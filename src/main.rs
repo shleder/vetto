@@ -170,6 +170,12 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // ---- Phase 2: threads now allowed -------------------------------------
     let bus = EventBus::new();
     let root_pid = handle.root_pid;
+    // Subscribe the sinks FIRST so nothing (incl. SessionStarted) is missed.
+    let jsonl_path = cfg.jsonl_path.clone();
+    if let Some(path) = &jsonl_path {
+        logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+    }
+    let stats = report::stats::StatsCollector::spawn(&bus);
     bus.publish(Event::SessionStarted {
         ts: events::types::now(),
         pid: root_pid,
@@ -244,10 +250,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         });
     }
 
-    if let Some(path) = &cfg.jsonl_path {
-        logger::jsonl::JsonlSink::spawn(&bus, path.clone());
-    }
-    let stats = report::stats::StatsCollector::spawn(&bus);
     install_sigint_forwarder(root_pid, tier);
 
     // ---- Phase 3: run the UI / wait ---------------------------------------
@@ -516,11 +518,12 @@ fn doctor_probe() -> Result<()> {
     drop(out_w);
     drop(err_w);
 
+    // Consume the OwnedFds into Files (taking ownership, no double close).
     let mut output = String::new();
-    let mut f = unsafe { std::fs::File::from_raw_fd(out_r.as_raw_fd()) };
+    let mut f: std::fs::File = out_r.into();
     let _ = f.read_to_string(&mut output);
     let mut eout = String::new();
-    let mut ef = unsafe { std::fs::File::from_raw_fd(err_r.as_raw_fd()) };
+    let mut ef: std::fs::File = err_r.into();
     let _ = ef.read_to_string(&mut eout);
     let _code = handle.wait();
 
