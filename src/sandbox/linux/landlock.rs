@@ -220,12 +220,15 @@ pub fn apply_policy(
     // Empirically verified against the kernel: on a NON-directory parent
     // only these rights are accepted — everything else (READ_DIR, REMOVE_*,
     // MAKE_*, and REFER — despite being file-adjacent) returns EINVAL.
-    let file_mask = READ_FILE | WRITE_FILE | EXECUTE
-        | if abi >= 3 { TRUNCATE } else { 0 };
+    let file_mask = READ_FILE | WRITE_FILE | EXECUTE | if abi >= 3 { TRUNCATE } else { 0 };
 
     for (_, (path, rights)) in wanted {
         let opened = open_path_fd(&path)?;
-        let effective = if opened.is_dir { rights } else { rights & file_mask };
+        let effective = if opened.is_dir {
+            rights
+        } else {
+            rights & file_mask
+        };
         if effective == 0 {
             continue;
         }

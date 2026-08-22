@@ -21,7 +21,12 @@ fn ssh_key_unreachable_every_tier() {
     let proj = TempProject::new("ssh");
     let out = run_vetto_in(
         proj.path(),
-        &["--tui=none", "--", "cat", &format!("{}/.ssh/id_rsa", std::env::var("HOME").unwrap())],
+        &[
+            "--tui=none",
+            "--",
+            "cat",
+            &format!("{}/.ssh/id_rsa", std::env::var("HOME").unwrap()),
+        ],
     );
     let text = stdout(&out);
     assert!(
@@ -30,7 +35,10 @@ fn ssh_key_unreachable_every_tier() {
         out.status.success(),
         text
     );
-    assert!(!text.contains("FAKE-TEST-KEY"), "key material leaked: {text}");
+    assert!(
+        !text.contains("FAKE-TEST-KEY"),
+        "key material leaked: {text}"
+    );
 }
 
 #[test]
@@ -79,7 +87,10 @@ fn symlink_attack_blocked() {
     let script = stage_fixture(proj.path(), "symlink_attack.sh");
     let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
-    assert!(!text.contains("LEAK-SYMLINK"), "/etc/passwd via symlink: {text}");
+    assert!(
+        !text.contains("LEAK-SYMLINK"),
+        "/etc/passwd via symlink: {text}"
+    );
 }
 
 #[test]
@@ -93,7 +104,13 @@ fn malicious_agent_leaks_nothing() {
     let script = stage_fixture(proj.path(), "malicious_agent.sh");
     let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
-    for marker in ["LEAK-SSH", "LEAK-ENV", "LEAK-SHADOW", "WROTE-ETC", "NET-LEAK"] {
+    for marker in [
+        "LEAK-SSH",
+        "LEAK-ENV",
+        "LEAK-SHADOW",
+        "WROTE-ETC",
+        "NET-LEAK",
+    ] {
         assert!(!text.contains(marker), "marker {marker} present: {text}");
     }
 }
@@ -107,7 +124,11 @@ fn benign_agent_works() {
     let script = stage_fixture(proj.path(), "benign_agent.sh");
     let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
-    assert!(out.status.success(), "benign agent failed: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "benign agent failed: {}",
+        stderr(&out)
+    );
     assert!(text.contains("created-by-agent"), "agent output: {text}");
     assert!(text.contains("benign-done"), "agent output: {text}");
 }

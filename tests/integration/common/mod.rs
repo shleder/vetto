@@ -53,11 +53,7 @@ pub struct TempProject(PathBuf);
 impl TempProject {
     pub fn new(tag: &str) -> Self {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "vetto-it-{}-{}-{n}",
-            tag,
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("vetto-it-{}-{}-{n}", tag, std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp project dir");
         Self(dir)
     }

@@ -14,7 +14,13 @@ fn orphan_check(envs: &[(&str, &str)], tag: &str, graceless: bool) {
     let proj = TempProject::new(tag);
 
     let mut child = Command::new(vetto_bin())
-        .args(["--tui=none", "--", "sh", "-c", &format!("sleep 30 # {marker}")])
+        .args([
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            &format!("sleep 30 # {marker}"),
+        ])
         .current_dir(proj.path())
         .envs(envs.iter().copied())
         .stdout(Stdio::null())

@@ -17,11 +17,7 @@ fn force_tier_override_selects_fs_only() {
         return;
     }
     let proj = TempProject::new("forcetier");
-    let out = run_vetto_env_in(
-        proj.path(),
-        &["doctor"],
-        &[("VETTO_FORCE_TIER", "fs-only")],
-    );
+    let out = run_vetto_env_in(proj.path(), &["doctor"], &[("VETTO_FORCE_TIER", "fs-only")]);
     let text = stdout(&out);
     assert!(
         text.lines()

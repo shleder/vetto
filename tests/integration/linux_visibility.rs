@@ -57,7 +57,10 @@ fn full_tier_records_secret_masking_events() {
     );
     assert!(out.status.success(), "{}", stderr(&out));
     let log = std::fs::read_to_string(&jsonl).unwrap_or_default();
-    assert!(log.contains("\"secret_masked\""), "no masking events: {log}");
+    assert!(
+        log.contains("\"secret_masked\""),
+        "no masking events: {log}"
+    );
 }
 
 #[test]

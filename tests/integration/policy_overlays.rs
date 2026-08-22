@@ -9,7 +9,10 @@ fn globbed_pem_files_are_masked_full_tier() {
         return;
     }
     let proj = TempProject::new("pemmask");
-    write_file(&proj.path().join("certs/server.pem"), "PRIVATE-KEY-MATERIAL\n");
+    write_file(
+        &proj.path().join("certs/server.pem"),
+        "PRIVATE-KEY-MATERIAL\n",
+    );
     let out = run_vetto_in(
         proj.path(),
         &["--tui=none", "--", "cat", "certs/server.pem"],
