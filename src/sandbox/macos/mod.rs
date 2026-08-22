@@ -222,9 +222,10 @@ fn build_envp(opts: &SpawnOptions) -> Vec<CString> {
     let mut env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os().collect();
     for (k, v) in &opts.env_extra {
-        let key: std::ffi::OsString = k.as_ref().into();
-        let val: std::ffi::OsString = v.as_ref().into();
-        env.insert(key, val);
+        env.insert(
+            std::ffi::OsString::from(k.as_str()),
+            std::ffi::OsString::from(v.as_str()),
+        );
     }
     env.iter()
         .map(|(k, v)| {

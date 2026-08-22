@@ -495,9 +495,10 @@ fn child_exec(opts: &SpawnOptions) -> ! {
     let mut env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os().collect();
     for (k, v) in &opts.env_extra {
-        let key: std::ffi::OsString = k.as_ref().into();
-        let val: std::ffi::OsString = v.as_ref().into();
-        env.insert(key, val);
+        env.insert(
+            std::ffi::OsString::from(k.as_str()),
+            std::ffi::OsString::from(v.as_str()),
+        );
     }
     let mut envp = Vec::with_capacity(env.len());
     for (k, v) in &env {

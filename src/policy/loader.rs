@@ -176,7 +176,7 @@ fn mask_project_reads_for_fs_only(
         if !root.exists() {
             continue;
         }
-        if enumerate_tree(root, &deny_set, &mut allow_read, &mut enumerated, &mut excluded).is_err()
+        if enumerate_tree(root, &deny_set, allow_read, &mut enumerated, &mut excluded).is_err()
         {
             break; // budget exceeded -> fallback below
         }
