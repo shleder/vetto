@@ -526,7 +526,13 @@ fn child_exec(opts: &SpawnOptions) -> ! {
     }
 
     // SAFETY: execve with NUL-terminated argv/envp vectors built above.
-    unsafe { libc::execve(prog.as_ptr(), argv_ptr.as_ptr(), envp_ptr.as_ptr()) };
+    let r = unsafe { libc::execve(prog.as_ptr(), argv_ptr.as_ptr(), envp_ptr.as_ptr()) };
+    let msg = format!(
+        "[vetto-child] execve failed r={r} errno={}\n",
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    );
+    // SAFETY: raw write to stderr for diagnostics before dying.
+    unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
     child_exit(127)
 }
 
