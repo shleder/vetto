@@ -124,7 +124,7 @@ pub fn write_id_maps(pid: libc::pid_t) -> VettoResult<()> {
 
     let _ = fs::write(base.join("setgroups"), "deny");
 
-    let mut w = |name: &str, content: String| -> VettoResult<()> {
+    let w = |name: &str, content: String| -> VettoResult<()> {
         let path = base.join(name);
         let mut f = fs::OpenOptions::new()
             .write(true)

@@ -8,7 +8,7 @@ pub mod resizer;
 pub mod sigwinch;
 
 use std::ffi::CStr;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
 use crate::error::{VettoError, VettoResult};
 
