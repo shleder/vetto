@@ -213,11 +213,14 @@ pub fn apply_policy(
         Ok(())
     };
 
-    for p in allow_read {
+    // Profiles list paths that vary per machine; absent paths simply have
+    // nothing to allow and are skipped (write roots were already validated
+    // by the policy checker, so missing WRITE targets stay loud there).
+    for p in allow_read.iter().filter(|p| p.exists()) {
         let is_dir = p.is_dir();
         add_rule(p, read_only_rights(is_dir, abi))?;
     }
-    for p in allow_write {
+    for p in allow_write.iter().filter(|p| p.exists()) {
         add_rule(p, write_rights(abi))?;
     }
 
