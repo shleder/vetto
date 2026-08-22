@@ -214,7 +214,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
         let _ = relay_port;
         if let Some(fd) = notif_listener {
-            sandbox::linux::observe_seccomp::spawn_notifier(fd, bus.clone());
+            let notifier_policy = std::sync::Arc::new(pol.clone());
+            sandbox::linux::observe_seccomp::spawn_notifier(
+                fd,
+                bus.clone(),
+                notifier_policy,
+                project.clone(),
+            );
             bus.publish(Event::Notice {
                 ts: events::types::now(),
                 message: "blocked-attempt observation via --observe-seccomp \

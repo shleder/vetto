@@ -184,39 +184,53 @@ pub fn probe_available() -> bool {
 // ---------------------------------------------------------------------------
 
 /// Spawn the notification watchdog answering CONTINUE promptly. A stalled
-/// responder would stall the child, so this runs on a dedicated thread that
-/// never allocates heavily per notification.
-pub fn spawn_notifier(listener_fd: OwnedFd, bus: EventBus) {
+/// responder would stall the child, so this runs on a dedicated thread.
+///
+/// `policy` is used to classify notifications: the notifier cannot see
+/// syscall RESULTS (the kernel answers with CONTINUE and Landlock decides),
+/// so an attempt is reported as BlockedAttempt only when the path is OUTSIDE
+/// the policy allowlist — those are exactly the paths Landlock will deny.
+/// Attempts inside the allowlist are allowed ops (covered by the /proc
+/// poller) and are not re-reported here.
+pub fn spawn_notifier(
+    listener_fd: OwnedFd,
+    bus: EventBus,
+    policy: std::sync::Arc<crate::policy::Policy>,
+    sandbox_cwd: std::path::PathBuf,
+) {
     std::thread::Builder::new()
         .name("vetto-notifier".into())
-        .spawn(move || notifier_loop(listener_fd, bus))
+        .spawn(move || notifier_loop(listener_fd, bus, policy, sandbox_cwd))
         .expect("spawn notifier thread");
 }
 
-fn notifier_loop(listener: OwnedFd, bus: EventBus) {
+fn notifier_loop(
+    listener: OwnedFd,
+    bus: EventBus,
+    policy: std::sync::Arc<crate::policy::Policy>,
+    sandbox_cwd: std::path::PathBuf,
+) {
     let fd = listener.as_raw_fd();
     loop {
         let mut notif = zeroed_notif();
         // SAFETY: valid fd + properly initialized struct.
         if unsafe { libc::ioctl(fd, SECCOMP_IOCTL_NOTIF_RECV, &mut notif) } != 0 {
-            eprintln!(
-                "[notifier] RECV failed errno={}",
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            );
             break; // session over / fd closed
         }
 
-        let comm = read_comm(notif.pid).unwrap_or_else(|| "?".into());
         let maybe_path = extract_path(fd, &notif);
-
         if let Some(path) = maybe_path {
-            bus.publish(Event::BlockedAttempt {
-                ts: crate::events::types::now(),
-                pid: notif.pid,
-                comm,
-                path,
-                source: "observe-seccomp".into(),
-            });
+            let absolute = absolutize(&path, &sandbox_cwd);
+            if !policy.in_read_scope(&absolute) {
+                let comm = read_comm(notif.pid).unwrap_or_else(|| "?".into());
+                bus.publish(Event::BlockedAttempt {
+                    ts: crate::events::types::now(),
+                    pid: notif.pid,
+                    comm,
+                    path,
+                    source: "observe-seccomp".into(),
+                });
+            }
         }
 
         let resp = SeccompNotifResp {
@@ -229,6 +243,16 @@ fn notifier_loop(listener: OwnedFd, bus: EventBus) {
         if unsafe { libc::ioctl(fd, SECCOMP_IOCTL_NOTIF_SEND, &resp) } != 0 {
             break;
         }
+    }
+}
+
+/// Resolve syscall path arguments (often relative) against the sandbox cwd.
+fn absolutize(path: &str, sandbox_cwd: &std::path::Path) -> std::path::PathBuf {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        sandbox_cwd.join(p)
     }
 }
 
