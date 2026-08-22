@@ -103,8 +103,8 @@ def hero():
     draw_spaced(d, (124, 140), "vetto", wf, WHITE, ls=30)
 
     # tagline
-    gf = font(FR, 47)
-    d.text((134, 520), "from \u201cveto\u201d \u2014 to forbid \u00b7 daemon-less sandbox + security layer for AI coding agents", font=gf, fill=GRAY)
+    gf = font(FR, 40)
+    d.text((134, 528), "from \u201cveto\u201d \u2014 to forbid \u00b7 daemon-less sandbox + security layer for AI coding agents", font=gf, fill=GRAY)
 
     # kernel line, right-aligned
     kf = font(FR, 44)
@@ -143,7 +143,7 @@ def hero():
     x = 40
     y = bar_y + 32
     for text, color, bold in segs:
-        f = font(FB if bold else FR, 46)
+        f = font(FB if bold else FR, 40)
         d.text((x, y), text, font=f, fill=color)
         x += d.textlength(text, font=f)
 
@@ -226,8 +226,8 @@ def terminal():
     ]
     x = 64
     for text, color, bold in segs:
-        ff = fb if bold else f
-        d.text((x, bar_y + 30), text, font=ff, fill=color)
+        ff = font(FB if bold else FR, 42)
+        d.text((x, bar_y + 32), text, font=ff, fill=color)
         x += d.textlength(text, font=ff)
 
     return img.convert("RGBA")
