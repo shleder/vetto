@@ -19,7 +19,7 @@ const SYS_SECCOMP: libc::c_long = 317;
 const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
 const SECCOMP_FILTER_FLAG_NEW_LISTENER: libc::c_uint = 1 << 3;
 
-const SECCOMP_RET_USER_NOTIF: u32 = 0x7ff0_0000;
+const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc0_0000; // NOT 0x7ff00000 (= RET_TRACE!)
 const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 const SECCOMP_USER_NOTIF_FLAG_CONTINUE: u32 = 1 << 0;
 
