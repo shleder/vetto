@@ -273,5 +273,7 @@ fn enumerate_tree(
 }
 
 fn is_temp_root(p: &Path) -> bool {
-    p == Path::new("/tmp")
+    // Not "project" roots for enumeration purposes: temp sinks and device
+    // sinks are global, not part of the agent's project tree.
+    p == Path::new("/tmp") || p.starts_with("/dev/")
 }

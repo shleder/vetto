@@ -196,18 +196,39 @@ pub fn apply_policy(
     }
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset_fd as i32) };
 
-    // Dedup paths by canonical target to bound rule count.
-    let mut seen: HashMap<String, bool> = HashMap::new();
-
-    let mut add_rule = |path: &Path, rights: u64| -> VettoResult<()> {
+    // Collect rights per concrete path (read + write grants UNION — a path
+    // in both lists keeps both), then add ONE type-aware rule per path:
+    // directory-only rights (READ_DIR, MAKE_*, REMOVE_DIR) are EINVAL on a
+    // file parent, so they are masked for non-directories.
+    let mut wanted: HashMap<String, (std::path::PathBuf, u64)> = HashMap::new();
+    let mut want = |path: &std::path::PathBuf, rights: u64| {
         let key = format!("{}", path.display());
-        let opened = open_path_fd(path)?;
-        let is_dir = opened.is_dir;
-        if seen.insert(key, is_dir).is_some() {
-            return Ok(());
+        let e = wanted.entry(key).or_insert_with(|| (path.clone(), 0));
+        e.1 |= rights;
+    };
+    for p in allow_read.iter().filter(|p| p.exists()) {
+        want(p, read_only_rights(p.is_dir(), abi));
+    }
+    for p in allow_write.iter().filter(|p| p.exists()) {
+        let mut rights = write_rights(abi);
+        if strip_read_on_write {
+            rights &= !READ_FILE;
+        }
+        want(p, rights);
+    }
+
+    let file_mask = READ_FILE | WRITE_FILE | EXECUTE
+        | if abi >= 2 { REFER } else { 0 }
+        | if abi >= 3 { TRUNCATE } else { 0 };
+
+    for (_, (path, rights)) in wanted {
+        let opened = open_path_fd(&path)?;
+        let effective = if opened.is_dir { rights } else { rights & file_mask };
+        if effective == 0 {
+            continue;
         }
         let rule = LandlockPathBeneathAttr {
-            allowed_access: rights,
+            allowed_access: effective,
             parent_fd: opened._fd.as_raw_fd(),
         };
         // SAFETY: valid rule pointer referencing a live fd.
@@ -227,22 +248,6 @@ pub fn apply_policy(
                 std::io::Error::last_os_error()
             )));
         }
-        Ok(())
-    };
-
-    // Profiles list paths that vary per machine; absent paths simply have
-    // nothing to allow and are skipped (write roots were already validated
-    // by the policy checker, so missing WRITE targets stay loud there).
-    for p in allow_read.iter().filter(|p| p.exists()) {
-        let is_dir = p.is_dir();
-        add_rule(p, read_only_rights(is_dir, abi))?;
-    }
-    for p in allow_write.iter().filter(|p| p.exists()) {
-        let mut rights = write_rights(abi);
-        if strip_read_on_write {
-            rights &= !READ_FILE;
-        }
-        add_rule(p, rights)?;
     }
 
     // SAFETY: prctl with scalar args only.
