@@ -1,7 +1,7 @@
 //! Post-load sanity checks producing warnings (never hard failures unless
 //! something makes enforcement impossible).
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use super::types::Policy;
 

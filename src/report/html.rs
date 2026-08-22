@@ -100,7 +100,7 @@ observation is best-effort (/proc polling, ~100 ms granularity)</p>
 {blocked}
 
 <h2>Network requests</h2>
-{net}
+{net_tbl}
 
 <h2>Notices</h2>
 <ul>
@@ -124,7 +124,7 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
         reads = stats.file_reads,
         writes = stats.file_writes,
         blocked = blocked,
-        net = net,
+        net_tbl = net,
         notices = notices,
         version = env!("CARGO_PKG_VERSION"),
     )

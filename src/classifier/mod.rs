@@ -2,4 +2,4 @@
 
 pub mod operation;
 
-pub use operation::Operation;
+pub use operation::classify_path;
