@@ -48,7 +48,8 @@ fn poll_loop(bus: EventBus, roots: Vec<u32>) {
                 continue;
             };
             for entry in fds.flatten() {
-                let Some(name) = entry.file_name().to_str() else {
+                let name_os = entry.file_name();
+                let Some(name) = name_os.to_str() else {
                     continue;
                 };
                 let Ok(fd_num) = name.parse::<i32>() else {

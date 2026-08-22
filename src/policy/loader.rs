@@ -77,7 +77,7 @@ pub fn load(
     let vars = Vars { project, home };
 
     // --- write roots -------------------------------------------------------
-    let allow_write = resolve_list(&raw.filesystem.allow_write, &vars);
+    let mut allow_write = resolve_list(&raw.filesystem.allow_write, &vars);
 
     // --- read roots --------------------------------------------------------
     let mut allow_read = resolve_list(&raw.filesystem.allow_read, &vars);

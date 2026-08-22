@@ -194,8 +194,10 @@ fn dashboard_ui(
         };
         rows.push(Row::new(vec![kind.to_string(), app::describe(ev)]).style(style));
     }
-    let table = Table::new(rows)
-        .widths(vec![Constraint::Length(16), Constraint::Min(10)])
+    let table = Table::new(
+        rows,
+        vec![Constraint::Length(16), Constraint::Min(10)],
+    )
         .block(
             Block::default()
                 .borders(Borders::ALL)

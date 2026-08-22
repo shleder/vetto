@@ -58,7 +58,7 @@ impl Policy {
 
     /// Is `path` covered by an allow rule at all?
     pub fn in_read_scope(&self, path: &Path) -> bool {
-        let allowed = self.allow_read.iter().chain(self.allow_write.iter());
+        let mut allowed = self.allow_read.iter().chain(self.allow_write.iter());
         allowed.any(|root| path.starts_with(root))
     }
 }

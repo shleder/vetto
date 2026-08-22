@@ -20,7 +20,7 @@ mod tui;
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
