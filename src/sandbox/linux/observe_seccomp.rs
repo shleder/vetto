@@ -145,6 +145,11 @@ pub fn probe_available() -> bool {
     match unsafe { libc::fork() } {
         -1 => false,
         0 => {
+            // NEW_LISTENER requires no_new_privs (or CAP_SYS_ADMIN).
+            // SAFETY: scalar-only prctl.
+            if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+                unsafe { libc::_exit(1) };
+            }
             let fprog = SockFProg {
                 len: 1,
                 filter: probe_prog.as_ptr(),

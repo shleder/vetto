@@ -68,30 +68,32 @@ fn build_program() -> Vec<SockFilter> {
     //
     // idx: instruction
     // 0    LD arch
-    // 1    JEQ native -> 2 : ret ERRNO(EPERM)
-    // 2    LD nr
-    // 3    JEQ socket     -> 6 (domain check)
-    // 4    JEQ socketpair -> 6
-    // 5    ret ALLOW
-    // 6    LD args[0] (address family)
-    // 7    JEQ AF_INET  -> ret EAFNOSUPPORT
-    // 8    JEQ AF_INET6 -> ret EAFNOSUPPORT
-    // 9    ret ALLOW
-    // 10   ret ERRNO(EAFNOSUPPORT)
+    // 1    JEQ native -> skip the EPERM (idx3) : foreign falls into idx2
+    // 2    ret ERRNO(EPERM) for foreign ABIs
+    // 3    LD nr
+    // 4    JEQ socket     -> 7 (domain check)
+    // 5    JEQ socketpair -> 7
+    // 6    ret ALLOW
+    // 7    LD args[0] (address family)
+    // 8    JEQ AF_INET  -> ret EAFNOSUPPORT
+    // 9    ret ERRNO(EAFNOSUPPORT)
+    // 10   JEQ AF_INET6 -> ret EAFNOSUPPORT
+    // 11   ret ERRNO(EAFNOSUPPORT)
+    // 12   ret ALLOW
     vec![
-        bpf_stmt(LD_ABS, 4),                              // 0
-        bpf_jump(JEQ, native_audit_arch(), 0, 1),         // 1 -> 2 / 3(err)
-        bpf_stmt(RET, SECCOMP_RET_ERRNO | libc::EPERM as u32), // fallback for foreign ABIs
-        bpf_stmt(LD_ABS, 0),                              // 3
-        bpf_jump(JEQ, NR_SOCKET as u32, 2, 0),            // 4 -> 7(domain)
-        bpf_jump(JEQ, NR_SOCKETPAIR as u32, 1, 0),        // 5 -> 7
-        bpf_stmt(RET, SECCOMP_RET_ALLOW),                 // 6
-        bpf_stmt(LD_ABS, 16),                             // 7 args[0]
-        bpf_jump(JEQ, AF_INET, 0, 1),                     // 8
-        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),  // 9
-        bpf_jump(JEQ, AF_INET6, 0, 1),                    // 10
-        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),  // 11
-        bpf_stmt(RET, SECCOMP_RET_ALLOW),                 // 12
+        bpf_stmt(LD_ABS, 4),                                  // 0
+        bpf_jump(JEQ, native_audit_arch(), 1, 0),             // 1 native -> 3, foreign -> 2
+        bpf_stmt(RET, SECCOMP_RET_ERRNO | libc::EPERM as u32), // 2 fallback for foreign ABIs
+        bpf_stmt(LD_ABS, 0),                                  // 3
+        bpf_jump(JEQ, NR_SOCKET as u32, 2, 0),                // 4 -> 7(domain)
+        bpf_jump(JEQ, NR_SOCKETPAIR as u32, 1, 0),            // 5 -> 7
+        bpf_stmt(RET, SECCOMP_RET_ALLOW),                     // 6
+        bpf_stmt(LD_ABS, 16),                                 // 7 args[0]
+        bpf_jump(JEQ, AF_INET, 0, 1),                         // 8
+        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),      // 9
+        bpf_jump(JEQ, AF_INET6, 0, 1),                        // 10
+        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),      // 11
+        bpf_stmt(RET, SECCOMP_RET_ALLOW),                     // 12
     ]
 }
 
@@ -129,6 +131,9 @@ pub fn probe_available() -> bool {
         -1 => false,
         0 => {
             let res = install();
+            if let Err(e) = &res {
+                eprintln!("[netblock-probe] install failed: {e}");
+            }
             unsafe { libc::_exit(if res.is_ok() { 0 } else { 1 }) };
         }
         pid => {
