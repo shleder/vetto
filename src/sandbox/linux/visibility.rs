@@ -5,8 +5,8 @@
 //! misses sub-100ms opens; fd flags come from `/proc/<pid>/fdinfo`; this is
 //! observation, never enforcement.
 
-use std::collections::HashSet;
 use crate::events::{bus::EventBus, Event, FileAccess};
+use std::collections::HashSet;
 
 pub const POLL_INTERVAL_MS: u64 = 100;
 const MAX_EVENTS_PER_TICK: usize = 200;
@@ -158,9 +158,8 @@ fn fd_access(pid: u32, fd: i32) -> FileAccess {
         return FileAccess::Unknown;
     };
     match flags & 0b11 {
-        0 => FileAccess::Read,          // O_RDONLY
-        1 | 2 => FileAccess::Write,     // O_WRONLY | O_RDWR
+        0 => FileAccess::Read,      // O_RDONLY
+        1 | 2 => FileAccess::Write, // O_WRONLY | O_RDWR
         _ => FileAccess::Unknown,
     }
 }
-

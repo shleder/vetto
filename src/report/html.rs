@@ -16,7 +16,9 @@ pub fn render(stats: &SessionStats) -> String {
         blocked.push_str("<p class=\"muted\">No blocked attempts were observed. \
             Remember: observation channels are optional (see notices) — enforcement is active regardless.</p>\n");
     } else {
-        blocked.push_str("<table><tr><th>path</th><th>process</th><th>source</th><th>count</th></tr>\n");
+        blocked.push_str(
+            "<table><tr><th>path</th><th>process</th><th>source</th><th>count</th></tr>\n",
+        );
         for b in &stats.blocked_attempts {
             blocked.push_str(&format!(
                 "<tr><td class=\"path\">{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td></tr>\n",

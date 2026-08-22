@@ -128,7 +128,9 @@ fn ingest(inner: &mut Inner, ev: Event) {
             st.exit_code = exit_code;
             st.duration_secs = duration_secs;
         }
-        Event::FileObserved { ref path, access, .. } => {
+        Event::FileObserved {
+            ref path, access, ..
+        } => {
             // fd-derived access beats extension heuristics when available.
             let op = match access {
                 FileAccess::Write => crate::classifier::Operation::FsWrite,
@@ -145,10 +147,7 @@ fn ingest(inner: &mut Inner, ev: Event) {
         Event::BlockedAttempt {
             path, comm, source, ..
         } => {
-            *inner
-                .blocked
-                .entry((path, comm, source))
-                .or_insert(0) += 1;
+            *inner.blocked.entry((path, comm, source)).or_insert(0) += 1;
         }
         Event::NetRequest {
             host,
@@ -156,17 +155,19 @@ fn ingest(inner: &mut Inner, ev: Event) {
             allowed,
             ..
         } => {
-            *st
-                .op_counts
+            *st.op_counts
                 .entry(crate::classifier::Operation::Net.label().to_string())
                 .or_insert(0) += 1;
             if st.net_requests.len() < 500 {
-                st.net_requests.push(NetRecord { host, port, allowed });
+                st.net_requests.push(NetRecord {
+                    host,
+                    port,
+                    allowed,
+                });
             }
         }
         Event::Notice { message, .. } => {
-            *st
-                .op_counts
+            *st.op_counts
                 .entry(crate::classifier::Operation::Other.label().to_string())
                 .or_insert(0) += 1;
             if st.notices.len() < 100 {

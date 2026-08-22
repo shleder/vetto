@@ -50,7 +50,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend = Box::new(sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp)?);
+    let backend = Box::new(sandbox::Backend::detect(
+        cfg.net.clone(),
+        cfg.observe_seccomp,
+    )?);
     let tier = backend.tier();
     tracing::debug!("backend: {}", backend.describe());
 
@@ -329,7 +332,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         );
     }
 
-    let code = if exit_code < 0 { 128 - exit_code } else { exit_code };
+    let code = if exit_code < 0 {
+        128 - exit_code
+    } else {
+        exit_code
+    };
     std::process::exit(code);
 }
 
@@ -341,12 +348,7 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
     }
 }
 
-fn dry_run(
-    cfg: &RunConfig,
-    pol: &policy::Policy,
-    agent_cmd: &[String],
-    tier: &str,
-) -> Result<()> {
+fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &str) -> Result<()> {
     println!("vetto dry-run — nothing enforced, nothing executed");
     println!("  tier:  {tier}");
     println!("  net:   {}", cfg.net.label());
@@ -362,7 +364,11 @@ fn dry_run(
     }
     println!("  deny paths resolved: {}", pol.deny_resolved.len());
     for d in pol.deny_resolved.iter().take(50) {
-        println!("    {}{}", d.path.display(), if d.is_dir { "/" } else { "" });
+        println!(
+            "    {}{}",
+            d.path.display(),
+            if d.is_dir { "/" } else { "" }
+        );
     }
     println!("  agent: {}", agent_cmd.join(" "));
     Ok(())
@@ -375,10 +381,9 @@ fn pipe2() -> Result<(OwnedFd, OwnedFd)> {
         bail!("pipe2: {}", std::io::Error::last_os_error());
     }
     // SAFETY: fresh descriptors from a successful pipe2.
-    Ok((
-        unsafe { OwnedFd::from_raw_fd(fds[0]) },
-        unsafe { OwnedFd::from_raw_fd(fds[1]) },
-    ))
+    Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+        OwnedFd::from_raw_fd(fds[1])
+    }))
 }
 
 fn resolve_in_path(cmd: &str) -> Result<String> {
@@ -451,8 +456,14 @@ fn doctor(probe_deny: bool) -> Result<()> {
             }
         );
         println!("unprivileged userns:     {}", yn(p.userns_available));
-        println!("seccomp filters:         {}", yn(p.seccomp_filter_available));
-        println!("seccomp user-notify:     {}", yn(p.seccomp_notify_available));
+        println!(
+            "seccomp filters:         {}",
+            yn(p.seccomp_filter_available)
+        );
+        println!(
+            "seccomp user-notify:     {}",
+            yn(p.seccomp_notify_available)
+        );
         println!("audit feed readable:     {}", yn(p.audit_feed_readable));
         match sandbox::linux::pick_tier(&p) {
             Ok(t) => println!("chosen tier:             {}", t.label()),
@@ -483,7 +494,9 @@ fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
     let backend = Box::new(sandbox::Backend::detect(NetMode::Off, false)?);
     let project = std::env::current_dir().context("getcwd")?;
-    let home = std::env::var_os("HOME").map(PathBuf::from).context("$HOME not set")?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("$HOME not set")?;
     let tier = backend.tier().unwrap_or(policy::Tier::Full);
     let pol = policy::loader::load("default", None, &project, &home, tier)?;
     if pol.deny_resolved.is_empty() {

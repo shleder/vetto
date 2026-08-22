@@ -53,7 +53,9 @@ pub fn spawn_broker(broker_fd: RawFd, allowlist: Vec<String>, bus: EventBus) {
                 let target = format!("{}:{}", req.host.trim_end_matches('.'), req.port);
                 match resolve_and_connect(&target) {
                     Ok(tcp) => {
-                        if create_and_send_data_fd(&mut ctrl, tcp).is_err() && ctrl.write_all(b"X").is_err() {
+                        if create_and_send_data_fd(&mut ctrl, tcp).is_err()
+                            && ctrl.write_all(b"X").is_err()
+                        {
                             break;
                         }
                     }
@@ -98,7 +100,10 @@ fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
 
 fn resolve_and_connect(target: &str) -> Result<TcpStream, ()> {
     use std::net::ToSocketAddrs;
-    let addrs = target.to_socket_addrs().map_err(|_| ())?.collect::<Vec<_>>();
+    let addrs = target
+        .to_socket_addrs()
+        .map_err(|_| ())?
+        .collect::<Vec<_>>();
     for addr in addrs {
         if let Ok(s) = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) {
             return Ok(s);
@@ -171,10 +176,9 @@ fn socketpair_stream() -> Result<(OwnedFd, OwnedFd), ()> {
         return Err(());
     }
     // SAFETY: fresh owned fds from a successful socketpair.
-    Ok((
-        unsafe { OwnedFd::from_raw_fd(fds[0]) },
-        unsafe { OwnedFd::from_raw_fd(fds[1]) },
-    ))
+    Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+        OwnedFd::from_raw_fd(fds[1])
+    }))
 }
 
 /// sendmsg(2) carrying one fd in SCM_RIGHTS over `sock`.
@@ -187,8 +191,7 @@ pub(crate) fn send_fd(sock: RawFd, fd_to_send: RawFd) -> Result<(), ()> {
     }
     let mut cmsg = CmsghdrAligned {
         hdr: libc::cmsghdr {
-            cmsg_len: std::mem::size_of::<libc::cmsghdr>()
-                + std::mem::size_of::<libc::c_int>(),
+            cmsg_len: std::mem::size_of::<libc::cmsghdr>() + std::mem::size_of::<libc::c_int>(),
             cmsg_level: libc::SOL_SOCKET,
             cmsg_type: libc::SCM_RIGHTS,
         },
@@ -206,8 +209,7 @@ pub(crate) fn send_fd(sock: RawFd, fd_to_send: RawFd) -> Result<(), ()> {
         msg_iov: &mut iov,
         msg_iovlen: 1,
         msg_control: &mut cmsg as *mut _ as *mut libc::c_void,
-        msg_controllen: std::mem::size_of::<libc::cmsghdr>()
-            + std::mem::size_of::<libc::c_int>(),
+        msg_controllen: std::mem::size_of::<libc::cmsghdr>() + std::mem::size_of::<libc::c_int>(),
         msg_flags: 0,
     };
     // SAFETY: all pointers valid for the call duration.
@@ -254,7 +256,12 @@ pub(crate) fn recv_fd(sock: RawFd) -> Result<OwnedFd, ()> {
     if data_len < std::mem::size_of::<libc::c_int>() as usize {
         return Err(());
     }
-    let fd_bytes = [control[hdr_len], control[hdr_len + 1], control[hdr_len + 2], control[hdr_len + 3]];
+    let fd_bytes = [
+        control[hdr_len],
+        control[hdr_len + 1],
+        control[hdr_len + 2],
+        control[hdr_len + 3],
+    ];
     let fd = i32::from_ne_bytes(fd_bytes);
     // SAFETY: fresh fd received from the kernel via SCM_RIGHTS.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
@@ -314,8 +321,7 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
 
     let outcome = {
         let _guard = SETUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        send_request_frame(ctrl_fd, &host, port)
-            .and_then(|_| read_status_and_fd(ctrl_fd))
+        send_request_frame(ctrl_fd, &host, port).and_then(|_| read_status_and_fd(ctrl_fd))
     };
 
     match outcome {
@@ -496,12 +502,19 @@ fn pump(a: TcpStream, data_fd: OwnedFd) {
 pub fn build_proxy_env(port: u16) -> Vec<(String, String)> {
     let url = format!("http://127.0.0.1:{port}");
     [
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-        "http_proxy", "https_proxy", "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
     ]
     .into_iter()
     .map(|k| (k.to_string(), url.clone()))
-    .chain([("NO_PROXY".to_string(), String::new()), ("no_proxy".to_string(), String::new())])
+    .chain([
+        ("NO_PROXY".to_string(), String::new()),
+        ("no_proxy".to_string(), String::new()),
+    ])
     .collect()
 }
 

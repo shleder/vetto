@@ -27,7 +27,16 @@ fn cstr(p: &Path) -> VettoResult<CString> {
 pub fn make_root_private() -> VettoResult<()> {
     let root = cstr(Path::new("/"))?;
     // SAFETY: valid NUL paths; flags are scalar.
-    if unsafe { libc::mount(std::ptr::null(), root.as_ptr(), std::ptr::null(), MS_PRIVATE | MS_REC, std::ptr::null()) } != 0 {
+    if unsafe {
+        libc::mount(
+            std::ptr::null(),
+            root.as_ptr(),
+            std::ptr::null(),
+            MS_PRIVATE | MS_REC,
+            std::ptr::null(),
+        )
+    } != 0
+    {
         return Err(VettoError::Mount(format!(
             "remount / private: {}",
             std::io::Error::last_os_error()
@@ -40,7 +49,16 @@ fn bind_devnull(target: &Path) -> VettoResult<()> {
     let src = cstr(Path::new("/dev/null"))?;
     let dst = cstr(target)?;
     // SAFETY: valid NUL paths; flags are scalar.
-    if unsafe { libc::mount(src.as_ptr(), dst.as_ptr(), std::ptr::null(), MS_BIND, std::ptr::null()) } != 0 {
+    if unsafe {
+        libc::mount(
+            src.as_ptr(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND,
+            std::ptr::null(),
+        )
+    } != 0
+    {
         return Err(VettoError::Mount(format!(
             "bind /dev/null over {}: {}",
             target.display(),

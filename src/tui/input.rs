@@ -72,8 +72,11 @@ fn forward_loop(
         let chunk = &buf[..n as usize];
         if chunk.contains(&OVERLAY_KEY) {
             overlay_requested.store(true, Ordering::SeqCst);
-            let filtered: Vec<u8> =
-                chunk.iter().copied().filter(|&b| b != OVERLAY_KEY).collect();
+            let filtered: Vec<u8> = chunk
+                .iter()
+                .copied()
+                .filter(|&b| b != OVERLAY_KEY)
+                .collect();
             if !filtered.is_empty() {
                 pty::write_all_fd(master_fd, &filtered);
             }

@@ -37,7 +37,12 @@ struct SockFProg {
 }
 
 const fn bpf_stmt(code: u16, k: u32) -> SockFilter {
-    SockFilter { code, jt: 0, jf: 0, k }
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
 }
 const fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
     SockFilter { code, jt, jf, k }
@@ -81,19 +86,19 @@ fn build_program() -> Vec<SockFilter> {
     // 11   ret ERRNO(EAFNOSUPPORT)
     // 12   ret ALLOW
     vec![
-        bpf_stmt(LD_ABS, 4),                                  // 0
-        bpf_jump(JEQ, native_audit_arch(), 1, 0),             // 1 native -> 3, foreign -> 2
+        bpf_stmt(LD_ABS, 4),                                   // 0
+        bpf_jump(JEQ, native_audit_arch(), 1, 0),              // 1 native -> 3, foreign -> 2
         bpf_stmt(RET, SECCOMP_RET_ERRNO | libc::EPERM as u32), // 2 fallback for foreign ABIs
-        bpf_stmt(LD_ABS, 0),                                  // 3
-        bpf_jump(JEQ, NR_SOCKET as u32, 2, 0),                // 4 -> 7(domain)
-        bpf_jump(JEQ, NR_SOCKETPAIR as u32, 1, 0),            // 5 -> 7
-        bpf_stmt(RET, SECCOMP_RET_ALLOW),                     // 6
-        bpf_stmt(LD_ABS, 16),                                 // 7 args[0]
-        bpf_jump(JEQ, AF_INET, 0, 1),                         // 8
-        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),      // 9
-        bpf_jump(JEQ, AF_INET6, 0, 1),                        // 10
-        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),      // 11
-        bpf_stmt(RET, SECCOMP_RET_ALLOW),                     // 12
+        bpf_stmt(LD_ABS, 0),                                   // 3
+        bpf_jump(JEQ, NR_SOCKET as u32, 2, 0),                 // 4 -> 7(domain)
+        bpf_jump(JEQ, NR_SOCKETPAIR as u32, 1, 0),             // 5 -> 7
+        bpf_stmt(RET, SECCOMP_RET_ALLOW),                      // 6
+        bpf_stmt(LD_ABS, 16),                                  // 7 args[0]
+        bpf_jump(JEQ, AF_INET, 0, 1),                          // 8
+        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),       // 9
+        bpf_jump(JEQ, AF_INET6, 0, 1),                         // 10
+        bpf_stmt(RET, SECCOMP_RET_ERRNO | EAFNOSUPPORT),       // 11
+        bpf_stmt(RET, SECCOMP_RET_ALLOW),                      // 12
     ]
 }
 

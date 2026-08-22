@@ -56,7 +56,7 @@ pub fn probe_unprivileged_userns() -> bool {
     }
     let mut ready_fds = [0 as libc::c_int; 2]; // child -> parent
     let mut ack_fds = [0 as libc::c_int; 2]; // parent -> child
-    // SAFETY: valid out-arrays; scalar flags.
+                                             // SAFETY: valid out-arrays; scalar flags.
     if unsafe { libc::pipe2(ready_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
         return false;
     }
@@ -132,8 +132,7 @@ fn parent_probe_side(
         // SAFETY: plain waitpid.
         let r = unsafe { libc::waitpid(pid, status, 0) };
         if r == pid
-            || (r < 0
-                && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
+            || (r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
         {
             break;
         }

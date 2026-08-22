@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use super::types::Policy;
 
-const SYSTEM_WRITE_ROOTS: [&str; 8] =
-    ["/", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/boot"];
+const SYSTEM_WRITE_ROOTS: [&str; 8] = [
+    "/", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/boot",
+];
 
 pub fn check(policy: &mut Policy) {
     // Writing to system locations is almost always a misconfiguration.
@@ -39,9 +40,10 @@ pub fn check(policy: &mut Policy) {
     policy.allow_write.retain(|p| {
         let exists = p.exists();
         if !exists {
-            policy
-                .warnings
-                .push(format!("allow_write path '{}' does not exist; dropped", p.display()));
+            policy.warnings.push(format!(
+                "allow_write path '{}' does not exist; dropped",
+                p.display()
+            ));
         }
         exists
     });

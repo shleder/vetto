@@ -14,7 +14,10 @@ use crate::logger::sanitizer;
 
 /// Write `./vetto-report-<timestamp>.<ext>` for every requested format.
 /// Values pass through the BEST-EFFORT sanitizer before rendering.
-pub fn write_reports(stats: &stats::SessionStats, formats: &[ReportFormat]) -> Result<Vec<PathBuf>> {
+pub fn write_reports(
+    stats: &stats::SessionStats,
+    formats: &[ReportFormat],
+) -> Result<Vec<PathBuf>> {
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let mut written = Vec::new();
     for fmt in formats {

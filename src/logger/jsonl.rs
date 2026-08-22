@@ -26,7 +26,10 @@ impl JsonlSink {
 
 fn sink_loop(mut rx: broadcast::Receiver<Event>, path: PathBuf) {
     let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) else {
-        eprintln!("vetto: cannot open --jsonl file {}: skipping sink", path.display());
+        eprintln!(
+            "vetto: cannot open --jsonl file {}: skipping sink",
+            path.display()
+        );
         return;
     };
     let mut out = std::io::BufWriter::new(file);

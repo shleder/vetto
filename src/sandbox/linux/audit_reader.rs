@@ -15,7 +15,11 @@ pub const NETLINK_AUDIT: libc::c_int = 9;
 pub fn open_audit_feed() -> Result<OwnedFd, String> {
     // SAFETY: scalar args only.
     let fd = unsafe {
-        libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, NETLINK_AUDIT)
+        libc::socket(
+            libc::AF_NETLINK,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+            NETLINK_AUDIT,
+        )
     };
     if fd < 0 {
         return Err(format!(

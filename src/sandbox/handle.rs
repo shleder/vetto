@@ -79,12 +79,10 @@ impl SandboxHandle {
         if let Some(strategy) = self.strategy.take() {
             match strategy {
                 KillStrategy::PidNsPipe(fd) => drop(fd), // EOF => inner init kills all
-                KillStrategy::ProcessGroup { pid, pgid } => {
-                    unsafe {
-                        libc::kill(-pgid, libc::SIGKILL);
-                        libc::kill(pid, libc::SIGKILL);
-                    }
-                }
+                KillStrategy::ProcessGroup { pid, pgid } => unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                    libc::kill(pid, libc::SIGKILL);
+                },
             }
         }
     }

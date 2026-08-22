@@ -155,10 +155,9 @@ fn pipe2_cloexec() -> Result<(OwnedFd, OwnedFd)> {
         bail!("pipe2: {}", std::io::Error::last_os_error());
     }
     // SAFETY: fresh descriptors from a successful pipe2.
-    Ok((
-        unsafe { OwnedFd::from_raw_fd(fds[0]) },
-        unsafe { OwnedFd::from_raw_fd(fds[1]) },
-    ))
+    Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+        OwnedFd::from_raw_fd(fds[1])
+    }))
 }
 
 fn socketpair_cloexec() -> Result<(OwnedFd, OwnedFd)> {
@@ -176,10 +175,9 @@ fn socketpair_cloexec() -> Result<(OwnedFd, OwnedFd)> {
         bail!("socketpair: {}", std::io::Error::last_os_error());
     }
     // SAFETY: fresh descriptors from a successful socketpair.
-    Ok((
-        unsafe { OwnedFd::from_raw_fd(fds[0]) },
-        unsafe { OwnedFd::from_raw_fd(fds[1]) },
-    ))
+    Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+        OwnedFd::from_raw_fd(fds[1])
+    }))
 }
 
 /// close_range(2) — available on every kernel that also has Landlock (5.9+).
@@ -340,13 +338,7 @@ fn read_exact_timeout(fd: RawFd, buf: &mut [u8], timeout_ms: i32) -> std::io::Re
             continue;
         }
         // SAFETY: raw read into the unfilled tail of the buffer.
-        let n = unsafe {
-            libc::read(
-                fd,
-                buf[filled..].as_mut_ptr().cast(),
-                buf.len() - filled,
-            )
-        };
+        let n = unsafe { libc::read(fd, buf[filled..].as_mut_ptr().cast(), buf.len() - filled) };
         if n > 0 {
             filled += n as usize;
         } else if n == 0 {
@@ -446,7 +438,10 @@ fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
         StdioMode::Captured { stdout_w, stderr_w } => {
             // SAFETY: open of a static NUL-terminated path.
             let devnull = unsafe {
-                libc::open(b"/dev/null\0".as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC)
+                libc::open(
+                    b"/dev/null\0".as_ptr().cast(),
+                    libc::O_RDONLY | libc::O_CLOEXEC,
+                )
             };
             if devnull < 0 {
                 return Err(format!("open /dev/null: {}", errno_val()));
@@ -543,7 +538,10 @@ fn child_relay(relay_end: RawFd, s_pid: libc::pid_t, port: u16) -> ! {
     close_all_except(&[relay_end]);
     // SAFETY: open of a static NUL-terminated path (fd will be dup2'd).
     let devnull = unsafe {
-        libc::open(b"/dev/null\0".as_ptr().cast(), libc::O_RDWR | libc::O_CLOEXEC)
+        libc::open(
+            b"/dev/null\0".as_ptr().cast(),
+            libc::O_RDWR | libc::O_CLOEXEC,
+        )
     };
     if devnull >= 0 {
         dup2_all(devnull);
@@ -887,9 +885,7 @@ fn spawn_full(
     let maps_ok = namespaces::write_id_maps(child_pid).is_ok();
     // SAFETY: raw write of one ack byte (0 ok / 1 fail).
     let ack: &[u8] = if maps_ok { &[0] } else { &[1] };
-    let _ = unsafe {
-        libc::write(ack_w.as_raw_fd(), ack.as_ptr().cast(), ack.len())
-    };
+    let _ = unsafe { libc::write(ack_w.as_raw_fd(), ack.as_ptr().cast(), ack.len()) };
     if !maps_ok {
         let code = reap_child(pid);
         return Err(anyhow!(

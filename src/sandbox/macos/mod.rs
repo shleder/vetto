@@ -48,7 +48,8 @@ impl MacosSandbox {
         }
 
         let profile = seatbelt::generate(policy, &self.net);
-        let sb_path: PathBuf = std::env::temp_dir().join(format!("vetto-{}.sb", std::process::id()));
+        let sb_path: PathBuf =
+            std::env::temp_dir().join(format!("vetto-{}.sb", std::process::id()));
         std::fs::write(&sb_path, &profile)
             .with_context(|| format!("write {}", sb_path.display()))?;
 
@@ -120,10 +121,9 @@ fn pipe2() -> Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
         bail!("pipe: {}", std::io::Error::last_os_error());
     }
     // SAFETY: fresh descriptors from a successful pipe.
-    Ok((
-        unsafe { OwnedFd::from_raw_fd(fds[0]) },
-        unsafe { OwnedFd::from_raw_fd(fds[1]) },
-    ))
+    Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+        OwnedFd::from_raw_fd(fds[1])
+    }))
 }
 
 fn close_all_except(keep: &[RawFd]) {

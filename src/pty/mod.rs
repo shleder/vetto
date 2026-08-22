@@ -21,9 +21,7 @@ impl Pty {
     /// Open a fresh pty pair sized `(rows, cols)`.
     pub fn open(rows: u16, cols: u16) -> VettoResult<Self> {
         // SAFETY: scalar-only pty master allocation.
-        let master = unsafe {
-            libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC)
-        };
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
         if master < 0 {
             return Err(VettoError::Pty(format!(
                 "posix_openpt: {}",
@@ -49,7 +47,10 @@ impl Pty {
         if unsafe { libc::ptsname_r(master, name_buf.as_mut_ptr().cast(), name_buf.len()) } != 0 {
             return Err(fail("ptsname_r", master));
         }
-        let len = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
+        let len = name_buf
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(name_buf.len());
         let Ok(name) = CStr::from_bytes_with_nul(&name_buf[..=len]) else {
             return Err(fail("ptsname_r", master));
         };
@@ -72,7 +73,6 @@ impl Pty {
             slave: unsafe { OwnedFd::from_raw_fd(slave) },
         })
     }
-
 }
 
 /// TIOCSWINSZ on a pty end. The kernel forwards SIGWINCH to the foreground
@@ -125,9 +125,7 @@ pub fn write_all_fd(fd: RawFd, mut buf: &[u8]) {
         let n = unsafe { libc::write(fd, buf.as_ptr().cast(), buf.len()) };
         if n > 0 {
             buf = &buf[n as usize..];
-        } else if n < 0
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
-        {
+        } else if n < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
             continue;
         } else {
             return;

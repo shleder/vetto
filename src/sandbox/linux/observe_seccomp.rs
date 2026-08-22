@@ -12,8 +12,8 @@
 
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 
-use crate::events::{bus::EventBus, Event};
 use crate::error::{VettoError, VettoResult};
+use crate::events::{bus::EventBus, Event};
 
 const SYS_SECCOMP: libc::c_long = 317;
 const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
@@ -73,7 +73,12 @@ const BPF_JEQ_K: u16 = 0x15;
 const BPF_RET: u16 = 0x06;
 
 fn stmt(code: u16, k: u32) -> SockFilter {
-    SockFilter { code, jt: 0, jf: 0, k }
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
 }
 fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
     SockFilter { code, jt, jf, k }
@@ -99,14 +104,14 @@ fn build_tap_program() -> Vec<SockFilter> {
     // 6  RET ALLOW
     // 7  RET USER_NOTIF
     vec![
-        stmt(BPF_LD_ABS, 0),                      // 0
-        jump(BPF_JEQ_K, NR_OPEN as u32, 5, 0),    // 1
-        jump(BPF_JEQ_K, NR_OPENAT as u32, 4, 0),  // 2
-        jump(BPF_JEQ_K, NR_OPENAT2 as u32, 3, 0), // 3
-        jump(BPF_JEQ_K, NR_EXECVE as u32, 2, 0),  // 4
-        jump(BPF_JEQ_K, NR_EXECVEAT as u32, 1, 0),// 5
-        stmt(BPF_RET, SECCOMP_RET_ALLOW),         // 6
-        stmt(BPF_RET, SECCOMP_RET_USER_NOTIF),    // 7
+        stmt(BPF_LD_ABS, 0),                       // 0
+        jump(BPF_JEQ_K, NR_OPEN as u32, 5, 0),     // 1
+        jump(BPF_JEQ_K, NR_OPENAT as u32, 4, 0),   // 2
+        jump(BPF_JEQ_K, NR_OPENAT2 as u32, 3, 0),  // 3
+        jump(BPF_JEQ_K, NR_EXECVE as u32, 2, 0),   // 4
+        jump(BPF_JEQ_K, NR_EXECVEAT as u32, 1, 0), // 5
+        stmt(BPF_RET, SECCOMP_RET_ALLOW),          // 6
+        stmt(BPF_RET, SECCOMP_RET_USER_NOTIF),     // 7
     ]
 }
 

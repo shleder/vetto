@@ -69,9 +69,19 @@ pub fn abi_version() -> Option<u32> {
 }
 
 fn handled_fs_mask(abi: u32) -> u64 {
-    let mut mask =
-        EXECUTE | WRITE_FILE | READ_FILE | READ_DIR | REMOVE_DIR | REMOVE_FILE | MAKE_CHAR
-            | MAKE_DIR | MAKE_REG | MAKE_SOCK | MAKE_FIFO | MAKE_BLOCK | MAKE_SYM;
+    let mut mask = EXECUTE
+        | WRITE_FILE
+        | READ_FILE
+        | READ_DIR
+        | REMOVE_DIR
+        | REMOVE_FILE
+        | MAKE_CHAR
+        | MAKE_DIR
+        | MAKE_REG
+        | MAKE_SOCK
+        | MAKE_FIFO
+        | MAKE_BLOCK
+        | MAKE_SYM;
     if abi >= 2 {
         mask |= REFER;
     }
@@ -232,13 +242,7 @@ pub fn apply_policy(
         )));
     }
     // SAFETY: syscall with fd + null pointers.
-    let r = unsafe {
-        libc::syscall(
-            SYS_LANDLOCK_RESTRICT_SELF,
-            ruleset.as_raw_fd(),
-            0u32,
-        )
-    };
+    let r = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset.as_raw_fd(), 0u32) };
     if r < 0 {
         return Err(VettoError::Landlock(format!(
             "restrict_self: {}",

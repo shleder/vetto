@@ -12,8 +12,8 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use tokio::sync::broadcast;
 
 use crate::events::{Event, EventBus};
@@ -171,7 +171,11 @@ fn overlay_ui(f: &mut ratatui::Frame, app_state: &AppState, offset_from_end: usi
     let area = f.size();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
         .split(area);
 
     let header = Paragraph::new(vec![
@@ -208,20 +212,18 @@ fn overlay_ui(f: &mut ratatui::Frame, app_state: &AppState, offset_from_end: usi
         rows.push(Row::new(vec![kind.to_string(), app::describe(ev)]).style(style));
     }
 
-    let table = Table::new(
-        rows,
-        vec![Constraint::Length(16), Constraint::Min(10)],
-    )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" session events (best-effort observation) "),
-        );
+    let table = Table::new(rows, vec![Constraint::Length(16), Constraint::Min(10)]).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" session events (best-effort observation) "),
+    );
     f.render_widget(table, chunks[1]);
 
     let footer = Paragraph::new(format!(
         " showing {} of {} events, {} up from newest ",
-        end - start, total, offset_from_end
+        end - start,
+        total,
+        offset_from_end
     ));
     f.render_widget(footer, chunks[2]);
 }

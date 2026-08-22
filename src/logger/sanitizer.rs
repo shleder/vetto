@@ -47,18 +47,18 @@ fn redact_pem(s: &str) -> String {
 fn redact_prefixed_tokens(s: &str) -> String {
     let mut out = s.to_string();
     for (prefix, min_run) in [
-        ("AKIA", 16usize),       // AWS access key id
-        ("ASIA", 16),            // AWS temporary access key id
-        ("ghp_", 20),            // GitHub PAT
-        ("gho_", 20),            // GitHub OAuth
-        ("ghu_", 20),            // GitHub user token
-        ("ghs_", 20),            // GitHub server token
-        ("ghr_", 20),            // GitHub refresh token
-        ("sk-", 24),             // generic API secret / OpenAI-style
-        ("xoxb-", 20),           // Slack bot token
-        ("xoxp-", 20),           // Slack user token
-        ("xoxa-", 20),           // Slack app token
-        ("xoxs-", 20),           // Slack secret
+        ("AKIA", 16usize), // AWS access key id
+        ("ASIA", 16),      // AWS temporary access key id
+        ("ghp_", 20),      // GitHub PAT
+        ("gho_", 20),      // GitHub OAuth
+        ("ghu_", 20),      // GitHub user token
+        ("ghs_", 20),      // GitHub server token
+        ("ghr_", 20),      // GitHub refresh token
+        ("sk-", 24),       // generic API secret / OpenAI-style
+        ("xoxb-", 20),     // Slack bot token
+        ("xoxp-", 20),     // Slack user token
+        ("xoxa-", 20),     // Slack app token
+        ("xoxs-", 20),     // Slack secret
     ] {
         out = redact_run(&out, prefix, min_run);
     }
@@ -114,7 +114,13 @@ fn utf8_step(s: &str) -> usize {
 // --- key=value / key: value pairs ------------------------------------------
 
 const SECRET_KEYS: [&str; 7] = [
-    "password", "passwd", "secret", "token", "api_key", "apikey", "authorization",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
 ];
 
 fn redact_key_values(s: &str) -> String {

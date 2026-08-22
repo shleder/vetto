@@ -44,7 +44,9 @@ impl AppState {
             Event::BlockedAttempt { .. } => self.blocked += 1,
             Event::NetRequest { .. } => self.net_requests += 1,
             Event::Notice { .. } => self.notices += 1,
-            Event::SessionStarted { .. } | Event::SessionEnded { .. } | Event::SecretMasked { .. } => {}
+            Event::SessionStarted { .. }
+            | Event::SessionEnded { .. }
+            | Event::SecretMasked { .. } => {}
         }
         self.last_line = describe(&ev);
         self.events.push_back(ev);
@@ -94,13 +96,12 @@ pub fn truncate_chars(s: &str, max_chars: usize) -> String {
 pub fn describe(ev: &Event) -> String {
     let t = ev.ts().format("%H:%M:%S");
     match ev {
-        Event::SessionStarted { pid, .. } => format!("[{t}] session started (agent subtree root {pid})"),
+        Event::SessionStarted { pid, .. } => {
+            format!("[{t}] session started (agent subtree root {pid})")
+        }
         Event::SessionEnded { exit_code, .. } => format!("[{t}] session ended (exit {exit_code})"),
         Event::FileObserved {
-            comm,
-            path,
-            access,
-            ..
+            comm, path, access, ..
         } => {
             let a = match access {
                 FileAccess::Read => "read",
@@ -110,7 +111,10 @@ pub fn describe(ev: &Event) -> String {
             format!("[{t}] {comm} {a} {path}")
         }
         Event::ExecObserved { argv, .. } => {
-            format!("[{t}] exec {}", argv.first().map(String::as_str).unwrap_or("?"))
+            format!(
+                "[{t}] exec {}",
+                argv.first().map(String::as_str).unwrap_or("?")
+            )
         }
         Event::BlockedAttempt {
             comm, path, source, ..

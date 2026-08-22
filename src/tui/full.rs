@@ -143,7 +143,9 @@ fn dashboard_ui(
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             format!(" vetto v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
             "  tier={}  net={}  profile={}",
@@ -154,7 +156,11 @@ fn dashboard_ui(
             app_state.blocked, app_state.files, app_state.execs, app_state.net_requests
         )),
         Span::styled(
-            if app_state.blocked > 0 { "  ⚠ BLOCKED" } else { "  ✓" },
+            if app_state.blocked > 0 {
+                "  ⚠ BLOCKED"
+            } else {
+                "  ✓"
+            },
             blocked_style,
         ),
     ]))
@@ -175,7 +181,11 @@ fn dashboard_ui(
     let scroll_base = line_count.saturating_sub(visible);
     let scroll = scroll_base.saturating_sub(scroll_up.min(scroll_base));
     let output = Paragraph::new(text.into_owned())
-        .block(Block::default().borders(Borders::ALL).title(" agent output (headless capture) "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" agent output (headless capture) "),
+        )
         .scroll((scroll as u16, 0));
     f.render_widget(output, chunks[1]);
 
@@ -194,15 +204,11 @@ fn dashboard_ui(
         };
         rows.push(Row::new(vec![kind.to_string(), app::describe(ev)]).style(style));
     }
-    let table = Table::new(
-        rows,
-        vec![Constraint::Length(16), Constraint::Min(10)],
-    )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" session events (best-effort observation) "),
-        );
+    let table = Table::new(rows, vec![Constraint::Length(16), Constraint::Min(10)]).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" session events (best-effort observation) "),
+    );
     f.render_widget(table, chunks[2]);
 
     let footer = Paragraph::new(" q quit (kills agent) · Up/Down/PgUp/PgDn scroll output ");

@@ -9,7 +9,9 @@ use crate::events::bus::EventBus;
 
 /// Returns Some(reason) when no watcher could be started (always, in v0.1).
 pub fn spawn_watcher_if_available(_bus: &EventBus) -> Option<String> {
-    Some("FSEvents visibility is not implemented in v0.1; macOS sessions show \
+    Some(
+        "FSEvents visibility is not implemented in v0.1; macOS sessions show \
           no allowed-file feed (enforcement is ACTIVE regardless)"
-        .to_string())
+            .to_string(),
+    )
 }

@@ -83,10 +83,7 @@ pub fn load(
     let mut allow_read = resolve_list(&raw.filesystem.allow_read, &vars);
 
     // --- deny set ----------------------------------------------------------
-    let deny_patterns = raw
-        .display_only_deny
-        .map(|d| d.paths)
-        .unwrap_or_default();
+    let deny_patterns = raw.display_only_deny.map(|d| d.paths).unwrap_or_default();
     let mut deny_resolved: Vec<DenyEntry> = Vec::new();
     let mut deny_set: BTreeSet<PathBuf> = BTreeSet::new();
     for entry in &deny_patterns {
@@ -104,12 +101,7 @@ pub fn load(
 
     // --- FS-ONLY project masking by enumeration -----------------------------
     if tier == Tier::FsOnly {
-        mask_project_reads_for_fs_only(
-            &mut allow_read,
-            &allow_write,
-            &deny_set,
-            &mut warnings,
-        );
+        mask_project_reads_for_fs_only(&mut allow_read, &allow_write, &deny_set, &mut warnings);
     }
 
     // Dedup + sanity checks.
@@ -176,8 +168,7 @@ fn mask_project_reads_for_fs_only(
         if !root.exists() {
             continue;
         }
-        if enumerate_tree(root, deny_set, allow_read, &mut enumerated, &mut excluded).is_err()
-        {
+        if enumerate_tree(root, deny_set, allow_read, &mut enumerated, &mut excluded).is_err() {
             break; // budget exceeded -> fallback below
         }
     }

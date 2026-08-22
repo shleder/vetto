@@ -59,9 +59,9 @@ impl Backend {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (net, observe_seccomp);
-            Err(anyhow::anyhow!(crate::error::VettoError::UnsupportedPlatform(
-                "this platform"
-            )))
+            Err(anyhow::anyhow!(
+                crate::error::VettoError::UnsupportedPlatform("this platform")
+            ))
         }
     }
 
