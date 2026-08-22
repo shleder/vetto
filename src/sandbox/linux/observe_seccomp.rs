@@ -199,6 +199,10 @@ fn notifier_loop(listener: OwnedFd, bus: EventBus) {
         let mut notif = zeroed_notif();
         // SAFETY: valid fd + properly initialized struct.
         if unsafe { libc::ioctl(fd, SECCOMP_IOCTL_NOTIF_RECV, &mut notif) } != 0 {
+            eprintln!(
+                "[notifier] RECV failed errno={}",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            );
             break; // session over / fd closed
         }
 
