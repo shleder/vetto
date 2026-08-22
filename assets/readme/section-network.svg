@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92" role="img" aria-label="03 Network">
-  <rect width="1200" height="92" fill="#0d1117"/>
-  <text x="26" y="63" font-family="ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="42" font-weight="700" fill="#4dd0e1">03</text>
-  <text x="92" y="61" font-family="ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="31" font-weight="700" fill="#ffffff" letter-spacing="3">NETWORK — OFF BY DEFAULT, ALLOWLIST WITHOUT SNOOPING</text>
-  <line x1="92" y1="74" x2="1176" y2="74" stroke="#30363d" stroke-width="2"/>
-</svg>

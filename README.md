@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="vetto — from 'veto', to forbid. Daemon-less sandbox + security layer for AI coding agents: Landlock/namespaces on Linux, Seatbelt on macOS, TUI statusline, post-session audit reports.">
+  <img src="./assets/readme/hero.png" width="100%" alt="vetto — from 'veto', to forbid. Daemon-less sandbox + security layer for AI coding agents: Landlock/namespaces on Linux, Seatbelt on macOS, TUI statusline, post-session audit reports.">
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@ $ vetto doctor --probe
 ```
 
 <p align="center">
-  <img src="./assets/readme/section-why.svg" width="100%" alt="01 Why vetto">
+  <img src="./assets/readme/section-why.png" width="100%" alt="01 Why vetto">
 </p>
 
 Modern agents ship their own sandboxing (Codex CLI uses Landlock+seccomp on
@@ -54,7 +54,7 @@ machine, regardless of what the agent itself does (or doesn't) enforce.
 - ❌ no SNI inspection / TLS MITM / CA injection — ever
 
 <p align="center">
-  <img src="./assets/readme/section-tiers.svg" width="100%" alt="02 Two tiers">
+  <img src="./assets/readme/section-tiers.png" width="100%" alt="02 Two tiers">
 </p>
 
 Linux is the primary platform. **Do not assume “works everywhere
@@ -82,7 +82,7 @@ throwaway sandbox. Filesystem decisions happen in the kernel on the resolved
 inode — symlink/TOCTOU escape tricks are structurally impossible on Linux.
 
 <p align="center">
-  <img src="./assets/readme/section-network.svg" width="100%" alt="03 Network">
+  <img src="./assets/readme/section-network.png" width="100%" alt="03 Network">
 </p>
 
 - **`--net=off` (default)** — no sockets, no DNS, no exfiltration, on every
@@ -95,11 +95,11 @@ inode — symlink/TOCTOU escape tricks are structurally impossible on Linux.
   decryption, no CA injection, no SNI parsing — ever.
 
 <p align="center">
-  <img src="./assets/readme/section-visibility.svg" width="100%" alt="04 Visibility and reports">
+  <img src="./assets/readme/section-visibility.png" width="100%" alt="04 Visibility and reports">
 </p>
 
 <p align="center">
-  <img src="./assets/readme/terminal-demo.svg" width="100%" alt="A vetto session: agent output flows normally, blocked attempts are surfaced, and one reserved statusline row shows tier, net mode, counters and the last event.">
+  <img src="./assets/readme/terminal-demo.png" width="100%" alt="A vetto session: agent output flows normally, blocked attempts are surfaced, and one reserved statusline row shows tier, net mode, counters and the last event.">
 </p>
 
 - **`--tui=statusline` (default)** — the agent keeps its own interactive TUI
@@ -119,7 +119,7 @@ inode — symlink/TOCTOU escape tricks are structurally impossible on Linux.
   appears (it can produce false positives and misses).
 
 <p align="center">
-  <img src="./assets/readme/section-start.svg" width="100%" alt="05 Start">
+  <img src="./assets/readme/section-start.png" width="100%" alt="05 Start">
 </p>
 
 ```console
