@@ -127,38 +127,35 @@ fn create_and_send_data_fd(
     }
     drop(theirs);
 
-    // Pump both directions between our end and the outbound TCP connection.
+    // Two independent half-duplex pumps:
+    //   thread: outbound TCP -> unix (server responses toward the relay)
+    //   here:   unix -> outbound TCP (client requests toward the internet)
     let mine = unsafe { std::os::unix::net::UnixStream::from_raw_fd(mine.into_raw_fd()) };
-    let mine_rev = match mine.try_clone() {
-        Ok(m) => m,
-        Err(_) => return Ok(()),
+    let (Ok(unix_read), Ok(unix_write)) = (mine.try_clone(), mine.try_clone()) else {
+        return Ok(());
     };
-    let tcp_rev = match tcp.try_clone() {
-        Ok(t) => t,
-        Err(_) => return Ok(()),
+    let (Ok(tcp_read), Ok(tcp_write)) = (tcp.try_clone(), tcp.try_clone()) else {
+        return Ok(());
     };
-    let fwd = std::thread::Builder::new()
+    let rev = std::thread::Builder::new()
         .name("broker-fwd".into())
         .spawn(move || {
-            let mut m = mine_rev;
-            let mut t = tcp_rev;
-            let _ = std::io::copy(&mut m, &mut t);
-            shutdown_write(m.as_raw_fd());
+            let mut t = tcp_read;
+            let mut u = unix_write;
+            let _ = std::io::copy(&mut t, &mut u);
+            // Outbound side closed: propagate EOF toward the relay.
+            let _ = u.shutdown(std::net::Shutdown::Write);
         })
         .ok();
-    let mut mine_fwd = mine;
-    let mut tcp_fwd = tcp;
-    let _ = std::io::copy(&mut mine_fwd, &mut tcp_fwd);
-    shutdown_write(mine_fwd.as_raw_fd());
-    if let Some(h) = fwd {
+    let mut unix_side = mine;
+    let mut outbound = tcp;
+    let _ = std::io::copy(&mut unix_side, &mut outbound);
+    // Client closed: propagate EOF to the outbound connection.
+    let _ = outbound.shutdown(std::net::Shutdown::Write);
+    if let Some(h) = rev {
         let _ = h.join();
     }
     Ok(())
-}
-
-fn shutdown_write(fd: RawFd) {
-    // SAFETY: scalar-only call on an owned descriptor.
-    unsafe { libc::shutdown(fd, libc::SHUT_WR) };
 }
 
 fn socketpair_stream() -> Result<(OwnedFd, OwnedFd), ()> {
@@ -484,18 +481,29 @@ fn read_exact_fd(fd: RawFd, mut buf: &mut [u8]) -> Result<(), ()> {
 }
 
 /// Pump both directions until both EOF. Blocks the calling thread.
-fn pump(a: TcpStream, data_fd: OwnedFd) {
+fn pump(client: TcpStream, data_fd: OwnedFd) {
     // SAFETY: owned fd from recv_fd.
     let unix_side = unsafe { std::os::unix::net::UnixStream::from_raw_fd(data_fd.into_raw_fd()) };
-    let unix_a = unix_side.try_clone();
-    let tcp_b = a.try_clone();
-    let (Ok(unix_a), Ok(tcp_b)) = (unix_a, tcp_b) else {
+    // Two independent half-duplex pumps:
+    //   thread: client TCP -> unix (requests toward the broker)
+    //   here:   unix -> client TCP (responses from the broker)
+    let (Ok(unix_read), Ok(unix_write)) = (unix_side.try_clone(), unix_side.try_clone()) else {
+        return;
+    };
+    let (Ok(client_read), Ok(client_write)) = (client.try_clone(), client.try_clone()) else {
         return;
     };
     let rev = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut { unix_a }, &mut { a });
+        let mut c = client_read;
+        let mut u = unix_write;
+        let _ = std::io::copy(&mut c, &mut u);
+        // Client closed its sending side: propagate EOF to the broker.
+        let _ = u.shutdown(std::net::Shutdown::Write);
     });
-    let _ = std::io::copy(&mut { unix_side }, &mut { tcp_b });
+    let mut u = unix_side;
+    let mut c = client;
+    let _ = std::io::copy(&mut u, &mut c);
+    let _ = c.shutdown(std::net::Shutdown::Write);
     let _ = rev.join();
 }
 

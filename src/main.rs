@@ -432,9 +432,14 @@ fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
     };
     CHILD_TARGET.store(target, std::sync::atomic::Ordering::SeqCst);
     // SAFETY: registering our extern handler.
-    let r = unsafe { libc::signal(libc::SIGINT, on_sigint as *const () as libc::sighandler_t) };
-    if r == libc::SIG_ERR {
+    let h = on_sigint as *const () as libc::sighandler_t;
+    if unsafe { libc::signal(libc::SIGINT, h) } == libc::SIG_ERR {
         eprintln!("vetto: warning: could not install SIGINT forwarder");
+    }
+    // SIGTERM gets the same forwarding so `kill <vetto>` tears the sandbox
+    // down through the normal wait/cleanup path instead of mid-flight.
+    if unsafe { libc::signal(libc::SIGTERM, h) } == libc::SIG_ERR {
+        eprintln!("vetto: warning: could not install SIGTERM forwarder");
     }
 }
 
