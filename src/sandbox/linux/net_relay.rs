@@ -35,10 +35,8 @@ pub fn spawn_broker(broker_fd: RawFd, allowlist: Vec<String>, bus: EventBus) {
             // SAFETY: broker_fd is an owned socketpair end created pre-fork.
             let mut ctrl = unsafe { std::os::unix::net::UnixStream::from_raw_fd(broker_fd) };
             let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
-            loop {
-                let Some(req) = read_framed_request(&mut ctrl) else {
-                    break; // relay gone => session ended
-                };
+            // relay gone => loop (and thread) ends
+            while let Some(req) = read_framed_request(&mut ctrl) {
                 let allowed = domain_allowed(&req.host, &allowlist);
                 bus.publish(Event::NetRequest {
                     ts: crate::events::types::now(),

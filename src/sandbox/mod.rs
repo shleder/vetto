@@ -93,7 +93,7 @@ impl Backend {
     ///
     /// IRON RULE: must be called before any thread/tokio runtime exists —
     /// every fork inside is only safe from a single-threaded process.
-    pub fn spawn(self: Box<Self>, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
+    pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
         match *self {
             Backend::Linux(s) => s.spawn(policy, opts),
             #[cfg(target_os = "macos")]

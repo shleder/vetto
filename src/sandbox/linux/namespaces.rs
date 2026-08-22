@@ -76,8 +76,7 @@ pub fn probe_unprivileged_userns() -> bool {
         }
         pid => {
             let mut status = 0i32;
-            let verdict = parent_probe_side(pid, fds, &mut status);
-            verdict
+            parent_probe_side(pid, fds, &mut status)
         }
     }
 }

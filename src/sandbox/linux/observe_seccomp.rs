@@ -143,7 +143,7 @@ pub fn install_tap() -> VettoResult<RawFd> {
 pub fn probe_available() -> bool {
     let probe_prog = [stmt(BPF_RET, SECCOMP_RET_ALLOW)];
     match unsafe { libc::fork() } {
-        -1 => return false,
+        -1 => false,
         0 => {
             let fprog = SockFProg {
                 len: 1,
