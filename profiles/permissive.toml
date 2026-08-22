@@ -3,10 +3,11 @@
 # Network remains governed exclusively by --net= (default off).
 
 [filesystem]
-allow_write = ["$PROJECT", "/tmp"]
+allow_write = ["$PROJECT", "/tmp", "/dev/null"]
 
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc",
   "$HOME/.cargo", "$HOME/.rustup",
   "$HOME/.npm", "$HOME/.cache",

@@ -179,7 +179,7 @@ fn socketpair_stream() -> Result<(OwnedFd, OwnedFd), ()> {
 }
 
 /// sendmsg(2) carrying one fd in SCM_RIGHTS over `sock`.
-fn send_fd(sock: RawFd, fd_to_send: RawFd) -> Result<(), ()> {
+pub(crate) fn send_fd(sock: RawFd, fd_to_send: RawFd) -> Result<(), ()> {
     #[repr(C)]
     struct CmsghdrAligned {
         hdr: libc::cmsghdr,
@@ -221,7 +221,7 @@ fn send_fd(sock: RawFd, fd_to_send: RawFd) -> Result<(), ()> {
 }
 
 /// recvmsg(2) counterpart: receive one fd sent by [`send_fd`].
-fn recv_fd(sock: RawFd) -> Result<OwnedFd, ()> {
+pub(crate) fn recv_fd(sock: RawFd) -> Result<OwnedFd, ()> {
     let mut payload = [0u8; 1];
     let mut iov = libc::iovec {
         iov_base: payload.as_mut_ptr() as *mut libc::c_void,

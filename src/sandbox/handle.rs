@@ -9,8 +9,11 @@ use std::path::PathBuf;
 pub enum StdioMode {
     /// Interactive: child talks to a PTY slave (statusline mode).
     Pty { slave_fd: RawFd },
-    /// Headless: stdout/stderr captured through pipes (full dashboard mode).
-    Captured,
+    /// Headless: stdout/stderr dup2'd onto these pipe write ends (full
+    /// dashboard mode). The parent keeps the read ends.
+    Captured { stdout_w: RawFd, stderr_w: RawFd },
+    /// Agent inherits vetto's own stdio (`--tui=none`, CI piping).
+    Inherit,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,23 @@ pub struct SandboxHandle {
 }
 
 impl SandboxHandle {
+    /// Non-blocking poll: Some(exit_code) once the process is gone.
+    pub fn try_wait(&mut self) -> Option<i32> {
+        let pid = self.root_pid as i32;
+        let mut status = 0i32;
+        // SAFETY: plain waitpid with WNOHANG on our own child.
+        let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if r == pid {
+            Some(decode_status(status))
+        } else if r == 0 {
+            None
+        } else if errno() == libc::ECHILD {
+            Some(-1)
+        } else {
+            None
+        }
+    }
+
     /// Block until the sandboxed agent exits; returns its exit code
     /// (negative for death-by-signal).
     pub fn wait(&mut self) -> i32 {

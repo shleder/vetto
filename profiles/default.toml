@@ -3,12 +3,14 @@
 # Globs are resolved at LOAD TIME into concrete paths (see ARCHITECTURE.md).
 
 [filesystem]
-# Project + temp: read-write
-allow_write = ["$PROJECT", "/tmp"]
+# Project + temp: read-write. /dev/null is writable so shell redirections
+# like `>/dev/null` keep working (it is a pure sink, never a secret).
+allow_write = ["$PROJECT", "/tmp", "/dev/null"]
 
 # System + toolchains + dependency caches: read-only
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts", "/etc/nsswitch.conf",
   "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",

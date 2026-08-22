@@ -4,16 +4,34 @@
 //! does NOT run. There is never an unsandboxed fallback.
 
 pub mod handle;
+#[cfg(target_os = "linux")]
 pub mod linux;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
 
 pub use handle::{SandboxHandle, SpawnOptions, StdioMode};
+#[cfg(target_os = "linux")]
 pub use linux::Probe;
+
+use std::os::fd::OwnedFd;
 
 use crate::config::NetMode;
 use crate::policy::{Policy, Tier};
+
+/// Everything `Backend::spawn` hands back to the supervisor besides the
+/// waitable handle itself.
+pub struct Spawned {
+    pub handle: SandboxHandle,
+    /// Broker end of the relay control socketpair (`--net=allowlist`).
+    /// `main` passes it to `net_relay::spawn_broker` which takes ownership.
+    pub broker_ctrl_fd: Option<OwnedFd>,
+    /// Loopback port the in-netns relay listens on (allowlist mode).
+    pub relay_port: Option<u16>,
+    /// seccomp user-notify listener fd (`--observe-seccomp`); `main` passes
+    /// it to `observe_seccomp::spawn_notifier` which takes ownership.
+    pub notif_listener: Option<OwnedFd>,
+}
 
 /// Selected enforcement backend for this session.
 pub enum Backend {
@@ -74,7 +92,10 @@ impl Backend {
 
     /// Spawn the agent inside the sandbox. Consumes the backend: enforcement
     /// state is applied in the forked child before exec.
-    pub fn spawn(self: Box<Self>, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<SandboxHandle> {
+    ///
+    /// IRON RULE: must be called before any thread/tokio runtime exists —
+    /// every fork inside is only safe from a single-threaded process.
+    pub fn spawn(self: Box<Self>, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
         match *self {
             Backend::Linux(s) => s.spawn(policy, opts),
             #[cfg(target_os = "macos")]

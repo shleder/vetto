@@ -30,7 +30,6 @@ tracing-subscriber = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-nix = { version = "0.28", features = ["fs", "mount", "process", "pty", "sched", "signal", "term"] }
 
 [profile.release]
 lto = true

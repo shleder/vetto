@@ -1,12 +1,14 @@
 # vetto policy profile: strict
-# Minimal surface. No dependency caches, no git identity, no /tmp writes
-# outside a vetto-scoped temp dir (the sandbox still provides /tmp via /tmp).
+# Minimal surface. No dependency caches, no git identity, no /tmp writes.
+# /dev/null + /dev/urandom stay available: redirect sinks and crypto
+# entropy sources are required for any non-trivial agent to function.
 
 [filesystem]
-allow_write = ["$PROJECT"]
+allow_write = ["$PROJECT", "/dev/null"]
 
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc/ssl", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts",
 ]

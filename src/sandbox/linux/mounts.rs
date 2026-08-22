@@ -76,7 +76,7 @@ fn empty_tmpfs(target: &Path) -> VettoResult<()> {
 /// directories an empty tmpfs. Returns false when the path does not exist
 /// (nothing to mask — not an error).
 pub fn mask_path(path: &Path, is_dir: bool) -> VettoResult<bool> {
-    if !path.symlink_metadata().is_ok() {
+    if path.symlink_metadata().is_err() {
         return Ok(false);
     }
     if is_dir {

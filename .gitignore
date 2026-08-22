@@ -1,2 +1,3 @@
 /target
-leash.toml
+vetto.toml
+vetto-report-*.{html,md,json}

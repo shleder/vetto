@@ -42,8 +42,8 @@ pub fn userns_knobs_look_enabled() -> bool {
 }
 
 /// Authoritative probe: fork a child that unshares a user namespace while
-/// the parent performs the real map writes; success proves the FULL tier is
-/// usable end-to-end.
+/// the parent performs the real map writes over a pipe handshake; success
+/// proves the FULL tier is usable end-to-end (unshare + uid_map + gid_map).
 ///
 /// SAFETY: fork in a single-threaded context (called before any tokio
 /// runtime exists); the child only performs syscalls and _exit().
@@ -51,42 +51,67 @@ pub fn probe_unprivileged_userns() -> bool {
     if !userns_knobs_look_enabled() {
         return false;
     }
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: valid out-array; scalar flags.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return false;
+    }
     // SAFETY: see fn docs.
     match unsafe { libc::fork() } {
         -1 => false,
         0 => {
-            // child: try to enter a user namespace, then verify identity.
-            if unshare(CLONE_NEWUSER).is_err() {
+            // Child: enter a user ns, tell the parent, wait for its verdict.
+            let entered = unshare(CLONE_NEWUSER).is_ok();
+            // SAFETY: raw write of one status byte (1 = unshared).
+            let byte: &[u8] = if entered { &[1] } else { &[0] };
+            let _ = unsafe { libc::write(fds[1], byte.as_ptr().cast(), 1) };
+            if !entered {
                 unsafe { libc::_exit(1) };
             }
-            // Parent writes maps once we report our pid over stdout-less
-            // channel: use exit-code protocol via a status pipe instead.
-            unsafe { libc::_exit(if maps_written_by_parent_happens_outside()) { 0 } else { 42 } };
+            let mut ack = [0u8; 1];
+            // SAFETY: raw blocking read of the parent's verdict.
+            let n = unsafe { libc::read(fds[0], ack.as_mut_ptr().cast(), 1) };
+            // ack 0 => maps written correctly.
+            unsafe { libc::_exit(if n == 1 && ack[0] == 0 { 0 } else { 1 }) };
         }
         pid => {
-            // parent: write maps then read child verdict.
-            let ok_child = write_id_maps(pid).is_ok();
             let mut status = 0i32;
-            loop {
-                // SAFETY: plain waitpid.
-                let r = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if r == pid || (r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)) {
-                    break;
-                }
-            }
-            let exited_zero =
-                unsafe { libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 };
-            // WEXITSTATUS==42 means child ran but maps never landed.
-            ok_child && exited_zero
+            let verdict = parent_probe_side(pid, fds, &mut status);
+            verdict
         }
     }
 }
 
-// The probe child cannot know whether its parent succeeded; the parent's
-// map-write result is combined on the parent side above. This stub exists to
-// keep the child's control flow explicit and honest.
-fn maps_written_by_parent_happens_outside() -> bool {
-    true
+fn parent_probe_side(pid: libc::pid_t, fds: [libc::c_int; 2], status: &mut i32) -> bool {
+    let mut ready = [0u8; 1];
+    // SAFETY: raw read of the child's status byte.
+    let n = unsafe { libc::read(fds[0], ready.as_mut_ptr().cast(), 1) };
+    let entered = n == 1 && ready[0] == 1;
+    let mut maps_ok = false;
+    if entered {
+        maps_ok = write_id_maps(pid).is_ok();
+        // SAFETY: raw write of one verdict byte (0 = maps ok).
+        let byte: &[u8] = if maps_ok { &[0] } else { &[1] };
+        let _ = unsafe { libc::write(fds[1], byte.as_ptr().cast(), 1) };
+    }
+    // SAFETY: close both probe fds.
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+    loop {
+        // SAFETY: plain waitpid.
+        let r = unsafe { libc::waitpid(pid, status, 0) };
+        if r == pid
+            || (r < 0
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
+        {
+            break;
+        }
+    }
+    // SAFETY: scalar WIF/WEXIT macros.
+    let exited_zero = unsafe { libc::WIFEXITED(*status) && libc::WEXITSTATUS(*status) == 0 };
+    entered && maps_ok && exited_zero
 }
 
 /// Write setgroups-deny + uid_map + gid_map for `pid` mapping the caller's
