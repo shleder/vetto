@@ -159,9 +159,16 @@ fn open_path_fd(path: &Path) -> VettoResult<OpenPath> {
 
 /// Apply the policy's filesystem allowlist to the current thread/process and
 /// restrict. Irreversible; inherited by all future children.
+///
+/// `strip_read_on_write` (Tier FS-ONLY): write roots are the WHOLE project
+/// tree and would otherwise re-grant READ over secret files that the loader's
+/// enumeration carved out of the read list — so READ_FILE is stripped from
+/// write-root rules there. Honest cost: files created at a write root itself
+/// (not in an enumerated clean subdirectory) cannot be read back in FS-ONLY.
 pub fn apply_policy(
     allow_write: &[std::path::PathBuf],
     allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
 ) -> VettoResult<()> {
     let Some(abi) = abi_version() else {
         return Err(VettoError::Landlock(
@@ -231,7 +238,11 @@ pub fn apply_policy(
         add_rule(p, read_only_rights(is_dir, abi))?;
     }
     for p in allow_write.iter().filter(|p| p.exists()) {
-        add_rule(p, write_rights(abi))?;
+        let mut rights = write_rights(abi);
+        if strip_read_on_write {
+            rights &= !READ_FILE;
+        }
+        add_rule(p, rights)?;
     }
 
     // SAFETY: prctl with scalar args only.

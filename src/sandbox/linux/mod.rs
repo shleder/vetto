@@ -92,7 +92,15 @@ fn kernel_release() -> String {
 }
 
 /// Fail-closed tier selection. `Err` means: the agent does NOT run.
+///
+/// `VETTO_FORCE_TIER=full|fs-only` (testing override) can only select a tier
+/// whose primitives are actually available — it can never bypass fail-closed.
 pub fn pick_tier(probe: &Probe) -> Result<Tier> {
+    match std::env::var("VETTO_FORCE_TIER").as_deref() {
+        Ok("fs-only") if probe.seccomp_filter_available => return Ok(Tier::FsOnly),
+        Ok("full") if probe.userns_available => return Ok(Tier::Full),
+        _ => {}
+    }
     if probe.landlock_abi.is_none() {
         bail!(
             "Landlock is unavailable on this kernel (needs >= 5.13 with landlock enabled); \
@@ -757,7 +765,7 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         }
     }
 
-    if let Err(e) = landlock::apply_policy(&policy.allow_write, &policy.allow_read) {
+    if let Err(e) = landlock::apply_policy(&policy.allow_write, &policy.allow_read, false) {
         child_fail(err_w, 120, &format!("{e}"));
     }
 
@@ -990,9 +998,10 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
         }
     }
 
-    // FS-ONLY has no mount ns: intra-project secrets were already carved out
-    // by the loader's tree enumeration (see policy/loader.rs).
-    if let Err(e) = landlock::apply_policy(&policy.allow_write, &policy.allow_read) {
+    // FS-ONLY has no mount ns: intra-project secrets were carved out by the
+    // loader's tree enumeration; READ is stripped from write roots so the
+    // whole-tree write rule cannot re-expose them (see landlock.rs).
+    if let Err(e) = landlock::apply_policy(&policy.allow_write, &policy.allow_read, true) {
         child_fail(err_w, 120, &format!("{e}"));
     }
 

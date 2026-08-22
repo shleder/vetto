@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt + clippy + test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+      - name: Unit + integration tests
+        # Enforcement tests self-skip when the runner lacks a tier; the
+        # GitHub-hosted ubuntu kernel normally provides both landlock and
+        # unprivileged userns.
+        run: cargo test --quiet
+
+  build-macos:
+    name: build (macos, seatbelt compiles)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --quiet
+      - run: cargo clippy -- -D warnings
