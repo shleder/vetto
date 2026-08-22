@@ -110,7 +110,7 @@ fn parent_probe_side(pid: libc::pid_t, fds: [libc::c_int; 2], status: &mut i32) 
         }
     }
     // SAFETY: scalar WIF/WEXIT macros.
-    let exited_zero = unsafe { libc::WIFEXITED(*status) && libc::WEXITSTATUS(*status) == 0 };
+    let exited_zero = libc::WIFEXITED(*status) && libc::WEXITSTATUS(*status) == 0;
     entered && maps_ok && exited_zero
 }
 

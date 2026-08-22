@@ -4,4 +4,4 @@ pub mod glob_resolve;
 pub mod loader;
 pub mod types;
 
-pub use types::{DenyEntry, Policy, Tier};
+pub use types::{Policy, Tier};

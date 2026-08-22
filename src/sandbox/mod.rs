@@ -11,8 +11,6 @@ pub mod linux;
 pub mod macos;
 
 pub use handle::{SandboxHandle, SpawnOptions, StdioMode};
-#[cfg(target_os = "linux")]
-pub use linux::Probe;
 
 use std::os::fd::OwnedFd;
 

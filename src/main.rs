@@ -84,6 +84,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             agent_cmd[0]
         );
     }
+    if pol.in_write_scope(Path::new(&agent_cmd[0])) {
+        eprintln!(
+            "vetto: warning: agent binary '{}' is inside a WRITE scope — the agent can \
+             replace its own binary; consider running it from a read-only location",
+            agent_cmd[0]
+        );
+    }
 
     if cfg.dry_run {
         return dry_run(&cfg, &pol, &agent_cmd, tier_label(tier));
@@ -412,7 +419,7 @@ fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
     };
     CHILD_TARGET.store(target, std::sync::atomic::Ordering::SeqCst);
     // SAFETY: registering our extern handler.
-    let r = unsafe { libc::signal(libc::SIGINT, on_sigint as libc::sighandler_t) };
+    let r = unsafe { libc::signal(libc::SIGINT, on_sigint as *const () as libc::sighandler_t) };
     if r == libc::SIG_ERR {
         eprintln!("vetto: warning: could not install SIGINT forwarder");
     }

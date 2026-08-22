@@ -8,6 +8,7 @@
 use crate::error::{VettoError, VettoResult};
 
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
+#[cfg(target_arch = "aarch64")]
 const AUDIT_ARCH_AARCH64: u32 = 0x8000_00B7;
 
 const NR_SOCKET: i32 = 41; // x86_64 + aarch64
@@ -139,7 +140,7 @@ pub fn probe_available() -> bool {
                     break;
                 }
             }
-            unsafe { libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 }
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
         }
     }
 }

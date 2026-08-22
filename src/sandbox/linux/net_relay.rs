@@ -19,7 +19,6 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::Mutex;
 
 use crate::events::{bus::EventBus, Event};
-use crate::error::{VettoError, VettoResult};
 
 pub const RELAY_PORT_BASE: u16 = 47129;
 

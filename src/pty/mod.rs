@@ -73,9 +73,6 @@ impl Pty {
         })
     }
 
-    pub fn resize(&self, rows: u16, cols: u16) {
-        set_winsize(self.master.as_raw_fd(), rows, cols);
-    }
 }
 
 /// TIOCSWINSZ on a pty end. The kernel forwards SIGWINCH to the foreground

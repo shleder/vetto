@@ -92,9 +92,10 @@ pub fn truncate_chars(s: &str, max_chars: usize) -> String {
 
 /// Short one-line rendering of an event for statusline/overlay.
 pub fn describe(ev: &Event) -> String {
+    let t = ev.ts().format("%H:%M:%S");
     match ev {
-        Event::SessionStarted { pid, .. } => format!("session started (agent subtree root {pid})"),
-        Event::SessionEnded { exit_code, .. } => format!("session ended (exit {exit_code})"),
+        Event::SessionStarted { pid, .. } => format!("[{t}] session started (agent subtree root {pid})"),
+        Event::SessionEnded { exit_code, .. } => format!("[{t}] session ended (exit {exit_code})"),
         Event::FileObserved {
             comm,
             path,
@@ -106,14 +107,14 @@ pub fn describe(ev: &Event) -> String {
                 FileAccess::Write => "write",
                 FileAccess::Unknown => "open",
             };
-            format!("{comm} {a} {path}")
+            format!("[{t}] {comm} {a} {path}")
         }
         Event::ExecObserved { argv, .. } => {
-            format!("exec {}", argv.first().map(String::as_str).unwrap_or("?"))
+            format!("[{t}] exec {}", argv.first().map(String::as_str).unwrap_or("?"))
         }
         Event::BlockedAttempt {
             comm, path, source, ..
-        } => format!("BLOCKED [{source}] {comm} -> {path}"),
+        } => format!("[{t}] BLOCKED [{source}] {comm} -> {path}"),
         Event::NetRequest {
             host,
             port,
@@ -121,12 +122,12 @@ pub fn describe(ev: &Event) -> String {
             ..
         } => {
             if *allowed {
-                format!("net allow {host}:{port}")
+                format!("[{t}] net allow {host}:{port}")
             } else {
-                format!("net DENY {host}:{port}")
+                format!("[{t}] net DENY {host}:{port}")
             }
         }
-        Event::SecretMasked { path, .. } => format!("secret masked: {path}"),
-        Event::Notice { message, .. } => message.clone(),
+        Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),
+        Event::Notice { message, .. } => format!("[{t}] {message}"),
     }
 }

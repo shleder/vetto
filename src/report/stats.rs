@@ -129,7 +129,12 @@ fn ingest(inner: &mut Inner, ev: Event) {
             st.duration_secs = duration_secs;
         }
         Event::FileObserved { ref path, access, .. } => {
-            let op = crate::classifier::classify_path(path);
+            // fd-derived access beats extension heuristics when available.
+            let op = match access {
+                FileAccess::Write => crate::classifier::Operation::FsWrite,
+                FileAccess::Read => crate::classifier::classify_path(path),
+                FileAccess::Unknown => crate::classifier::classify_path(path),
+            };
             *st.op_counts.entry(op.label().to_string()).or_insert(0) += 1;
             match access {
                 FileAccess::Read => st.file_reads += 1,
@@ -151,11 +156,19 @@ fn ingest(inner: &mut Inner, ev: Event) {
             allowed,
             ..
         } => {
+            *st
+                .op_counts
+                .entry(crate::classifier::Operation::Net.label().to_string())
+                .or_insert(0) += 1;
             if st.net_requests.len() < 500 {
                 st.net_requests.push(NetRecord { host, port, allowed });
             }
         }
         Event::Notice { message, .. } => {
+            *st
+                .op_counts
+                .entry(crate::classifier::Operation::Other.label().to_string())
+                .or_insert(0) += 1;
             if st.notices.len() < 100 {
                 st.notices.push(message);
             }

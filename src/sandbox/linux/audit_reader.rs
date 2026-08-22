@@ -5,7 +5,7 @@
 //! Probe at runtime; when unavailable, vetto shows a persistent notice and
 //! enforcement remains ACTIVE regardless.
 
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{FromRawFd, OwnedFd};
 
 use crate::events::{bus::EventBus, Event};
 

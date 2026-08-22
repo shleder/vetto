@@ -6,8 +6,6 @@
 //! observation, never enforcement.
 
 use std::collections::HashSet;
-use std::path::Path;
-
 use crate::events::{bus::EventBus, Event, FileAccess};
 
 pub const POLL_INTERVAL_MS: u64 = 100;
@@ -166,12 +164,3 @@ fn fd_access(pid: u32, fd: i32) -> FileAccess {
     }
 }
 
-/// Used by doctor --probe: confirm a path is unreachable from this process
-/// context. Returns the errno string on expected failure, None on success.
-pub fn probe_unreachable(path: &Path) -> Option<String> {
-    match std::fs::metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("ENOENT".into()),
-        Err(e) => Some(format!("{}", e.raw_os_error().unwrap_or(0))),
-        Ok(_) => None,
-    }
-}

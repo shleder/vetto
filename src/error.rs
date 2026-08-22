@@ -1,5 +1,9 @@
 use thiserror::Error;
 
+/// Public error taxonomy. Some variants are reserved for macOS/Windows
+/// code paths and platform-gated constructors; they exist so the error
+/// surface stays stable.
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum VettoError {
     #[error("landlock: {0}")]

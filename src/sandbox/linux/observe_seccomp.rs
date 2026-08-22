@@ -10,7 +10,7 @@
 //! Documented limits: reported paths are racy (TOCTOU in observation only);
 //! path strings are read best-effort from /proc/<pid>/mem.
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 
 use crate::events::{bus::EventBus, Event};
 use crate::error::{VettoError, VettoResult};
@@ -169,7 +169,7 @@ pub fn probe_available() -> bool {
                     break;
                 }
             }
-            unsafe { libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 }
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
         }
     }
 }

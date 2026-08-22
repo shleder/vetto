@@ -24,17 +24,6 @@ pub struct SpawnOptions {
     pub stdio: StdioMode,
 }
 
-impl SpawnOptions {
-    pub fn new(agent_cmd: Vec<String>, cwd: PathBuf, stdio: StdioMode) -> Self {
-        Self {
-            agent_cmd,
-            cwd,
-            env_extra: HashMap::new(),
-            stdio,
-        }
-    }
-}
-
 /// How vetto kills the whole tree when the session ends or vetto dies.
 pub enum KillStrategy {
     /// Tier FULL: dropping this pipe makes the inner PID-1 supervisor
@@ -108,10 +97,10 @@ impl Drop for SandboxHandle {
 }
 
 fn decode_status(status: i32) -> i32 {
-    if unsafe { libc::WIFEXITED(status) } {
-        unsafe { libc::WEXITSTATUS(status) }
-    } else if unsafe { libc::WIFSIGNALED(status) } {
-        -unsafe { libc::WTERMSIG(status) }
+    if libc::WIFEXITED(status) {
+        libc::WEXITSTATUS(status)
+    } else if libc::WIFSIGNALED(status) {
+        -libc::WTERMSIG(status)
     } else {
         -1
     }

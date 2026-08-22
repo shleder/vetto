@@ -35,7 +35,6 @@ pub const MAKE_BLOCK: u64 = 1 << 11;
 pub const MAKE_SYM: u64 = 1 << 12;
 pub const REFER: u64 = 1 << 13; // ABI 2
 pub const TRUNCATE: u64 = 1 << 14; // ABI 3
-pub const IOCTL_DEV: u64 = 1 << 15; // ABI 4
 
 #[repr(C)]
 struct LandlockRulesetAttr {

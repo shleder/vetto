@@ -12,7 +12,7 @@ extern "C" fn on_sigwinch(_sig: libc::c_int) {
 /// Install the handler. Call once before the statusline loop starts.
 pub fn install() -> bool {
     // SAFETY: registering our extern handler; returns SIG_ERR on failure.
-    let r = unsafe { libc::signal(libc::SIGWINCH, on_sigwinch as libc::sighandler_t) };
+    let r = unsafe { libc::signal(libc::SIGWINCH, on_sigwinch as *const () as libc::sighandler_t) };
     r != libc::SIG_ERR
 }
 

@@ -252,11 +252,10 @@ fn child_pdeathsig(parent_pid: libc::pid_t) {
 }
 
 fn decode_status(status: i32) -> i32 {
-    // SAFETY: scalar WIF* macros on a wait status.
-    if unsafe { libc::WIFEXITED(status) } {
-        unsafe { libc::WEXITSTATUS(status) }
-    } else if unsafe { libc::WIFSIGNALED(status) } {
-        -unsafe { libc::WTERMSIG(status) }
+    if libc::WIFEXITED(status) {
+        libc::WEXITSTATUS(status)
+    } else if libc::WIFSIGNALED(status) {
+        -libc::WTERMSIG(status)
     } else {
         -1
     }
@@ -898,14 +897,14 @@ fn spawn_full(
     // 2. Setup result: 'R' ready / 'E:<reason>' failure / EOF died.
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
+        ByteRead::Byte(b'E') | ByteRead::Eof => {
+            return Err(err_from_dead_child(pid, err_r.as_raw_fd()));
+        }
         ByteRead::Byte(other) => {
             let code = reap_child(pid);
             return Err(anyhow!(
                 "unexpected setup byte {other:#x} from sandbox child (exit {code})"
             ));
-        }
-        ByteRead::Eof | ByteRead::Byte(b'E') => {
-            return Err(err_from_dead_child(pid, err_r.as_raw_fd()));
         }
         ByteRead::Timeout => {
             let code = kill_and_reap(pid);
@@ -1066,14 +1065,14 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
 
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
+        ByteRead::Byte(b'E') | ByteRead::Eof => {
+            return Err(err_from_dead_child(pid, err_r.as_raw_fd()));
+        }
         ByteRead::Byte(other) => {
             let code = reap_child(pid);
             return Err(anyhow!(
                 "unexpected setup byte {other:#x} from sandbox child (exit {code})"
             ));
-        }
-        ByteRead::Eof | ByteRead::Byte(b'E') => {
-            return Err(err_from_dead_child(pid, err_r.as_raw_fd()));
         }
         ByteRead::Timeout => {
             let code = kill_and_reap(pid);

@@ -51,7 +51,6 @@ pub struct RunConfig {
     pub report_formats: Vec<ReportFormat>,
     pub dry_run: bool,
     pub ci: bool,
-    pub verbose: bool,
     pub agent: Vec<String>,
 }
 
@@ -85,7 +84,6 @@ impl RunConfig {
             report_formats,
             dry_run: cli.dry_run,
             ci: cli.ci,
-            verbose: cli.verbose,
             agent: cli.agent.clone(),
         })
     }
