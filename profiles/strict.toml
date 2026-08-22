@@ -9,7 +9,7 @@ allow_write = ["$PROJECT", "/dev/null"]
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
   "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
-  "/etc/ssl", "/etc/ca-certificates", "/etc/pki",
+  "/etc/ld.so.cache", "/etc/ssl", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts",
 ]
 

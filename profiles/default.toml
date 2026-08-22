@@ -11,7 +11,7 @@ allow_write = ["$PROJECT", "/tmp", "/dev/null"]
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
   "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
-  "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
+  "/etc/ld.so.cache", "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts", "/etc/nsswitch.conf",
   "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",
   "$HOME/.rustup",
