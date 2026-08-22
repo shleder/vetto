@@ -487,10 +487,10 @@ fn pump(client: TcpStream, data_fd: OwnedFd) {
     // Two independent half-duplex pumps:
     //   thread: client TCP -> unix (requests toward the broker)
     //   here:   unix -> client TCP (responses from the broker)
-    let (Ok(unix_read), Ok(unix_write)) = (unix_side.try_clone(), unix_side.try_clone()) else {
+    let Ok(unix_write) = unix_side.try_clone() else {
         return;
     };
-    let (Ok(client_read), Ok(client_write)) = (client.try_clone(), client.try_clone()) else {
+    let Ok(client_read) = client.try_clone() else {
         return;
     };
     let rev = std::thread::spawn(move || {
