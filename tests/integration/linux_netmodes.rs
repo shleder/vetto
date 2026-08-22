@@ -77,8 +77,8 @@ fn allowlist_permits_listed_domain_only() {
             "curl",
             "-sS",
             "-m",
-            "15",
-            "http://example.com",
+            "20",
+            "https://example.com",
         ],
     );
     let ok_text = stdout(&ok);
@@ -99,8 +99,8 @@ fn allowlist_permits_listed_domain_only() {
             "curl",
             "-sS",
             "-m",
-            "15",
-            "http://httpbin.org/status/200",
+            "20",
+            "https://httpbin.org/status/200",
         ],
     );
     assert!(

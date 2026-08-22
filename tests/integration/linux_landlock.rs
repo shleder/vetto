@@ -76,10 +76,8 @@ fn symlink_attack_blocked() {
         return;
     }
     let proj = TempProject::new("symlink");
-    let out = run_vetto_in(
-        proj.path(),
-        &["--tui=none", "--", "sh", fixture("symlink_attack.sh").to_str().unwrap()],
-    );
+    let script = stage_fixture(proj.path(), "symlink_attack.sh");
+    let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
     assert!(!text.contains("LEAK-SYMLINK"), "/etc/passwd via symlink: {text}");
 }
@@ -92,10 +90,8 @@ fn malicious_agent_leaks_nothing() {
     let proj = TempProject::new("malicious");
     write_file(&proj.path().join(".env"), "TOPSECRET=1\n");
     ensure_fake_ssh_key();
-    let out = run_vetto_in(
-        proj.path(),
-        &["--tui=none", "--", "sh", fixture("malicious_agent.sh").to_str().unwrap()],
-    );
+    let script = stage_fixture(proj.path(), "malicious_agent.sh");
+    let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
     for marker in ["LEAK-SSH", "LEAK-ENV", "LEAK-SHADOW", "WROTE-ETC", "NET-LEAK"] {
         assert!(!text.contains(marker), "marker {marker} present: {text}");
@@ -108,10 +104,8 @@ fn benign_agent_works() {
         return;
     }
     let proj = TempProject::new("benign");
-    let out = run_vetto_in(
-        proj.path(),
-        &["--tui=none", "--", "sh", fixture("benign_agent.sh").to_str().unwrap()],
-    );
+    let script = stage_fixture(proj.path(), "benign_agent.sh");
+    let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", &script]);
     let text = stdout(&out);
     assert!(out.status.success(), "benign agent failed: {}", stderr(&out));
     assert!(text.contains("created-by-agent"), "agent output: {text}");

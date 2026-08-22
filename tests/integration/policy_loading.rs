@@ -21,6 +21,8 @@ fn custom_policy_file_is_loaded() {
         return;
     }
     let proj = TempProject::new("custompol");
+    write_file(&proj.path().join(".env"), "X=1
+");
     write_file(
         &proj.path().join("vetto-test.toml"),
         r#"

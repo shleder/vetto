@@ -39,13 +39,16 @@ fn dry_run_executes_nothing() {
     let proj = TempProject::new("dryrun");
     let out = run_vetto_in(
         proj.path(),
-        &["--dry-run", "--", "sh", "-c", "echo DRY-RAN-MARKER"],
+        &["--dry-run", "--", "sh", "-c", "touch dry-ran-flag"],
     );
     let text = stdout(&out);
     assert!(text.contains("vetto dry-run"), "{text}");
     assert!(text.contains("tier:"), "{text}");
-    assert!(!text.contains("DRY-RAN-MARKER"), "dry-run executed the agent!");
-    assert!(!proj.path().join("vetto-benign.txt").exists());
+    // Nothing may have executed: only execution could create this file.
+    assert!(
+        !proj.path().join("dry-ran-flag").exists(),
+        "dry-run executed the agent!"
+    );
 }
 
 #[test]

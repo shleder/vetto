@@ -12,6 +12,7 @@ fn jsonl_contains_lifecycle_events() {
     let proj = TempProject::new("jsonl");
     write_file(&proj.path().join(".env"), "X=1\n");
     let jsonl = proj.path().join("session.jsonl");
+    let script = stage_fixture(proj.path(), "benign_agent.sh");
     let out = run_vetto_in(
         proj.path(),
         &[
@@ -20,7 +21,7 @@ fn jsonl_contains_lifecycle_events() {
             jsonl.to_str().unwrap(),
             "--",
             "sh",
-            fixture("benign_agent.sh").to_str().unwrap(),
+            &script,
         ],
     );
     assert!(out.status.success(), "agent failed: {}", stderr(&out));

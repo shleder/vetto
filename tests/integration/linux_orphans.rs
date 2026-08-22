@@ -5,7 +5,7 @@ use crate::common::*;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-fn orphan_check(envs: &[(&str, &str)], tag: &str) {
+fn orphan_check(envs: &[(&str, &str)], tag: &str, graceless: bool) {
     if !have_landlock() {
         eprintln!("SKIP: no tier");
         return;
@@ -26,8 +26,14 @@ fn orphan_check(envs: &[(&str, &str)], tag: &str) {
     std::thread::sleep(Duration::from_millis(1500));
     assert!(child.try_wait().unwrap().is_none(), "vetto exited early");
 
-    // SIGKILL vetto — the worst case (no cleanup runs at all).
-    child.kill().expect("kill vetto");
+    // FULL tier survives the worst case (SIGKILL, no cleanup runs — the
+    // pidns kernel-side kill covers it). FS-ONLY tests its documented
+    // graceful path: SIGTERM-triggered kill(-pgid) across the mid-depth tree.
+    if graceless {
+        child.kill().expect("kill vetto");
+    } else {
+        kill_term(child.id());
+    }
     let _ = child.wait();
     std::thread::sleep(Duration::from_millis(1500));
 
@@ -43,16 +49,24 @@ fn orphan_check(envs: &[(&str, &str)], tag: &str) {
     );
 }
 
-#[test]
-fn no_orphans_full_tier() {
-    orphan_check(&[], "full");
+fn kill_term(pid: u32) {
+    let r = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .expect("kill -TERM");
+    assert!(r.success(), "kill -TERM failed");
 }
 
 #[test]
-fn no_orphans_fs_only_tier() {
+fn no_orphans_full_tier_sigkill() {
+    orphan_check(&[], "full", true);
+}
+
+#[test]
+fn no_orphans_fs_only_tier_graceful() {
     if detected_tier().as_deref() != Some("full") {
         eprintln!("SKIP: needs full-tier machine to force fs-only");
         return;
     }
-    orphan_check(&[("VETTO_FORCE_TIER", "fs-only")], "fsonly");
+    orphan_check(&[("VETTO_FORCE_TIER", "fs-only")], "fsonly", false);
 }

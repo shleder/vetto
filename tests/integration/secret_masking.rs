@@ -21,7 +21,7 @@ fn jsonl_redacts_aws_key_in_agent_argv() {
             "--",
             "/bin/sh",
             "-c",
-            &format!("echo argv-carrying {secret}"),
+            &format!("echo argv-carrying {secret}; sleep 2"),
         ],
     );
     assert!(out.status.success(), "{}", stderr(&out));
