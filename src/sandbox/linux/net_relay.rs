@@ -131,10 +131,10 @@ fn create_and_send_data_fd(
     //   thread: outbound TCP -> unix (server responses toward the relay)
     //   here:   unix -> outbound TCP (client requests toward the internet)
     let mine = unsafe { std::os::unix::net::UnixStream::from_raw_fd(mine.into_raw_fd()) };
-    let (Ok(unix_read), Ok(unix_write)) = (mine.try_clone(), mine.try_clone()) else {
+    let Ok(unix_write) = mine.try_clone() else {
         return Ok(());
     };
-    let (Ok(tcp_read), Ok(tcp_write)) = (tcp.try_clone(), tcp.try_clone()) else {
+    let Ok(tcp_read) = tcp.try_clone() else {
         return Ok(());
     };
     let rev = std::thread::Builder::new()
