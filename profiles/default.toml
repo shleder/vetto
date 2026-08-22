@@ -1,0 +1,35 @@
+# vetto policy profile: default
+# $PROJECT expands to the sandboxed working directory, $HOME to the user home.
+# Globs are resolved at LOAD TIME into concrete paths (see ARCHITECTURE.md).
+
+[filesystem]
+# Project + temp: read-write
+allow_write = ["$PROJECT", "/tmp"]
+
+# System + toolchains + dependency caches: read-only
+allow_read = [
+  "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
+  "/etc/hosts", "/etc/nsswitch.conf",
+  "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",
+  "$HOME/.rustup",
+  "$HOME/.npm/_cacache",
+  "$HOME/.cache/pip", "$HOME/.cache/uv",
+  "$HOME/go/pkg/mod",
+  "$HOME/.local/share/pnpm/store",
+  "$HOME/.gradle/caches", "$HOME/.m2/repository",
+  "$HOME/.gitconfig",
+]
+
+[display_only_deny]
+# NOT an enforcement mechanism by itself. Documentation + doctor probes;
+# on Linux Tier FULL these paths are additionally masked with bind-mount
+# overlays (/dev/null or empty tmpfs) inside the sandbox mount namespace.
+paths = [
+  "$HOME/.ssh", "$HOME/.aws", "$HOME/.gnupg",
+  "$HOME/.npmrc", "$HOME/.git-credentials", "$HOME/.netrc",
+  "$HOME/.config/gcloud", "$HOME/.kube",
+  "$PROJECT/.env",
+  "$PROJECT/**/*.pem",
+  "$PROJECT/**/*.key",
+]

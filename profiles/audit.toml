@@ -1,0 +1,31 @@
+# vetto policy profile: audit
+# Same filesystem semantics as `default`. Intended to be combined with:
+#   vetto --profile audit --observe-seccomp --jsonl session.jsonl --report html,md -- <agent>
+# Enforcement is identical; this profile exists so audit-focused sessions are
+# explicit in shell history and reports.
+
+[filesystem]
+allow_write = ["$PROJECT", "/tmp"]
+
+allow_read = [
+  "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
+  "/etc/hosts", "/etc/nsswitch.conf",
+  "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",
+  "$HOME/.rustup",
+  "$HOME/.npm/_cacache",
+  "$HOME/.cache/pip", "$HOME/.cache/uv",
+  "$HOME/go/pkg/mod",
+  "$HOME/.local/share/pnpm/store",
+  "$HOME/.gradle/caches", "$HOME/.m2/repository",
+  "$HOME/.gitconfig",
+]
+
+[display_only_deny]
+paths = [
+  "$HOME/.ssh", "$HOME/.aws", "$HOME/.gnupg",
+  "$HOME/.npmrc", "$HOME/.git-credentials", "$HOME/.netrc",
+  "$HOME/.config/gcloud", "$HOME/.kube",
+  "$PROJECT/.env",
+  "$PROJECT/**/*.pem", "$PROJECT/**/*.key",
+]

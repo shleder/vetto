@@ -1,0 +1,22 @@
+# vetto policy profile: strict
+# Minimal surface. No dependency caches, no git identity, no /tmp writes
+# outside a vetto-scoped temp dir (the sandbox still provides /tmp via /tmp).
+
+[filesystem]
+allow_write = ["$PROJECT"]
+
+allow_read = [
+  "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/etc/ssl", "/etc/ca-certificates", "/etc/pki",
+  "/etc/hosts",
+]
+
+[display_only_deny]
+paths = [
+  "$HOME/.ssh", "$HOME/.aws", "$HOME/.gnupg",
+  "$HOME/.npmrc", "$HOME/.git-credentials", "$HOME/.netrc",
+  "$HOME/.config/gcloud", "$HOME/.kube",
+  "$HOME/.gitconfig",
+  "$PROJECT/.env", "$PROJECT/**/.env*",
+  "$PROJECT/**/*.pem", "$PROJECT/**/*.key", "$PROJECT/**/*.p12",
+]

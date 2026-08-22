@@ -1,17 +1,28 @@
 [package]
-name = "leash"
+name = "vetto"
 version = "0.1.0"
 edition = "2021"
-description = "A sandbox/security layer for AI coding agents"
+rust-version = "1.75"
+description = "Daemon-less sandbox + security layer for AI coding agents (Landlock/Seatbelt, TUI statusline, post-session audit reports)"
 license = "Apache-2.0"
+repository = "https://github.com/shleder/vetto"
+keywords = ["sandbox", "security", "landlock", "seatbelt", "ai"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "vetto"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.27"
+glob = "0.3"
 ratatui = "0.26"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
@@ -19,4 +30,8 @@ tracing-subscriber = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-nix = { version = "0.28", features = ["ptrace", "sched", "mount", "signal", "process"] }
+nix = { version = "0.28", features = ["fs", "mount", "process", "pty", "sched", "signal", "term"] }
+
+[profile.release]
+lto = true
+strip = true

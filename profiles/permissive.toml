@@ -1,0 +1,27 @@
+# vetto policy profile: permissive
+# Wide read surface for the user's own toolchains. Secrets are still denied.
+# Network remains governed exclusively by --net= (default off).
+
+[filesystem]
+allow_write = ["$PROJECT", "/tmp"]
+
+allow_read = [
+  "/usr", "/bin", "/sbin", "/lib", "/lib64",
+  "/etc",
+  "$HOME/.cargo", "$HOME/.rustup",
+  "$HOME/.npm", "$HOME/.cache",
+  "$HOME/go",
+  "$HOME/.local/share/pnpm/store",
+  "$HOME/.gradle/caches", "$HOME/.m2/repository",
+  "$HOME/.gitconfig",
+  "$HOME/.config/github-copilot", "$HOME/.claude", "$HOME/.codex",
+]
+
+[display_only_deny]
+paths = [
+  "$HOME/.ssh", "$HOME/.aws", "$HOME/.gnupg",
+  "$HOME/.npmrc", "$HOME/.git-credentials", "$HOME/.netrc",
+  "$HOME/.config/gcloud", "$HOME/.kube",
+  "$PROJECT/.env",
+  "$PROJECT/**/*.pem", "$PROJECT/**/*.key",
+]
