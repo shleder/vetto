@@ -15,7 +15,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::Mutex;
 
 use crate::events::{bus::EventBus, Event};
@@ -126,6 +126,7 @@ fn create_and_send_data_fd(
     drop(theirs);
 
     // Pump both directions between our end and the outbound TCP connection.
+    let mine = unsafe { std::os::unix::net::UnixStream::from_raw_fd(mine.into_raw_fd()) };
     let mine_rev = match mine.try_clone() {
         Ok(m) => m,
         Err(_) => return Ok(()),
@@ -138,7 +139,8 @@ fn create_and_send_data_fd(
         .name("broker-fwd".into())
         .spawn(move || {
             let mut m = mine_rev;
-            let _ = std::io::copy(&mut m, &mut { tcp_rev });
+            let mut t = tcp_rev;
+            let _ = std::io::copy(&mut m, &mut t);
             shutdown_write(m.as_raw_fd());
         })
         .ok();

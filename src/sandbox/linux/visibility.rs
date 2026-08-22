@@ -99,13 +99,15 @@ fn poll_loop(bus: EventBus, roots: Vec<u32>) {
 /// BFS over PPid links from the sandbox roots.
 fn collect_subtree(roots: &[u32]) -> Vec<u32> {
     let mut parents: std::collections::HashMap<u32, u32> = Default::default();
-    for entry in std::fs::read_dir("/proc").into_iter().flatten() {
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        if let Some(ppid) = read_ppid(pid) {
-            parents.insert(pid, ppid);
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+                continue;
+            };
+            if let Some(ppid) = read_ppid(pid) {
+                parents.insert(pid, ppid);
+            }
         }
     }
     let mut out = Vec::new();
@@ -157,9 +159,8 @@ fn fd_access(pid: u32, fd: i32) -> FileAccess {
         return FileAccess::Unknown;
     };
     match flags & 0b11 {
-        libc::O_RDONLY => FileAccess::Read,
-        libc::O_WRONLY => FileAccess::Write,
-        libc::O_RDWR => FileAccess::Write,
+        0 => FileAccess::Read,          // O_RDONLY
+        1 | 2 => FileAccess::Write,     // O_WRONLY | O_RDWR
         _ => FileAccess::Unknown,
     }
 }

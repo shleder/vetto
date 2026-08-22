@@ -10,7 +10,7 @@
 //! Documented limits: reported paths are racy (TOCTOU in observation only);
 //! path strings are read best-effort from /proc/<pid>/mem.
 
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use crate::events::{bus::EventBus, Event};
 use crate::error::{VettoError, VettoResult};

@@ -59,7 +59,7 @@ fn empty_tmpfs(target: &Path) -> VettoResult<()> {
             dst.as_ptr(),
             b"tmpfs\0".as_ptr() as *const libc::c_char,
             MS_NOSUID | MS_NODEV | MS_NOEXEC,
-            b"mode=000\0".as_ptr() as *const libc::c_char,
+            b"mode=000\0".as_ptr() as *const libc::c_void,
         )
     } != 0
     {
