@@ -218,7 +218,7 @@ jobs:
           chmod +x npm-stage/native/darwin-arm64/vetto
 
           npm test --prefix npm-stage
-          npm pack npm-stage --pack-destination npm-dist
+          npm pack ./npm-stage --pack-destination ./npm-dist
           package_tarball="$(find npm-dist -maxdepth 1 -type f -name '*.tgz' -print -quit)"
           test -n "$package_tarball"
           mv "$package_tarball" npm-dist/vetto-npm-${package_version}.tgz
