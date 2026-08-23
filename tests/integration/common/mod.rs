@@ -78,6 +78,7 @@ pub fn write_file(path: &Path, content: &str) {
     std::fs::write(path, content).expect("write file");
 }
 
+#[cfg(target_os = "linux")]
 pub fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -86,6 +87,7 @@ pub fn fixture(name: &str) -> PathBuf {
 
 /// Copy a fixture INTO the sandboxed project and return its relative path:
 /// the sandbox can only read scripts inside its own allowlist.
+#[cfg(target_os = "linux")]
 pub fn stage_fixture(project: &Path, name: &str) -> String {
     let src = fixture(name);
     let dst = project.join(name);
@@ -101,6 +103,7 @@ pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
+#[cfg(target_os = "linux")]
 pub fn tool_available(name: &str) -> bool {
     Command::new(name)
         .arg("--version")

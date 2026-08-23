@@ -11,6 +11,11 @@ use crate::policy::Policy;
 pub fn generate(policy: &Policy, net: &NetMode) -> String {
     let mut sb = String::with_capacity(2048);
     sb.push_str("(version 1)\n(deny default)\n");
+    // Seatbelt separates file readability from process creation. Allow the
+    // agent to execute readable tools and spawn descendants; those children
+    // remain inside the inherited profile and cannot expand filesystem or
+    // network access.
+    sb.push_str("(allow process-exec)\n(allow process-fork)\n");
 
     for p in &policy.allow_read {
         sb.push_str(&format!(
