@@ -774,11 +774,18 @@ fn doctor_probe() -> Result<()> {
         return Ok(());
     }
 
-    // The probe script reports, per path: dir -> "D|ok|denied" for a listing
-    // attempt; file -> "F|bytes|unreadable" for a read attempt. Overlaid
-    // files appear EMPTY (0 bytes) — checked against the host size below.
-    let script = "for p in \"$@\"; do if [ -d \"$p\" ]; then if ls -A \"$p\" >/dev/null 2>&1; \
-                  then echo \"D|$p|ok\"; else echo \"D|$p|denied\"; fi; \
+    // The probe script reports, per path: directory contents readable or
+    // denied; file byte count or unreadable. FS-ONLY may expose directory
+    // entry names because Landlock is an access-control mechanism, not a
+    // visibility overlay, so the security property checked here is that no
+    // file content under a denied directory can be read. FULL still masks the
+    // whole directory. Overlaid files appear EMPTY (0 bytes).
+    let script = "for p in \"$@\"; do if [ -d \"$p\" ]; then leak=0; \
+                  for f in \"$p\"/* \"$p\"/.[!.]* \"$p\"/..?*; do \
+                  [ -f \"$f\" ] || continue; \
+                  if dd if=\"$f\" of=/dev/null bs=1 count=1 >/dev/null 2>&1; then leak=1; break; fi; done; \
+                  if [ \"$leak\" -eq 0 ]; then echo \"D|$p|contents-denied\"; \
+                  else echo \"D|$p|content-readable\"; fi; \
                   else n=$(wc -c <\"$p\" 2>/dev/null) || { echo \"F|$p|unreadable\"; continue; }; \
                   echo \"F|$p|$n\"; fi; done";
 
@@ -824,9 +831,11 @@ fn doctor_probe() -> Result<()> {
             _ => continue,
         };
         match (kind, verdict) {
-            ("D", "denied") => println!("  ✓ {path}/ (listing denied)"),
-            ("D", "ok") => {
-                println!("  ✗ {path}/ LEAK: directory listing succeeded");
+            ("D", "contents-denied") => {
+                println!("  ✓ {path}/ (file contents denied; names may remain visible in FS-ONLY)")
+            }
+            ("D", "content-readable") => {
+                println!("  ✗ {path}/ LEAK: file content is readable");
                 failures += 1;
             }
             ("F", "unreadable") => println!("  ✓ {path} (open denied)"),

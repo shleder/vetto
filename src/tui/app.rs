@@ -459,7 +459,9 @@ mod tests {
     fn export_contains_only_the_bounded_ring() {
         let mut state = AppState::new("full", "off", "default");
         state.ingest(blocked("/tmp/a"));
-        let path = std::env::temp_dir().join(format!("vetto-tui-{}.jsonl", std::process::id()));
+        let temp =
+            std::fs::canonicalize(std::env::temp_dir()).expect("canonical temporary directory");
+        let path = temp.join(format!("vetto-tui-{}.jsonl", std::process::id()));
         let count = state.export_events(&path).expect("export");
         assert_eq!(count, 1);
         let text = std::fs::read_to_string(&path).expect("read export");
@@ -475,7 +477,9 @@ mod tests {
             ts: Utc::now(),
             message: format!("token={secret}"),
         });
-        let path = std::env::temp_dir().join(format!(
+        let temp =
+            std::fs::canonicalize(std::env::temp_dir()).expect("canonical temporary directory");
+        let path = temp.join(format!(
             "vetto-tui-secret-{}-{}.jsonl",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -499,8 +503,10 @@ mod tests {
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
-        let real = std::env::temp_dir().join(format!("vetto-tui-real-{suffix}"));
-        let link = std::env::temp_dir().join(format!("vetto-tui-link-{suffix}"));
+        let temp =
+            std::fs::canonicalize(std::env::temp_dir()).expect("canonical temporary directory");
+        let real = temp.join(format!("vetto-tui-real-{suffix}"));
+        let link = temp.join(format!("vetto-tui-link-{suffix}"));
         std::fs::create_dir(&real).expect("create real export directory");
         symlink(&real, &link).expect("create export symlink");
 

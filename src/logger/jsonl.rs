@@ -258,7 +258,8 @@ mod tests {
             .expect("clock before epoch")
             .as_nanos();
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
+        let temp = fs::canonicalize(std::env::temp_dir()).expect("canonical temporary directory");
+        let dir = temp.join(format!(
             "vetto-jsonl-symlink-{}-{nonce}-{n}",
             std::process::id()
         ));

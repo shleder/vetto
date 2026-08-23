@@ -760,7 +760,7 @@ mod tests {
             SECCOMP_RET_ALLOW
         );
         assert_eq!(
-            eval(&program, native_audit_arch() ^ 1, NR_OPEN),
+            eval(&program, native_audit_arch() ^ 1, NR_OPENAT),
             SECCOMP_RET_KILL_PROCESS
         );
     }
@@ -797,13 +797,17 @@ mod tests {
 
     #[test]
     fn filesystem_path_arguments_cover_requested_mutations() {
+        #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(path_arg_index(NR_OPEN), Some(0));
         assert_eq!(path_arg_index(NR_OPENAT), Some(1));
+        #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(path_arg_index(NR_UNLINK), Some(0));
         assert_eq!(path_arg_index(NR_UNLINKAT), Some(1));
+        #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(path_arg_index(NR_RENAME), Some(0));
         assert_eq!(path_arg_index(NR_RENAMEAT), Some(1));
         assert_eq!(path_arg_index(NR_RENAMEAT2), Some(1));
+        #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(path_arg_index(NR_CHMOD), Some(0));
         assert_eq!(path_arg_index(NR_FCHMODAT), Some(1));
         assert_eq!(path_arg_index(NR_CONNECT), None);
@@ -812,10 +816,12 @@ mod tests {
 
     #[test]
     fn addfd_substitution_is_limited_to_open_family_results() {
+        #[cfg(not(target_arch = "aarch64"))]
         assert!(addfd_allowed_syscall(NR_OPEN));
         assert!(addfd_allowed_syscall(NR_OPENAT));
         assert!(addfd_allowed_syscall(NR_OPENAT2));
         assert!(!addfd_allowed_syscall(NR_EXECVE));
+        #[cfg(not(target_arch = "aarch64"))]
         assert!(!addfd_allowed_syscall(NR_UNLINK));
         assert!(!addfd_allowed_syscall(NR_CONNECT));
     }
