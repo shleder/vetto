@@ -92,6 +92,31 @@ impl EnvironmentPolicy {
     }
 }
 
+#[cfg(test)]
+mod environment_tests {
+    use super::EnvironmentPolicy;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn allowlist_is_exact_and_secrets_are_default_deny() {
+        let policy = EnvironmentPolicy {
+            pass_through: vec!["PATH".into(), "LC_*".into(), "SAFE_EXACT".into()],
+        };
+        assert!(policy.allows(OsStr::new("PATH")));
+        assert!(policy.allows(OsStr::new("LC_ALL")));
+        assert!(policy.allows(OsStr::new("SAFE_EXACT")));
+        assert!(!policy.allows(OsStr::new("SAFE_EXACT_EXTRA")));
+        for secret in [
+            "GH_TOKEN",
+            "OPENAI_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "ANTHROPIC_API_KEY",
+        ] {
+            assert!(!policy.allows(OsStr::new(secret)), "leaked {secret}");
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub name: String,

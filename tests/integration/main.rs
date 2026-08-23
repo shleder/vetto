@@ -6,7 +6,7 @@
 mod common;
 
 mod cli_reporting;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod env_stripping;
 #[cfg(target_os = "linux")]
 mod linux_landlock;
