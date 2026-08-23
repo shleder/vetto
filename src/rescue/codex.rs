@@ -100,7 +100,7 @@ impl CodexAdapter {
     }
 
     fn read_stable(context: &RescueContext, path: &Path) -> Result<Vec<u8>> {
-        Self::read_stable_with(context, path, |path, limit| Self::read_bounded(path, limit))
+        Self::read_stable_with(context, path, Self::read_bounded)
     }
 
     fn read_stable_with<F>(context: &RescueContext, path: &Path, mut read: F) -> Result<Vec<u8>>
