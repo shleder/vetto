@@ -74,8 +74,9 @@ impl ClaudeAdapter {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 continue;
             }
-            let canonical = fs::canonicalize(&path)
-                .with_context(|| format!("canonicalize Claude state directory {}", path.display()))?;
+            let canonical = fs::canonicalize(&path).with_context(|| {
+                format!("canonicalize Claude state directory {}", path.display())
+            })?;
             if canonical.starts_with(&canonical_root) {
                 candidates.push(canonical);
             }
@@ -89,10 +90,7 @@ impl ClaudeAdapter {
     fn normalized_relative(context: &RescueContext, path: &Path) -> Result<String> {
         let canonical_root = Self::validate_root(context)?;
         let relative = path.strip_prefix(&canonical_root).with_context(|| {
-            format!(
-                "Claude transcript {} is outside state root",
-                path.display()
-            )
+            format!("Claude transcript {} is outside state root", path.display())
         })?;
         Ok(relative.to_string_lossy().replace('\\', "/"))
     }
@@ -404,12 +402,8 @@ impl RescueAdapter for ClaudeAdapter {
         let file_name = destination
             .file_name()
             .context("Claude snapshot destination must have a file name")?;
-        let canonical_parent = fs::canonicalize(parent).with_context(|| {
-            format!(
-                "canonicalize Claude snapshot parent {}",
-                parent.display()
-            )
-        })?;
+        let canonical_parent = fs::canonicalize(parent)
+            .with_context(|| format!("canonicalize Claude snapshot parent {}", parent.display()))?;
         let canonical_root = Self::validate_root(context)?;
         if canonical_parent.starts_with(&canonical_root) {
             bail!("Claude snapshot destination may not be inside the original state root");
@@ -484,8 +478,7 @@ mod tests {
         .expect("write transcript");
         fs::write(projects.join("credentials.jsonl"), b"not a transcript\n")
             .expect("write credential-shaped file");
-        fs::write(projects.join("notes.txt"), b"not a transcript\n")
-            .expect("write non-jsonl file");
+        fs::write(projects.join("notes.txt"), b"not a transcript\n").expect("write non-jsonl file");
 
         let sessions = ClaudeAdapter
             .discover_sessions(&context(&root))
@@ -562,11 +555,7 @@ not-json
             .expect("discover sessions")
             .pop()
             .expect("session");
-        let result = ClaudeAdapter.snapshot(
-            &context(&root),
-            &session,
-            &root.join("copy.jsonl"),
-        );
+        let result = ClaudeAdapter.snapshot(&context(&root), &session, &root.join("copy.jsonl"));
         assert!(result.is_err());
         assert!(!root.join("copy.jsonl").exists());
         fs::remove_dir_all(root).expect("remove test directory");
