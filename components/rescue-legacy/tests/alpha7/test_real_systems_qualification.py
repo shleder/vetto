@@ -177,13 +177,19 @@ while True:
             engine = TransactionalRepairEngine(chome)
             res = engine.execute_derived_index_repair(sess)
 
-            self.assertEqual(res.status, "REPAIRED")
+            self.assertEqual(res.status, "BLOCKED")
             self.assertTrue(res.source_preserved)
             self.assertEqual(res.initial_source_sha256, res.final_source_sha256)
-            self.assertEqual(res.applied_mutations_count, 1)
+            self.assertEqual(res.applied_mutations_count, 0)
+            self.assertIn("DIRECT_DERIVED_STATE_MUTATION_DISABLED", res.message)
 
-            # Verify SQLite DB exists and contains index
+            # Verify SQLite DB exists but remains unchanged and unindexed.
             self.assertTrue(state_db.exists())
+            conn = sqlite3.connect(str(state_db))
+            self.assertIsNone(
+                conn.execute("SELECT id FROM threads WHERE id = ?", (sess_uuid,)).fetchone()
+            )
+            conn.close()
 
     def test_state_observer_detects_real_changes(self):
         with safe_temp_codex_home() as chome:

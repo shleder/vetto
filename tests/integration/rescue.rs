@@ -30,7 +30,10 @@ fn scan_and_diagnose_are_bounded_to_codex_session_roots() {
     );
     write_file(&root.join("auth.json"), "DO-NOT-READ");
     write_file(&root.join("config.toml"), "DO-NOT-READ");
-    write_file(&root.join("logs/not-a-session.jsonl"), "{\"secret\":true}\n");
+    write_file(
+        &root.join("logs/not-a-session.jsonl"),
+        "{\"secret\":true}\n",
+    );
 
     let scan = run_rescue(&root, &["scan"]);
     assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
@@ -100,8 +103,14 @@ fn snapshot_is_copy_only_exclusive_and_outside_agent_state() {
         .output()
         .expect("snapshot command");
     assert!(first.status.success(), "stderr: {}", stderr(&first));
-    assert_eq!(fs::read(&source).expect("source after snapshot"), source_bytes);
-    assert_eq!(fs::read(&output_path).expect("snapshot bytes"), source_bytes);
+    assert_eq!(
+        fs::read(&source).expect("source after snapshot"),
+        source_bytes
+    );
+    assert_eq!(
+        fs::read(&output_path).expect("snapshot bytes"),
+        source_bytes
+    );
 
     let second = Command::new(vetto_bin())
         .arg("rescue")
@@ -114,7 +123,10 @@ fn snapshot_is_copy_only_exclusive_and_outside_agent_state() {
         .output()
         .expect("collision command");
     assert!(!second.status.success(), "collision unexpectedly succeeded");
-    assert_eq!(fs::read(&output_path).expect("snapshot preserved"), source_bytes);
+    assert_eq!(
+        fs::read(&output_path).expect("snapshot preserved"),
+        source_bytes
+    );
 
     let inside_root = root.join("sessions/forbidden-copy.jsonl");
     let forbidden = Command::new(vetto_bin())
@@ -162,4 +174,3 @@ fn scan_does_not_follow_session_symlinks() {
         serde_json::from_slice(&output.stdout).expect("scan JSON output");
     assert_eq!(value["sessions"].as_array().map(Vec::len), Some(0));
 }
-

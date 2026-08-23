@@ -1,6 +1,6 @@
 Name:           vetto
-Version:        0.1.0
-Release:        0.1%{?dist}
+Version:        0.2.0
+Release:        0.alpha.1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
 URL:            https://github.com/shleder/vetto
@@ -34,5 +34,8 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Sun Aug 23 2026 vetto contributors - 0.2.0-0.alpha.1
+- Universal read-only rescue alpha metadata.
+
 * Sun Aug 23 2026 vetto contributors - 0.1.0-0.1
 - Source-only packaging recipe; no release performed.

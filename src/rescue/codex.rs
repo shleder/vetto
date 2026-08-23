@@ -132,7 +132,8 @@ impl CodexAdapter {
                     pending.push(canonical);
                     continue;
                 }
-                if !metadata.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+                if !metadata.is_file()
+                    || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
                 {
                     continue;
                 }
@@ -141,7 +142,10 @@ impl CodexAdapter {
                     _ => continue,
                 };
                 if sessions.len() >= context.max_files {
-                    bail!("session discovery exceeded the {} file budget", context.max_files);
+                    bail!(
+                        "session discovery exceeded the {} file budget",
+                        context.max_files
+                    );
                 }
                 *total_bytes = total_bytes
                     .checked_add(metadata.len())
@@ -210,11 +214,7 @@ impl RescueAdapter for CodexAdapter {
         Ok(sessions)
     }
 
-    fn diagnose(
-        &self,
-        context: &RescueContext,
-        session: &SessionRef,
-    ) -> Result<SessionView> {
+    fn diagnose(&self, context: &RescueContext, session: &SessionRef) -> Result<SessionView> {
         let bytes = Self::read_stable(context, &session.source_path)?;
         let terminated_with_newline = bytes.is_empty() || bytes.ends_with(b"\n");
         let mut records = 0usize;
@@ -321,4 +321,3 @@ impl RescueAdapter for CodexAdapter {
         })
     }
 }
-

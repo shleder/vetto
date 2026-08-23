@@ -17,9 +17,9 @@ use types::{Availability, RescueContext, SessionRef};
 fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
     match id {
         "codex" => Ok(Box::new(CodexAdapter)),
-        other => bail!(
-            "rescue adapter {other:?} is not available in 0.2.0-alpha.1; available: codex"
-        ),
+        other => {
+            bail!("rescue adapter {other:?} is not available in 0.2.0-alpha.1; available: codex")
+        }
     }
 }
 
@@ -105,11 +105,7 @@ pub fn run_cli(
                     "sessions": sessions,
                 }))
             } else {
-                println!(
-                    "adapter: {} ({})",
-                    adapter.id(),
-                    status.support_level
-                );
+                println!("adapter: {} ({})", adapter.id(), status.support_level);
                 if let Some(reason) = status.reason {
                     println!("status: unavailable ({})", report::clean(&reason));
                 } else {
@@ -117,11 +113,7 @@ pub fn run_cli(
                 }
                 println!("sessions: {}", sessions.len());
                 for session in sessions {
-                    println!(
-                        "{}  {} bytes",
-                        report::clean(&session.key),
-                        session.bytes
-                    );
+                    println!("{}  {} bytes", report::clean(&session.key), session.bytes);
                 }
                 Ok(())
             }
@@ -144,23 +136,13 @@ pub fn run_cli(
                 Ok(())
             }
         }
-        RescueCommand::Snapshot {
-            session,
-            output,
-        }
-        | RescueCommand::Fork {
-            session,
-            output,
-        } => {
+        RescueCommand::Snapshot { session, output } | RescueCommand::Fork { session, output } => {
             let session = select_session(adapter.as_ref(), &context, session)?;
             let receipt = adapter.snapshot(&context, &session, output)?;
             if json {
                 print_json(&receipt)
             } else {
-                println!(
-                    "snapshot: {}",
-                    report::clean(&receipt.destination)
-                );
+                println!("snapshot: {}", report::clean(&receipt.destination));
                 println!("bytes: {}", receipt.bytes);
                 println!("sha256: {}", receipt.sha256);
                 println!("source preserved: {}", receipt.source_preserved);

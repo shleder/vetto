@@ -273,153 +273,20 @@ class TransactionalRepairEngine:
                 invariants=invariants,
             )
 
-        # 6. Create Pre-Mutation Backup (INV-005)
-        backup_manifest = self.backup_engine.create_pre_mutation_backup(
-            targets=[session_file, target_db],
-            operation_id=op_id,
-        )
-        if not backup_manifest.verified:
-            return TransactionResult(
-                operation_id=op_id,
-                status="BLOCKED",
-                initial_source_sha256=sha_before,
-                final_source_sha256=sha_before,
-                source_preserved=True,
-                message="Pre-mutation backup verification failed.",
-                invariants=invariants,
-            )
-
-        # 7. Recheck preconditions immediately before mutation (INV-015)
-        current_sha = compute_file_sha256(session_file)
-        if current_sha != sha_before:
-            return TransactionResult(
-                operation_id=op_id,
-                status="STALE_PLAN",
-                initial_source_sha256=sha_before,
-                final_source_sha256=current_sha,
-                source_preserved=False,
-                message="Source rollout changed immediately prior to mutation. Aborting stale plan.",
-                invariants=invariants,
-            )
-
-        writer_recheck = self.desktop_adapter.detect_writer_status()
-        if writer_recheck != WriterStatus.INACTIVE_CONFIRMED:
-            return TransactionResult(
-                operation_id=op_id,
-                status="BLOCKED",
-                initial_source_sha256=sha_before,
-                final_source_sha256=sha_before,
-                source_preserved=True,
-                message="Writer appeared immediately prior to mutation. Aborting.",
-                invariants=invariants,
-            )
-
-        # 8. Apply narrow allowlisted insertion (INSERT INTO without REPLACE)
-        mutations_applied = 0
-        try:
-            conn = sqlite3.connect(str(target_db), timeout=5.0)
-            try:
-                cur = conn.cursor()
-                now_ts = int(time.time())
-
-                # Prepare authoritative values where proven from source or parameters
-                meta = dict(proven_metadata or {})
-                row_data: Dict[str, Any] = {
-                    "id": session_id,
-                    "rollout_path": str(session_file.resolve()),
-                    "created_at": meta.get("created_at", now_ts),
-                    "updated_at": meta.get("updated_at", now_ts),
-                }
-                for k, v in meta.items():
-                    if k not in row_data:
-                        row_data[k] = v
-
-                # Verify all NOT NULL columns without defaults are present
-                existing_cols_map = {c["name"]: c for c in threads_table.columns}
-                for nn_col in threads_table.not_null_columns:
-                    col_spec = existing_cols_map.get(nn_col)
-                    if col_spec and col_spec.get("dflt_value") is None and nn_col not in row_data:
-                        raise ValueError(f"Authoritative value missing for NOT NULL column '{nn_col}' without default")
-
-                cols_to_insert = [c for c in row_data if c in existing_cols_map]
-                placeholders = ", ".join("?" for _ in cols_to_insert)
-                col_names = ", ".join(f'"{c}"' for c in cols_to_insert)
-                values = tuple(row_data[c] for c in cols_to_insert)
-
-                # Strictly INSERT (NOT REPLACE)
-                cur.execute(f"INSERT INTO threads ({col_names}) VALUES ({placeholders})", values)
-                conn.commit()
-                mutations_applied = 1
-            finally:
-                conn.close()
-        except Exception as e:
-            # Rollback immediately on failure
-            rolled_back = self.backup_engine.rollback(backup_manifest)
-            status_val = "ROLLED_BACK" if rolled_back else "ROLLBACK_FAILED"
-            msg = f"Database write failed; state rolled back: {e}" if rolled_back else f"CRITICAL: Database write failed and rollback failed: {e}"
-            return TransactionResult(
-                operation_id=op_id,
-                status=status_val,
-                initial_source_sha256=sha_before,
-                final_source_sha256=sha_before,
-                source_preserved=True,
-                backup_manifest=backup_manifest,
-                message=msg,
-                invariants=invariants,
-            )
-
-        # 9. Post-Mutation Verification (INV-002, INV-008, INV-015)
-        sha_after = compute_file_sha256(session_file)
-        inv_immutability = InvariantEngine.check_source_immutability(sha_before, sha_after, is_derived_recovery=True)
-        invariants.append(inv_immutability)
-
-        if not inv_immutability.passed:
-            rolled_back = self.backup_engine.rollback(backup_manifest)
-            status_val = "ROLLED_BACK" if rolled_back else "ROLLBACK_FAILED"
-            return TransactionResult(
-                operation_id=op_id,
-                status=status_val,
-                initial_source_sha256=sha_before,
-                final_source_sha256=sha_after,
-                source_preserved=False,
-                backup_manifest=backup_manifest,
-                message="Source immutability violation detected; rolled back.",
-                invariants=invariants,
-            )
-
-        # Verify thread exists in DB and points to exact canonical path
-        try:
-            conn_verify = sqlite3.connect(str(target_db), timeout=2.0)
-            try:
-                cur_v = conn_verify.cursor()
-                cur_v.execute("SELECT rollout_path FROM threads WHERE id = ?", (session_id,))
-                row_v = cur_v.fetchone()
-                if not row_v or Path(row_v[0]).resolve() != session_file.resolve():
-                    raise ValueError("Target index verification failed: rollout_path mismatch")
-            finally:
-                conn_verify.close()
-        except Exception as e:
-            rolled_back = self.backup_engine.rollback(backup_manifest)
-            status_val = "ROLLED_BACK" if rolled_back else "ROLLBACK_FAILED"
-            return TransactionResult(
-                operation_id=op_id,
-                status=status_val,
-                initial_source_sha256=sha_before,
-                final_source_sha256=sha_after,
-                source_preserved=True,
-                backup_manifest=backup_manifest,
-                message=f"Post-repair verification failed; rolled back: {e}",
-                invariants=invariants,
-            )
-
+        # Vetto's universal recovery contract is copy-only. Even a schema that
+        # appears compatible cannot prove every vendor-derived field or future
+        # migration invariant, so production SQLite writes stop here.
         return TransactionResult(
             operation_id=op_id,
-            status="REPAIRED",
+            status="BLOCKED",
             initial_source_sha256=sha_before,
-            final_source_sha256=sha_after,
+            final_source_sha256=sha_before,
             source_preserved=True,
-            backup_manifest=backup_manifest,
-            applied_mutations_count=mutations_applied,
-            message="Derived state successfully repaired and verified. Source rollout preserved.",
+            applied_mutations_count=0,
+            message=(
+                "DIRECT_DERIVED_STATE_MUTATION_DISABLED: vendor SQLite state is "
+                "read-only; use snapshot, salvage, portable export/import, or "
+                "restore-to-copy instead."
+            ),
             invariants=invariants,
         )

@@ -126,24 +126,24 @@ class MutationNegativeAndRollbackTests(unittest.TestCase):
         with patch.object(engine.desktop_adapter, "detect_writer_status", return_value=WriterStatus.INACTIVE_CONFIRMED):
             with patch.object(engine.backup_engine, "create_pre_mutation_backup", side_effect=concurrent_alteration):
                 res = engine.execute_derived_index_repair(self.session_file)
-                self.assertEqual(res.status, "STALE_PLAN")
-                self.assertIn("Source rollout changed immediately prior to mutation", res.message)
+                self.assertEqual(res.status, "BLOCKED")
+                self.assertIn("DIRECT_DERIVED_STATE_MUTATION_DISABLED", res.message)
 
-    def test_successful_repair_and_post_verification(self):
+    def test_direct_repair_is_disabled_and_database_is_unchanged(self):
         state_db = self._setup_valid_state_db()
         engine = TransactionalRepairEngine(self.codex_home)
         with patch.object(engine.desktop_adapter, "detect_writer_status", return_value=WriterStatus.INACTIVE_CONFIRMED):
             res = engine.execute_derived_index_repair(self.session_file)
-            self.assertEqual(res.status, "REPAIRED")
-            self.assertEqual(res.applied_mutations_count, 1)
+            self.assertEqual(res.status, "BLOCKED")
+            self.assertEqual(res.applied_mutations_count, 0)
+            self.assertIn("DIRECT_DERIVED_STATE_MUTATION_DISABLED", res.message)
 
-            # Check DB row
+            # No vendor-derived row may be fabricated.
             conn = sqlite3.connect(str(state_db))
             cur = conn.cursor()
             cur.execute("SELECT rollout_path FROM threads WHERE id = ?", ("11111111-2222-3333-4444-555555555555",))
             row = cur.fetchone()
-            self.assertIsNotNone(row)
-            self.assertEqual(Path(row[0]).resolve(), self.session_file.resolve())
+            self.assertIsNone(row)
             conn.close()
 
     def test_rollback_failed_status_when_backup_corrupted(self):
@@ -163,8 +163,8 @@ class MutationNegativeAndRollbackTests(unittest.TestCase):
             with patch.object(engine.backup_engine, "rollback", return_value=False):
                 with patch("sqlite3.connect", side_effect=faulty_connect):
                     res = engine.execute_derived_index_repair(self.session_file)
-                    self.assertEqual(res.status, "ROLLBACK_FAILED")
-                    self.assertIn("CRITICAL", res.message)
+                    self.assertEqual(res.status, "BLOCKED")
+                    self.assertIn("DIRECT_DERIVED_STATE_MUTATION_DISABLED", res.message)
 
 
 if __name__ == "__main__":

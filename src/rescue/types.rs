@@ -87,4 +87,3 @@ pub struct SnapshotReceipt {
     pub sha256: String,
     pub source_preserved: bool,
 }
-

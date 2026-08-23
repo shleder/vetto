@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use super::types::{
-    AdapterStatus, RescueContext, SessionRef, SessionView, SnapshotReceipt,
-};
+use super::types::{AdapterStatus, RescueContext, SessionRef, SessionView, SnapshotReceipt};
 
 pub trait RescueAdapter: Send + Sync {
     fn id(&self) -> &'static str;
@@ -11,8 +9,7 @@ pub trait RescueAdapter: Send + Sync {
 
     fn discover_sessions(&self, context: &RescueContext) -> Result<Vec<SessionRef>>;
 
-    fn diagnose(&self, context: &RescueContext, session: &SessionRef)
-        -> Result<SessionView>;
+    fn diagnose(&self, context: &RescueContext, session: &SessionRef) -> Result<SessionView>;
 
     fn snapshot(
         &self,
@@ -21,4 +18,3 @@ pub trait RescueAdapter: Send + Sync {
         destination: &std::path::Path,
     ) -> Result<SnapshotReceipt>;
 }
-

@@ -35,7 +35,7 @@ Codespace. Your host is probed at runtime; the tier is never assumed.
 
 ```console
 $ vetto doctor
-vetto v0.1.0 doctor
+vetto v0.2.0-alpha.1 doctor
 landlock:                available (ABI 4)
 unprivileged userns:     yes
 full namespace stack:    yes
@@ -66,20 +66,23 @@ and reports sit below a one-way boundary; none of them can grant an operation.
 
 ## Run it
 
-Install the stable package from npm, inspect the machine, then add `vetto --`
-before the command you already use:
+Install the current public alpha from npm, inspect the machine, then add
+`vetto --` before the command you already use:
 
 ```console
-npm install --global @shleddy/vetto
+npm install --global @shleddy/vetto@next
 vetto doctor
 cd my-project
 vetto --agent codex --profile default -- codex exec "review auth"
 ```
 
-The npm package includes native executables for Linux x64/ARM64, macOS
+The alpha npm package includes native executables for Linux x64/ARM64, macOS
 x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
 there is no install-time binary downloader. To install this release exactly,
-use `npm install --global @shleddy/vetto@0.1.0`.
+use `npm install --global @shleddy/vetto@0.2.0-alpha.1`. Stable `0.1.x`
+remains on the npm `latest` tag while alpha builds use `next`.
+Alpha testers should follow the privacy and reporting checklist in
+[docs/field-testing.md](docs/field-testing.md).
 
 <details>
 <summary><strong>Build directly from source</strong></summary>
@@ -103,6 +106,25 @@ For an interactive agent, the default `--tui=statusline` preserves the
 agent's PTY and reserves one row for vetto. Use `--tui=full` for the dashboard
 or `--tui=none` for scripts and CI. `vetto init` creates a starter
 `vetto.toml` in the current project.
+
+## Rescue local sessions
+
+The `0.2` alpha adds a provider-neutral, copy-only recovery surface. Alpha 1
+ships a bounded Codex reference adapter; later adapters use the same contract
+without changing the sandbox core.
+
+```console
+vetto rescue --json scan
+vetto rescue diagnose sessions/2026/08/23/session.jsonl
+mkdir recovery
+vetto rescue snapshot session.jsonl --output recovery/session.jsonl
+```
+
+Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
+overwrites an existing destination, writes inside the original agent state
+root, or fabricates vendor SQLite rows. `snapshot` and `fork` create a verified
+new copy; ambiguous or changing inputs fail closed. See
+[ADR 0001](docs/adr/0001-universal-rescue-architecture.md).
 
 ## Why an outer boundary?
 

@@ -162,8 +162,12 @@ class CliSubprocessE2ETests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, f"Stderr: {proc.stderr}")
             data = json.loads(proc.stdout)
-            self.assertEqual(data["data"]["action_taken"], "REPAIRED")
+            self.assertEqual(data["data"]["action_taken"], "BLOCKED")
             self.assertTrue(data["data"]["transaction"]["source_preserved"])
+            self.assertIn(
+                "DIRECT_DERIVED_STATE_MUTATION_DISABLED",
+                data["data"]["transaction"]["message"],
+            )
 
 
 if __name__ == "__main__":
