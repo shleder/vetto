@@ -35,7 +35,7 @@ Codespace. Your host is probed at runtime; the tier is never assumed.
 
 ```console
 $ vetto doctor
-vetto v0.2.0-alpha.1 doctor
+vetto v0.2.0-alpha.2 doctor
 landlock:                available (ABI 4)
 unprivileged userns:     yes
 full namespace stack:    yes
@@ -79,7 +79,7 @@ vetto --agent codex --profile default -- codex exec "review auth"
 The alpha npm package includes native executables for Linux x64/ARM64, macOS
 x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
 there is no install-time binary downloader. To install this release exactly,
-use `npm install --global @shleddy/vetto@0.2.0-alpha.1`. Stable `0.1.x`
+use `npm install --global @shleddy/vetto@0.2.0-alpha.2`. Stable `0.1.x`
 remains on the npm `latest` tag while alpha builds use `next`.
 Alpha testers should follow the privacy and reporting checklist in
 [docs/field-testing.md](docs/field-testing.md).

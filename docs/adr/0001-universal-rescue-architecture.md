@@ -1,6 +1,6 @@
 # ADR 0001: universal rescue architecture
 
-Status: accepted for `0.2.0-alpha.1`
+Status: accepted for the `0.2` alpha line
 
 ## Context
 
@@ -88,4 +88,3 @@ published acceptance gates.
 - unit, integration, security-smoke and cross-platform release checks pass;
 - Git history and release assets pass the documented secret scan;
 - the repository is made public only after all preceding gates pass.
-

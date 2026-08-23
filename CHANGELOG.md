@@ -7,6 +7,23 @@ Keep a Changelog; versioning follows SemVer.
 
 No unreleased changes yet.
 
+## [0.2.0-alpha.2] — 2026-08-23
+
+### Added
+
+- Freeze the provider-neutral rescue adapter contract v1 and conformance
+  checks for bounded, copy-only recovery.
+- Add an experimental Claude read-only adapter with explicit-root discovery,
+  opaque JSONL diagnosis, credential-path exclusion, and verified snapshots.
+- Add Antigravity compatibility-gate documentation; unsupported formats fail
+  closed instead of being guessed.
+
+### Changed
+
+- Keep user installation npm-only; no source-install path is advertised.
+- Harden Codex and Claude discovery with per-session size budgets and stable
+  source reads.
+
 ## [0.2.0-alpha.1] — 2026-08-23
 
 First integration alpha for universal local-agent recovery.

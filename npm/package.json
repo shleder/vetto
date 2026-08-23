@@ -1,6 +1,6 @@
 {
   "name": "@shleddy/vetto",
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0-alpha.2",
   "description": "Cross-platform vetto sandbox and security layer for AI coding agents",
   "license": "Apache-2.0",
   "author": "shleddy",
