@@ -5,60 +5,264 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   build:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact: vetto-linux-x86_64
-          - os: macos-14
+            archive: vetto-linux-x86_64.tar.gz
+            binary: vetto
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            artifact: vetto-linux-aarch64
+            archive: vetto-linux-aarch64.tar.gz
+            binary: vetto
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact: vetto-macos-aarch64
-          - os: macos-13
+            archive: vetto-macos-aarch64.tar.gz
+            binary: vetto
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: vetto-macos-x86_64
+            archive: vetto-macos-x86_64.tar.gz
+            binary: vetto
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: vetto-windows-x86_64
+            archive: vetto-windows-x86_64.zip
+            binary: vetto.exe
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
 
-      - name: Release build
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package
+      - name: Verify tag and manifest versions
+        shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czf ../../../${{ matrix.artifact }}.tar.gz vetto
-          cd ../../..
-          sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          set -euo pipefail
+          expected_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          npm_version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",$/\1/p' npm/package.json | head -n 1)"
+          test -n "$cargo_version"
+          test "$expected_version" = "$cargo_version"
+          test "$expected_version" = "$npm_version"
 
-      - name: Upload artifacts
+      - name: Install the ARM64 Linux linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
+      - name: Release build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package release archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          test -f "$binary"
+          mkdir -p release-assets
+          tar -czf "release-assets/${{ matrix.archive }}" \
+            -C "$(dirname "$binary")" "$(basename "$binary")"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd release-assets && sha256sum "${{ matrix.archive }}" \
+              > "${{ matrix.archive }}.sha256")
+          else
+            (cd release-assets && shasum -a 256 "${{ matrix.archive }}" \
+              > "${{ matrix.archive }}.sha256")
+          fi
+
+      - name: Package Windows release archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "release binary not found: $binary"
+          }
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $archive = "release-assets/${{ matrix.archive }}"
+          Compress-Archive -LiteralPath $binary -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.archive }}" | Set-Content -Encoding ascii "$archive.sha256"
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.tar.gz.sha256
+          name: release-${{ matrix.artifact }}
+          path: release-assets/*
+          if-no-files-found: error
 
-  publish:
+  npm-package:
+    name: assemble npm package
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Download native release archives
+        uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           merge-multiple: true
 
-      - name: Create GitHub release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Assemble and validate npm package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./npm/package.json').version")"
+          test "$expected_version" = "$package_version"
+
+          rm -rf npm-stage npm-dist
+          mkdir -p npm-stage npm-dist
+          cp -R npm/. npm-stage/
+          rm -f npm-stage/.npmignore npm-stage/.gitignore
+          rm -rf npm-stage/native
+
+          for checksum in vetto-*.sha256; do
+            sha256sum -c "$checksum"
+          done
+
+          extract_binary() {
+            local archive="$1"
+            local target="$2"
+            mkdir -p "npm-stage/native/$target"
+            tar -xzf "$archive.tar.gz" -C "npm-stage/native/$target"
+          }
+
+          extract_binary vetto-linux-x86_64 linux-x64
+          extract_binary vetto-linux-aarch64 linux-arm64
+          extract_binary vetto-macos-x86_64 darwin-x64
+          extract_binary vetto-macos-aarch64 darwin-arm64
+          mkdir -p npm-stage/native/win32-x64
+          unzip -q vetto-windows-x86_64.zip -d npm-stage/native/win32-x64
+
+          chmod +x npm-stage/bin/vetto.js
+          chmod +x npm-stage/native/linux-x64/vetto
+          chmod +x npm-stage/native/linux-arm64/vetto
+          chmod +x npm-stage/native/darwin-x64/vetto
+          chmod +x npm-stage/native/darwin-arm64/vetto
+
+          npm test --prefix npm-stage
+          npm pack npm-stage --pack-destination npm-dist
+          package_tarball="$(find npm-dist -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "$package_tarball"
+          mv "$package_tarball" npm-dist/vetto-npm-${package_version}.tgz
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd npm-dist && sha256sum "vetto-npm-${package_version}.tgz" \
+              > "vetto-npm-${package_version}.tgz.sha256")
+          else
+            (cd npm-dist && shasum -a 256 "vetto-npm-${package_version}.tgz" \
+              > "vetto-npm-${package_version}.tgz.sha256")
+          fi
+
+          package_listing="$(mktemp)"
+          tar -tzf npm-dist/vetto-npm-${package_version}.tgz > "$package_listing"
+          for path in \
+            package/bin/vetto.js \
+            package/native/linux-x64/vetto \
+            package/native/linux-arm64/vetto \
+            package/native/darwin-x64/vetto \
+            package/native/darwin-arm64/vetto \
+            package/native/win32-x64/vetto.exe; do
+            grep -Fqx "$path" "$package_listing"
+          done
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: npm-dist/*
+          if-no-files-found: error
+
+  npm-smoke:
+    name: npm smoke (${{ matrix.os }})
+    needs: npm-package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+    steps:
+      - name: Download npm package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: npm-dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install and launch the packaged CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir smoke && cd smoke
+          npm init --yes >/dev/null 2>&1
+          package_tarball="$(find ../npm-dist -maxdepth 1 -type f -name 'vetto-npm-*.tgz' -print -quit)"
+          test -n "$package_tarball"
+          npm install --ignore-scripts "$package_tarball"
+          node <<'NODE'
+          const { spawnSync } = require("child_process");
+          const bin = process.platform === "win32"
+            ? "node_modules/.bin/vetto.cmd"
+            : "node_modules/.bin/vetto";
+          const result = spawnSync(bin, ["--version"], {
+            stdio: "inherit",
+            shell: process.platform === "win32",
+          });
+          if (result.error) throw result.error;
+          process.exit(result.status === null ? 1 : result.status);
+          NODE
+
+  github-release:
+    name: create draft GitHub release
+    needs: [build, npm-package, npm-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Download npm package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release-assets
+
+      - name: Create draft GitHub release
         uses: ncipollo/release-action@v1
         with:
           draft: true
-          artifacts: "*.tar.gz,*.sha256"
+          artifacts: "*.tar.gz,*.zip,*.sha256,release-assets/vetto-npm-*.tgz,release-assets/vetto-npm-*.tgz.sha256"
           generateReleaseNotes: true

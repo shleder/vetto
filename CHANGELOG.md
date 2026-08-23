@@ -5,8 +5,20 @@ Keep a Changelog; versioning follows SemVer.
 
 ## [Unreleased]
 
-No release, tag, package publication, or registry update is implied by this
-section.
+No unreleased changes yet.
+
+## [0.1.0] — 2026-08-23
+
+First public release of the daemon-less sandbox and security layer for local
+AI coding agents.
+
+### Distribution
+
+- Publish the cross-platform `vetto` npm package with bundled native
+  executables for Linux x64/ARM64, macOS x64/Apple Silicon, and Windows x64.
+- Publish matching native archives and SHA-256 checksums in the GitHub release.
+- Keep crates.io publication out of this release; Cargo remains the build and
+  source-install manifest, with its version aligned to `0.1.0`.
 
 ### Security
 
@@ -39,11 +51,10 @@ section.
 - Performance documentation no longer presents estimates as measured product
   overhead.
 
-## [0.1.0] — 2026-08-22
+### Initial milestone
 
-First public milestone: daemon-less sandbox + security layer for AI coding
-agents. (This crate was scaffolded under the working name `leash` before its
-public rename to `vetto`; pre-rename history is preserved below.)
+The crate was scaffolded under the working name `leash` before its public
+rename to `vetto`; pre-rename history is preserved below.
 
 ### Enforcement
 - Linux Tier FULL: Landlock (ABI 1–3) + USER/MOUNT/PID/NET/IPC namespaces,

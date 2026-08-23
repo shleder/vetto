@@ -1,28 +1,31 @@
-# vetto — npm alpha preview
+# vetto — cross-platform npm distribution
 
-This package contains the real `vetto` native sandbox binary for **Linux
-x86_64 with glibc 2.29 or newer**. It is an early npm distribution preview
-published under the `beta` tag; it is not the stable cross-platform release
-channel yet.
+Install the stable release globally with npm:
 
 ```bash
-npm install --global @shleddy/vetto@beta
-vetto doctor --probe
+npm install --global vetto
+vetto doctor
 ```
 
-The bundled executable provides Landlock filesystem isolation, seccomp socket
-and syscall filtering, namespace isolation where supported, environment
-allowlisting, audit output, and post-session reports. It requires Linux with
-Landlock support; run `vetto doctor` to see the tier available on your machine.
+`vetto` ships the native `vetto` executable in the package. It does
+not run an install script, download code at install time, or require a Rust
+toolchain. The small launcher runs on the Node.js installation that provides
+npm.
 
-Package version: `0.0.1-alpha.0`. The bundled core currently reports its Rust
-application version as `vetto 0.1.0`.
+Prebuilt targets in `0.1.0`:
 
-This alpha package:
+| Platform | Architecture | Native path |
+| --- | --- | --- |
+| Linux | x86_64 | `linux-x64` |
+| Linux | arm64 | `linux-arm64` |
+| macOS | x86_64 | `darwin-x64` |
+| macOS | arm64 | `darwin-arm64` |
+| Windows | x86_64 | `win32-x64` |
 
-- supports Linux x64 only;
-- contains no install scripts or network downloader;
-- ships a stripped native binary plus the Apache-2.0 license;
-- does not support Windows or macOS through npm yet.
+Linux requires a glibc-based distribution with Landlock support for the full
+sandbox tier. The Windows backend is experimental and reports its available
+capabilities through `vetto doctor`.
 
-Project: <https://github.com/shleder/vetto>
+The npm package is a distribution channel for the native CLI. For policy
+reference, security limitations, and source builds, see the project
+documentation: <https://github.com/shleder/vetto>.

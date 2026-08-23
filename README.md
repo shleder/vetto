@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status for main"></a>
+  <a href="https://www.npmjs.com/package/vetto"><img src="https://img.shields.io/npm/v/vetto?logo=npm&label=npm" alt="npm package version"></a>
 </p>
 
 <p align="center">
@@ -60,20 +61,34 @@ and reports sit below a one-way boundary; none of them can grant an operation.
 <a id="run-it"></a>
 
 <p align="center">
-  <img src="./assets/readme/section-run.svg" width="100%" alt="01 Run it: install from source, inspect the host, and wrap an existing agent command">
+  <img src="./assets/readme/section-run.svg" width="100%" alt="01 Run it: install from npm, inspect the host, and wrap an existing agent command">
 </p>
 
 ## Run it
 
-Install the current source, inspect the machine, then add `vetto --` before the
-command you already use:
+Install the stable package from npm, inspect the machine, then add `vetto --`
+before the command you already use:
 
 ```console
-cargo install --locked --git https://github.com/shleder/vetto
+npm install --global vetto
 vetto doctor
 cd my-project
 vetto --agent codex --profile default -- codex exec "review auth"
 ```
+
+The npm package includes native executables for Linux x64/ARM64, macOS
+x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
+there is no install-time binary downloader. To install this release exactly,
+use `npm install --global vetto@0.1.0`.
+
+<details>
+<summary><strong>Build directly from source</strong></summary>
+
+```console
+cargo install --locked --git https://github.com/shleder/vetto
+```
+
+</details>
 
 The wrapper accepts any executable:
 
