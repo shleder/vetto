@@ -222,6 +222,12 @@ impl ClaudeAdapter {
                 if metadata.nlink() != 1 {
                     continue;
                 }
+                if metadata.len() > context.max_session_bytes {
+                    bail!(
+                        "Claude discovery found a file over the {} byte inspection budget",
+                        context.max_session_bytes
+                    );
+                }
                 let canonical = match fs::canonicalize(&path) {
                     Ok(canonical) if canonical.starts_with(root) => canonical,
                     _ => continue,
