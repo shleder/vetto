@@ -1,151 +1,200 @@
-# vetto
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled policy ledger and OS boundary around local AI coding agents">
+</p>
 
-`vetto` is a daemon-less, agent-agnostic security boundary for locally
-invoked AI coding agents. It applies one operator-controlled policy around
-Codex, Claude Code, Aider, custom scripts, and other command-line agents,
-then writes post-session audit artifacts.
+<p align="center">
+  <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status for main"></a>
+</p>
 
-The boundary is enforced by the operating system: Landlock, namespaces and
-seccomp on Linux; Seatbelt on macOS; and a capability-gated Windows process
-sandbox where the required Windows 11 APIs are present. vetto does not
-replace an agent's built-in sandbox. It adds a consistent outer policy,
-network default-deny, environment filtering, terminal visibility, and reports
-across agents.
+<p align="center">
+  <a href="#run-it">Run it</a> ·
+  <a href="#boundary">Boundary</a> ·
+  <a href="#controls">Controls</a> ·
+  <a href="#platforms">Platforms</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#limits">Limits</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
 
-There is no persistent daemon, cloud service, telemetry, phone-home, OPA/Rego
-engine, TLS MITM, CA injection, Docker dependency, or root requirement in the
-core path. Per-session relay/helper processes may exist while a session is
-running; they are not a persistent service.
+`vetto` launches Codex, Claude Code, Aider, custom scripts, and other local
+commands inside an operator-controlled OS security boundary. It applies the
+policy before `exec`, makes descendants inherit it, filters the child
+environment, defaults the network to off, and leaves session evidence without
+turning observation into enforcement.
 
-## Positioning
+> [!IMPORTANT]
+> **No boundary, no process.** If the selected sandbox cannot be established,
+> vetto refuses to launch the agent. It never falls back to an ordinary
+> unsandboxed command.
 
-Modern agents increasingly ship their own sandbox. vetto is the uniform layer
-above those heterogeneous built-ins, including agents whose built-in policy is
-older, optional, or absent.
+### A real capability probe
 
-| Competitor / alternative | Overlap | vetto's edge |
-|---|---|---|
-| AgentJail | High | One daemon-less binary; no OPA/Rego daemon |
-| Watchfire | High | One binary; no `watchfired` service |
-| ZeroClaw | Medium | Terminal-native TUI and post-session reports; no web dashboard |
-| landrun | Medium | Agent presets, TUI, audit formats, and macOS backend |
-| Agent built-in sandboxes (Codex, Claude Code, etc.) | High | One policy and report model across any agent; defense in depth that the operator controls |
-
-## Quick start
-
-From a source checkout:
+This is an excerpt from `vetto doctor` on the project's current GitHub
+Codespace. Your host is probed at runtime; the tier is never assumed.
 
 ```console
-cargo install --locked --path .
+$ vetto doctor
+vetto v0.1.0 doctor
+landlock:                available (ABI 4)
+unprivileged userns:     yes
+full namespace stack:    yes
+seccomp filters:         yes
+seccomp user-notify:     yes
+audit feed readable:     no
+chosen tier:             full
+```
+
+The last two lines are deliberate: enforcement can be fully active even when
+the host does not expose a readable audit feed.
+
+<a id="boundary"></a>
+
+<p align="center">
+  <img src="./assets/readme/boundary.svg" width="100%" alt="vetto resolves policy, probes capabilities, applies an OS boundary, executes the agent, and keeps observation separate from enforcement">
+</p>
+
+The startup order is the security property: policy resolution and capability
+checks happen before the agent exists. The TUI, event readers, JSONL stream,
+and reports sit below a one-way boundary; none of them can grant an operation.
+
+<a id="run-it"></a>
+
+<p align="center">
+  <img src="./assets/readme/section-run.svg" width="100%" alt="01 Run it: install from source, inspect the host, and wrap an existing agent command">
+</p>
+
+## Run it
+
+Install the current source, inspect the machine, then add `vetto --` before the
+command you already use:
+
+```console
+cargo install --locked --git https://github.com/shleder/vetto
 vetto doctor
 cd my-project
-vetto -- codex exec "refactor auth module"
+vetto --agent codex --profile default -- codex exec "review auth"
 ```
 
-Replace `codex exec ...` with `claude -p ...`, `aider ...`, `opencode ...`, or
-any executable command. `vetto doctor` reports the backend and Linux tier
-before a session starts. `vetto init` writes a starter `vetto.toml` in the
-current directory.
+The wrapper accepts any executable:
 
-For an interactive agent, keep the default `--tui=statusline`. For a
-headless command or CI, use `--tui=full` or `--tui=none`; `--ci` implies
-`--tui=none` and prints a final JSON summary.
-
-## How it works
-
-```text
-operator command
-      |
-      v
-vetto: policy layers -> capability probe -> fail-closed setup
-      |
-      +-- Linux FULL: Landlock + USER/MOUNT/PID/NET/IPC namespaces + seccomp
-      +-- Linux FS-ONLY: Landlock + seccomp, no namespaces
-      +-- macOS: Seatbelt profile via sandbox-exec
-      +-- Windows: experimental AppContainer/process sandbox + Job Object
-      |
-      v
-agent and descendants -> TUI / JSONL / reports (observation only)
+```console
+vetto -- claude -p "fix the failing test"
+vetto -- aider
+vetto -- opencode
+vetto -- python agent.py
 ```
 
-Enforcement is installed before the agent is executed and is inherited by
-descendants. Observation never decides whether an operation is allowed.
+For an interactive agent, the default `--tui=statusline` preserves the
+agent's PTY and reserves one row for vetto. Use `--tui=full` for the dashboard
+or `--tui=none` for scripts and CI. `vetto init` creates a starter
+`vetto.toml` in the current project.
 
-### Linux capability tiers
+## Why an outer boundary?
 
-| | FULL (preferred) | FS-ONLY (fallback) |
-|---|---|---|
-| Required capabilities | Landlock (kernel support, normally kernel >= 5.13) and a complete unprivileged user-namespace setup; `doctor` probes the namespace stack and private `/proc` | Landlock plus unprivileged seccomp filters; no user namespaces or mount/PID/network namespaces |
-| Filesystem | Landlock allowlist. Intra-project secrets are masked with `/dev/null` file binds or empty tmpfs directory overlays before Landlock is applied | Landlock allowlist. The loader enumerates the project and omits resolved secret-shaped entries; overlays are unavailable |
-| Process lifecycle | vetto's PID-namespace supervisor reaps and contains descendants; killing it kills the namespace | `PR_SET_PDEATHSIG` and a private process group; a `setsid()`-detached grandchild can outlive cleanup |
-| `--net=off` | Interface-less network namespace plus seccomp socket-family hardening | Seccomp rejects non-Unix socket families |
-| `--net=allowlist` / `strict` | CONNECT relay and host-side broker; DNS and destination validation happen outside the sandbox | Refused before launch; these relay modes require FULL |
-| Privileges | No root is required when the host permits the unprivileged setup | No root is required when Landlock and seccomp are available |
+Agent-built sandboxes are useful defense in depth, but their policies,
+platform coverage, defaults, and reporting differ. vetto gives the operator
+one outer policy without detecting, disabling, or weakening the sandbox
+inside the agent.
 
-If Landlock is unavailable, or neither tier can be established, vetto refuses
-to run the agent. It never falls back to unsandboxed execution. FS-ONLY is a
-real fallback with a smaller isolation boundary, not a claim that every Linux
-host has the same guarantees.
+| Competitor / alternative | Overlap | What vetto adds |
+| --- | --- | --- |
+| AgentJail | High | Daemon-less core path; no OPA/Rego service |
+| Watchfire | High | No persistent `watchfired` service |
+| ZeroClaw | Medium | Terminal-native operation and post-session artifacts; no web dashboard |
+| landrun | Medium | Agent presets, TUI, reports, and a macOS backend |
+| **Agent built-in sandboxes (Codex, Claude Code, etc.)** | High | One operator-controlled policy and report model across agents; a consistent outer layer for custom, optional, older, or absent built-ins |
 
-### Filesystem and secret handling
+<a id="controls"></a>
 
-Landlock makes decisions in the VFS on resolved inodes; path races and symlink
-tricks do not become a userspace policy decision. Landlock is additive,
-however, so it cannot subtract `.env` from an otherwise allowed project tree.
-On Linux FULL, vetto therefore masks each resolved deny path in the private
-mount namespace before applying Landlock. Home credentials remain denied by
-omission from read roots. `~/.gitconfig` is intentionally read-only in the
-default/audit/permissive profiles because Git identity is commonly needed.
+## What the boundary controls
 
-The Linux seccomp hardening filter is inherited by descendants and blocks
-mount teardown/replacement and selected kernel-control interfaces including
-`umount2`, `io_uring`, `userfaultfd`, `ptrace`, `process_vm_*`, `bpf`, and
-`perf_event_open`. These blocks can make debuggers, nested container tools, or
-kernel tracing workloads unusable.
+| Surface | Enforcement | Operator-facing control |
+| --- | --- | --- |
+| Filesystem and secrets | Landlock on Linux and Seatbelt on macOS; Windows refuses policies whose requested path exclusions cannot be represented | Additive read/write roots; resolved secret masking in Linux FULL; fail-closed bounded enumeration in FS-ONLY |
+| Processes and kernel interfaces | Namespace/process containment plus inherited seccomp on Linux; Job Object/restricted token on Windows | Linux seccomp blocks `umount2`, `ptrace`, `process_vm_*`, `pidfd_getfd`, `io_uring`, `userfaultfd`, `bpf`, and `perf_event_open`; resource limits are backend-specific |
+| Network | Off by default; Linux FULL can use a host-side relay | Domain allowlist, exact domain+port rules, and an explicit Git-over-SSH helper |
+| Environment | Child environment rebuilt from an allowlist | Explicit `[environment].pass_through`; token, cloud, and API-key variables are stripped by default |
+| Session evidence | PTY/TUI, optional event feeds, JSONL, HTML, Markdown, JSON, SARIF | `--observe-seccomp`, `--fail-on-block`, `--report-dir`, and bounded retention; evidence never changes allow/deny |
 
-### Observation and TUI
+### Network modes
 
-- `--tui=statusline` (default) leaves the agent in a PTY and reserves one row
-  for tier, network mode, counters, and the last event. `Ctrl+]` opens the
-  scrollable event overlay.
-- `--tui=full` owns an alternate-screen dashboard with agent output, filters,
-  blocked/files/network/suspicious views, activity counters, pause/resume,
-  and bounded event export. `q` asks before terminating the agent.
-- `--tui=none` leaves stdio inherited. This is the portable choice for batch
-  commands and CI.
-- Linux allowed-file activity comes from a best-effort process/fd poller.
-  Blocked attempts are available only when a readable kernel audit feed or
-  `--observe-seccomp` is available. A missing feed does not weaken
-  enforcement; it only means some denied attempts will not appear in the UI
-  or reports.
-- macOS FSEvents is a delayed/coalesced change feed. It does not report file
-  reads and does not expose Seatbelt denials. Optional Endpoint Security is
-  capability/entitlement/privilege gated and is not the Seatbelt enforcement
-  boundary.
+```console
+# No external network. This is the default.
+vetto --net=off -- agent command
 
-## Supported agents
+# Linux FULL: proxy-aware traffic to listed domains.
+vetto --net=allowlist:api.github.com,registry.npmjs.org -- agent command
 
-The wrapper accepts any executable command. These names select built-in
-compatibility presets with narrowly scoped read roots; they do not disable the
-base policy.
+# Linux FULL: exact host and port.
+vetto --net=strict:registry.npmjs.org:443 -- agent command
 
-| Agent | Typical command | Built-in isolation | Preset | Recommended UI / notes |
-|---|---|---|---|---|
-| OpenAI Codex CLI | `codex`, `codex exec` | Yes; platform/config dependent | `codex` | `statusline` interactive; `full`/`none` for `exec` |
-| Claude Code | `claude`, `claude -p` | Optional/tool-specific | `claude` | `statusline` interactive; `full`/`none` for `-p` |
-| Aider | `aider` | No uniform OS boundary assumed | `aider` | Keep vetto as the outer enforcement boundary |
-| Cursor Agent | `cursor-agent` | Implementation/version dependent | `cursor` | Prefer `full`; endpoint requirements are task-specific |
-| Cline | User-configured CLI/extension command | Unknown | `cline` | Provide the actual executable explicitly |
-| OpenCode | `opencode` | Its permission model is not treated as an OS boundary | `opencode` | Provider endpoints must be allowed explicitly |
-| GitHub Copilot CLI | `copilot` | Implementation/version dependent | `copilot` | GitHub endpoints are not allowed by default |
-| Custom process | Any executable | Unknown | `custom` | Use `--tui=none` for scripts and CI |
+# Linux FULL: explicit SSH relay; the host/port must also be allowed.
+vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
+```
 
-Use `vetto --agent codex -- codex exec "task"` for a preset. `doctor
---check-agent NAME` probes an executable's version output; it is not a
-version compatibility guarantee. Built-in agent sandboxes are defense in
-depth: vetto does not try to detect, disable, or weaken them.
+The broker resolves DNS outside the sandbox, rejects loopback, private,
+link-local, metadata, and other special-use destinations, pins the approved
+IP for the connection, and pumps opaque bytes. There is no SNI parsing, TLS
+decryption, CA injection, or TLS MITM. Non-proxy protocols have no route
+unless an explicit helper exists. See [docs/network.md](docs/network.md).
 
-## Profiles
+### Reports and CI
+
+```console
+vetto --ci --tui=none --profile=strict --net=off \
+  --report=json,sarif --report-dir=.vetto/reports \
+  --fail-on-block -- agent command
+```
+
+Reports use private, collision-resistant names and bounded retention. The
+sanitizer is explicitly best-effort: false positives and false negatives are
+possible, and reports contain observed events rather than proof of complete
+denial visibility.
+
+<a id="platforms"></a>
+
+<p align="center">
+  <img src="./assets/readme/section-platforms.svg" width="100%" alt="02 Capability first: Linux, macOS, and Windows expose different verified boundaries">
+</p>
+
+## Platform matrix
+
+| Platform | Enforcement path | Current scope | Honest boundary |
+| --- | --- | --- | --- |
+| **Linux FULL** | Landlock + USER/MOUNT/PID/NET/IPC namespaces + seccomp | Filesystem masking, descendant containment, network-off, allowlist/strict relay, Git SSH helper | Preferred tier; requires the complete unprivileged namespace setup |
+| **Linux FS-ONLY** | Landlock + seccomp, without namespaces | Filesystem policy, environment filtering, process hardening, network-off | No mount/PID/network namespace; relay modes are refused |
+| **macOS** | Seatbelt through `/usr/bin/sandbox-exec` | Filesystem policy and network-off spawn path | `sandbox-exec` is deprecated and undocumented; FSEvents is change-only |
+| **Windows** | Windows 11 experimental process sandbox/AppContainer + restricted low-integrity token + Job Object | Capability-gated network-off process launch with inherited stdio | Conditional backend, not a Linux-equivalent fallback; missing APIs stop launch |
+
+The core path does not self-elevate. Linux needs no root when the host permits
+the required unprivileged setup. Optional Windows WFP, ETW, Event Log,
+minifilter, or Windows Sandbox integrations remain capability/privilege gated
+and are never silently enabled. Details:
+[docs/platform-backends.md](docs/platform-backends.md).
+
+### Linux tier difference
+
+| | FULL | FS-ONLY |
+| --- | --- | --- |
+| Secret handling | File-bind and empty-tmpfs overlays before Landlock | Bounded project enumeration; errors instead of widening access when it cannot complete |
+| Descendants | PID-namespace supervisor contains and reaps them | Private process group + `PR_SET_PDEATHSIG`; a `setsid()` grandchild can outlive cleanup |
+| Network | Off, allowlist, strict, Git SSH relay | Off only |
+| Compatibility | Requires usable unprivileged namespaces and private `/proc` | Smaller boundary with fewer host requirements |
+
+<a id="configuration"></a>
+
+## Profiles and policy
+
+Named agent presets add narrowly scoped compatibility reads; they never turn
+off the base policy. Available presets include `codex`, `claude`, `aider`,
+`cursor`, `cline`, `opencode`, `copilot`, and `custom`.
+
+| Profile | Read/write posture | Use when |
+| --- | --- | --- |
+| `default` | Project and temp writes; common system/toolchain/cache reads | Normal local development |
+| `strict` | Project writes; minimal system/runtime reads | Reduce ambient access |
+| `audit` | Same filesystem posture as `default` | Pair with event feeds and reports |
+| `permissive` | Wider system/toolchain reads; secrets remain denied | Compatibility troubleshooting |
 
 ```console
 vetto profiles
@@ -154,69 +203,13 @@ vetto --profile audit --observe-seccomp --jsonl session.jsonl \
   --report html,md,json -- codex exec "review this change"
 ```
 
-| Profile | Write roots | Read surface | Use when |
-|---|---|---|---|
-| `default` | `$PROJECT`, `/tmp`, `/dev/null` | System paths, common toolchains and dependency caches | Balanced local development |
-| `strict` | `$PROJECT`, `/dev/null` | Minimal system/runtime paths; no caches or Git identity by default | Reduce ambient read access |
-| `audit` | Same as `default` | Same as `default` | Make audit-focused sessions explicit; pair with observation/reports |
-| `permissive` | `$PROJECT`, `/tmp`, `/dev/null` | Wider `/etc` and toolchain read surface | Compatibility troubleshooting; secrets remain denied |
-
-All built-in profiles use an environment allowlist and secret deny patterns.
-`display_only_deny` is an input to the platform-specific masking/enumeration
-path, not a replacement for the kernel boundary. See
-[docs/profiles.md](docs/profiles.md) for inheritance and conditions.
-
-## Network modes
-
-Network is `off` by default and is enforced for descendants.
-
-```console
-# No external network (all supported backends)
-vetto --net=off -- agent command
-
-# Linux FULL: proxy-aware HTTP CONNECT/SOCKS traffic to listed domains
-vetto --net=allowlist:api.github.com,registry.npmjs.org -- agent command
-
-# Linux FULL: exact domain + port rules
-vetto --net=strict:registry.npmjs.org:443,api.github.com:443 -- agent command
-```
-
-On Linux relay modes, the child has no general route. A loopback relay passes
-the requested host/port over an inherited Unix socket to a host-side broker.
-The broker resolves DNS, rejects loopback/private/link-local/metadata and
-other special-use addresses, pins an approved destination for that
-connection, and pumps opaque bytes. There is no SNI parsing, TLS decryption,
-CA injection, or TLS MITM. Non-proxy-aware protocols fail closed.
-
-Git over SSH has an explicit Linux relay helper:
-
-```console
-vetto --net=allowlist:github.com --git-ssh -- git fetch origin
-vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
-```
-
-`--git-ssh` configures a per-command OpenSSH `ProxyCommand`; it is not a
-persistent daemon and is Linux-only. The host must be allowed, and strict
-mode must include the requested port.
-
-Platform limits are intentional: Linux FS-ONLY rejects relay modes; macOS
-currently supports Seatbelt network-off only (`--net=allowlist` is rejected,
-and the current Seatbelt path does not implement a strict allowlist relay);
-the Windows process backend currently accepts `--net=off` only. See
-[docs/network.md](docs/network.md) for the broker boundary and DNS model.
-
-## Configuration: `vetto.toml`
-
-`vetto` automatically loads a non-symlink `vetto.toml` in the project root.
-`--policy PATH` adds an explicit TOML layer after that project layer; the
-loader is additive, so a later layer cannot remove a base deny rule or
-environment allowlist. Unknown keys are rejected.
+<details>
+<summary><strong>Minimal vetto.toml</strong></summary>
 
 ```toml
 [metadata]
 name = "my-project"
-description = "Project policy"
-extends = "default"       # a built-in profile name, or an array of names
+extends = "default"
 
 [filesystem]
 allow_write = ["$PROJECT", "/tmp"]
@@ -228,30 +221,27 @@ paths = ["$PROJECT/.env", "$HOME/.ssh"]
 [environment]
 pass_through = ["EDITOR", "GIT_AUTHOR_NAME"]
 
-[limits]
-cpu_seconds = 3600
-address_space_bytes = 8589934592
-processes = 256
-open_files = 1024
-
 [conditions]
 branch = ["main"]
 file_exists = ["package.json"]
-project_contains = ["Cargo.toml"]
 ```
 
-`$PROJECT` and `$HOME` are resolved by vetto. `$AGENT` is available only
-with a named preset (`codex`, `claude`, `aider`, `cursor`, `cline`,
-`opencode`, `copilot`, or `custom`). Conditions are bounded checks, not a
-general policy language. Network, report, and CI settings are CLI options;
-`[network]`, `[project]`, `[secrets]`, `[agent_overrides]`, and `[ci]` are not
-part of the TOML schema.
+</details>
 
-## Multi-agent mode
+Project policy is loaded only from a non-symlink `vetto.toml`; `--policy`
+adds another layer. Unknown tables and fields are errors. Network, reporting,
+and CI remain CLI settings: `[network]`, `[project]`, `[secrets]`,
+`[agent_overrides]`, and `[ci]` are not accepted policy tables. See
+[docs/profiles.md](docs/profiles.md).
 
-Each manifest entry gets its own preflight, policy, backend instance, process
+### Isolated multi-agent sessions
+
+Each manifest entry receives its own policy resolution, backend, process
 container, event stream, output buffer, and report directory. Commands are
-argv arrays, never shell strings.
+argv arrays rather than shell strings.
+
+<details>
+<summary><strong>Multi-agent manifest</strong></summary>
 
 ```toml
 version = 1
@@ -271,98 +261,86 @@ net = "off"
 observe_seccomp = true
 ```
 
-Run it with:
-
 ```console
 vetto multi --manifest vetto-agents.toml
 ```
 
-The full multi-agent TUI provides split panes, selection, pause/resume,
-per-agent termination, and a combined aggregate report. The compatibility
-form `vetto --multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo`
-accepts executable-only entries; use a manifest for arguments and per-agent
-policies. The runtime currently supports multi-agent launch on Unix; Windows
-fails closed rather than launching without the requested isolation.
+</details>
 
-## Platform support and privileges
+The split-pane runtime currently launches on Unix. Windows fails closed
+instead of silently running an uncontained multi-agent session.
 
-| Platform | Enforcement path | Requirements and supported scope | Privilege boundary |
-|---|---|---|---|
-| Linux | FULL or FS-ONLY as selected by `doctor` | Landlock plus either the complete unprivileged namespace stack (FULL) or unprivileged seccomp (FS-ONLY). Relay modes and `--git-ssh` require FULL. | Core path is unprivileged; no root fallback |
-| macOS | `/usr/bin/sandbox-exec` Seatbelt | `sandbox-exec` must exist. Network-off is the implemented spawn path. FSEvents is delayed/change-only. | Seatbelt session is unprivileged; optional Endpoint Security needs a signed entitlement and platform privilege/TCC gates and is not enforcement |
-| Windows | Windows 11 experimental process sandbox/AppContainer plus restricted/low-integrity token and Job Object | `processmodel.dll!Experimental_CreateProcessInSandbox`, AppContainer APIs, token APIs, and Job Object kill-on-close must probe successfully. Core backend currently accepts network-off and inherited stdio only; use `--tui=none`/`--ci`. | No self-elevation. Optional firewall/WFP, ETW, Event Log, minifilter, or Windows Sandbox integrations are capability-gated and not silently enabled |
+### GitHub Actions
 
-Windows is therefore supported as a conditional, experimental backend, not as
-a promise of a Linux-style fallback tier. If the required process-sandbox
-export is unavailable, vetto refuses to run an ordinary unsandboxed process.
-Policies with resolved deny paths may
-also be rejected because the current Windows process-sandbox schema has no
-verified denied-path field; this is fail-closed behavior.
+```yaml
+permissions:
+  contents: read
+  security-events: write
 
-## Reports and CI
-
-Request post-session formats with `--report html,md,json,sarif`; JSONL event
-logging is enabled separately with `--jsonl PATH`.
-
-```console
-vetto --ci --tui=none --profile=strict --net=off \
-  --report=json,sarif --report-dir=.vetto/reports \
-  --fail-on-block -- agent command
+steps:
+  - uses: actions/checkout@v4
+  - uses: shleder/vetto/action@main
+    with:
+      command: codex exec "review this PR"
+      profile: strict
+      net: off
+      report: json,sarif
+      upload-sarif: "true"
 ```
 
-Reports default to `.vetto/reports` and use private, collision-resistant
-filenames. Retention defaults to 50 generated reports and can be adjusted
-with `--report-retention`, `--report-max-age-secs`, or the cleanup flags.
-HTML is self-contained; JSON and SARIF are intended for automation. The
-sanitizer is explicitly best-effort: false positives and false negatives are
-possible. Reports contain observed events, not proof that every denied
-operation was visible.
+The action builds the checked-out source with `--locked`; it does not download
+or publish a release. Do not interpolate untrusted pull-request text into its
+shell command. See [docs/ci-cd.md](docs/ci-cd.md).
 
-See [docs/ci-cd.md](docs/ci-cd.md) for the repository action and generic CI
-usage, and [docs/schema/session-stats.schema.json](docs/schema/session-stats.schema.json)
-for the JSON shape.
+<a id="limits"></a>
 
-## Security model and known limitations
+<p align="center">
+  <img src="./assets/readme/section-limits.svg" width="100%" alt="03 Know the gaps: documented limits and fail-closed behavior are part of the product">
+</p>
 
-The security boundary and threat assumptions are documented in
-[SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md).
-Important operational limits are:
+## What vetto does not promise
 
-- Enforcement is kernel/OS policy; TUI, `/proc` polling, FSEvents, ETW,
-  kernel audit, seccomp user-notify, JSONL, and the sanitizer are observation
-  or reporting paths.
-- Linux blocked-attempt feeds are usually unavailable to an unprivileged
-  process unless `--observe-seccomp` is usable. A persistent notice is shown;
-  enforcement remains active.
-- Linux FS-ONLY has no mount/PID/network namespace. A `setsid()`-detached
-  grandchild can outlive process-group cleanup, and the bounded project
-  enumeration cannot provide FULL's mount overlays.
-- macOS Seatbelt relies on Apple's deprecated and undocumented
-  `sandbox-exec`; denials are invisible to FSEvents, and a SIGKILLed vetto may
-  leave process-group orphans.
-- Linux allowlist traffic is for proxy-shaped protocols. Git SSH requires the
-  explicit Linux-only helper. Direct non-proxy protocols have no route.
-- Windows uses different, experimental primitives. It has no Landlock or
-  Seatbelt, no WIN-BASIC fallback in this implementation, no Windows multi
-  runtime, and no domain allowlist relay in the core backend.
-- The agent and its dependencies are treated as arbitrary code. A hostile
-  kernel, root/administrator outside the sandbox, physical access, and a
-  compromised vetto binary are out of scope.
-- No performance percentage or benchmark result is promised. See
-  [docs/performance.md](docs/performance.md) for reproducible measurement
-  rules.
+- Observation is not complete auditing. Linux deny feeds may be unavailable
+  without usable seccomp user-notify or audit privileges; enforcement remains
+  active.
+- Linux FS-ONLY cannot contain a `setsid()`-detached grandchild as strongly as
+  the FULL PID namespace.
+- macOS FSEvents does not reveal file reads or Seatbelt denials, and a
+  SIGKILLed vetto can leave process-group orphans.
+- Linux allowlist traffic is designed for proxy-shaped protocols. Direct
+  non-proxy protocols fail closed unless an explicit relay helper exists.
+- Windows is capability-gated and experimental. It currently has no domain
+  allowlist relay or multi-agent runtime in the core backend.
+- A hostile kernel, root/administrator outside the sandbox, physical access,
+  and a compromised vetto binary are out of scope.
+- No performance percentage is promised. Measurement rules live in
+  [docs/performance.md](docs/performance.md).
 
-Fail-closed is a design rule: if the selected enforcement boundary cannot be
-established, the agent does not run.
+### Deliberate anti-features
+
+No persistent daemon. No OPA/Rego engine. No cloud or telemetry. No web
+dashboard. No TLS MITM or CA injection. No root fallback. No Docker/VM
+dependency in the core path. No report or event feed that can widen policy.
+
+The complete model is in [SECURITY.md](SECURITY.md),
+[ARCHITECTURE.md](ARCHITECTURE.md), and
+[docs/threat-model.md](docs/threat-model.md).
+
+## Documentation
+
+| Start | Understand | Integrate |
+| --- | --- | --- |
+| [Install](docs/tutorials/installing.md) | [Architecture](ARCHITECTURE.md) | [CI/CD](docs/ci-cd.md) |
+| [Run Codex](docs/tutorials/codex.md) | [Security](SECURITY.md) | [Network](docs/network.md) |
+| [Profiles](docs/tutorials/profiles.md) | [Threat model](docs/threat-model.md) | [Agent presets](docs/agents.md) |
+| [TUI](docs/tutorials/tui.md) | [Platform backends](docs/platform-backends.md) | [Multi-agent](docs/tutorials/multi-agent.md) |
 
 ## Contributing
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and the
-relevant platform documentation before changing a backend. Keep enforcement
-separate from observation, preserve fail-closed behavior, add conditional
-tests for platform capabilities, and update the documentation when a
-guarantee or limitation changes. Do not add a daemon, telemetry, TLS MITM,
-or a silent unsandboxed fallback.
+Read the architecture and security boundary before changing a backend.
+Preserve fail-closed behavior, keep enforcement separate from observation,
+add capability-aware tests, and update the documented guarantee or limitation
+with the code.
 
 ## License
 

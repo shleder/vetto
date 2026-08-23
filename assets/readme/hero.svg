@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="410" viewBox="0 0 1200 410" role="img" aria-labelledby="title desc">
+  <title id="title">vetto — runtime boundary for AI coding agents</title>
+  <desc id="desc">A strict access-control ledger shows project access, denied credentials, network-off, environment allowlisting, and inherited policy for descendants.</desc>
+
+  <rect width="1200" height="410" fill="#090909"/>
+  <path d="M40 0V410M650 0V410M1160 0V410M0 44H1200M0 330H1200" stroke="#292929" stroke-width="1"/>
+  <rect x="650" width="4" height="330" fill="#ff4d3d"/>
+
+  <g id="metadata" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" letter-spacing="1.5">
+    <text x="48" y="29" fill="#aaa69d">RUNTIME BOUNDARY / AI CODING AGENTS</text>
+    <text x="1148" y="29" text-anchor="end" fill="#f4f1e8">FAIL-CLOSED · DAEMON-LESS</text>
+  </g>
+
+  <g id="title-block" transform="translate(48 78)">
+    <text x="0" y="102" fill="#f4f1e8" font-size="116" font-weight="800" letter-spacing="-4" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">vetto</text>
+    <text x="3" y="150" fill="#f4f1e8" font-size="28" font-weight="650" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Run the agent. Keep the boundary.</text>
+    <text x="3" y="188" fill="#aaa69d" font-size="20" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">One operator-controlled policy around any local</text>
+    <text x="3" y="216" fill="#aaa69d" font-size="20" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">coding agent — applied before the process exists.</text>
+  </g>
+
+  <text x="642" y="316" transform="rotate(-90 642 316)" fill="#ff7a6f" font-size="15" letter-spacing="2" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">VETO / POLICY GATE</text>
+
+  <g id="policy-ledger" transform="translate(704 68)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="0" y="0" fill="#aaa69d" font-size="16" letter-spacing="1.5">SESSION POLICY / PRE-EXEC</text>
+    <path d="M0 24H416" stroke="#55524c"/>
+
+    <g font-size="19">
+      <text x="0" y="58" fill="#77736c">01</text><text x="48" y="58" fill="#f4f1e8">$PROJECT</text><text x="416" y="58" text-anchor="end" fill="#f4f1e8">READ + WRITE</text>
+      <path d="M0 76H416" stroke="#292929"/>
+      <text x="0" y="108" fill="#77736c">02</text><text x="48" y="108" fill="#f4f1e8">$HOME/.ssh</text><text x="416" y="108" text-anchor="end" fill="#ff5c4d" font-weight="700">DENY</text>
+      <path d="M0 126H416" stroke="#292929"/>
+      <text x="0" y="158" fill="#77736c">03</text><text x="48" y="158" fill="#f4f1e8">NETWORK</text><text x="416" y="158" text-anchor="end" fill="#ff5c4d" font-weight="700">OFF</text>
+      <path d="M0 176H416" stroke="#292929"/>
+      <text x="0" y="208" fill="#77736c">04</text><text x="48" y="208" fill="#f4f1e8">ENVIRONMENT</text><text x="416" y="208" text-anchor="end" fill="#f4f1e8">ALLOWLIST</text>
+      <path d="M0 226H416" stroke="#292929"/>
+      <text x="0" y="258" fill="#77736c">05</text><text x="48" y="258" fill="#f4f1e8">DESCENDANTS</text><text x="416" y="258" text-anchor="end" fill="#f4f1e8">INHERIT</text>
+    </g>
+  </g>
+
+  <g id="command-strip" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <rect y="330" width="1200" height="80" fill="#111111"/>
+    <text x="48" y="367" fill="#77736c" font-size="19">$</text>
+    <text x="74" y="367" fill="#f4f1e8" font-size="19">vetto --profile=strict --net=off -- codex exec "review auth"</text>
+    <rect x="766" y="348" width="10" height="24" fill="#ff4d3d"/>
+    <text x="48" y="397" fill="#77736c" font-size="15" letter-spacing="1">LANDLOCK + NAMESPACES + SECCOMP  /  SEATBELT  /  WINDOWS*</text>
+    <text x="1148" y="397" text-anchor="end" fill="#77736c" font-size="15">* CAPABILITY-GATED</text>
+  </g>
+</svg>
