@@ -1,0 +1,6 @@
+578210714c00fc86fa5a2c671dc527366e2eede2:tests/alpha7/test_autopilot_cli.py:generic-api-key:35
+578210714c00fc86fa5a2c671dc527366e2eede2:tests/alpha7/test_deep_edge_cases.py:github-pat:65
+b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:github-pat:408
+b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:github-pat:432
+b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:jwt:413
+b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:pypi-upload-token:412

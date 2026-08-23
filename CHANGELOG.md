@@ -7,6 +7,34 @@ Keep a Changelog; versioning follows SemVer.
 
 No unreleased changes yet.
 
+## [0.2.0-alpha.1] — 2026-08-23
+
+First integration alpha for universal local-agent recovery.
+
+### Added
+
+- Provider-neutral `vetto rescue scan`, `diagnose`, `snapshot`, and `fork`
+  commands with a bounded Codex reference adapter.
+- Copy-only session snapshots with exclusive, symlink-safe creation and
+  SHA-256 verification outside the original agent state root.
+- A versioned adapter manifest schema, recovery security contract, imported
+  Codex Rescue history, MIT attribution, and history secret-scan baseline.
+- Cross-platform rescue integration tests and structured field-test intake.
+
+### Security
+
+- Disable direct `INSERT`, `INSERT OR REPLACE`, projection-cursor updates, and
+  all other production writes to vendor-derived SQLite state, including from
+  hand-edited recovery plans and Alpha7 autopilot repair paths.
+- Reject symlinked session entries, ambiguous selectors, oversized scans,
+  oversized records, source changes during capture, existing snapshot
+  destinations, and destinations inside the original agent state root.
+
+### Distribution
+
+- Publish prerelease builds on the npm `next` tag. Stable `0.1.x` remains on
+  `latest`.
+
 ## [0.1.0] — 2026-08-23
 
 First public release of the daemon-less sandbox and security layer for local

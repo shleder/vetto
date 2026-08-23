@@ -1,0 +1,259 @@
+name: Alpha5 Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Exact Alpha5 tag"
+        required: true
+        default: "v0.1.0-alpha.5"
+      expected_sha:
+        description: "Exact commit the tag must resolve to"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  EXPECTED_PYTHON_VERSION: 0.1.0a5
+  EXPECTED_NPM_VERSION: 0.1.0-alpha.5
+  EXPECTED_TAG: v0.1.0-alpha.5
+  PYINSTALLER_VERSION: 6.22.1
+  BUILD_VERSION: 1.5.0
+  TWINE_VERSION: 7.0.0
+  SETUPTOOLS_VERSION: 84.0.0
+
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Verify exact tag, SHA, versions, and npm names
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "$EXPECTED_TAG"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$EXPECTED_SHA"
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          expected_py = "0.1.0a5"
+          expected_npm = "0.1.0-alpha.5"
+          text = Path("src/codex_rescue/__init__.py").read_text(encoding="utf-8")
+          m = re.search(r'__version__\s*=\s*["\']([^"\']+)', text)
+          if not m or m.group(1) != expected_py:
+              raise SystemExit("Python version mismatch")
+          top = json.loads(Path("npm/codex-rescue/package.json").read_text(encoding="utf-8"))
+          expected_names = {
+              "codex-rescue-linux-x64",
+              "codex-rescue-win32-x64",
+              "codex-rescue-darwin-arm64",
+              "codex-rescue-darwin-x64",
+          }
+          if top["name"] != "codex-rescue" or top["version"] != expected_npm:
+              raise SystemExit("npm meta package mismatch")
+          if set(top.get("optionalDependencies", {})) != expected_names:
+              raise SystemExit("npm optional dependency name set mismatch")
+          if set(top["optionalDependencies"].values()) != {expected_npm}:
+              raise SystemExit("npm optional dependency version mismatch")
+          for path in Path("npm/platforms").glob("*/package.json"):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              if data["version"] != expected_npm or data["name"] not in expected_names:
+                  raise SystemExit(f"npm platform mapping mismatch: {path}")
+          PY
+          node scripts/check_npm_names.mjs
+
+  python-dist:
+    needs: verify-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+      - name: Install pinned packaging toolchain
+        run: python -m pip install "setuptools==${{ env.SETUPTOOLS_VERSION }}" "build==${{ env.BUILD_VERSION }}" "twine==${{ env.TWINE_VERSION }}"
+      - run: python -m build --no-isolation
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alpha5-python-dist
+          path: dist/*
+          if-no-files-found: error
+
+  native-npm:
+    needs: verify-source
+    name: candidate (${{ matrix.platform_id }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform_id: linux-x64
+            platform_package: codex-rescue-linux-x64
+            binary: codex-rescue
+            candidate_binary: codex-rescue-linux-x64
+          - os: windows-latest
+            platform_id: win32-x64
+            platform_package: codex-rescue-win32-x64
+            binary: codex-rescue.exe
+            candidate_binary: codex-rescue-win32-x64.exe
+          - os: macos-15
+            platform_id: darwin-arm64
+            platform_package: codex-rescue-darwin-arm64
+            binary: codex-rescue
+            candidate_binary: codex-rescue-darwin-arm64
+          - os: macos-15-intel
+            platform_id: darwin-x64
+            platform_package: codex-rescue-darwin-x64
+            binary: codex-rescue
+            candidate_binary: codex-rescue-darwin-x64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - run: python -m pip install . "pyinstaller==${{ env.PYINSTALLER_VERSION }}"
+      - run: node --test npm/tests/*.test.cjs
+      - run: python -m PyInstaller --clean --noconfirm --onefile --name codex-rescue scripts/native_entry.py
+      - run: python scripts/semantic_parity.py --native "dist/${{ matrix.binary }}" --output-dir build/parity
+      - name: Native version/help (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          "dist/${{ matrix.binary }}" --version
+          "dist/${{ matrix.binary }}" --help
+      - name: Native version/help (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "dist/${{ matrix.binary }}" --version
+          & "dist/${{ matrix.binary }}" --help
+      - run: python scripts/assemble_npm_platform.py --template "npm/platforms/${{ matrix.platform_id }}" --binary "dist/${{ matrix.binary }}" --output build/npm-platform
+      - run: python -c "from pathlib import Path; Path('build/tarballs').mkdir(parents=True, exist_ok=True)"
+      - working-directory: build/npm-platform
+        run: npm pack --pack-destination ../tarballs
+      - working-directory: npm/codex-rescue
+        run: npm pack --pack-destination ../../build/tarballs
+      - run: |
+          python scripts/audit_npm_tarball.py "build/tarballs/${{ matrix.platform_package }}-0.1.0-alpha.5.tgz" --kind platform
+          python scripts/audit_npm_tarball.py "build/tarballs/codex-rescue-0.1.0-alpha.5.tgz" --kind top
+      - run: python scripts/prepare_npm_smoke.py
+      - working-directory: build/npm-smoke
+        run: npm install --ignore-scripts "../tarballs/${{ matrix.platform_package }}-0.1.0-alpha.5.tgz" "../tarballs/codex-rescue-0.1.0-alpha.5.tgz"
+      - working-directory: build/npm-smoke
+        run: |
+          node node_modules/codex-rescue/bin/codex-rescue.js --version
+          node node_modules/codex-rescue/bin/codex-rescue.js --help
+      - run: python scripts/semantic_parity.py --native "dist/${{ matrix.binary }}" --node-launcher build/npm-smoke/node_modules/codex-rescue/bin/codex-rescue.js --output-dir build/parity
+      - name: Stage candidate files
+        shell: bash
+        run: |
+          mkdir -p candidate
+          cp "dist/${{ matrix.binary }}" "candidate/${{ matrix.candidate_binary }}"
+          cp "build/tarballs/${{ matrix.platform_package }}-0.1.0-alpha.5.tgz" candidate/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alpha5-candidate-${{ matrix.platform_id }}
+          path: candidate/*
+          if-no-files-found: error
+
+  npm-meta:
+    needs: verify-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - run: mkdir -p build/tarballs
+      - working-directory: npm/codex-rescue
+        run: npm pack --pack-destination ../../build/tarballs
+      - run: python scripts/audit_npm_tarball.py build/tarballs/codex-rescue-0.1.0-alpha.5.tgz --kind top
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alpha5-npm-meta
+          path: build/tarballs/codex-rescue-0.1.0-alpha.5.tgz
+          if-no-files-found: error
+
+  bundle:
+    needs: [python-dist, native-npm, npm-meta]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: alpha5-*
+          path: incoming
+          merge-multiple: true
+      - name: Verify expected candidate set and create manifest
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('incoming')
+          expected = {
+              'codex_rescue-0.1.0a5-py3-none-any.whl',
+              'codex_rescue-0.1.0a5.tar.gz',
+              'codex-rescue-0.1.0-alpha.5.tgz',
+              'codex-rescue-linux-x64-0.1.0-alpha.5.tgz',
+              'codex-rescue-win32-x64-0.1.0-alpha.5.tgz',
+              'codex-rescue-darwin-arm64-0.1.0-alpha.5.tgz',
+              'codex-rescue-darwin-x64-0.1.0-alpha.5.tgz',
+              'codex-rescue-linux-x64',
+              'codex-rescue-win32-x64.exe',
+              'codex-rescue-darwin-arm64',
+              'codex-rescue-darwin-x64',
+          }
+          found = {p.name for p in root.iterdir() if p.is_file()}
+          if found != expected:
+              raise SystemExit(f'candidate file set mismatch: missing={sorted(expected-found)} extra={sorted(found-expected)}')
+          rows = []
+          for path in sorted(root.iterdir()):
+              if path.is_file():
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  rows.append((digest, path.name))
+          Path('release-bundle').mkdir()
+          for path in root.iterdir():
+              if path.is_file():
+                  (Path('release-bundle') / path.name).write_bytes(path.read_bytes())
+          (Path('release-bundle') / 'SHA256SUMS').write_text(''.join(f'{d}  {n}\n' for d,n in rows), encoding='utf-8')
+          manifest = {
+              'source_sha': os.environ['EXPECTED_SHA'],
+              'tag': os.environ['RELEASE_TAG'],
+              'python_version': '0.1.0a5',
+              'npm_version': '0.1.0-alpha.5',
+              'npm_packages': ['codex-rescue-linux-x64','codex-rescue-win32-x64','codex-rescue-darwin-arm64','codex-rescue-darwin-x64','codex-rescue'],
+              'files': {n: d for d,n in rows},
+          }
+          (Path('release-bundle') / 'release-manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alpha5-release-bundle
+          path: release-bundle/*
+          if-no-files-found: error

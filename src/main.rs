@@ -22,7 +22,7 @@ use clap::Parser;
 use vetto::config::NetMode;
 use vetto::config::{RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
-use vetto::{cli, events, logger, multi, policy, report, sandbox};
+use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox};
 #[cfg(unix)]
 use vetto::{pty, tui};
 
@@ -66,6 +66,12 @@ fn main() -> Result<()> {
         Some(cli::Command::Report {
             command: cli::ReportCommand::Compare { session1, session2 },
         }) => report::compare_reports(session1, session2),
+        Some(cli::Command::Rescue {
+            adapter,
+            root,
+            json,
+            command,
+        }) => rescue::run_cli(adapter, root.as_deref(), *json, command),
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]

@@ -26,4 +26,5 @@ mod macos_seatbelt;
 mod multi_agent;
 mod policy_loading;
 mod policy_overlays;
+mod rescue;
 mod secret_masking;

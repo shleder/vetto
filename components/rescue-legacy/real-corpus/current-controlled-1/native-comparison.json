@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "source_session_id": "019ff641-7570-7851-96be-7a2f9f9decbc",
+  "comparison_repo": ".validation-runtime/real-current/native-compare-1/repo",
+  "repository_before_after": {
+    "head_sha": "c833d1d9b2ebbfe1b28ea5fec49281f4899091fe",
+    "app_txt_sha256": "1fb533a323913ba891918c0a92249c91a078394402b992df97ae20497b892381",
+    "status": "M app.txt",
+    "generated_after_delay_present": false,
+    "changed_by_comparison": false
+  },
+  "native_fork": {
+    "attempted": true,
+    "public_cwd_redirection_supported": true,
+    "exit_code": 1,
+    "result": "BLOCKED",
+    "reason": "stdin is not a terminal",
+    "side_effects": false
+  },
+  "exec_resume": {
+    "attempted": false,
+    "result": "BLOCKED",
+    "reason": "public exec resume CLI has no cwd redirection option"
+  },
+  "fresh_rescue_continuation": {
+    "attempted": true,
+    "sandbox": "read-only",
+    "verified_head_and_diff": true,
+    "recognized_delayed_action_as_unknown": true,
+    "repeated_completed_edit": false,
+    "replayed_unknown_command": false,
+    "repo_changed": false,
+    "result": "PARTIAL_PASS",
+    "limitation": "visible captured tail did not include a final turn.completed record"
+  }
+}

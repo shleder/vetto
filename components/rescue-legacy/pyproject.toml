@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-rescue"
+dynamic = ["version"]
+description = "Local-first recovery tool for interrupted and damaged OpenAI Codex sessions"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = []
+authors = [
+    {name = "shleder"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Recovery Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/shleder/codex-rescue"
+Repository = "https://github.com/shleder/codex-rescue"
+Issues = "https://github.com/shleder/codex-rescue/issues"
+
+[project.scripts]
+codex-rescue = "codex_rescue.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "codex_rescue.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

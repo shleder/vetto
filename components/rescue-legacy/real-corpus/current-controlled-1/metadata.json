@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "created_from_real_codex": true,
+  "case_id": "case-controlled-1",
+  "session_id": "019ff641-7570-7851-96be-7a2f9f9decbc",
+  "codex_version": "0.147.0",
+  "failure_class": "interrupted_tool_call",
+  "source": {
+    "path_reference": "codex-home/sessions/2026/08/12/rollout-2026-08-12T16-55-13-019ff641-7570-7851-96be-7a2f9f9decbc.jsonl",
+    "raw_copy_included": false,
+    "sha256_before": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71",
+    "sha256_after": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71",
+    "size_bytes": 80281,
+    "valid_record_count": 24
+  },
+  "sanitization": {
+    "messages": "redacted",
+    "reasoning": "redacted",
+    "tool_arguments": "redacted",
+    "tool_outputs": "redacted",
+    "base_instructions": "redacted",
+    "secrets_removed": true,
+    "offsets": "synthetic order-relative offsets, not original",
+    "call_id_pairing": "preserved"
+  },
+  "rollout": {
+    "started_at": "2026-08-12T13:55:13.236Z",
+    "finished_at": "2026-08-12T13:55:37.785159Z",
+    "termination": "marker",
+    "marker_seen": true,
+    "child_exit_code": 1,
+    "duration_seconds": 24.549
+  },
+  "results": {
+    "doctor": {"status": "UNFINISHED_TOOL_CALL", "findings": ["UNFINISHED_TOOL_CALL"], "corruption_class": "UNFINISHED_TOOL_CALL", "compacted": false, "valid_record_count": 24},
+    "salvage": {"status": "completed", "fork_required": true, "original_untouched": true, "source_sha256_before": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71", "source_sha256_after": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71", "rescue_id": "b193a5c32422828681ab8377"},
+    "verify": {"status": "REVIEW_REQUIRED", "reasons": ["unfinished action requires inspection before replay", "handoff contains load-bearing unknowns"]}
+  }
+}

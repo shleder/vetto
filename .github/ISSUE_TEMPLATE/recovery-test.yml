@@ -1,0 +1,54 @@
+name: Alpha recovery test
+description: Report scan, diagnose, snapshot, or fork behavior.
+title: "[recovery]: "
+labels: ["tester", "recovery"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Recovery is copy-only in this alpha. Never upload the original session or vendor database.
+  - type: input
+    id: version
+    attributes:
+      label: Vetto version
+      placeholder: 0.2.0-alpha.1
+    validations:
+      required: true
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter and source agent version
+      placeholder: codex / Codex CLI 1.2.3
+    validations:
+      required: true
+  - type: dropdown
+    id: operation
+    attributes:
+      label: Operation
+      options: [scan, diagnose, snapshot, fork]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Use synthetic or fully redacted fixtures only.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Safety checks
+      options:
+        - label: The original source hash was unchanged.
+          required: true
+        - label: No existing destination was overwritten.
+          required: true
+        - label: I removed tokens, prompts, source code, and private paths from this issue.
+          required: true

@@ -19,6 +19,7 @@ pub mod policy;
 #[cfg(unix)]
 pub mod pty;
 pub mod report;
+pub mod rescue;
 pub mod sandbox;
 #[cfg(unix)]
 pub mod tui;

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "doctor": {
+    "status": "HEALTHY",
+    "findings": ["HEALTHY"],
+    "valid_record_count": 21,
+    "unfinished_tool_calls": 0
+  },
+  "salvage": {
+    "completed": true,
+    "original_untouched": true,
+    "fork_required": true,
+    "rescue_id": "73212274bd947b2112afe48e"
+  },
+  "verify": {
+    "status": "SAFE_TO_CONTINUE",
+    "conflicts": [],
+    "review_reasons": []
+  },
+  "side_effect": {
+    "app_txt_line": "probe-shell-after-side-effect",
+    "observed": true,
+    "git_status": "M app.txt",
+    "head_unchanged": true,
+    "automatic_replay": false
+  },
+  "source_sha256_before": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e",
+  "source_sha256_after": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e"
+}

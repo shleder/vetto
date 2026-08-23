@@ -1,0 +1,72 @@
+name: Alpha compatibility test
+description: Report a Vetto alpha result for one OS, agent, and surface.
+title: "[compatibility]: "
+labels: ["tester", "compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing a published Vetto alpha. Do not attach credentials, raw sessions, or unreviewed private data.
+  - type: input
+    id: vetto-version
+    attributes:
+      label: Vetto version
+      placeholder: 0.2.0-alpha.1
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, WSL]
+    validations:
+      required: true
+  - type: input
+    id: architecture
+    attributes:
+      label: Architecture
+      placeholder: x86_64 or arm64
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      placeholder: Codex CLI 1.2.3
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [CLI, Desktop, IDE, Cloud or remote]
+    validations:
+      required: true
+  - type: dropdown
+    id: support-level
+    attributes:
+      label: Observed support level
+      options: [protected, integrated, rescue-only, observe-only, unavailable]
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized vetto doctor output
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps and result
+      description: Include the exact command, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I reviewed this report and removed sessions, tokens, keys, cookies, prompts, source code, and private paths.
+          required: true

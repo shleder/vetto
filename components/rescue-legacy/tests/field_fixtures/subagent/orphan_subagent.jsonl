@@ -1,0 +1,2 @@
+{"type": "turn_started", "ordinal": 1, "parent_session_id": "nonexistent_parent_999"}
+{"type": "task_complete", "ordinal": 2}

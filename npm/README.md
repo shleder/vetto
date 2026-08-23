@@ -1,10 +1,18 @@
 # vetto — cross-platform npm distribution
 
-Install the stable release globally with npm:
+Install the current alpha globally with npm:
 
 ```bash
-npm install --global @shleddy/vetto
+npm install --global @shleddy/vetto@next
 vetto doctor
+```
+
+Alpha 1 also includes copy-only Codex session inspection:
+
+```bash
+vetto rescue --json scan
+vetto rescue diagnose SESSION
+vetto rescue snapshot SESSION --output ./recovery/session.jsonl
 ```
 
 `vetto` ships the native `vetto` executable in the package. It does
@@ -12,7 +20,7 @@ not run an install script, download code at install time, or require a Rust
 toolchain. The small launcher runs on the Node.js installation that provides
 npm.
 
-Prebuilt targets in `0.1.0`:
+Prebuilt targets in `0.2.0-alpha.1`:
 
 | Platform | Architecture | Native path |
 | --- | --- | --- |

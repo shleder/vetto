@@ -40,8 +40,13 @@ jobs:
               exit 1
             fi
           else
+            prerelease_args=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              prerelease_args+=(--prerelease)
+            fi
             gh release create "$RELEASE_TAG" \
               --draft \
+              "${prerelease_args[@]}" \
               --generate-notes \
               --title "vetto ${RELEASE_TAG#v}" \
               --verify-tag

@@ -1,0 +1,3 @@
+{"type": "turn_started", "ordinal": 1}
+{"type": "compaction", "ordinal": 2}
+{"type": "task_complete", "ordinal": 3}

@@ -16,6 +16,9 @@ Examples:
   vetto multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
   vetto doctor
   vetto doctor --probe
+  vetto rescue --json scan
+  vetto rescue diagnose sessions/2026/08/23/session.jsonl
+  vetto rescue snapshot session.jsonl --output ./recovery/session.jsonl
   vetto report compare session-a.json session-b.json
   vetto completions bash";
 
@@ -156,6 +159,20 @@ pub enum Command {
         #[arg(last = true, value_name = "COMMAND [ARGS...]")]
         command: Vec<String>,
     },
+    /// Inspect and copy persisted agent sessions without modifying originals.
+    Rescue {
+        /// Recovery adapter. Alpha 1 ships the Codex reference adapter.
+        #[arg(long, default_value = "codex", value_name = "ID")]
+        adapter: String,
+        /// Explicit agent state root (defaults to CODEX_HOME or $HOME/.codex).
+        #[arg(long, value_name = "PATH")]
+        root: Option<PathBuf>,
+        /// Emit sanitized machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        #[command(subcommand)]
+        command: RescueCommand,
+    },
     /// Compare two JSON session reports.
     Report {
         #[command(subcommand)]
@@ -184,6 +201,31 @@ pub enum ReportCommand {
         session1: PathBuf,
         #[arg(value_name = "SESSION2")]
         session2: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RescueCommand {
+    /// Discover bounded regular JSONL sessions under the adapter state root.
+    Scan,
+    /// Diagnose one exact session key without changing agent state.
+    Diagnose {
+        #[arg(value_name = "SESSION")]
+        session: String,
+    },
+    /// Create a verified, exclusive new copy outside the agent state root.
+    Snapshot {
+        #[arg(value_name = "SESSION")]
+        session: String,
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+    },
+    /// Create a recovery fork as a verified new copy outside agent state.
+    Fork {
+        #[arg(value_name = "SESSION")]
+        session: String,
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
     },
 }
 
@@ -241,6 +283,31 @@ mod tests {
                 check_agent: Some(ref agent),
                 ..
             }) if agent == "codex"
+        ));
+    }
+
+    #[test]
+    fn rescue_parser_keeps_adapter_options_outside_the_session_selector() {
+        let cli = Cli::try_parse_from([
+            "vetto",
+            "rescue",
+            "--adapter",
+            "codex",
+            "--root",
+            "/tmp/codex-home",
+            "--json",
+            "diagnose",
+            "sessions/example.jsonl",
+        ])
+        .expect("rescue syntax");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Rescue {
+                ref adapter,
+                json: true,
+                command: RescueCommand::Diagnose { ref session },
+                ..
+            }) if adapter == "codex" && session == "sessions/example.jsonl"
         ));
     }
 }

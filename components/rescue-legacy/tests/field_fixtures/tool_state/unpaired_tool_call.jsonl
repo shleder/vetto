@@ -1,0 +1,2 @@
+{"type": "turn_started", "ordinal": 1, "timestamp": "2026-08-18T10:00:00Z"}
+{"type": "tool_call", "name": "exec", "call_id": "call_123", "ordinal": 2}

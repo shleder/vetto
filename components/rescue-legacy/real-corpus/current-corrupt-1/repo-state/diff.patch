@@ -1,0 +1,7 @@
+diff --git a/app.txt b/app.txt
+index 180b47c..4d24a24 100644
+--- a/app.txt
++++ b/app.txt
+@@ -1 +1,2 @@
+ baseline
++current-case-edit: completed-before-crash
