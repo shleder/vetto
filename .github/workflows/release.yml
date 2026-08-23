@@ -285,12 +285,15 @@ jobs:
           npm install --ignore-scripts "$package_tarball"
           node <<'NODE'
           const { spawnSync } = require("child_process");
-          const bin = process.platform === "win32"
-            ? "node_modules/.bin/vetto.cmd"
+          const windows = process.platform === "win32";
+          const command = windows
+            ? (process.env.ComSpec || "cmd.exe")
             : "node_modules/.bin/vetto";
-          const result = spawnSync(bin, ["--version"], {
+          const args = windows
+            ? ["/d", "/c", "node_modules\\.bin\\vetto.cmd", "--version"]
+            : ["--version"];
+          const result = spawnSync(command, args, {
             stdio: "inherit",
-            shell: process.platform === "win32",
           });
           if (result.error) throw result.error;
           process.exit(result.status === null ? 1 : result.status);
