@@ -16,6 +16,17 @@ pub fn generate(policy: &Policy, net: &NetMode) -> String {
     // remain inside the inherited profile and cannot expand filesystem or
     // network access.
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
+    // dyld/libSystem on modern macOS reads the sealed system volume, shared
+    // cache metadata, and read-only sysctl values before the agent's main
+    // function runs. These compatibility reads contain platform runtime data,
+    // not user secrets, and do not grant any write or network capability.
+    sb.push_str("(allow sysctl-read)\n");
+    for runtime_root in ["/System", "/Library", "/private/var/db/dyld"] {
+        sb.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            sb_escape(runtime_root)
+        ));
+    }
 
     for p in &policy.allow_read {
         sb.push_str(&format!(
