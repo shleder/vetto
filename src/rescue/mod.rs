@@ -17,9 +17,10 @@ use types::{Availability, RescueContext, SessionRef};
 fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
     match id {
         "codex" => Ok(Box::new(CodexAdapter)),
-        other => {
-            bail!("rescue adapter {other:?} is not available in 0.2.0-alpha.1; available: codex")
-        }
+        other => bail!(
+            "rescue adapter {other:?} is not available in {}; available: codex",
+            env!("CARGO_PKG_VERSION")
+        ),
     }
 }
 

@@ -174,3 +174,21 @@ fn scan_does_not_follow_session_symlinks() {
         serde_json::from_slice(&output.stdout).expect("scan JSON output");
     assert_eq!(value["sessions"].as_array().map(Vec::len), Some(0));
 }
+
+#[cfg(unix)]
+#[test]
+fn scan_does_not_accept_hardlinked_session_aliases() {
+    let project = TempProject::new("rescue-hardlink");
+    let root = project.path().join("codex-home");
+    let sessions = root.join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions directory");
+    let outside = project.path().join("outside.jsonl");
+    write_file(&outside, "{\"type\":\"outside\"}\n");
+    fs::hard_link(&outside, sessions.join("linked.jsonl")).expect("session hardlink");
+
+    let output = run_rescue(&root, &["scan"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("scan JSON output");
+    assert_eq!(value["sessions"].as_array().map(Vec::len), Some(0));
+}

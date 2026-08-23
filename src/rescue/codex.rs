@@ -1,6 +1,10 @@
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -63,6 +67,10 @@ impl CodexAdapter {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             bail!("session must be a regular non-symlink file");
         }
+        #[cfg(unix)]
+        if metadata.nlink() != 1 {
+            bail!("session hardlinks are not accepted");
+        }
         if metadata.len() > context.max_session_bytes {
             bail!(
                 "session exceeds the {} byte inspection budget",
@@ -93,12 +101,9 @@ impl CodexAdapter {
 
     fn read_stable(context: &RescueContext, path: &Path) -> Result<Vec<u8>> {
         let canonical = Self::validate_session_path(context, path)?;
-        let first = fs::read(&canonical)
+        let first = Self::read_bounded(&canonical, context.max_session_bytes)
             .with_context(|| format!("read session {}", canonical.display()))?;
-        if first.len() as u64 > context.max_session_bytes {
-            bail!("session grew beyond the inspection budget while reading");
-        }
-        let second = fs::read(&canonical)
+        let second = Self::read_bounded(&canonical, context.max_session_bytes)
             .with_context(|| format!("re-read session {}", canonical.display()))?;
         if Self::sha256(&first) != Self::sha256(&second) {
             bail!("session changed while being read; retry after the writer stops");
@@ -106,11 +111,22 @@ impl CodexAdapter {
         Ok(first)
     }
 
+    fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
+        let file = File::open(path)?;
+        let mut bytes = Vec::new();
+        file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > limit {
+            bail!("session grew beyond the inspection budget while reading");
+        }
+        Ok(bytes)
+    }
+
     fn scan_directory(
         context: &RescueContext,
         root: &Path,
         sessions: &mut Vec<SessionRef>,
         total_bytes: &mut u64,
+        entries_seen: &mut usize,
     ) -> Result<()> {
         let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
@@ -119,6 +135,15 @@ impl CodexAdapter {
                 .collect::<std::io::Result<Vec<_>>>()?;
             entries.sort_by_key(|entry| entry.path());
             for entry in entries {
+                *entries_seen = entries_seen
+                    .checked_add(1)
+                    .context("session entry counter overflow")?;
+                if *entries_seen > context.max_files {
+                    bail!(
+                        "session discovery exceeded the {} entry budget",
+                        context.max_files
+                    );
+                }
                 let path = entry.path();
                 let metadata = fs::symlink_metadata(&path)?;
                 if metadata.file_type().is_symlink() {
@@ -137,16 +162,14 @@ impl CodexAdapter {
                 {
                     continue;
                 }
+                #[cfg(unix)]
+                if metadata.nlink() != 1 {
+                    continue;
+                }
                 let canonical = match fs::canonicalize(&path) {
                     Ok(canonical) if canonical.starts_with(root) => canonical,
                     _ => continue,
                 };
-                if sessions.len() >= context.max_files {
-                    bail!(
-                        "session discovery exceeded the {} file budget",
-                        context.max_files
-                    );
-                }
                 *total_bytes = total_bytes
                     .checked_add(metadata.len())
                     .context("session byte counter overflow")?;
@@ -202,8 +225,15 @@ impl RescueAdapter for CodexAdapter {
         Self::validate_root(context)?;
         let mut sessions = Vec::new();
         let mut total_bytes = 0u64;
+        let mut entries_seen = 0usize;
         for root in Self::canonical_session_roots(context)? {
-            Self::scan_directory(context, &root, &mut sessions, &mut total_bytes)?;
+            Self::scan_directory(
+                context,
+                &root,
+                &mut sessions,
+                &mut total_bytes,
+                &mut entries_seen,
+            )?;
         }
         sessions.sort_by(|left, right| {
             right
