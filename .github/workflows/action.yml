@@ -1,0 +1,32 @@
+name: Composite action checks
+
+on:
+  pull_request:
+    paths:
+      - "action/**"
+      - ".github/workflows/action.yml"
+  push:
+    branches: [main]
+    paths:
+      - "action/**"
+      - ".github/workflows/action.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell entrypoint
+        shell: bash
+        run: bash -n action/entrypoint.sh
+      - name: Run composite action with a benign command
+        uses: ./action
+        with:
+          command: sh -c 'printf "vetto-action-ok\\n"'
+          profile: default
+          net: off
+          report: json
+          fail-on-block: "false"

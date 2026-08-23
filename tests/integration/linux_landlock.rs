@@ -25,7 +25,7 @@ fn ssh_key_unreachable_every_tier() {
             "--tui=none",
             "--",
             "cat",
-            &format!("{}/.ssh/id_rsa", std::env::var("HOME").unwrap()),
+            &format!("{}/.ssh/id_rsa", test_home().display()),
         ],
     );
     let text = stdout(&out);
@@ -57,13 +57,20 @@ fn env_masked_empty_on_full() {
 
 #[test]
 fn env_denied_or_empty_on_fs_only() {
-    if !have_landlock() || detected_tier().as_deref() != Some("full") {
-        eprintln!("SKIP: needs Tier FULL to force fs-only against");
+    let tier = detected_tier();
+    if tier.is_none() {
+        eprintln!("SKIP: no enforcement tier");
         return;
     }
     let proj = TempProject::new("envfs");
     write_file(&proj.path().join(".env"), "TOPSECRET=1\n");
-    let out = run_vetty_cat_env(proj.path(), &[("VETTO_FORCE_TIER", "fs-only")]);
+    let forced = [("VETTO_FORCE_TIER", "fs-only")];
+    let envs = if tier.as_deref() == Some("full") {
+        forced.as_slice()
+    } else {
+        &[]
+    };
+    let out = run_vetty_cat_env(proj.path(), envs);
     // Enumeration either excluded the file (open denied) or it is unreadable;
     // content must never come through.
     assert!(
@@ -131,4 +138,143 @@ fn benign_agent_works() {
     );
     assert!(text.contains("created-by-agent"), "agent output: {text}");
     assert!(text.contains("benign-done"), "agent output: {text}");
+}
+
+#[test]
+fn benign_agent_works_in_statusline_pty_mode() {
+    if !guard() {
+        return;
+    }
+    let proj = TempProject::new("pty");
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--tui=statusline",
+            "--",
+            "sh",
+            "-c",
+            "printf 'PTY-OK\\n'; sleep 1",
+        ],
+    );
+    let text = stdout(&out);
+    assert!(out.status.success(), "statusline stderr: {}", stderr(&out));
+    assert!(text.contains("PTY-OK"), "PTY output: {text:?}");
+}
+
+#[test]
+fn environment_drops_credential_variables_by_default() {
+    if !guard() {
+        return;
+    }
+    let proj = TempProject::new("envallowlist");
+    let out = run_vetto_env_in(
+        proj.path(),
+        &["--tui=none", "--", "sh", "-c", "env"],
+        &[
+            ("GH_TOKEN", "SECRET-GH"),
+            ("OPENAI_API_KEY", "SECRET-OPENAI"),
+            ("AWS_ACCESS_KEY_ID", "SECRET-AWS"),
+            ("AWS_SECRET_ACCESS_KEY", "SECRET-AWS-2"),
+            ("ANTHROPIC_API_KEY", "SECRET-ANTHROPIC"),
+        ],
+    );
+    let text = stdout(&out);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    for marker in [
+        "SECRET-GH",
+        "SECRET-OPENAI",
+        "SECRET-AWS",
+        "SECRET-AWS-2",
+        "SECRET-ANTHROPIC",
+    ] {
+        assert!(
+            !text.contains(marker),
+            "credential leaked into agent env: {marker}"
+        );
+    }
+}
+
+#[test]
+fn opaque_dependency_dirs_do_not_regrant_project_secrets_fs_only() {
+    let tier = detected_tier();
+    if tier.is_none() {
+        eprintln!("SKIP: no enforcement tier");
+        return;
+    }
+    let proj = TempProject::new("opaque-secrets");
+    write_file(&proj.path().join(".git/.env"), "OPAQUE-SECRET=1\n");
+    write_file(
+        &proj.path().join("node_modules/credential.pem"),
+        "OPAQUE-PEM\n",
+    );
+    let forced = [("VETTO_FORCE_TIER", "fs-only")];
+    let envs = if tier.as_deref() == Some("full") {
+        forced.as_slice()
+    } else {
+        &[]
+    };
+    let out = run_vetto_env_in(
+        proj.path(),
+        &[
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "cat .git/.env; cat node_modules/credential.pem",
+        ],
+        envs,
+    );
+    let text = stdout(&out);
+    assert!(
+        !text.contains("OPAQUE-SECRET"),
+        "opaque .env leaked: {text}"
+    );
+    assert!(!text.contains("OPAQUE-PEM"), "opaque PEM leaked: {text}");
+}
+
+#[test]
+fn fs_only_refer_cannot_move_or_link_secret_into_readable_subtree() {
+    let tier = detected_tier();
+    if tier.is_none() {
+        eprintln!("SKIP: no enforcement tier");
+        return;
+    }
+    let proj = TempProject::new("refer-secret");
+    write_file(&proj.path().join(".env"), "REFER-SECRET\n");
+    write_file(&proj.path().join("src/ordinary.txt"), "ordinary\n");
+
+    let forced = [("VETTO_FORCE_TIER", "fs-only")];
+    let envs = if tier.as_deref() == Some("full") {
+        forced.as_slice()
+    } else {
+        &[]
+    };
+    let out = run_vetto_env_in(
+        proj.path(),
+        &[
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "mv .env src/moved 2>/dev/null || true; \
+             ln .env src/linked 2>/dev/null || true; \
+             cat src/moved src/linked 2>/dev/null || true",
+        ],
+        envs,
+    );
+
+    let text = stdout(&out);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        !text.contains("REFER-SECRET"),
+        "REFER re-exposed secret: {text}"
+    );
+    assert!(
+        !proj.path().join("src/moved").exists(),
+        "secret move succeeded"
+    );
+    assert!(
+        !proj.path().join("src/linked").exists(),
+        "secret hardlink succeeded"
+    );
 }

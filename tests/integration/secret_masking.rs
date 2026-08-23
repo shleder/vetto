@@ -55,7 +55,8 @@ fn json_report_is_sanitized_and_written() {
     );
     assert!(out.status.success(), "{}", stderr(&out));
     let mut found = false;
-    for entry in std::fs::read_dir(proj.path()).unwrap().flatten() {
+    let report_dir = proj.path().join(".vetto/reports");
+    for entry in std::fs::read_dir(&report_dir).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with("vetto-report-") && name.ends_with(".json") {
             found = true;

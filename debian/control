@@ -1,0 +1,15 @@
+Source: vetto
+Section: utils
+Priority: optional
+Maintainer: vetto contributors <noreply@github.com>
+Build-Depends: debhelper-compat (= 13), cargo, rustc (>= 1.75)
+Standards-Version: 4.7.0
+Homepage: https://github.com/shleder/vetto
+Rules-Requires-Root: no
+
+Package: vetto
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: daemon-less sandbox and audit layer for AI coding agents
+ vetto supervises local coding agents with operating-system enforcement,
+ terminal-native visibility, and post-session audit reports.

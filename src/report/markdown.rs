@@ -7,9 +7,9 @@ pub fn render(stats: &SessionStats) -> String {
     out.push_str("# vetto session report\n\n");
     out.push_str(&format!(
         "- tier: `{}` · net: `{}` · profile: `{}`\n",
-        stats.tier,
-        stats.net_mode,
-        clean(&stats.profile)
+        markdown_inline(&stats.tier),
+        markdown_inline(&stats.net_mode),
+        markdown_inline(&stats.profile)
     ));
     out.push_str(&format!(
         "- exit code: `{}` · duration: `{}s`\n\n",
@@ -19,7 +19,7 @@ pub fn render(stats: &SessionStats) -> String {
     out.push_str("## Event counts\n\n");
     out.push_str("| event | count |\n|---|---|\n");
     for (kind, count) in &stats.counts {
-        out.push_str(&format!("| {kind} | {count} |\n"));
+        out.push_str(&format!("| {} | {count} |\n", markdown_cell(kind)));
     }
     out.push_str(&format!(
         "\nObserved file reads: {} · writes: {} (best-effort /proc polling).\n\n",
@@ -37,9 +37,9 @@ pub fn render(stats: &SessionStats) -> String {
         for b in &stats.blocked_attempts {
             out.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
-                clean(&b.path).replace('|', "\\|"),
-                clean(&b.comm),
-                clean(&b.source),
+                markdown_cell(&b.path),
+                markdown_cell(&b.comm),
+                markdown_cell(&b.source),
                 b.count
             ));
         }
@@ -55,9 +55,27 @@ pub fn render(stats: &SessionStats) -> String {
             let decision = if r.allowed { "allow" } else { "DENIED" };
             out.push_str(&format!(
                 "| {} | {} | {} |\n",
-                clean(&r.host),
+                markdown_cell(&r.host),
                 r.port,
                 decision
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Suspicious signals (best-effort)\n\n");
+    if stats.suspicious_signals.is_empty() {
+        out.push_str("None observed. This classifier is advisory and incomplete.\n\n");
+    } else {
+        out.push_str("| severity | category | subject | reason | count |\n|---|---|---|---|---|\n");
+        for signal in &stats.suspicious_signals {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_cell(&signal.severity),
+                markdown_cell(&signal.category),
+                markdown_cell(&signal.subject),
+                markdown_cell(&signal.reason),
+                signal.count
             ));
         }
         out.push('\n');
@@ -68,7 +86,7 @@ pub fn render(stats: &SessionStats) -> String {
         out.push_str("- none\n");
     } else {
         for n in &stats.notices {
-            out.push_str(&format!("- {}\n", clean(n)));
+            out.push_str(&format!("- {}\n", markdown_cell(n)));
         }
     }
 
@@ -77,4 +95,42 @@ pub fn render(stats: &SessionStats) -> String {
 enforcement authority. Secret sanitizer: BEST-EFFORT.\n",
     );
     out
+}
+
+/// Keep attacker-controlled strings in one Markdown cell. Sanitization is
+/// best-effort redaction; escaping only protects report structure and does
+/// not make the source string trusted.
+fn markdown_cell(value: &str) -> String {
+    clean(value)
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+}
+
+fn markdown_inline(value: &str) -> String {
+    markdown_cell(value).replace(char::from(96), "'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_strings_are_redacted_and_table_structure_is_escaped() {
+        let secret = "Bearer abcdefghijklmnop";
+        let stats = SessionStats {
+            tier: format!("tier-{secret}"),
+            net_mode: "off".into(),
+            profile: "profile".into(),
+            notices: vec!["row | injected\nnext".into()],
+            ..SessionStats::default()
+        };
+        let report = render(&stats);
+        assert!(
+            !report.contains("abcdefghijklmnop"),
+            "secret leaked: {report}"
+        );
+        assert!(report.contains("row \\| injected\\nnext"));
+    }
 }

@@ -21,12 +21,14 @@
 //!   122  fork of the inner supervisor B failed
 //!   123  seccomp network block failed (FS-ONLY)
 //!   124  stdio (pty/pipe) setup failed
-//!   125  session/pgroup setup failed (FS-ONLY)
+//!   125  session/pgroup setup failed
+//!   126  seccomp hardening failed (FULL)
 //!   127  execve of the agent failed
 //!   97/98  relay: loopback bring-up / bind failed
 
 pub mod audit_reader;
 pub mod landlock;
+pub mod limits;
 pub mod mounts;
 pub mod namespaces;
 pub mod net_relay;
@@ -55,6 +57,8 @@ pub struct Probe {
     pub kernel: String,
     pub landlock_abi: Option<u32>,
     pub userns_available: bool,
+    /// The complete FULL setup path, including private procfs, succeeded.
+    pub full_tier_available: bool,
     pub seccomp_filter_available: bool,
     pub seccomp_notify_available: bool,
     pub audit_feed_readable: bool,
@@ -64,10 +68,12 @@ pub struct Probe {
 /// callers only.
 pub fn probe() -> Probe {
     let kernel = kernel_release();
+    let userns_available = namespaces::probe_unprivileged_userns();
     Probe {
         kernel,
         landlock_abi: landlock::abi_version(),
-        userns_available: namespaces::probe_unprivileged_userns(),
+        userns_available,
+        full_tier_available: userns_available && namespaces::probe_full_tier(),
         seccomp_filter_available: seccomp_netblock::probe_available(),
         seccomp_notify_available: observe_seccomp::probe_available(),
         audit_feed_readable: audit_reader::open_audit_feed().is_ok(),
@@ -98,7 +104,7 @@ fn kernel_release() -> String {
 pub fn pick_tier(probe: &Probe) -> Result<Tier> {
     match std::env::var("VETTO_FORCE_TIER").as_deref() {
         Ok("fs-only") if probe.seccomp_filter_available => return Ok(Tier::FsOnly),
-        Ok("full") if probe.userns_available => return Ok(Tier::Full),
+        Ok("full") if probe.full_tier_available => return Ok(Tier::Full),
         _ => {}
     }
     if probe.landlock_abi.is_none() {
@@ -107,7 +113,7 @@ pub fn pick_tier(probe: &Probe) -> Result<Tier> {
              refusing to run the agent unsandboxed (fail-closed)"
         );
     }
-    if probe.userns_available {
+    if probe.full_tier_available {
         return Ok(Tier::Full);
     }
     if probe.seccomp_filter_available {
@@ -131,14 +137,14 @@ impl LinuxSandbox {
     /// only (see module docs). The caller owns the stdio fds passed via
     /// `opts.stdio` and must close its own duplicates after this returns.
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> Result<Spawned> {
-        if self.tier == Tier::FsOnly && matches!(self.net, NetMode::Allowlist(_)) {
+        if self.tier == Tier::FsOnly && self.net.uses_relay() {
             bail!(
-                "--net=allowlist requires Tier FULL (unprivileged user namespaces), \
+                "--net relay modes require Tier FULL (unprivileged user namespaces), \
                  which is unavailable on this machine; refusing to run (fail-closed)"
             );
         }
         let relay_port = match self.net {
-            NetMode::Allowlist(_) => Some(net_relay::RELAY_PORT_BASE),
+            NetMode::Allowlist(_) | NetMode::Strict(_) => Some(net_relay::RELAY_PORT_BASE),
             NetMode::Off => None,
         };
         match self.tier {
@@ -255,6 +261,106 @@ fn child_pdeathsig(parent_pid: libc::pid_t) {
     if unsafe { libc::getppid() } != parent_pid {
         child_exit(113);
     }
+}
+
+/// Permanently remove the user-namespace root capability set before exec.
+/// Mount setup is complete by the time this runs, so the agent never needs
+/// CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_SYS_PTRACE, or any other capability.
+fn drop_agent_capabilities() -> Result<(), String> {
+    // Disable the special uid-0 capability regain rules across execve and
+    // lock that choice before clearing the current sets.
+    const SECURE_NOROOT_AND_NO_SETUID_FIXUP_LOCKED: libc::c_ulong = 0x0f;
+    if unsafe {
+        libc::prctl(
+            libc::PR_SET_SECUREBITS,
+            SECURE_NOROOT_AND_NO_SETUID_FIXUP_LOCKED,
+            0,
+            0,
+            0,
+        )
+    } != 0
+    {
+        return Err(format!(
+            "lock securebits: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    // Remove every known/possible capability from the bounding set while
+    // CAP_SETPCAP is still effective. EINVAL simply means the kernel has a
+    // smaller capability table.
+    for capability in 0..64 {
+        let result = unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) };
+        if result != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL) {
+            return Err(format!(
+                "drop capability {capability} from bounding set: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+
+    // Clear ambient capabilities (the operation is harmless when none exist).
+    const PR_CAP_AMBIENT_CLEAR_ALL: libc::c_ulong = 4;
+    if unsafe { libc::prctl(libc::PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0) } != 0 {
+        return Err(format!(
+            "clear ambient capabilities: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    #[repr(C)]
+    struct CapHeader {
+        version: u32,
+        pid: i32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CapData {
+        effective: u32,
+        permitted: u32,
+        inheritable: u32,
+    }
+    const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+    let mut header = CapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let data = [
+        CapData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+        CapData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+    ];
+    if unsafe {
+        libc::syscall(
+            libc::SYS_capset,
+            &mut header as *mut CapHeader,
+            data.as_ptr(),
+        )
+    } != 0
+    {
+        return Err(format!(
+            "clear capability sets: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // capset/securebits transitions may clear dumpability. Re-enable it so
+    // the ancestor vetto process can read syscall arguments for the optional
+    // seccomp user-notify observer. Outgoing ptrace/process_vm/pidfd_getfd
+    // syscalls remain blocked by the agent's own seccomp filter.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0) } != 0 {
+        return Err(format!(
+            "restore parent observability: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 fn decode_status(status: i32) -> i32 {
@@ -429,8 +535,9 @@ fn err_from_dead_child(pid: libc::pid_t, err_r: RawFd) -> anyhow::Error {
 // Shared child pieces
 // ---------------------------------------------------------------------------
 
-/// Route the agent's stdio according to the mode. The caller performs
-/// setsid()/session setup beforehand.
+/// Route the agent's stdio according to the mode. PTY callers perform
+/// setsid()/session setup beforehand; captured and inherited modes do not
+/// alter the caller's session.
 fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
     match *stdio {
         StdioMode::Pty { slave_fd } => {
@@ -440,8 +547,7 @@ fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
             if unsafe { libc::ioctl(slave_fd, libc::TIOCSCTTY, 0i32) } != 0 {
                 return Err(format!("TIOCSCTTY: {}", errno_val()));
             }
-            dup2_all(slave_fd);
-            Ok(())
+            dup2_all(slave_fd)
         }
         StdioMode::Captured { stdout_w, stderr_w } => {
             // SAFETY: open of a static NUL-terminated path.
@@ -454,9 +560,9 @@ fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
             if devnull < 0 {
                 return Err(format!("open /dev/null: {}", errno_val()));
             }
-            dup2_all(devnull);
-            dup2_to(stdout_w, 1);
-            dup2_to(stderr_w, 2);
+            dup2_all(devnull)?;
+            dup2_to(stdout_w, 1)?;
+            dup2_to(stderr_w, 2)?;
             // SAFETY: plain close on our temporary descriptor.
             unsafe { libc::close(devnull) };
             Ok(())
@@ -465,26 +571,58 @@ fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
     }
 }
 
-fn dup2_to(fd: RawFd, target: RawFd) {
+fn dup2_to(fd: RawFd, target: RawFd) -> Result<(), String> {
     loop {
         // SAFETY: dup2 onto a stdio slot; EINTR retried.
         if unsafe { libc::dup2(fd, target) } >= 0 {
-            return;
+            return Ok(());
         }
         if errno_val() != libc::EINTR {
-            child_exit(111);
+            return Err(format!(
+                "dup2({fd}, {target}): {}",
+                std::io::Error::last_os_error()
+            ));
         }
     }
 }
 
-fn dup2_all(fd: RawFd) {
-    dup2_to(fd, 0);
-    dup2_to(fd, 1);
-    dup2_to(fd, 2);
+fn dup2_all(fd: RawFd) -> Result<(), String> {
+    dup2_to(fd, 0)?;
+    dup2_to(fd, 1)?;
+    dup2_to(fd, 2)
+}
+
+/// Keep the agent's stdio descriptors alive across the supervisor fork.
+fn append_stdio_fds(keep: &mut Vec<RawFd>, stdio: StdioMode) {
+    match stdio {
+        StdioMode::Pty { slave_fd } => keep.push(slave_fd),
+        StdioMode::Captured { stdout_w, stderr_w } => {
+            keep.push(stdout_w);
+            keep.push(stderr_w);
+        }
+        StdioMode::Inherit => {}
+    }
+}
+
+/// Close the supervisor's copies after C has inherited the descriptors.
+fn close_stdio_fds(stdio: StdioMode) {
+    let mut fds = [None, None];
+    match stdio {
+        StdioMode::Pty { slave_fd } => fds[0] = Some(slave_fd),
+        StdioMode::Captured { stdout_w, stderr_w } => {
+            fds[0] = Some(stdout_w);
+            fds[1] = Some(stderr_w);
+        }
+        StdioMode::Inherit => {}
+    }
+    for fd in fds.into_iter().flatten().filter(|fd| *fd > 2) {
+        // SAFETY: these are supervisor-owned inherited descriptors.
+        unsafe { libc::close(fd) };
+    }
 }
 
 /// execve the agent. Only returns on failure (exit 127).
-fn child_exec(opts: &SpawnOptions) -> ! {
+fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
     let mut argv = Vec::with_capacity(opts.agent_cmd.len() + 1);
     for a in &opts.agent_cmd {
         match CString::new(a.as_str()) {
@@ -493,9 +631,13 @@ fn child_exec(opts: &SpawnOptions) -> ! {
         }
     }
 
-    // Parent environment + overrides.
+    // Only explicitly allowed parent variables reach the agent. Internal
+    // overrides (currently the network relay's proxy variables) are added
+    // separately below; arbitrary parent credentials never reach execve.
     let mut env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
-        std::env::vars_os().collect();
+        std::env::vars_os()
+            .filter(|(key, _)| policy.environment.allows(key))
+            .collect();
     for (k, v) in &opts.env_extra {
         env.insert(
             std::ffi::OsString::from(k.as_str()),
@@ -529,6 +671,12 @@ fn child_exec(opts: &SpawnOptions) -> ! {
     }
 
     // SAFETY: execve with NUL-terminated argv/envp vectors built above.
+    if let Err(error) = limits::apply_before_exec(&policy.limits) {
+        let message = format!("[vetto-child] resource limits failed: {error}\n");
+        // SAFETY: raw write to stderr for diagnostics before dying.
+        unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
+        child_exit(126);
+    }
     let r = unsafe { libc::execve(prog.as_ptr(), argv_ptr.as_ptr(), envp_ptr.as_ptr()) };
     let msg = format!(
         "[vetto-child] execve failed r={r} errno={}\n",
@@ -551,17 +699,27 @@ fn child_relay(relay_end: RawFd, s_pid: libc::pid_t, port: u16) -> ! {
             libc::O_RDWR | libc::O_CLOEXEC,
         )
     };
-    if devnull >= 0 {
-        dup2_all(devnull);
-        // SAFETY: plain close on the temporary descriptor.
-        unsafe { libc::close(devnull) };
+    if devnull < 0 || dup2_all(devnull).is_err() {
+        // The relay has no setup error pipe; terminate rather than run with
+        // inherited or partially redirected descriptors.
+        child_exit(111);
     }
+    // SAFETY: plain close on the temporary descriptor.
+    unsafe { libc::close(devnull) };
     net_relay::serve_relay(relay_end, port)
 }
 
 /// Inner supervisor B: PID 1 of the sandbox pidns. Reaps zombies, watches the
 /// alive pipe, and kills the whole namespace when the agent (or vetto) dies.
-fn child_b(alive_r: RawFd, err_w: RawFd, opts: &SpawnOptions) -> ! {
+fn child_b(
+    alive_r: RawFd,
+    err_w: RawFd,
+    notif_child: Option<RawFd>,
+    observe: bool,
+    policy: &Policy,
+    opts: &SpawnOptions,
+    socket_policy: seccomp_netblock::SocketPolicy,
+) -> ! {
     // PDEATHSIG still works across the pid boundary; the getppid() identity
     // check is impossible here (our parent lives in an ancestor pidns and
     // getppid() returns 0), so the alive-pipe poll below covers that race.
@@ -569,7 +727,35 @@ fn child_b(alive_r: RawFd, err_w: RawFd, opts: &SpawnOptions) -> ! {
     if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) } != 0 {
         child_exit(113);
     }
-    close_all_except(&[alive_r, err_w]);
+    match mounts::mount_restricted_proc() {
+        Ok(mounts::ProcVisibility::HidePid) => {}
+        Ok(mounts::ProcVisibility::Fallback) => {
+            // Keep setup honest without claiming hidepid enforcement when a
+            // kernel lacks it. The proc mount remains private to this PID ns.
+            let message = b"[vetto-child] /proc hidepid unsupported; private proc fallback\n";
+            // SAFETY: inherited stderr remains open until C is forked.
+            unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
+        }
+        Err(error) => child_fail(err_w, 115, &format!("restricted /proc: {error}")),
+    }
+    // Install Landlock only after the private procfs is mounted. Mounting
+    // `/proc` after applying a policy that intentionally omits the host proc
+    // tree can fail with EACCES/EPERM even though the namespace stack itself
+    // is available. B and every descendant inherit this ruleset, while the
+    // relay (forked earlier and outside the PID namespace) remains outside it.
+    if let Err(error) = landlock::apply_policy(&policy.allow_write, &policy.allow_read, false) {
+        child_fail(err_w, 120, &format!("{error}"));
+    }
+    // B does not use the agent's stdio, but must keep the descriptors alive
+    // until C has inherited them. Closing them before the fork makes PTY and
+    // captured modes fail during C's stdio setup.
+    // Keep inherited stdio for StdioMode::Inherit; C uses it unchanged.
+    let mut keep = vec![0, 1, 2, alive_r, err_w];
+    if let Some(fd) = notif_child {
+        keep.push(fd);
+    }
+    append_stdio_fds(&mut keep, opts.stdio);
+    close_all_except(&keep);
     // SAFETY: scalar getpid (returns 1 inside the fresh pidns).
     let b_pid = unsafe { libc::getpid() };
 
@@ -581,13 +767,64 @@ fn child_b(alive_r: RawFd, err_w: RawFd, opts: &SpawnOptions) -> ! {
     if c_pid == 0 {
         // Agent process C.
         child_pdeathsig(b_pid);
-        close_all_except(&[0, 1, 2, err_w]);
+        let mut keep = vec![0, 1, 2, err_w];
+        if let Some(fd) = notif_child {
+            keep.push(fd);
+        }
+        append_stdio_fds(&mut keep, opts.stdio);
+        close_all_except(&keep);
+        // Become a session leader only for PTY mode: TIOCSCTTY requires it.
+        // Captured and inherited stdio must keep their caller's session.
+        if matches!(opts.stdio, StdioMode::Pty { .. }) && unsafe { libc::setsid() } < 0 {
+            child_fail(err_w, 125, "setsid failed");
+        }
         if let Err(msg) = child_stdio_setup(&opts.stdio) {
             child_fail(err_w, 124, &format!("stdio: {msg}"));
         }
+        if let Err(error) = drop_agent_capabilities() {
+            child_fail(err_w, 126, &format!("drop capabilities: {error}"));
+        }
+        // Install user-notify only in the final agent process. Installing it
+        // in S or B would trap their own Landlock path opens or fork and
+        // deadlock setup before the parent owns the listener.
+        if observe {
+            if let Some(nc) = notif_child {
+                let mut ok = false;
+                if let Ok(listener) = observe_seccomp::install_tap() {
+                    child_write_all(nc, b"T");
+                    if net_relay::send_fd(nc, listener).is_ok() {
+                        ok = true;
+                    }
+                    unsafe { libc::close(listener) };
+                }
+                if !ok {
+                    child_write_all(nc, b"N");
+                }
+                unsafe { libc::close(nc) };
+            }
+        }
+        // The actual NetMode selects the socket policy: FULL/off is
+        // AF_UNIX-only, while FULL/allowlist additionally permits IPv4/IPv6
+        // for the loopback proxy. Both variants retain syscall hardening.
+        if let Err(e) = seccomp_netblock::install_for(socket_policy) {
+            child_fail(err_w, 126, &format!("seccomp hardening: {e}"));
+        }
+        // Readiness belongs to C, not the outer namespace helper: by this
+        // point private procfs, Landlock, stdio and seccomp are all active.
+        // Reporting ready earlier can return a handle for a child that is
+        // already failing its final sandbox setup.
+        child_write_all(err_w, b"R");
         close_all_except(&[0, 1, 2]);
-        child_exec(opts)
+        child_exec(policy, opts)
     }
+
+    if let Some(fd) = notif_child {
+        unsafe { libc::close(fd) };
+    }
+
+    // B must not retain a PTY slave or captured pipe writers: those copies
+    // would keep the outer stream open after C exits and hide EOF from vetto.
+    close_stdio_fds(opts.stdio);
 
     // Supervisor loop.
     let mut c_code: i32 = 0;
@@ -679,7 +916,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
 
     // NOTE: the parent's alive_w copy must NOT survive this fork — the whole
     // orphan-kill design depends on the write end living ONLY in vetto.
-    let mut keep: Vec<RawFd> = vec![err_w, map_w, ack_r, alive_r];
+    // Preserve inherited stdio for StdioMode::Inherit; the eventual agent C
+    // uses these descriptors unchanged.
+    let mut keep: Vec<RawFd> = vec![0, 1, 2, err_w, map_w, ack_r, alive_r];
     if let Some(fd) = relay_end {
         keep.push(fd);
     }
@@ -721,6 +960,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     }
     if let Err(e) = mounts::make_root_private() {
         child_fail(err_w, 115, &format!("make root private: {e}"));
+    }
+    if let Err(e) = mounts::isolate_dev_shm() {
+        child_fail(err_w, 115, &format!("isolate /dev/shm: {e}"));
     }
     if let Err(e) = namespaces::unshare(namespaces::CLONE_NEWIPC) {
         child_fail(err_w, 115, &format!("unshare ipc: {e}"));
@@ -765,30 +1007,10 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         }
     }
 
-    if let Err(e) = landlock::apply_policy(&policy.allow_write, &policy.allow_read, false) {
-        child_fail(err_w, 120, &format!("{e}"));
-    }
-
-    // Optional observation tap — best-effort, fail-open by design.
-    if observe {
-        if let Some(nc) = notif_child {
-            let mut ok = false;
-            if let Ok(listener) = observe_seccomp::install_tap() {
-                child_write_all(nc, b"T");
-                if net_relay::send_fd(nc, listener).is_ok() {
-                    ok = true;
-                }
-                // The listener is owned by the parent now.
-                // SAFETY: plain close on the local copy.
-                unsafe { libc::close(listener) };
-            }
-            if !ok {
-                child_write_all(nc, b"N");
-            }
-            // SAFETY: plain close on the spent socket end.
-            unsafe { libc::close(nc) };
-        }
-    }
+    let socket_policy = match relay_port {
+        Some(_) => seccomp_netblock::SocketPolicy::UnixAndIp,
+        None => seccomp_netblock::SocketPolicy::UnixOnly,
+    };
 
     // Inner supervisor B (PID 1 of the new pidns) forks the agent C.
     // SAFETY: fork of a single-threaded child.
@@ -797,11 +1019,19 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         child_fail(err_w, 122, "fork supervisor failed");
     }
     if b == 0 {
-        child_b(alive_r, err_w, opts);
+        child_b(
+            alive_r,
+            err_w,
+            notif_child,
+            observe,
+            policy,
+            opts,
+            socket_policy,
+        );
     }
 
-    // Signal readiness to the parent, then just ferry B's exit code.
-    child_write_all(err_w, b"R");
+    // C reports readiness only after the complete sandbox stack is active.
+    // S only ferries B's exit code.
     close_all_except(&[]);
     // SAFETY: blocking waitpid on B.
     let mut status = 0i32;
@@ -971,7 +1201,9 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
         opts,
     } = a;
 
-    let mut keep: Vec<RawFd> = vec![err_w];
+    // Preserve inherited stdio for StdioMode::Inherit; child_exec must not
+    // receive closed standard streams merely because FS-ONLY has one fork.
+    let mut keep: Vec<RawFd> = vec![0, 1, 2, err_w];
     if let Some(fd) = notif_child {
         keep.push(fd);
     }
@@ -986,10 +1218,31 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
 
     child_pdeathsig(parent_pid);
 
-    // Own session => own process group for kill(-pgid) cleanup.
-    // SAFETY: scalar-only setsid.
-    if unsafe { libc::setsid() } < 0 {
-        child_fail(err_w, 125, "setsid failed");
+    // PTY mode needs a new session for TIOCSCTTY. Captured and inherited
+    // modes preserve the caller's session, but still get a private process
+    // group so kill(-pgid) never targets the caller's group.
+    match opts.stdio {
+        StdioMode::Pty { .. } => {
+            // SAFETY: scalar-only setsid in the freshly forked child.
+            if unsafe { libc::setsid() } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setsid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
+        StdioMode::Captured { .. } | StdioMode::Inherit => {
+            // SAFETY: put only this child in a new process group; unlike
+            // setsid(), this preserves the caller's session and ctty.
+            if unsafe { libc::setpgid(0, 0) } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setpgid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
     }
 
     if net_off {
@@ -1035,7 +1288,7 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
 
     child_write_all(err_w, b"R");
     close_all_except(&[0, 1, 2]);
-    child_exec(opts)
+    child_exec(policy, opts)
 }
 
 fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<Spawned> {

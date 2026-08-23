@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -39,6 +40,7 @@ pub fn run_vetto_env_in(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> Out
     Command::new(vetto_bin())
         .args(args)
         .current_dir(cwd)
+        .env("HOME", test_home())
         .envs(envs.iter().copied())
         .output()
         .expect("spawn vetto")
@@ -107,11 +109,28 @@ pub fn tool_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A fake secret in the real $HOME (best-effort; $HOME denial is enforced
-/// regardless of file existence, but a real file makes the test meaningful).
+/// Isolated HOME inherited by every integration-test vetto process. Tests
+/// must never create credential-shaped fixtures in the runner account's real
+/// home directory.
+pub fn test_home() -> &'static Path {
+    static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
+    TEST_HOME
+        .get_or_init(|| {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos();
+            let path =
+                std::env::temp_dir().join(format!("vetto-it-home-{}-{nonce}", std::process::id()));
+            std::fs::create_dir_all(&path).expect("create isolated test HOME");
+            path
+        })
+        .as_path()
+}
+
+/// Create fake key material only inside the isolated integration-test HOME.
 pub fn ensure_fake_ssh_key() {
-    let home = std::env::var("HOME").expect("$HOME");
-    let ssh = Path::new(&home).join(".ssh");
+    let ssh = test_home().join(".ssh");
     let _ = std::fs::create_dir_all(&ssh);
     let key = ssh.join("id_rsa");
     if !key.exists() {

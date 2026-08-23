@@ -18,6 +18,22 @@ const MS_NOSUID: libc::c_ulong = 0x2;
 const MS_NODEV: libc::c_ulong = 0x4;
 const MS_NOEXEC: libc::c_ulong = 0x8;
 
+/// The FULL tier's private shared-memory surface. The size is deliberately
+/// bounded so an agent cannot turn `/dev/shm` into an unaccounted host-memory
+/// sink, while the tmpfs mount remains useful for ordinary runtime code.
+pub const DEV_SHM_SIZE_BYTES: u64 = 64 * 1024 * 1024;
+pub const DEV_SHM_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
+pub const PROC_HIDE_PID_OPTIONS: &str = "hidepid=2";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcVisibility {
+    /// `/proc` was mounted with `hidepid=2` in the private PID namespace.
+    HidePid,
+    /// The kernel accepted a private proc mount but does not support
+    /// `hidepid`; callers must surface this honest reduced-visibility state.
+    Fallback,
+}
+
 fn cstr(p: &Path) -> VettoResult<CString> {
     CString::new(p.as_os_str().as_encoded_bytes())
         .map_err(|_| VettoError::Mount(format!("NUL in path {}", p.display())))
@@ -43,6 +59,94 @@ pub fn make_root_private() -> VettoResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Replace `/dev/shm` inside the private mount namespace with a bounded,
+/// isolated tmpfs. The target must already exist; failures are returned to
+/// the FULL-tier setup path rather than silently exposing the host mount.
+pub fn isolate_dev_shm() -> VettoResult<()> {
+    let target = Path::new("/dev/shm");
+    let metadata = std::fs::symlink_metadata(target)
+        .map_err(|error| VettoError::Mount(format!("inspect /dev/shm: {error}")))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(VettoError::Mount("/dev/shm is not a directory".into()));
+    }
+    let dst = cstr(target)?;
+    let options = cstr(Path::new(DEV_SHM_MOUNT_OPTIONS))?;
+    // SAFETY: valid NUL-terminated mount arguments; flags are scalar.
+    if unsafe {
+        libc::mount(
+            std::ptr::null(),
+            dst.as_ptr(),
+            b"tmpfs\0".as_ptr() as *const libc::c_char,
+            MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            options.as_ptr().cast(),
+        )
+    } != 0
+    {
+        return Err(VettoError::Mount(format!(
+            "isolated /dev/shm tmpfs: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+fn mount_proc(options: Option<&str>) -> Result<(), (VettoError, Option<i32>)> {
+    let source = cstr(Path::new("proc")).map_err(|error| (error, None))?;
+    let target = cstr(Path::new("/proc")).map_err(|error| (error, None))?;
+    let fstype = cstr(Path::new("proc")).map_err(|error| (error, None))?;
+    let data = options
+        .map(|value| cstr(Path::new(value)))
+        .transpose()
+        .map_err(|error| (error, None))?;
+    // SAFETY: all strings are owned for the duration of the call.
+    if unsafe {
+        libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            data.as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr().cast()),
+        )
+    } != 0
+    {
+        let error = std::io::Error::last_os_error();
+        let errno = error.raw_os_error();
+        return Err((
+            VettoError::Mount(format!("mount restricted /proc: {error}")),
+            errno,
+        ));
+    }
+    Ok(())
+}
+
+/// Mount a proc view after entering the new PID namespace. `hidepid=2` is
+/// preferred; only an explicit unsupported-option (`EINVAL`) result permits
+/// the no-hidepid fallback. Permission and other mount errors fail closed so
+/// the caller cannot mistake an unmounted host `/proc` for a restriction.
+pub fn mount_restricted_proc() -> VettoResult<ProcVisibility> {
+    match mount_proc(Some(PROC_HIDE_PID_OPTIONS)) {
+        Ok(()) => Ok(ProcVisibility::HidePid),
+        Err((first, errno)) if hidepid_unsupported(errno) => match mount_proc(None) {
+            Ok(()) => Ok(ProcVisibility::Fallback),
+            Err((second, _)) => Err(VettoError::Mount(format!(
+                "proc hidepid unsupported and fallback mount failed: {first}; {second}"
+            ))),
+        },
+        Err((error, _)) => Err(error),
+    }
+}
+
+fn hidepid_unsupported(errno: Option<i32>) -> bool {
+    matches!(
+        errno,
+        Some(value)
+            if value == libc::EINVAL
+                || value == libc::ENOPROTOOPT
+                || value == libc::EOPNOTSUPP
+    )
 }
 
 fn bind_devnull(target: &Path) -> VettoResult<()> {
@@ -113,4 +217,28 @@ pub fn blackhole_resolv_conf() -> VettoResult<()> {
         bind_devnull(p)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_shm_plan_is_bounded_and_non_executable() {
+        assert_eq!(DEV_SHM_SIZE_BYTES, 64 * 1024 * 1024);
+        assert!(DEV_SHM_MOUNT_OPTIONS.contains("size=67108864"));
+        assert!(DEV_SHM_MOUNT_OPTIONS.contains("mode=1777"));
+        assert_ne!(MS_NOSUID | MS_NODEV | MS_NOEXEC, 0);
+    }
+
+    #[test]
+    fn proc_plan_prefers_hidepid_and_has_explicit_fallback_state() {
+        assert_eq!(PROC_HIDE_PID_OPTIONS, "hidepid=2");
+        assert_ne!(MS_NOSUID | MS_NODEV | MS_NOEXEC, 0);
+        assert_ne!(ProcVisibility::HidePid, ProcVisibility::Fallback);
+        assert!(hidepid_unsupported(Some(libc::EINVAL)));
+        assert!(hidepid_unsupported(Some(libc::ENOPROTOOPT)));
+        assert!(hidepid_unsupported(Some(libc::EOPNOTSUPP)));
+        assert!(!hidepid_unsupported(Some(libc::EPERM)));
+    }
 }

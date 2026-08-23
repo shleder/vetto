@@ -25,20 +25,60 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Unit + integration tests
         # Enforcement tests self-skip when the runner lacks a tier; the
         # GitHub-hosted ubuntu kernel normally provides both landlock and
         # unprivileged userns.
-        run: cargo test --quiet
+        run: cargo test --all-features --quiet
+
+      - name: Release build
+        run: cargo build --release --all-features
+
+  check-aarch64:
+    name: test (aarch64 via QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Register binfmt_misc so the aarch64 test binary executes under QEMU.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Unit + integration tests (aarch64)
+        run: cross test --target aarch64-unknown-linux-gnu --all-features --quiet
 
   build-macos:
-    name: build (macos, seatbelt compiles)
+    name: build + test (macOS arm64 and x86_64 check)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --quiet
-      - run: cargo clippy -- -D warnings
+      - run: cargo build --release --all-features
+      - run: cargo test --all-features --quiet
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Intel macOS cross-check
+        run: cargo check --target x86_64-apple-darwin --all-features
+
+  build-windows:
+    name: build + test (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --all-features
+      - run: cargo test --all-features --quiet
+      - run: cargo clippy --all-targets --all-features -- -D warnings

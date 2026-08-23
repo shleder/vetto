@@ -45,3 +45,30 @@ downgraded: events are advisory, racy, and best-effort. Enforcement state is
 computed once at spawn from the policy and applied in the kernel. This
 separation is what makes racy observation *acceptable* — a tampered or
 missed event changes nothing about what the sandbox allows.
+
+## Process and kernel-interface attacks
+
+The untrusted command may run arbitrary native code, not just the documented
+agent executable. It can therefore attempt cross-process reads, namespace
+changes, asynchronous I/O paths and privileged kernel control operations by
+issuing raw syscalls directly.
+
+| Interface | Threat | Default decision | Compatibility cost |
+|---|---|---|---|
+| `ptrace`, `process_vm_readv/writev`, `pidfd_getfd` | inspect or copy another process's memory/descriptors | reject with `EPERM` | debuggers cannot attach inside a vetto session |
+| mount API, `pivot_root`, `umount2` | remove secret overlays or replace the filesystem view | reject with `EPERM` | nested container/mount tools cannot run |
+| `io_uring_*` | historical gaps between asynchronous operations and security hooks | reject with `EPERM` | programs must use ordinary synchronous/epoll I/O |
+| `userfaultfd` | kernel-exploit primitive and cross-thread memory manipulation | reject with `EPERM` | user-space paging runtimes cannot run |
+| `bpf`, `perf_event_open` | kernel attack surface and observation of processes outside the intended task | reject with `EPERM` | eBPF loaders and hardware profilers cannot run |
+| module/kexec/reboot/swap syscalls | kernel replacement, code loading, or host disruption on an unexpectedly permissive kernel/user namespace | reject with `EPERM` | kernel administration is intentionally impossible |
+
+Blocking `bpf` and `perf_event_open` is deliberate rather than a claim that
+every invocation is malicious. Typical compilers, package managers and test
+runners do not require them. Workloads whose purpose is kernel tracing or
+profiling are outside the sandbox's supported workload set; vetto does not
+silently weaken the boundary for those tools.
+
+The filter is installed after vetto finishes its own namespace/mount setup and
+immediately before `execve`, then inherited irreversibly by descendants. Tests
+exercise the native syscall ABI rather than command wrappers. Architecture
+numbers come from `libc::SYS_*`, so x86-64 constants are never reused on ARM64.

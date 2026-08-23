@@ -1,0 +1,66 @@
+name: vetto sandbox
+description: Build vetto from this action checkout and run an agent in CI without a daemon.
+inputs:
+  command:
+    description: Agent command to execute through vetto.
+    required: true
+  profile:
+    description: Built-in or project policy profile.
+    required: false
+    default: strict
+  net:
+    description: Network mode (off, allowlist:..., or strict:host:port,...).
+    required: false
+    default: off
+  report:
+    description: Comma-separated report formats.
+    required: false
+    default: json,sarif
+  report-dir:
+    description: Directory for generated reports.
+    required: false
+    default: .vetto/reports
+  fail-on-block:
+    description: "false disables; true fails at one observed block; a positive integer sets the threshold."
+    required: false
+    default: "false"
+  upload-sarif:
+    description: Upload the generated SARIF report to code scanning.
+    required: false
+    default: "false"
+outputs:
+  sarif-path:
+    description: Path to the generated SARIF report, when present.
+    value: ${{ steps.run.outputs.sarif-path }}
+  exit-code:
+    description: vetto process exit code.
+    value: ${{ steps.run.outputs.exit-code }}
+runs:
+  using: composite
+  steps:
+    - name: Cache Rust build
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.action_path }}/../target
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/../Cargo.lock', github.action_path)) }}
+
+    - name: Build and run vetto
+      id: run
+      shell: bash
+      env:
+        VETTO_ACTION_COMMAND: ${{ inputs.command }}
+        VETTO_ACTION_PROFILE: ${{ inputs.profile }}
+        VETTO_ACTION_NET: ${{ inputs.net }}
+        VETTO_ACTION_REPORT: ${{ inputs.report }}
+        VETTO_ACTION_REPORT_DIR: ${{ inputs.report-dir }}
+        VETTO_ACTION_FAIL_ON_BLOCK: ${{ inputs.fail-on-block }}
+      run: bash "$GITHUB_ACTION_PATH/entrypoint.sh"
+
+    - name: Upload SARIF
+      if: ${{ inputs.upload-sarif == 'true' && steps.run.outputs.sarif-path != '' && always() }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.run.outputs.sarif-path }}

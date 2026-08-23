@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>dev.vetto.jetbrains</id>
+    <name>vetto</name>
+    <vendor url="https://github.com/shleder/vetto">vetto</vendor>
+    <description><![CDATA[
+        Run headless coding-agent commands through the local vetto sandbox and
+        inspect output without weakening the selected policy.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="vetto"
+                    anchor="bottom"
+                    canCloseContents="false"
+                    factoryClass="dev.vetto.jetbrains.VettoToolWindowFactory"/>
+    </extensions>
+</idea-plugin>

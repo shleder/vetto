@@ -53,6 +53,41 @@ paths = ["$PROJECT/.env"]
 }
 
 #[test]
+fn custom_environment_pass_through_is_explicit() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("customenv");
+    write_file(
+        &proj.path().join("vetto-test.toml"),
+        r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["/usr", "/bin", "/lib", "/dev/null"]
+
+[environment]
+pass_through = ["VETTO_TEST_ALLOWED"]
+"#,
+    );
+    let out = run_vetto_env_in(
+        proj.path(),
+        &[
+            "--policy",
+            "vetto-test.toml",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s|%s' \"$VETTO_TEST_ALLOWED\" \"$GH_TOKEN\"",
+        ],
+        &[("VETTO_TEST_ALLOWED", "explicit"), ("GH_TOKEN", "secret")],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "explicit|", "environment output");
+}
+
+#[test]
 fn init_writes_starter_policy() {
     let proj = TempProject::new("init");
     let out = run_vetto_in(proj.path(), &["init"]);

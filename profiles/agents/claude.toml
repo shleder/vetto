@@ -1,0 +1,9 @@
+[metadata]
+name = "claude"
+description = "Safe read-only compatibility roots for Claude Code."
+
+[filesystem]
+allow_read = ["$AGENT/cache", "$AGENT/logs"]
+
+[display_only_deny]
+paths = ["$AGENT/.credentials.json", "$AGENT/settings.json"]

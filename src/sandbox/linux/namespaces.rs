@@ -43,7 +43,8 @@ pub fn userns_knobs_look_enabled() -> bool {
 
 /// Authoritative probe: fork a child that unshares a user namespace while
 /// the parent performs the real map writes over a two-pipe handshake; success
-/// proves the FULL tier is usable end-to-end (unshare + uid_map + gid_map).
+/// proves the user-namespace mapping prerequisite (unshare + uid_map +
+/// gid_map). `probe_full_tier` separately exercises the remaining FULL stack.
 ///
 /// Two SEPARATE pipes: a single bidirectional pipe would let the child race
 /// the parent for its own ready byte.
@@ -51,6 +52,18 @@ pub fn userns_knobs_look_enabled() -> bool {
 /// SAFETY: fork in a single-threaded context (called before any tokio
 /// runtime exists); the child only performs syscalls and _exit().
 pub fn probe_unprivileged_userns() -> bool {
+    probe_userns(false)
+}
+
+/// Authoritative FULL-tier probe. Besides user-id mappings this exercises the
+/// namespace and mount operations used by the real child, including a private
+/// procfs mount from inside the new PID namespace. This prevents selecting
+/// FULL on container hosts that permit CLONE_NEWUSER but reject a later mount.
+pub fn probe_full_tier() -> bool {
+    probe_userns(true)
+}
+
+fn probe_userns(require_full_stack: bool) -> bool {
     if !userns_knobs_look_enabled() {
         return false;
     }
@@ -90,14 +103,50 @@ pub fn probe_unprivileged_userns() -> bool {
                 libc::close(ready_fds[1]);
                 libc::close(ack_fds[0]);
             }
-            // ack 0 => maps written correctly.
-            unsafe { libc::_exit(if n == 1 && ack[0] == 0 { 0 } else { 1 }) };
+            let mapped = n == 1 && ack[0] == 0;
+            let ready = mapped && (!require_full_stack || probe_full_stack_in_child());
+            unsafe { libc::_exit(if ready { 0 } else { 1 }) };
         }
         pid => {
             let mut status = 0i32;
             parent_probe_side(pid, ready_fds, ack_fds, &mut status)
         }
     }
+}
+
+fn probe_full_stack_in_child() -> bool {
+    if unshare(CLONE_NEWNS).is_err() || super::mounts::make_root_private().is_err() {
+        return false;
+    }
+    if super::mounts::isolate_dev_shm().is_err()
+        || unshare(CLONE_NEWIPC).is_err()
+        || unshare(CLONE_NEWNET).is_err()
+        || unshare(CLONE_NEWPID).is_err()
+    {
+        return false;
+    }
+
+    // CLONE_NEWPID affects the next child. Mount procfs there so the probe
+    // covers the same capability boundary as the real PID-1 supervisor.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return false;
+    }
+    if pid == 0 {
+        let ok = super::mounts::mount_restricted_proc().is_ok();
+        unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+    }
+    let mut status = 0;
+    loop {
+        let result = unsafe { libc::waitpid(pid, &mut status, 0) };
+        if result == pid {
+            break;
+        }
+        if result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            return false;
+        }
+    }
+    libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
 }
 
 fn parent_probe_side(

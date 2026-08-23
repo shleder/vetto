@@ -1,0 +1,9 @@
+[metadata]
+name = "codex"
+description = "Safe read-only compatibility roots for the Codex CLI."
+
+[filesystem]
+allow_read = ["$AGENT/cache", "$AGENT/logs"]
+
+[display_only_deny]
+paths = ["$AGENT/auth.json", "$AGENT/config.toml"]

@@ -3,6 +3,42 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+No release, tag, package publication, or registry update is implied by this
+section.
+
+### Security
+
+- Reject unknown policy fields and add bounded built-in inheritance,
+  conditions, project layers, agent variables and resource ceilings.
+- Block cross-process access, mount teardown, io_uring/userfaultfd and selected
+  kernel-control syscalls in both Linux tiers with architecture-aware syscall
+  constants.
+- Sanitize JSON/SARIF content and harden JSONL/report creation and retention
+  against symlink/race paths.
+- Validate and pin broker-side IPv4/IPv6 DNS answers, including metadata,
+  mapped and NAT64 destinations.
+
+### Added
+
+- Strict domain+port networking, brokered Git-over-SSH, SARIF, report compare,
+  fail-on-block thresholds, configurable report storage and shell completions.
+- Agent presets, version probes, multi-agent manifests, independent sandboxes,
+  split-pane TUI and combined reports.
+- Adaptive Linux visibility, expanded seccomp observation and explicit opt-in
+  descriptor substitution API.
+- Capability-gated Windows and macOS backends/observers.
+- VS Code and JetBrains integrations, a composite GitHub Action, source-only
+  package recipes, tutorial outlines and reproducible benchmark targets.
+
+### Changed
+
+- FSEvents is described and emitted only as a coarse filesystem-change feed,
+  never file-read or Seatbelt-denial visibility.
+- Performance documentation no longer presents estimates as measured product
+  overhead.
+
 ## [0.1.0] — 2026-08-22
 
 First public milestone: daemon-less sandbox + security layer for AI coding

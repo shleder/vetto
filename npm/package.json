@@ -1,0 +1,40 @@
+{
+  "name": "@shleddy/vetto",
+  "version": "0.0.1-alpha.0",
+  "description": "Linux x64 alpha preview of the vetto sandbox and security layer for AI coding agents",
+  "license": "Apache-2.0",
+  "author": "shleddy",
+  "keywords": [
+    "ai",
+    "sandbox",
+    "security",
+    "landlock",
+    "seccomp"
+  ],
+  "homepage": "https://github.com/shleder/vetto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shleder/vetto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shleder/vetto/issues"
+  },
+  "bin": {
+    "vetto": "native/vetto"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "native/vetto",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
+  }
+}

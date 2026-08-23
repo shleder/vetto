@@ -3,27 +3,56 @@
 use crate::common::*;
 
 #[test]
-fn globbed_pem_files_are_masked_full_tier() {
+fn all_project_secret_shapes_are_masked_full_tier() {
     if detected_tier().as_deref() != Some("full") {
         eprintln!("SKIP: needs full tier for overlays");
         return;
     }
-    let proj = TempProject::new("pemmask");
-    write_file(
-        &proj.path().join("certs/server.pem"),
-        "PRIVATE-KEY-MATERIAL\n",
-    );
+    let proj = TempProject::new("secret-shape-mask");
+    for (path, marker) in [
+        (".env.local", "ENV-SECRET"),
+        ("certs/server.pem", "PEM-SECRET"),
+        ("certs/client.key", "KEY-SECRET"),
+        ("certs/client.p12", "P12-SECRET"),
+        ("certs/client.pfx", "PFX-SECRET"),
+        ("vault/passwords.kdbx", "KDBX-SECRET"),
+        (".ENV.production", "UPPER-ENV-SECRET"),
+        ("certs/PRIVATE.PEM", "UPPER-PEM-SECRET"),
+        ("vault/UPPER.KDBX", "UPPER-KDBX-SECRET"),
+    ] {
+        write_file(&proj.path().join(path), &format!("{marker}\n"));
+    }
     let out = run_vetto_in(
         proj.path(),
-        &["--tui=none", "--", "cat", "certs/server.pem"],
+        &[
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "cat .env.local certs/server.pem certs/client.key certs/client.p12 \
+             certs/client.pfx vault/passwords.kdbx .ENV.production \
+             certs/PRIVATE.PEM vault/UPPER.KDBX",
+        ],
     );
     // Masked via /dev/null bind: open succeeds, content is empty.
     assert!(
         !out.status.success() || stdout(&out).trim().is_empty(),
-        "pem content leaked: {:?}",
+        "project secret content leaked: {:?}",
         stdout(&out)
     );
-    assert!(!stdout(&out).contains("PRIVATE-KEY-MATERIAL"));
+    for marker in [
+        "ENV-SECRET",
+        "PEM-SECRET",
+        "KEY-SECRET",
+        "P12-SECRET",
+        "PFX-SECRET",
+        "KDBX-SECRET",
+        "UPPER-ENV-SECRET",
+        "UPPER-PEM-SECRET",
+        "UPPER-KDBX-SECRET",
+    ] {
+        assert!(!stdout(&out).contains(marker), "leaked marker {marker}");
+    }
 }
 
 #[test]
@@ -41,7 +70,7 @@ fn ssh_dir_listing_denied_full_tier() {
             "--",
             "ls",
             "-A",
-            &format!("{}/.ssh", std::env::var("HOME").unwrap()),
+            &format!("{}/.ssh", test_home().display()),
         ],
     );
     assert!(

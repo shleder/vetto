@@ -1,134 +1,212 @@
 # vetto architecture
 
-vetto is a single binary that supervises one agent session per invocation.
-No daemons, no background state: everything below happens inside one process
-tree per `vetto -- <agent>` run.
+vetto is the uniform operator-controlled boundary above heterogeneous coding
+agents and their built-in sandboxes. One invocation owns one session (or one
+explicit multi-agent group), starts no persistent daemon, uses no cloud
+service, and sends no telemetry.
 
-## Session wiring (load-bearing order)
+## Trust boundaries and startup order
 
-1. **Single-threaded phase** — CLI parse, policy load (glob expansion against
-   the real filesystem), PATH resolution of the agent binary, stdio plumbing
-   (PTY / pipes). *Every fork in vetto happens here* — forking a
-   multi-threaded process risks deadlocks on allocator locks, so the sandbox
-   chains run before any thread or async runtime exists.
-2. **Spawn** — the sandbox backend builds enforcement in a fork chain (below)
-   and the supervisor adopts the waitable handle. Fail-closed: any setup
-   failure means the agent never runs; there is no unsandboxed fallback.
-3. **Threaded phase** — event-bus consumers (network broker, seccomp-notify
-   watchdog, audit reader, /proc visibility poller, JSONL sink, stats
-   collector) and the UI loop (statusline / dashboard / none).
+The agent command and every descendant are untrusted. The operator, vetto
+binary, OS kernel and policy selected before launch are trusted. Report paths
+and network brokers stay outside the sandbox filesystem/network boundary.
 
-## Linux Tier FULL — the fork chain
+Startup order is load-bearing:
 
-```
-vetto (parent, single-threaded)
- └─fork→ S                         prctl(PDEATHSIG)+getppid check
-    ├─ unshare(USER) → pid↔parent handshake → parent writes uid/gid maps
-    ├─ unshare(MOUNT); mount --make-rprivate /
-    ├─ unshare(IPC); unshare(NET)
-    ├─ [allowlist] blackhole /etc/resolv.conf; fork→ R (relay)
-    │    R: in the netns, outside the later pidns; serves 127.0.0.1:<port>
-    │       HTTP CONNECT + socks5; forwards {host,port} to the broker over an
-    │       inherited AF_UNIX socketpair
-    ├─ unshare(PID)   (after R so R stays reachable)
-    ├─ mount overlays over every resolved display_only_deny path
-    │    (files: bind /dev/null; dirs: empty tmpfs mode=000) — the ONLY way
-    │    to carve secrets out of an allowed tree in Landlock
-    ├─ landlock restrict_self (pure allowlist; VFS/inode decisions)
-    ├─ [--observe-seccomp] install user-notify tap → send listener fd to
-    │    parent via SCM_RIGHTS (fail-open: observation only)
-    └─fork→ B                       PID 1 of the inner pidns
-        ├─fork→ C                   setsid + TIOCSCTTY (or pipe dup2s),
-        │                           chdir($PROJECT), execve(agent)
-        └─ loop: waitpid(-1, WNOHANG) + poll(alive pipe, 50 ms)
-             C died  → remember exit code; kill(-1); reap; exit(code)
-             alive pipe EOF (vetto died) → kill(-1); reap; exit
-```
+1. Parse CLI/project policy, resolve concrete paths and executable argv, and
+   prepare PTY/pipes while the process is single-threaded.
+2. Detect a backend and preflight every required capability. A missing
+   enforcement primitive aborts before the command runs.
+3. Fork/create the sandbox, install irreversible restrictions, then `execve`
+   or the platform equivalent.
+4. Only after all required sandbox processes exist, start observation,
+   aggregation, report and TUI worker threads.
+5. On exit, terminate/reap the entire platform process container, finalize
+   sanitized reports outside the sandbox, and return the agent/failure status.
 
-- Killing vetto ⇒ alive-pipe EOF ⇒ B kills the namespace ⇒ kernel reaps the
-  rest. PDEATHSIG is belt-and-suspenders on every hop.
-- seccomp **never** enforces paths. The user-notify tap answers every
-  notification with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`; Landlock stays the
-  sole filesystem enforcer.
-
-## Linux Tier FS-ONLY (no unprivileged userns)
-
-Single fork; the child **is** the agent after: `setsid` (own pgroup) →
-seccomp-BPF network block (`socket/socketpair` on `AF_INET/6` →
-`EAFNOSUPPORT`) → Landlock. Without a mount namespace, intra-project secrets
-cannot be overlay-masked; instead the loader enumerates the project tree at
-load time (post-order, clean subtrees collapse into single rules, opaque
-dirs like `.git`/`node_modules`/`target` get blanket rules) and emits
-per-entry read rules that exclude secret-shaped files; write-root rules have
-`READ_FILE` stripped so the whole-tree write grant cannot re-expose them.
-Budget: 20 000 entries, above which vetto falls back to whole-tree read with
-a LOUD warning. Honest gap: `setsid()`-detached grandchildren survive this
-tier.
-
-## Network
-
-- `--net=off` — FULL: interface-less netns (no `lo`, no route). FS-ONLY:
-  seccomp-BPF socket block. Always enforced.
-- `--net=allowlist:d1,d2` — FULL only. The proxy CANNOT live inside an
-  interface-less netns (no route to anything), so:
-  1. pre-fork AF_UNIX socketpair: broker end in vetto, relay end inherited;
-  2. R (inside the netns) brings up `lo`, listens on 127.0.0.1:47129;
-  3. the child gets `HTTP(S)_PROXY`/`ALL_PROXY` env pointing there;
-  4. R parses CONNECT/socks5 requests, ships `{host,port}` to the broker;
-  5. the broker (outside) resolves DNS, checks the CONNECT-level domain
-     allowlist (exact or subdomain), dials, and hands the data socket back
-     via SCM_RIGHTS; bytes pump both ways until EOF.
-  The child never resolves DNS (`/etc/resolv.conf` blackholed); non-proxy
-     protocols have no route and fail closed (git-over-SSH will not work —
-     documented). No TLS decryption, ever.
-
-## Visibility model (enforcement ≠ observation)
-
-- Enforcement is silent (kernel).
-- Allowed ops: `/proc/<pid>/fd` poll every ~100 ms, best-effort, misses
-  sub-100 ms opens. Never claimed as real-time interception.
-- Blocked attempts, in preference order: kernel audit feed (needs ≥ 6.12 and
-  privileges an unprivileged vetto usually lacks — probed, treated as
-  best-effort-rare) → `--observe-seccomp` user-notify tap (unprivileged;
-  paths are racy in observation only — acceptable because enforcement never
-  depends on them; the notifier classifies against the policy because the
-  syscall *result* is not visible to a CONTINUE responder) → persistent
-  notice "enforcement ACTIVE".
+This ordering avoids unsafe post-thread `fork()` paths and prevents a partial
+multi-agent launch from becoming an unsandboxed fallback.
 
 ## Policy pipeline
 
-TOML profile → variable substitution (`$PROJECT`, `$HOME`, `~/`) → glob
-expansion at **load time** (globs do not exist at the enforcement layer;
-Landlock only understands concrete paths) → sanity warnings (system write
-roots, wholesale `$HOME` reads, nonexistent write roots dropped) → tier
-adjustment (FS-ONLY enumeration) → resolved `Policy` of concrete roots.
+The intended layer order is:
+
+```text
+built-in profile ← inherited built-ins ← agent preset ← project vetto.toml ← CLI overrides
+```
+
+All TOML structs reject unknown fields. Inheritance accepts built-in names,
+not arbitrary paths. Conditions are deliberately bounded (`branch`,
+`file_exists`, `project_contains`), and condition scans have path/file/byte
+budgets. `$PROJECT`, `$HOME` and a known `$AGENT` root are resolved before
+enforcement. Globs become finite concrete paths; they never reach Landlock or
+another backend as string patterns.
+
+Environment construction is default-deny. A small built-in compatibility list
+and exact names in `[environment].pass_through` are copied into a fresh
+environment; the full parent environment is never inherited.
+
+## Linux FULL
+
+FULL requires Landlock and an unprivileged user namespace. A simplified
+process/mount layout is:
+
+```text
+vetto supervisor (host namespaces)
+├─ optional host broker (DNS + allowlist + pinned outbound socket)
+└─ sandbox setup: USER + MOUNT + IPC + NET
+   ├─ loopback relay (allowlist/strict only)
+   └─ PID namespace init
+      └─ agent and all descendants
+```
+
+Setup makes mounts private, isolates and size-limits `/dev/shm`, restricts the
+PID-visible `/proc`, masks resolved secret files with `/dev/null` and secret
+directories with an empty tmpfs, then applies Landlock. Secret overlays are
+necessary because Landlock is a pure allowlist: it cannot subtract `.env`
+from an otherwise allowed project tree.
+
+Immediately before the agent runs, seccomp blocks mount removal/replacement,
+cross-process memory/descriptor access, io_uring, userfaultfd and selected
+kernel-control interfaces. Resource ceilings are applied at the same boundary.
+The PID-namespace init reaps zombies and kills the namespace process tree when
+the supervisor disappears.
+
+## Linux FS-ONLY
+
+FS-ONLY is selected when Landlock works but user namespaces do not. It has no
+mount, PID or network namespace. Landlock and seccomp still apply and are
+inherited by descendants. Network off rejects non-Unix socket families.
+
+Because overlays are unavailable, the loader walks the project and constructs
+concrete read rules that omit secret-shaped entries. Traversal errors, symlink
+ambiguity and the entry budget fail closed; no “large tree means read all” path
+exists. Lifecycle uses `PR_SET_PDEATHSIG`, a parent-race check and a process
+group. A deliberately `setsid()`-detached grandchild is the documented cleanup
+gap, not an enforcement bypass.
+
+## Network topology
+
+Network off gives FULL an interface-less network namespace and gives FS-ONLY a
+socket-family seccomp gate. Allowlist and strict modes use this topology:
+
+```text
+proxy-aware client
+  → sandbox loopback CONNECT/SOCKS relay
+  → inherited AF_UNIX bridge (no host route in sandbox)
+  → host broker: domain rule → one DNS lookup → reject unsafe answer set
+  → connect to pinned validated IP:port → opaque byte pump
+```
+
+Strict rules bind both DNS name and port. On Linux, `--git-ssh` supplies an
+OpenSSH `ProxyCommand` that uses the same CONNECT path. The broker does not
+parse TLS, SNI or SSH content and never installs a CA. Relay modes require
+FULL; FS-ONLY fails closed. The SSH helper is Linux-only. See
+[docs/network.md](docs/network.md).
+
+## Observation
+
+Enforcement never consumes observation results.
+
+- Linux allowed operations: recursive `/proc` process/fd scan with adaptive
+  50 ms/500 ms/2 s intervals and bounded caches.
+- Linux blocked attempts: readable kernel audit when available, otherwise
+  optional seccomp user-notify. Notification IDs are validated immediately
+  before responses. Default responses continue the syscall so Landlock remains
+  the filesystem authority.
+- An optional ADDFD substitution API is a distinct behaviour-changing mode,
+  disabled by default and not described as observation.
+- macOS FSEvents supplies coarse directory-change events, never reads/denials.
+- Endpoint Security and Windows ETW are capability/privilege-gated optional
+  feeds. The current Endpoint Security path is notify-only and keeps Seatbelt
+  as enforcement; it does not claim synchronous AUTH allow/deny enforcement.
+  Losing a feed cannot weaken enforcement.
+
+The event bus fans out to the TUI, JSONL sink, statistics and reports. Buffers,
+caches and rendering rates are bounded so untrusted event volume cannot grow
+memory without limit.
 
 ## macOS
 
-Seatbelt profile generated from the same resolved `Policy`:
-`(deny default)` + subpath allows + trailing `(deny file-read*)` carve-outs
-(SBPL: last matching rule wins) + `(deny network*)` for `--net=off`, applied
-via `/usr/bin/sandbox-exec`. Honest gaps (SECURITY.md): sandbox-exec is
-deprecated; denials are invisible to FSEvents; no PDEATHSIG — v0.1 cleans up
-only via process-group kill on normal exit.
+The backend generates a Seatbelt profile from the same concrete policy and
+invokes `/usr/bin/sandbox-exec`. Profile files use unpredictable names,
+exclusive/no-follow creation, private permissions and cleanup. Network off is
+Seatbelt-denied. The current Seatbelt spawn path does not wire the standalone
+macOS broker helper, so domain allowlist traffic is not advertised here.
 
-## Repository layout
+FSEvents watches project changes with inherent latency and reports change
+labels, not reads or Seatbelt denials. Optional Endpoint Security dynamically
+probes the framework, signed entitlement and privilege/TCC gates; unavailable
+ES falls back to Seatbelt plus FSEvents and is reported honestly. The current
+spawn path supports network-off; `--net=allowlist` is rejected and the
+loopback broker helper is not wired into Seatbelt execution. Strict mode does
+not provide a macOS allowlist relay. Seatbelt rules are inherited by
+descendants. `sandbox-exec` deprecation remains an explicit platform risk.
 
-```
-src/
-  main.rs                 wiring, doctor (--probe), init, profiles
-  cli.rs config.rs        clap CLI → RunConfig
-  policy/                 types, loader, glob resolve, checker, defaults
-  events/                 Event + tokio broadcast bus (sync publish)
-  sandbox/
-    handle.rs             spawn contract, wait/try_wait, kill strategies
-    linux/                probe/tier selection, fork chains, landlock,
-                          namespaces, mounts, seccomp netblock, net relay,
-                          observe tap, /proc poller, audit reader
-    macos/                seatbelt generation + honest stubs
-  pty/                    posix_openpt pair, SIGWINCH latch, resize
-  tui/                    statusline pass-through + overlay, full dashboard
-  logger/                 stderr tracing, JSONL sink, BEST-EFFORT sanitizer
-  report/                 stats collector, self-contained HTML/MD/JSON
-tests/integration/        conditional matrix driving the compiled binary
-```
+## Windows
+
+Windows has no Landlock-equivalent, so the backend is capability-based and
+conditional:
+
+- the Windows 11 experimental `processmodel.dll` process-sandbox API and
+  AppContainer capabilities provide the requested filesystem/process boundary
+  when available;
+- a restricted primary token and Low integrity remove ambient privilege when
+  the optional as-user launch export is present;
+- a Job Object with kill-on-close contains descendant lifetime;
+- the core launcher accepts `--net=off` only. It does not compile domain
+  allowlists to firewall rules and does not silently mutate host firewall/WFP
+  state;
+- the core launcher currently supports inherited stdio only, so callers should
+  use `--tui=none`/`--ci` on Windows;
+- ETW, directory-change and handle feeds are observation only;
+- Windows Sandbox, WFP/firewall, Event Log and minifilter modules are separate,
+  explicit capability-gated integrations. They do not install features,
+  register services, start drivers or elevate automatically.
+
+There is no weaker WIN-BASIC fallback in this implementation. Low integrity or
+a Job Object by itself is not claimed as filesystem/network isolation. If the
+experimental process-sandbox boundary is unavailable, or a policy asks for a
+resolved denied-path field that the Windows schema cannot verify, Windows
+fails before process creation.
+
+## PTY and TUI
+
+Statusline mode gives an interactive agent a PTY sized to reserve one terminal
+row and transparently forwards input/output/resizes. `Ctrl+]` enters the event
+overlay. Full mode owns the alternate screen and embeds captured headless
+output. Both render only on dirty/event input and cap repaint to five frames
+per second.
+
+The shared state contains a bounded event ring, blocked table, accessed-file
+tree, network records, activity buckets and session summary. Pause/resume acts
+on the platform process container, not a UI-only flag. Exports use the same
+safe report/JSONL paths as non-TUI output.
+
+## Multi-agent isolation
+
+A strict manifest represents commands as argv arrays, avoiding a shell quoting
+language. All policies, executables, report paths and backend capabilities are
+preflighted before launch. Every entry gets its own backend instance,
+Landlock/namespaces or platform process container, event bus, output buffer and
+report directory. Failure terminates already-created sandboxes. The current
+multi-agent runtime is Unix-only; Windows rejects a multi-agent launch rather
+than weakening isolation.
+
+The split-pane UI consumes a tagged aggregate stream. Combined reports contain
+per-agent sections and comparisons but do not merge enforcement boundaries.
+
+## Reports and storage
+
+JSONL and HTML/Markdown/JSON/SARIF render through the best-effort sanitizer.
+On Unix, writers traverse parent directories through `openat` directory fds
+with no-follow checks and create final files with exclusive semantics; opened
+objects are verified as private regular files. Cleanup is anchored to the exact
+report directory and only accepts vetto's generated filename grammar.
+
+## Performance discipline
+
+The benchmark crate measures policy/ruleset preparation, visibility scans,
+seccomp-filter/classification primitives, PTY transfer and report rendering.
+No overhead percentage is an architectural guarantee. Reproducibility and
+publication rules are in [docs/performance.md](docs/performance.md).

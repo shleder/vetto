@@ -10,6 +10,11 @@ use tokio::sync::broadcast;
 
 use crate::events::{Event, EventBus, FileAccess};
 
+/// Event streams are attacker-influenced. Keep unique path/subject keys
+/// bounded so a noisy process cannot turn reporting into an unbounded-memory
+/// sink. Repeated keys continue to aggregate after the cap is reached.
+const MAX_DISTINCT_RECORDS: usize = 4_096;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockedRecord {
     pub path: String,
@@ -23,6 +28,15 @@ pub struct NetRecord {
     pub host: String,
     pub port: u16,
     pub allowed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SuspiciousRecord {
+    pub category: String,
+    pub severity: String,
+    pub subject: String,
+    pub reason: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -41,6 +55,8 @@ pub struct SessionStats {
     pub file_writes: u64,
     pub blocked_attempts: Vec<BlockedRecord>,
     pub net_requests: Vec<NetRecord>,
+    /// Best-effort audit hints. These records never affect enforcement.
+    pub suspicious_signals: Vec<SuspiciousRecord>,
     pub notices: Vec<String>,
 }
 
@@ -48,6 +64,7 @@ pub struct SessionStats {
 struct Inner {
     stats: SessionStats,
     blocked: BTreeMap<(String, String, String), u64>, // (path, comm, source)
+    suspicious: BTreeMap<(String, String, String, String), u64>,
 }
 
 pub struct StatsCollector {
@@ -85,6 +102,26 @@ impl StatsCollector {
             .collect();
         blocked.sort_by(|a, b| b.count.cmp(&a.count).then(a.path.cmp(&b.path)));
         stats.blocked_attempts = blocked;
+        let mut suspicious: Vec<SuspiciousRecord> = inner
+            .suspicious
+            .iter()
+            .map(
+                |((category, severity, subject, reason), count)| SuspiciousRecord {
+                    category: category.clone(),
+                    severity: severity.clone(),
+                    subject: subject.clone(),
+                    reason: reason.clone(),
+                    count: *count,
+                },
+            )
+            .collect();
+        suspicious.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then(a.category.cmp(&b.category))
+                .then(a.subject.cmp(&b.subject))
+        });
+        stats.suspicious_signals = suspicious;
         stats
     }
 }
@@ -103,6 +140,17 @@ fn collect_loop(mut rx: broadcast::Receiver<Event>, inner: Arc<Mutex<Inner>>) {
 }
 
 fn ingest(inner: &mut Inner, ev: Event) {
+    if let Some(signal) = crate::classifier::classify_event(&ev) {
+        let key = (
+            signal.category.to_string(),
+            signal.severity.label().to_string(),
+            signal.subject,
+            signal.reason.to_string(),
+        );
+        if inner.suspicious.contains_key(&key) || inner.suspicious.len() < MAX_DISTINCT_RECORDS {
+            *inner.suspicious.entry(key).or_insert(0) += 1;
+        }
+    }
     let st = &mut inner.stats;
     st.events_total += 1;
     *st.counts.entry(ev.kind().to_string()).or_insert(0) += 1;
@@ -147,7 +195,10 @@ fn ingest(inner: &mut Inner, ev: Event) {
         Event::BlockedAttempt {
             path, comm, source, ..
         } => {
-            *inner.blocked.entry((path, comm, source)).or_insert(0) += 1;
+            let key = (path, comm, source);
+            if inner.blocked.contains_key(&key) || inner.blocked.len() < MAX_DISTINCT_RECORDS {
+                *inner.blocked.entry(key).or_insert(0) += 1;
+            }
         }
         Event::NetRequest {
             host,
@@ -175,5 +226,63 @@ fn ingest(inner: &mut Inner, ev: Event) {
             }
         }
         Event::ExecObserved { .. } | Event::SecretMasked { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::types::now;
+
+    #[test]
+    fn attacker_controlled_record_keys_are_bounded_but_repeats_aggregate() {
+        let mut inner = Inner::default();
+        for index in 0..(MAX_DISTINCT_RECORDS + 32) {
+            ingest(
+                &mut inner,
+                Event::BlockedAttempt {
+                    ts: now(),
+                    pid: 1,
+                    comm: "agent".into(),
+                    path: format!("/tmp/path-{index}"),
+                    source: "test".into(),
+                },
+            );
+        }
+        assert_eq!(inner.blocked.len(), MAX_DISTINCT_RECORDS);
+
+        for _ in 0..3 {
+            ingest(
+                &mut inner,
+                Event::BlockedAttempt {
+                    ts: now(),
+                    pid: 1,
+                    comm: "agent".into(),
+                    path: "/tmp/path-0".into(),
+                    source: "test".into(),
+                },
+            );
+        }
+        assert_eq!(
+            inner
+                .blocked
+                .get(&("/tmp/path-0".into(), "agent".into(), "test".into()))
+                .copied(),
+            Some(4)
+        );
+
+        for index in 0..(MAX_DISTINCT_RECORDS + 32) {
+            ingest(
+                &mut inner,
+                Event::FileObserved {
+                    ts: now(),
+                    pid: 1,
+                    comm: "agent".into(),
+                    path: format!("/tmp/.env.{index}"),
+                    access: FileAccess::Read,
+                },
+            );
+        }
+        assert_eq!(inner.suspicious.len(), MAX_DISTINCT_RECORDS);
     }
 }

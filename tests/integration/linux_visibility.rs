@@ -81,7 +81,7 @@ fn observe_seccomp_reports_out_of_policy_paths() {
             jsonl.to_str().unwrap(),
             "--",
             "cat",
-            &format!("{}/.ssh/id_rsa", std::env::var("HOME").unwrap()),
+            &format!("{}/.ssh/id_rsa", test_home().display()),
         ],
     );
     let _ = out.status.code(); // blocked cat exits nonzero; that is fine

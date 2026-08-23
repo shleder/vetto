@@ -1,0 +1,37 @@
+# Maintainer: vetto contributors
+pkgname=vetto-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Daemon-less sandbox and audit layer for AI coding agents'
+arch=('x86_64' 'aarch64')
+url='https://github.com/shleder/vetto'
+license=('Apache-2.0')
+makedepends=('cargo' 'git')
+provides=('vetto')
+conflicts=('vetto')
+source=('vetto::git+https://github.com/shleder/vetto.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd vetto
+  git describe --long --tags --always | sed 's/^v//;s/-/.r/;s/-/./'
+}
+
+build() {
+  cd vetto
+  cargo build --locked --release
+}
+
+check() {
+  cd vetto
+  cargo test --locked
+}
+
+package() {
+  cd vetto
+  install -Dm755 target/release/vetto "${pkgdir}/usr/bin/vetto"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -d "${pkgdir}/usr/share/vetto/profiles"
+  cp -a profiles/. "${pkgdir}/usr/share/vetto/profiles/"
+}

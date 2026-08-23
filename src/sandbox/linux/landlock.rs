@@ -47,6 +47,45 @@ struct LandlockPathBeneathAttr {
     parent_fd: libc::c_int,
 }
 
+/// A path rule prepared for a Landlock ruleset.
+///
+/// This is a data-only representation. Preparing rules does not create a
+/// Landlock ruleset, add kernel rules, set `NO_NEW_PRIVS`, or call
+/// `restrict_self`; callers that need enforcement must use [`apply_policy`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRule {
+    pub path: std::path::PathBuf,
+    pub allowed_access: u64,
+}
+
+/// Data-only Landlock preparation result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRuleset {
+    abi: u32,
+    rules: Vec<PreparedRule>,
+}
+
+impl PreparedRuleset {
+    /// Landlock ABI used to calculate the access masks.
+    pub fn abi(&self) -> u32 {
+        self.abi
+    }
+
+    /// Prepared path rules, in stable path order.
+    pub fn rules(&self) -> &[PreparedRule] {
+        &self.rules
+    }
+
+    /// Number of concrete rules that would be added to the kernel.
+    pub fn len(&self) -> usize {
+        self.rules.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+}
+
 /// Probe the highest Landlock ABI supported by the running kernel.
 /// None => Landlock unavailable (kernel < 5.13 or disabled).
 ///
@@ -125,6 +164,79 @@ fn write_rights(abi: u32) -> u64 {
     r
 }
 
+/// Prepare path rules using a caller-supplied ABI, without touching the
+/// Landlock installation syscalls. This is useful for deterministic tests
+/// and measurements on hosts where Landlock is unavailable.
+pub fn prepare_ruleset_for_abi(
+    abi: u32,
+    allow_write: &[std::path::PathBuf],
+    allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
+) -> PreparedRuleset {
+    // Collect rights per concrete path (read + write grants UNION — a path
+    // in both lists keeps both), matching the policy used by apply_policy.
+    let mut wanted: HashMap<String, (std::path::PathBuf, u64)> = HashMap::new();
+    let mut want = |path: &std::path::PathBuf, rights: u64| {
+        let key = format!("{}", path.display());
+        let entry = wanted.entry(key).or_insert_with(|| (path.clone(), 0));
+        entry.1 |= rights;
+    };
+    for path in allow_read.iter().filter(|path| path.exists()) {
+        want(path, read_only_rights(path.is_dir(), abi));
+    }
+    for path in allow_write.iter().filter(|path| path.exists()) {
+        let mut rights = write_rights(abi);
+        if strip_read_on_write {
+            rights &= !READ_FILE;
+        }
+        want(path, rights);
+    }
+
+    // Directory-only rights are invalid on a file parent. Keep the same mask
+    // used by apply_policy so the returned count mirrors actual kernel rules
+    // without opening descriptors or installing anything.
+    let file_mask = READ_FILE | WRITE_FILE | EXECUTE | if abi >= 3 { TRUNCATE } else { 0 };
+    let mut rules: Vec<PreparedRule> = wanted
+        .into_values()
+        .filter_map(|(path, rights)| {
+            let effective = if path.is_dir() {
+                rights
+            } else {
+                rights & file_mask
+            };
+            (effective != 0).then_some(PreparedRule {
+                path,
+                allowed_access: effective,
+            })
+        })
+        .collect();
+    rules.sort_by(|left, right| left.path.cmp(&right.path));
+    PreparedRuleset { abi, rules }
+}
+
+/// Prepare rules after probing the running kernel's Landlock ABI.
+///
+/// Unlike [`apply_policy`], this function is non-invasive: it performs only
+/// the version probe and filesystem metadata checks needed to build the data
+/// representation.
+pub fn prepare_ruleset(
+    allow_write: &[std::path::PathBuf],
+    allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
+) -> VettoResult<PreparedRuleset> {
+    let Some(abi) = abi_version() else {
+        return Err(VettoError::Landlock(
+            "kernel does not support Landlock (needs >= 5.13)".into(),
+        ));
+    };
+    Ok(prepare_ruleset_for_abi(
+        abi,
+        allow_write,
+        allow_read,
+        strip_read_on_write,
+    ))
+}
+
 struct OpenPath {
     _fd: OwnedFd,
     is_dir: bool,
@@ -196,38 +308,20 @@ pub fn apply_policy(
     }
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset_fd as i32) };
 
-    // Collect rights per concrete path (read + write grants UNION — a path
-    // in both lists keeps both), then add ONE type-aware rule per path:
-    // directory-only rights (READ_DIR, MAKE_*, REMOVE_DIR) are EINVAL on a
-    // file parent, so they are masked for non-directories.
-    let mut wanted: HashMap<String, (std::path::PathBuf, u64)> = HashMap::new();
-    let mut want = |path: &std::path::PathBuf, rights: u64| {
-        let key = format!("{}", path.display());
-        let e = wanted.entry(key).or_insert_with(|| (path.clone(), 0));
-        e.1 |= rights;
-    };
-    for p in allow_read.iter().filter(|p| p.exists()) {
-        want(p, read_only_rights(p.is_dir(), abi));
-    }
-    for p in allow_write.iter().filter(|p| p.exists()) {
-        let mut rights = write_rights(abi);
-        if strip_read_on_write {
-            rights &= !READ_FILE;
-        }
-        want(p, rights);
-    }
+    let prepared = prepare_ruleset_for_abi(abi, allow_write, allow_read, strip_read_on_write);
 
     // Empirically verified against the kernel: on a NON-directory parent
     // only these rights are accepted — everything else (READ_DIR, REMOVE_*,
     // MAKE_*, and REFER — despite being file-adjacent) returns EINVAL.
     let file_mask = READ_FILE | WRITE_FILE | EXECUTE | if abi >= 3 { TRUNCATE } else { 0 };
 
-    for (_, (path, rights)) in wanted {
-        let opened = open_path_fd(&path)?;
+    for rule in prepared.rules {
+        let rule_path = rule.path.clone();
+        let opened = open_path_fd(&rule.path)?;
         let effective = if opened.is_dir {
-            rights
+            rule.allowed_access
         } else {
-            rights & file_mask
+            rule.allowed_access & file_mask
         };
         if effective == 0 {
             continue;
@@ -249,7 +343,7 @@ pub fn apply_policy(
         if r < 0 {
             return Err(VettoError::Landlock(format!(
                 "add_rule {}: {}",
-                path.display(),
+                rule_path.display(),
                 std::io::Error::last_os_error()
             )));
         }

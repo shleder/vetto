@@ -22,6 +22,7 @@ fn orphan_check(envs: &[(&str, &str)], tag: &str, graceless: bool) {
             &format!("sleep 30 # {marker}"),
         ])
         .current_dir(proj.path())
+        .env("HOME", test_home())
         .envs(envs.iter().copied())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -65,14 +66,25 @@ fn kill_term(pid: u32) {
 
 #[test]
 fn no_orphans_full_tier_sigkill() {
+    if detected_tier().as_deref() != Some("full") {
+        eprintln!("SKIP: FULL tier unavailable");
+        return;
+    }
     orphan_check(&[], "full", true);
 }
 
 #[test]
 fn no_orphans_fs_only_tier_graceful() {
-    if detected_tier().as_deref() != Some("full") {
-        eprintln!("SKIP: needs full-tier machine to force fs-only");
+    let tier = detected_tier();
+    if tier.is_none() {
+        eprintln!("SKIP: no enforcement tier");
         return;
     }
-    orphan_check(&[("VETTO_FORCE_TIER", "fs-only")], "fsonly", false);
+    let forced = [("VETTO_FORCE_TIER", "fs-only")];
+    let envs = if tier.as_deref() == Some("full") {
+        forced.as_slice()
+    } else {
+        &[]
+    };
+    orphan_check(envs, "fsonly", false);
 }

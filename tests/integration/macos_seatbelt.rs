@@ -15,15 +15,21 @@ fn doctor_reports_seatbelt() {
 #[cfg(target_os = "macos")]
 #[test]
 fn seatbelt_blocks_home_secrets() {
+    let home = std::env::temp_dir().join(format!("vetto-macos-test-home-{}", std::process::id()));
+    let ssh = home.join(".ssh");
+    std::fs::create_dir_all(&ssh).expect("create isolated macOS test HOME");
+    std::fs::write(ssh.join("id_rsa"), "FAKE-VETTO-MACOS-KEY\n").expect("write fake key");
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
         .args([
             "--tui=none",
             "--",
             "cat",
-            &format!("{}/.ssh/id_rsa", std::env::var("HOME").unwrap()),
+            &format!("{}/.ssh/id_rsa", home.display()),
         ])
+        .env("HOME", &home)
         .output()
         .expect("vetto run");
+    let _ = std::fs::remove_dir_all(&home);
     assert!(
         !out.status.success() || out.stdout.is_empty(),
         "ssh key readable through seatbelt"

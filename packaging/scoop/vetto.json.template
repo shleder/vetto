@@ -1,0 +1,16 @@
+{
+  "version": "__VERSION__",
+  "description": "Daemon-less sandbox and audit layer for AI coding agents",
+  "homepage": "https://github.com/shleder/vetto",
+  "license": "Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "__WINDOWS_X64_ARCHIVE_URL__",
+      "hash": "__WINDOWS_X64_SHA256__"
+    }
+  },
+  "bin": "vetto.exe",
+  "checkver": {
+    "github": "https://github.com/shleder/vetto"
+  }
+}

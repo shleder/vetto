@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --locked --release
+
+override_dh_auto_test:
+	cargo test --locked
+
+override_dh_auto_install:
+	install -Dm0755 target/release/vetto debian/vetto/usr/bin/vetto
+	install -Dm0644 README.md debian/vetto/usr/share/doc/vetto/README.md
+	install -Dm0644 LICENSE debian/vetto/usr/share/doc/vetto/LICENSE
+	install -d debian/vetto/usr/share/vetto/profiles
+	cp -a profiles/. debian/vetto/usr/share/vetto/profiles/

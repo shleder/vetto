@@ -1,0 +1,102 @@
+{
+  "name": "vetto-vscode",
+  "displayName": "vetto",
+  "description": "Run coding agents through the vetto sandbox and inspect session events.",
+  "version": "0.0.1",
+  "publisher": "shleddy",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:vetto.run",
+    "onCommand:vetto.doctor",
+    "onCommand:vetto.refreshEvents",
+    "onCommand:vetto.openLastReport",
+    "onView:vetto.events"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vetto.run",
+        "title": "vetto: Run Agent"
+      },
+      {
+        "command": "vetto.doctor",
+        "title": "vetto: Doctor"
+      },
+      {
+        "command": "vetto.refreshEvents",
+        "title": "vetto: Refresh Events"
+      },
+      {
+        "command": "vetto.openLastReport",
+        "title": "vetto: Open Last Report"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vetto",
+          "title": "vetto",
+          "icon": "resources/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "vetto": [
+        {
+          "id": "vetto.events",
+          "name": "Session Events"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "vetto",
+      "properties": {
+        "vetto.executable": {
+          "type": "string",
+          "default": "vetto",
+          "description": "Path to the vetto executable."
+        },
+        "vetto.profile": {
+          "type": "string",
+          "default": "default",
+          "description": "Policy profile used for editor-launched sessions."
+        },
+        "vetto.network": {
+          "type": "string",
+          "default": "off",
+          "description": "Network policy, for example off or strict:api.github.com:443."
+        },
+        "vetto.tui": {
+          "type": "string",
+          "enum": [
+            "statusline",
+            "full",
+            "none"
+          ],
+          "default": "statusline"
+        },
+        "vetto.reportFormats": {
+          "type": "string",
+          "default": "html,json",
+          "description": "Comma-separated post-session report formats."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "check": "tsc -p . --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.93.0",
+    "typescript": "^5.7.2"
+  }
+}

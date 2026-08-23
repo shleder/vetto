@@ -1,0 +1,9 @@
+[metadata]
+name = "aider"
+description = "Safe read-only compatibility roots for Aider."
+
+[filesystem]
+allow_read = ["$AGENT/cache", "$AGENT/logs"]
+
+[display_only_deny]
+paths = ["$AGENT/.aider.conf.yml", "$AGENT/.env"]

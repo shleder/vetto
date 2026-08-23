@@ -1,0 +1,9 @@
+[metadata]
+name = "cursor"
+description = "Safe read-only compatibility roots for Cursor Agent."
+
+[filesystem]
+allow_read = ["$AGENT/cache", "$AGENT/logs"]
+
+[display_only_deny]
+paths = ["$AGENT/User/globalStorage", "$AGENT/User/settings.json"]

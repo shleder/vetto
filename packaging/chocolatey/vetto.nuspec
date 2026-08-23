@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>vetto</id>
+    <version>0.1.0</version>
+    <title>vetto</title>
+    <authors>vetto contributors</authors>
+    <projectUrl>https://github.com/shleder/vetto</projectUrl>
+    <licenseUrl>https://github.com/shleder/vetto/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Daemon-less sandbox and audit layer for AI coding agents.</description>
+    <tags>sandbox security cli ai-agent</tags>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

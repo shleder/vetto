@@ -22,11 +22,34 @@ allow_read = [
   "$HOME/.gitconfig",
 ]
 
+[environment]
+pass_through = [
+  "HOME", "PATH", "SHELL", "USER", "LOGNAME",
+  "TERM", "COLORTERM", "LANG", "LC_*",
+  "TMPDIR", "PWD", "OLDPWD", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
+  "NO_COLOR", "CI", "TERM_PROGRAM",
+]
+
 [display_only_deny]
 paths = [
   "$HOME/.ssh", "$HOME/.aws", "$HOME/.gnupg",
   "$HOME/.npmrc", "$HOME/.git-credentials", "$HOME/.netrc",
-  "$HOME/.config/gcloud", "$HOME/.kube",
-  "$PROJECT/.env",
-  "$PROJECT/**/*.pem", "$PROJECT/**/*.key",
+  "$HOME/.cargo/credentials", "$HOME/.cargo/credentials.toml",
+  "$HOME/.config/gh", "$HOME/.config/github-copilot",
+  "$HOME/.config/gcloud", "$HOME/.kube", "$HOME/.docker/config.json",
+  "$HOME/.claude", "$HOME/.codex",
+  "$PROJECT/.env", "$PROJECT/.env.*",
+  "$PROJECT/**/.env", "$PROJECT/**/.env.*",
+  "$PROJECT/*.pem", "$PROJECT/**/*.pem",
+  "$PROJECT/*.key", "$PROJECT/**/*.key",
+  "$PROJECT/*.p12", "$PROJECT/**/*.p12",
+  "$PROJECT/*.pfx", "$PROJECT/**/*.pfx",
+  "$PROJECT/*.kdbx", "$PROJECT/**/*.kdbx",
+  "$PROJECT/.[eE][nN][vV]", "$PROJECT/.[eE][nN][vV].*",
+  "$PROJECT/**/.[eE][nN][vV]", "$PROJECT/**/.[eE][nN][vV].*",
+  "$PROJECT/*.[pP][eE][mM]", "$PROJECT/**/*.[pP][eE][mM]",
+  "$PROJECT/*.[kK][eE][yY]", "$PROJECT/**/*.[kK][eE][yY]",
+  "$PROJECT/*.[pP]12", "$PROJECT/**/*.[pP]12",
+  "$PROJECT/*.[pP][fF][xX]", "$PROJECT/**/*.[pP][fF][xX]",
+  "$PROJECT/*.[kK][dD][bB][xX]", "$PROJECT/**/*.[kK][dD][bB][xX]",
 ]

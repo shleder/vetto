@@ -20,7 +20,7 @@ use crate::events::{Event, EventBus};
 use crate::pty;
 use crate::sandbox::handle::SandboxHandle;
 
-use super::app::{self, AppState};
+use super::app::{self, AppState, EventFilter};
 use super::input;
 
 const REPAINT_INTERVAL: Duration = Duration::from_millis(200); // ~5 fps cap
@@ -49,6 +49,7 @@ pub fn run(
     set_scroll_region(outer.0.saturating_sub(1).max(1));
 
     let mut last_paint = Instant::now() - REPAINT_INTERVAL;
+    let mut painted_generation = u64::MAX;
     let mut replay: Vec<u8> = Vec::new();
 
     let exit_code = loop {
@@ -89,8 +90,9 @@ pub fn run(
         }
 
         app_state.drain(&mut rx);
-        if last_paint.elapsed() >= REPAINT_INTERVAL {
+        if app_state.generation != painted_generation && last_paint.elapsed() >= REPAINT_INTERVAL {
             draw_status(outer.0, &app_state.status_text(outer.1));
+            painted_generation = app_state.generation;
             last_paint = Instant::now();
         }
         std::thread::sleep(TICK);
@@ -116,6 +118,7 @@ fn run_overlay(
     };
 
     let mut offset_from_end: usize = 0;
+    let mut paused = false;
     loop {
         app_state.drain(rx);
 
@@ -149,6 +152,30 @@ fn run_overlay(
                 match (k.code, k.modifiers) {
                     (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => break,
                     (KeyCode::Char(']'), KeyModifiers::CONTROL) => break,
+                    (KeyCode::Char('p'), _) | (KeyCode::Char(' '), _) => {
+                        if paused {
+                            handle.resume();
+                        } else {
+                            handle.pause();
+                        }
+                        paused = !paused;
+                        app_state.toggle_pause();
+                    }
+                    (KeyCode::Char('?'), _) => app_state.toggle_help(),
+                    (KeyCode::Char('b'), _) => app_state.set_filter(EventFilter::Blocked),
+                    (KeyCode::Char('f'), _) => app_state.set_filter(EventFilter::Files),
+                    (KeyCode::Char('n'), _) => app_state.set_filter(EventFilter::Network),
+                    (KeyCode::Char('s'), _) => app_state.set_filter(EventFilter::Suspicious),
+                    (KeyCode::Char('a'), _) => app_state.set_filter(EventFilter::All),
+                    (KeyCode::Char('e'), _) => {
+                        let path = std::path::PathBuf::from("vetto-events.jsonl");
+                        if let Err(error) = app_state.export_events(&path) {
+                            tracing::warn!(
+                                "could not export events to {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
                     (KeyCode::Up, _) => offset_from_end += 1,
                     (KeyCode::Down, _) => offset_from_end = offset_from_end.saturating_sub(1),
                     (KeyCode::PageUp, _) => offset_from_end += 10,
@@ -187,45 +214,170 @@ fn overlay_ui(f: &mut ratatui::Frame, app_state: &AppState, offset_from_end: usi
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
-            " blocked={} files={} exec={} net={} notices={}  |  Esc/Ctrl+]/q close · Up/Down/PgUp/PgDn scroll",
-            app_state.blocked, app_state.files, app_state.execs, app_state.net_requests,
+            " state={} filter={} blocked={} files={} (r{} w{}) exec={} net={} notices={}  |  Esc/Ctrl+]/q close · Up/Down/PgUp/PgDn scroll",
+            if app_state.paused { "paused" } else { "live" },
+            app_state.filter.label(),
+            app_state.blocked,
+            app_state.files,
+            app_state.file_reads,
+            app_state.file_writes,
+            app_state.execs,
+            app_state.net_requests,
             app_state.notices
         )),
     ])
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
-    let total = app_state.events.len();
-    let height = chunks[1].height.saturating_sub(2) as usize; // inside borders
+    let filtered = app_state.filtered_events();
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(chunks[1]);
+    let total = filtered.len();
+    let height = body[0].height.saturating_sub(2) as usize; // inside borders
     let end = total.saturating_sub(offset_from_end);
     let start = end.saturating_sub(height.max(1));
 
     let mut rows = Vec::new();
-    for ev in app_state.events.iter().skip(start).take(end - start) {
-        let blocked = matches!(ev, Event::BlockedAttempt { .. });
-        let kind = if blocked { "BLOCKED" } else { ev.kind() };
+    for ev in filtered.iter().skip(start).take(end - start) {
+        let blocked = matches!(ev, Event::BlockedAttempt { .. })
+            || matches!(ev, Event::NetRequest { allowed: false, .. });
+        let suspicious = crate::classifier::classify_event(ev).is_some();
+        let kind = if blocked {
+            "BLOCKED"
+        } else if suspicious {
+            "SUSPICIOUS"
+        } else {
+            ev.kind()
+        };
         let style = if blocked {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else if suspicious {
+            Style::default().fg(Color::Yellow)
+        } else if matches!(ev, Event::NetRequest { .. }) {
+            Style::default().fg(Color::Blue)
         } else {
-            Style::default()
+            Style::default().fg(Color::Green)
         };
         rows.push(Row::new(vec![kind.to_string(), app::describe(ev)]).style(style));
     }
 
     let table = Table::new(rows, vec![Constraint::Length(16), Constraint::Min(10)]).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" session events (best-effort observation) "),
+        Block::default().borders(Borders::ALL).title(format!(
+            " session events [{}] (best-effort observation) ",
+            app_state.filter.label()
+        )),
     );
-    f.render_widget(table, chunks[1]);
+    f.render_widget(table, body[0]);
+
+    let side = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(4),
+            Constraint::Min(4),
+        ])
+        .split(body[1]);
+    let blocked = app_state
+        .events
+        .iter()
+        .rev()
+        .filter_map(|event| match event {
+            Event::BlockedAttempt { path, .. } => Some(path.as_str()),
+            Event::NetRequest {
+                host,
+                allowed: false,
+                ..
+            } => Some(host.as_str()),
+            _ => None,
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("\n");
+    f.render_widget(
+        Paragraph::new(if blocked.is_empty() {
+            "none observed".to_string()
+        } else {
+            blocked
+        })
+        .block(Block::default().borders(Borders::ALL).title(" blocked ")),
+        side[0],
+    );
+    let files = app_state
+        .file_tree
+        .iter()
+        .rev()
+        .take(side[1].height.saturating_sub(2) as usize)
+        .map(|(path, count)| format!("{count:>3} {path}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    f.render_widget(
+        Paragraph::new(if files.is_empty() {
+            "no file observations".to_string()
+        } else {
+            files
+        })
+        .block(Block::default().borders(Borders::ALL).title(" file tree ")),
+        side[1],
+    );
+    let n = app_state.network;
+    f.render_widget(
+        Paragraph::new(format!(
+            "net {}/{}\nactivity {}\nsummary {} events",
+            n.allowed,
+            n.blocked,
+            app_state.activity.len(),
+            app_state.events_total
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" network / activity "),
+        ),
+        side[2],
+    );
 
     let footer = Paragraph::new(format!(
-        " showing {} of {} events, {} up from newest ",
+        " showing {} of {} events, {} up from newest · p pause/resume · b blocked f files n network a all · e export · ? help ",
         end - start,
         total,
         offset_from_end
     ));
     f.render_widget(footer, chunks[2]);
+
+    if app_state.help {
+        let popup = centered_rect(76, 50, area);
+        let help = Paragraph::new(
+            "statusline overlay keys\n  p/Space pause or resume the sandboxed agent\n  b blocked · f files · n network · a all\n  e export events · arrows/PgUp scroll\n  Esc/Ctrl+] close overlay · q terminate agent",
+        )
+        .block(Block::default().borders(Borders::ALL).title(" help "));
+        f.render_widget(help, popup);
+    }
+}
+
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    area: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
+    use ratatui::layout::{Constraint, Direction, Layout};
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn draw_status(rows_total: u16, text: &str) {

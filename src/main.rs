@@ -6,36 +6,78 @@
 //!   3. Only after a successful spawn: event bus consumers (broker, notifier,
 //!      audit reader, visibility poller, jsonl, stats) and the UI loop.
 
-mod classifier;
-mod cli;
-mod config;
-mod error;
-mod events;
-mod logger;
-mod policy;
-mod pty;
-mod report;
-mod sandbox;
-mod tui;
-
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+#[cfg(target_os = "linux")]
+use std::os::fd::IntoRawFd;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 
-use crate::config::{NetMode, RunConfig, TuiMode};
-use crate::events::{Event, EventBus};
+#[cfg(unix)]
+use vetto::config::NetMode;
+use vetto::config::{RunConfig, TuiMode};
+use vetto::events::{Event, EventBus};
+use vetto::{cli, events, logger, multi, policy, report, sandbox};
+#[cfg(unix)]
+use vetto::{pty, tui};
 
 fn main() -> Result<()> {
     let args = cli::Cli::parse();
     logger::init(args.verbose);
+
+    if args.multi {
+        if args.command.is_some() {
+            bail!("--multi cannot be combined with a subcommand");
+        }
+        let code = multi::run_cli(
+            args.multi_manifest.clone(),
+            args.agents.clone(),
+            args.agent.clone(),
+        )?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
+    if args.multi_manifest.is_some() {
+        bail!("--manifest is only valid with --multi or the `multi` subcommand");
+    }
+
     match &args.command {
-        Some(cli::Command::Doctor { probe }) => doctor(*probe),
+        Some(cli::Command::Doctor { probe, check_agent }) => doctor(*probe, check_agent.as_deref()),
         Some(cli::Command::Init) => init(),
         Some(cli::Command::Profiles) => profiles(),
+        Some(cli::Command::Multi {
+            manifest,
+            agents,
+            command,
+        }) => {
+            let code = multi::run_cli(manifest.clone(), agents.clone(), command.clone())?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+        Some(cli::Command::Report {
+            command: cli::ReportCommand::Compare { session1, session2 },
+        }) => report::compare_reports(session1, session2),
+        Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
+        Some(cli::Command::SshProxy { host, port }) => {
+            #[cfg(target_os = "linux")]
+            {
+                sandbox::linux::net_relay::run_ssh_proxy(host, *port)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (host, port);
+                bail!("the SSH proxy helper is available on Linux only")
+            }
+        }
         None => supervise(RunConfig::from_cli(&args)?),
     }
 }
@@ -66,12 +108,18 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         Some(t) => t,
         None => policy::Tier::Full, // macOS: no FS-ONLY enumeration semantics
     };
-    let pol = policy::loader::load(
+    let policy_options = policy::loader::PolicyLoadOptions {
+        agent: cfg.agent_preset.clone(),
+        include_project_policy: true,
+        ..policy::loader::PolicyLoadOptions::default()
+    };
+    let pol = policy::loader::load_with_options(
         &cfg.profile,
         cfg.policy_path.as_deref(),
         &project,
         &home,
         tier_for_policy,
+        &policy_options,
     )?;
     for w in &pol.warnings {
         eprintln!("vetto: policy warning: {w}");
@@ -99,30 +147,59 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         return dry_run(&cfg, &pol, &agent_cmd, tier_label(tier));
     }
 
-    if matches!(cfg.net, NetMode::Allowlist(_)) && tier == Some(policy::Tier::FsOnly) {
+    if cfg.net.uses_relay() && tier == Some(policy::Tier::FsOnly) {
         bail!(
-            "--net=allowlist requires Tier FULL (unprivileged user namespaces), \
+            "network relay modes require Tier FULL (unprivileged user namespaces), \
              unavailable on this machine; refusing to run (fail-closed)"
         );
     }
 
-    let mut env_extra: HashMap<String, String> = HashMap::new();
-    #[cfg(target_os = "linux")]
-    if matches!(cfg.net, NetMode::Allowlist(_)) {
-        for (k, v) in
-            sandbox::linux::net_relay::build_proxy_env(sandbox::linux::net_relay::RELAY_PORT_BASE)
-        {
-            env_extra.insert(k, v);
-        }
+    #[cfg(not(target_os = "linux"))]
+    if cfg.git_ssh {
+        bail!("--git-ssh is available on Linux only");
     }
 
+    let env_extra: HashMap<String, String> = {
+        #[cfg(target_os = "linux")]
+        {
+            let mut env_extra = HashMap::new();
+            if cfg.net.uses_relay() {
+                for (k, v) in sandbox::linux::net_relay::build_proxy_env(
+                    sandbox::linux::net_relay::RELAY_PORT_BASE,
+                ) {
+                    env_extra.insert(k, v);
+                }
+            }
+            if cfg.git_ssh {
+                let exe =
+                    std::env::current_exe().context("resolve vetto executable for SSH helper")?;
+                env_extra.insert(
+                    "GIT_SSH_COMMAND".into(),
+                    sandbox::linux::net_relay::build_git_ssh_command(&exe),
+                );
+            }
+            env_extra
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            HashMap::new()
+        }
+    };
+
     // stdio plumbing, owned by main and closed here after spawn.
+    #[cfg(unix)]
     let mut pty_master: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let mut pty_slave: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let mut stdout_r: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let mut stdout_w: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let mut stderr_r: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let mut stderr_w: Option<OwnedFd> = None;
+    #[cfg(unix)]
     let stdio = match cfg.tui {
         TuiMode::Statusline => {
             let (rows, cols) = crossterm::terminal::size().unwrap_or((24, 80));
@@ -148,6 +225,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
         TuiMode::None => sandbox::StdioMode::Inherit,
     };
+    #[cfg(windows)]
+    let stdio = {
+        if cfg.tui != TuiMode::None {
+            bail!("the Windows backend currently requires --tui=none or --ci");
+        }
+        sandbox::StdioMode::Inherit
+    };
 
     let opts = sandbox::SpawnOptions {
         agent_cmd: agent_cmd.clone(),
@@ -157,17 +241,22 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
-    let sandbox::Spawned {
-        mut handle,
-        broker_ctrl_fd,
-        relay_port,
-        notif_listener,
-    } = backend.spawn(&pol, opts)?;
+    let spawned = backend.spawn(&pol, opts)?;
+    let mut handle = spawned.handle;
+    #[cfg(unix)]
+    let broker_ctrl_fd = spawned.broker_ctrl_fd;
+    #[cfg(unix)]
+    let relay_port = spawned.relay_port;
+    #[cfg(unix)]
+    let notif_listener = spawned.notif_listener;
 
     // Close main's duplicates of the child-side stdio fds so EOF semantics
     // work: only the sandbox holds the write ends / slave now.
+    #[cfg(unix)]
     drop(pty_slave.take());
+    #[cfg(unix)]
     drop(stdout_w.take());
+    #[cfg(unix)]
     drop(stderr_w.take());
 
     // ---- Phase 2: threads now allowed -------------------------------------
@@ -209,11 +298,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         if let Some(fd) = broker_ctrl_fd {
-            let domains = match &cfg.net {
-                NetMode::Allowlist(d) => d.clone(),
-                NetMode::Off => Vec::new(),
+            let broker_policy = match &cfg.net {
+                NetMode::Allowlist(d) => {
+                    sandbox::linux::net_relay::BrokerPolicy::Allowlist(d.clone())
+                }
+                NetMode::Strict(rules) => {
+                    sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
+                }
+                NetMode::Off => sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
             };
-            sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), domains, bus.clone());
+            sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_policy, bus.clone());
         }
         let _ = relay_port;
         if let Some(fd) = notif_listener {
@@ -262,6 +356,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     install_sigint_forwarder(root_pid, tier);
 
     // ---- Phase 3: run the UI / wait ---------------------------------------
+    #[cfg(unix)]
     let exit_code = match cfg.tui {
         TuiMode::Statusline => {
             let master = pty_master.expect("statusline wires a pty");
@@ -289,6 +384,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
         TuiMode::None => handle.wait(),
     };
+    #[cfg(windows)]
+    let exit_code = handle.wait();
 
     let duration_secs = started.elapsed().as_secs();
     bus.publish(Event::SessionEnded {
@@ -300,22 +397,53 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let snap = stats.snapshot();
     if !cfg.report_formats.is_empty() {
-        for p in report::write_reports(&snap, &cfg.report_formats)? {
+        let report_options = report::ReportOptions {
+            report_dir: cfg.report_dir.clone(),
+            auto_cleanup: cfg.report_auto_cleanup,
+            retention: cfg.report_retention,
+            max_age_secs: cfg.report_max_age_secs,
+        };
+        for p in report::write_reports_with_options(&snap, &cfg.report_formats, &report_options)? {
             eprintln!("vetto: report written: {}", p.display());
         }
     }
-    let blocked_total: u64 = snap.blocked_attempts.iter().map(|b| b.count).sum();
+    let blocked_file_total: u64 = snap.blocked_attempts.iter().map(|b| b.count).sum();
+    let blocked_network_total = snap
+        .net_requests
+        .iter()
+        .filter(|request| !request.allowed)
+        .count() as u64;
+    let blocked_total = blocked_file_total.saturating_add(blocked_network_total);
+    let mut code = if exit_code < 0 {
+        128 - exit_code
+    } else {
+        exit_code
+    };
+    if let Some(threshold) = cfg.fail_on_block {
+        if blocked_total >= threshold {
+            eprintln!(
+                "vetto: fail-on-block threshold reached (blocked={} threshold={})",
+                blocked_total, threshold
+            );
+            if code == 0 {
+                code = 1;
+            }
+        }
+    }
     if cfg.ci {
         println!(
             "{}",
             serde_json::json!({
                 "vetto_ci": {
                     "exit_code": exit_code,
+                    "final_exit_code": code,
                     "duration_secs": duration_secs,
                     "tier": tier_label(tier),
                     "net": cfg.net.label(),
                     "profile": pol.name,
                     "blocked_attempts": blocked_total,
+                    "blocked_file_attempts": blocked_file_total,
+                    "network_denied": blocked_network_total,
                     "events_total": snap.events_total,
                     "sanitizer": "BEST-EFFORT",
                 }
@@ -332,11 +460,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         );
     }
 
-    let code = if exit_code < 0 {
-        128 - exit_code
-    } else {
-        exit_code
-    };
     std::process::exit(code);
 }
 
@@ -352,6 +475,7 @@ fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &s
     println!("vetto dry-run — nothing enforced, nothing executed");
     println!("  tier:  {tier}");
     println!("  net:   {}", cfg.net.label());
+    println!("  git ssh: {}", if cfg.git_ssh { "enabled" } else { "off" });
     println!("  tui:   {:?}", cfg.tui);
     println!("  policy: {}", pol.summary());
     println!("  write roots:");
@@ -370,44 +494,107 @@ fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &s
             if d.is_dir { "/" } else { "" }
         );
     }
+    if let Some(path) = cfg.policy_path.as_deref() {
+        if let Some(count) = explicit_policy_deny_count(path) {
+            let noun = if count == 1 { "path" } else { "paths" };
+            println!("  explicit CLI policy: {count} deny {noun} included above");
+        }
+    }
     println!("  agent: {}", agent_cmd.join(" "));
     Ok(())
 }
 
+fn explicit_policy_deny_count(path: &Path) -> Option<usize> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let document: toml::Value = toml::from_str(&text).ok()?;
+    let paths = document.get("display_only_deny")?.get("paths")?;
+    Some(match paths {
+        toml::Value::Array(values) => values.len(),
+        toml::Value::String(_) => 1,
+        _ => 0,
+    })
+}
+
+#[cfg(unix)]
 fn pipe2() -> Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0 as libc::c_int; 2];
-    // SAFETY: valid out-array; scalar flags.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        bail!("pipe2: {}", std::io::Error::last_os_error());
+    // SAFETY: valid out-array.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        bail!("pipe: {}", std::io::Error::last_os_error());
     }
-    // SAFETY: fresh descriptors from a successful pipe2.
+    for fd in fds {
+        // SAFETY: fd came from the successful pipe call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 {
+            let error = std::io::Error::last_os_error();
+            // SAFETY: both descriptors came from the successful pipe call.
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            bail!("fcntl(F_GETFD): {error}");
+        }
+        // SAFETY: fd came from the successful pipe call; preserve existing
+        // descriptor flags while adding close-on-exec.
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            let error = std::io::Error::last_os_error();
+            // SAFETY: both descriptors came from the successful pipe call.
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            bail!("fcntl(F_SETFD, FD_CLOEXEC): {error}");
+        }
+    }
+    // SAFETY: fresh descriptors from a successful pipe and CLOEXEC setup.
     Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
         OwnedFd::from_raw_fd(fds[1])
     }))
 }
 
 fn resolve_in_path(cmd: &str) -> Result<String> {
-    if cmd.contains('/') {
+    let command_path = Path::new(cmd);
+    if command_path.is_absolute() || command_path.components().count() > 1 {
         return Ok(cmd.to_string());
     }
-    let path = std::env::var("PATH").unwrap_or_default();
-    for dir in path.split(':') {
-        if dir.is_empty() {
-            continue;
-        }
-        let cand = Path::new(dir).join(cmd);
-        if is_executable_file(&cand) {
-            return Ok(cand.to_string_lossy().into_owned());
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(cmd);
+            if is_executable_file(&candidate) {
+                return Ok(candidate.to_string_lossy().into_owned());
+            }
+            #[cfg(windows)]
+            if candidate.extension().is_none() {
+                let extensions =
+                    std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+                for extension in extensions.to_string_lossy().split(';') {
+                    let extension = extension.trim().trim_start_matches('.');
+                    if extension.is_empty() {
+                        continue;
+                    }
+                    let candidate = candidate.with_extension(extension);
+                    if is_executable_file(&candidate) {
+                        return Ok(candidate.to_string_lossy().into_owned());
+                    }
+                }
+            }
         }
     }
     bail!("agent command '{cmd}' not found in PATH")
 }
 
 fn is_executable_file(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    match std::fs::metadata(p) {
-        Ok(m) => m.is_file() && (m.permissions().mode() & 0o111) != 0,
-        Err(_) => false,
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        match std::fs::metadata(p) {
+            Ok(m) => m.is_file() && (m.permissions().mode() & 0o111) != 0,
+            Err(_) => false,
+        }
+    }
+    #[cfg(windows)]
+    {
+        p.is_file()
     }
 }
 
@@ -415,8 +602,10 @@ fn is_executable_file(p: &Path) -> bool {
 // Ctrl+C forwarding
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 static CHILD_TARGET: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+#[cfg(unix)]
 extern "C" fn on_sigint(_sig: libc::c_int) {
     let t = CHILD_TARGET.load(std::sync::atomic::Ordering::SeqCst);
     if t != 0 {
@@ -425,6 +614,7 @@ extern "C" fn on_sigint(_sig: libc::c_int) {
     }
 }
 
+#[cfg(unix)]
 fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
     let target = match tier {
         Some(policy::Tier::FsOnly) => -(root_pid as i32), // whole process group
@@ -443,11 +633,14 @@ fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
     }
 }
 
+#[cfg(windows)]
+fn install_sigint_forwarder(_root_pid: u32, _tier: Option<policy::Tier>) {}
+
 // ---------------------------------------------------------------------------
 // doctor
 // ---------------------------------------------------------------------------
 
-fn doctor(probe_deny: bool) -> Result<()> {
+fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "linux")]
     {
@@ -461,6 +654,7 @@ fn doctor(probe_deny: bool) -> Result<()> {
             }
         );
         println!("unprivileged userns:     {}", yn(p.userns_available));
+        println!("full namespace stack:    {}", yn(p.full_tier_available));
         println!(
             "seccomp filters:         {}",
             yn(p.seccomp_filter_available)
@@ -490,11 +684,82 @@ fn doctor(probe_deny: bool) -> Result<()> {
             doctor_probe()?;
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        let capabilities = sandbox::windows::probe();
+        println!("windows capabilities:   {}", capabilities.summary());
+        println!(
+            "job kill-on-close:       {}",
+            yn(capabilities.job_object_kill_on_close)
+        );
+        println!(
+            "restricted token:        {}",
+            yn(capabilities.restricted_token)
+        );
+        println!(
+            "low-integrity token:     {}",
+            yn(capabilities.low_integrity_token)
+        );
+        println!(
+            "AppContainer API:        {}",
+            yn(capabilities.appcontainer_api)
+        );
+
+        let optional = sandbox::windows::optional_backend_report();
+        println!(
+            "firewall/WFP admin:      {}",
+            yn(optional.firewall.elevated_admin_token)
+        );
+        println!(
+            "firewall/WFP engine:     {}",
+            yn(optional.firewall.engine_readable)
+        );
+        println!(
+            "ETW private session:     {}",
+            yn(optional.etw.private_session_started)
+        );
+        println!(
+            "ETW decoded stream:      {}",
+            yn(optional.etw.decoded_event_stream)
+        );
+        println!(
+            "Windows Sandbox feature: {}",
+            yn(optional.windows_sandbox.feature_enabled)
+        );
+        println!(
+            "Windows Sandbox firmware: {}",
+            yn(optional.windows_sandbox.virtualization_firmware_enabled)
+        );
+        println!(
+            "event log source:        {}",
+            yn(optional.eventlog.source_registered)
+        );
+        for note in capabilities.notes {
+            println!("  note: {note}");
+        }
+        println!("  note: {}", optional.firewall.note);
+        println!("  note: {}", optional.etw.note);
+        println!("  note: {}", optional.windows_sandbox.note);
+        println!("  note: {}", optional.eventlog.note);
+        if probe_deny {
+            println!("probe: display-only deny verification is unavailable on the Windows backend");
+        }
+    }
+    if let Some(agent) = check_agent {
+        doctor_agent_check(agent)?;
+    }
+    Ok(())
+}
+
+fn doctor_agent_check(agent: &str) -> Result<()> {
+    let result = vetto::doctor::probe_agent(agent, std::time::Duration::from_secs(5));
+    println!("agent check: {}", result.summary());
     Ok(())
 }
 
 /// Build a throwaway sandbox around a probe script and verify every
 /// display_only_deny path is truly unreachable from inside.
+#[cfg(unix)]
 fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
     let backend = Box::new(sandbox::Backend::detect(NetMode::Off, false)?);

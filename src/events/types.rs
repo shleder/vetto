@@ -91,6 +91,32 @@ impl Event {
             Event::SessionEnded { .. } => "session_ended",
         }
     }
+
+    /// Returns the path associated with a filesystem observation, when the
+    /// event carries one.  Keeping this projection here lets the TUI and the
+    /// multi-agent aggregator share the exact same event semantics without
+    /// duplicating the enum match in each consumer.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Event::FileObserved { path, .. }
+            | Event::BlockedAttempt { path, .. }
+            | Event::SecretMasked { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Returns the network target for a request, when present.
+    pub fn network_target(&self) -> Option<(&str, u16, bool)> {
+        match self {
+            Event::NetRequest {
+                host,
+                port,
+                allowed,
+                ..
+            } => Some((host, *port, *allowed)),
+            _ => None,
+        }
+    }
 }
 
 pub fn now() -> DateTime<Utc> {

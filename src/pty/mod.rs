@@ -7,7 +7,9 @@
 pub mod resizer;
 pub mod sigwinch;
 
+#[cfg(target_os = "macos")]
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
 use crate::error::{VettoError, VettoResult};
@@ -42,20 +44,50 @@ impl Pty {
             return Err(fail("unlockpt", master));
         }
 
-        let mut name_buf = [0u8; 128];
-        // SAFETY: master valid; buffer is the documented ptsname_r out-param.
-        if unsafe { libc::ptsname_r(master, name_buf.as_mut_ptr().cast(), name_buf.len()) } != 0 {
-            return Err(fail("ptsname_r", master));
-        }
-        let len = name_buf
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(name_buf.len());
-        let Ok(name) = CStr::from_bytes_with_nul(&name_buf[..=len]) else {
-            return Err(fail("ptsname_r", master));
+        let name: CString = {
+            #[cfg(target_os = "linux")]
+            {
+                let mut name_buf = [0u8; 128];
+                // SAFETY: master valid; buffer is the documented ptsname_r out-param.
+                if unsafe { libc::ptsname_r(master, name_buf.as_mut_ptr().cast(), name_buf.len()) }
+                    != 0
+                {
+                    return Err(fail("ptsname_r", master));
+                }
+                let Some(len) = name_buf.iter().position(|&b| b == 0) else {
+                    return Err(fail("ptsname_r: unterminated result", master));
+                };
+                let Ok(name) = CString::new(&name_buf[..len]) else {
+                    return Err(fail("ptsname_r: invalid result", master));
+                };
+                name
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                // macOS provides ptsname(3), but not the Linux ptsname_r(3).
+                let name = unsafe { libc::ptsname(master) };
+                if name.is_null() {
+                    return Err(fail("ptsname", master));
+                }
+                // SAFETY: ptsname returned a non-null NUL-terminated C string.
+                let name = unsafe { CStr::from_ptr(name) };
+                let Ok(name) = CString::new(name.to_bytes()) else {
+                    return Err(fail("ptsname: invalid result", master));
+                };
+                name
+            }
+
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                return Err(fail(
+                    "pty slave lookup unsupported on this platform",
+                    master,
+                ));
+            }
         };
 
-        // SAFETY: slave path is NUL-terminated (straight from ptsname_r).
+        // SAFETY: slave path is NUL-terminated (straight from ptsname/ptsname_r).
         let slave = unsafe {
             libc::open(
                 name.as_ptr(),
@@ -116,6 +148,20 @@ pub fn read_ready(fd: RawFd, buf: &mut [u8]) -> usize {
     } else {
         0
     }
+}
+
+/// Copy one currently-ready chunk from a PTY/file descriptor to an output
+/// descriptor without interpreting or modifying any bytes.
+///
+/// The input is expected to be nonblocking, as it is in statusline mode. A
+/// zero return means that no bytes were ready or the read failed; output
+/// errors are handled by the same best-effort contract as [`write_all_fd`].
+pub fn passthrough_once(input_fd: RawFd, output_fd: RawFd, buf: &mut [u8]) -> usize {
+    let n = read_ready(input_fd, buf);
+    if n > 0 {
+        write_all_fd(output_fd, &buf[..n]);
+    }
+    n
 }
 
 /// Blocking-write loop for a fd (EINTR-safe). Best-effort: returns on error.

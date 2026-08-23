@@ -1,86 +1,163 @@
-# Security policy & honest limitations
+# Security policy and limitations
 
-vetto's threat model: a **locally-invoked AI coding agent** (or any tool it
-spawns) attempting to read secrets, exfiltrate data, or persist changes
-outside the project. The operator is trusted; the agent is not. This is a
-containment/visibility tool for developer machines — NOT a hardening
-boundary against a hostile kernel, root, or physical access.
+vetto treats the locally invoked coding agent and every descendant process as
+untrusted. It protects developer secrets, files outside the selected project,
+network boundaries and process lifetime from malicious model output, prompt
+injection, compromised dependencies and buggy automation. It does not defend
+against a hostile kernel, root/administrator, physical access, another user
+who can modify the operator's files, or a malicious vetto binary.
 
-## Reporting
+See [docs/threat-model.md](docs/threat-model.md) for the attack-by-attack
+analysis.
 
-Open a private security advisory via GitHub (Security → Report a
-vulnerability) for anything that lets a sandboxed agent reach files, network,
-or processes the active policy denies.
+## Reporting a vulnerability
 
-## ALL honest limitations (read before relying on vetto)
+Use GitHub's private vulnerability-reporting flow for this repository
+(Security → Report a vulnerability). No security email address is advertised
+until such an address is actually configured and monitored.
 
-1. **`sandbox-exec` is deprecated.** The macOS backend rides on Apple's
-   undocumented-but-working Seatbelt runner. Apple may remove it in any
-   macOS release; vetto would fail closed at that point (the agent stops
-   running, it does not run unsandboxed).
+Include the vetto revision, OS/kernel, detected tier, policy, shortest safe
+reproducer and whether the result is an enforcement bypass or only a missing
+observation event. Never attach real credentials; replace them with test data.
 
-2. **macOS denial visibility parity gap.** Seatbelt denials are invisible to
-   FSEvents — the same enforcement-vs-observation gap as Linux. FSEvents
-   (not implemented in v0.1) would show *allowed* ops with 50–200 ms latency
-   even if present; blocked-attempt visibility on macOS effectively does not
-   exist in v0.1. Enforcement is active regardless.
+## Enforcement and observation are different
 
-3. **Kernel audit reality.** Landlock denials surface in the audit stream
-   only on kernel ≥ 6.12, and *reading* that stream requires privileges
-   (auditd / `CAP_AUDIT_READ`) that an unprivileged vetto usually lacks.
-   Probe at runtime; expect "unavailable"; the persistent notice and active
-   enforcement are the default experience.
+Filesystem/network/process controls are the security boundary. Event feeds,
+the TUI and reports are evidence gathered around that boundary and can miss
+events. A missing “blocked” row never means the operation was allowed.
 
-4. **Secret sanitizer is BEST-EFFORT.** Pattern-based redaction (AWS keys,
-   GitHub/Slack/sk- tokens, PEM bodies, key=value pairs) with known false
-   positives AND false negatives. It is a courtesy for shareable artifacts,
-   never a guarantee, and is labeled as such everywhere it appears.
+- Linux Landlock denials reach the kernel audit stream only on sufficiently
+  new kernels (currently kernel 6.12 or newer), and an unprivileged process
+  usually cannot read that stream without audit privileges. vetto probes it
+  and normally reports it unavailable while enforcement remains active.
+- `--observe-seccomp` is optional. Its default mode responds with
+  `SECCOMP_USER_NOTIF_FLAG_CONTINUE`; paths copied from another process are
+  racy and are used only for display. `SECCOMP_IOCTL_NOTIF_ID_VALID` narrows
+  the notification race but does not turn the path into an enforcement input.
+- Any seccomp `ADDFD` substitution mode is separately opt-in and changes
+  syscall behaviour. It is not described as observation-only and is never
+  enabled by `--observe-seccomp` alone.
+- Linux allowed-file visibility polls `/proc` adaptively. Short opens and
+  short-lived processes can be missed.
+- macOS FSEvents reports coarse directory changes after they occur. It does
+  **not** report file reads, Seatbelt denials, or a complete per-process audit
+  trail. FSEvents must never be presented as file-read visibility.
 
-5. **FS-ONLY orphan gap.** Without user namespaces there is no PID
-   namespace: cleanup is `PR_SET_PDEATHSIG` + `setpgid` + `kill(-pgid)`.
-   Grandchildren that explicitly `setsid()` away from the group can survive
-   vetto's death in this tier. Tier FULL's PID namespace covers them.
+## Linux tiers
 
-6. **Windows is absent from v0.1** (roadmap v0.3+; enterprise audit reports
-   noted). A Windows build fails with an explicit error rather than shipping
-   a non-sandboxing binary.
+FULL requires Landlock and unprivileged user namespaces. It combines user,
+mount, PID, network and IPC namespaces, Landlock, secret overlays and seccomp.
+The PID-namespace init reaps and terminates descendants when vetto exits.
 
-7. **Observation is racy by design.** The `--observe-seccomp` tap reads path
-   arguments from `/proc/<pid>/mem` around a user-notify window; reported
-   paths can be stale. This is acceptable *only* because the tap never
-   enforces — `SECCOMP_USER_NOTIF_FLAG_CONTINUE` answers every notification
-   and Landlock remains the sole filesystem enforcer.
+FS-ONLY is the fail-closed fallback when Landlock works but user namespaces do
+not. It retains Landlock and inherited seccomp, but no mount/PID/network
+namespace exists. Project enumeration errors and the safety budget return an
+error; there is no broad read fallback. Lifecycle cleanup uses
+`PR_SET_PDEATHSIG` plus a process group. A grandchild that deliberately calls
+`setsid()` can escape cleanup in this tier, although it still inherits
+Landlock and seccomp restrictions.
 
-8. **Allowed-op observation granularity.** The `/proc/<pid>/fd` poller runs
-   every ~100 ms; opens shorter than that are invisible. Never treat
-   "no FileObserved events" as "nothing happened".
+If neither tier can establish its advertised controls, the command does not
+run.
 
-9. **Allowlist mode is proxy-shaped.** Only HTTP(S)/socks5 CONNECT-style
-   clients work (via injected proxy env). Non-proxy protocols fail closed
-   (git-over-SSH does not work in allowlist mode). The domain check happens
-   on the CONNECT target before TLS — there is no SNI parsing, no TLS
-   decryption, and no CA injection, ever.
+## Filesystem and secret overlays
 
-10. **Policy is per-machine at load time.** Globs are expanded when the
-    session starts; files created later matching `$PROJECT/**/*.pem` are NOT
-    retroactively denied on FS-ONLY (Tier FULL denies by allowlist
-    semantics — new files outside allowed read roots stay unreadable... note
-    the project root itself is writable, so new secret-shaped files created
-    by the agent inside the project are only masked by shape heuristics at
-    the next session's load).
+Landlock is an allowlist evaluated on the resolved inode. It cannot subtract
+`$PROJECT/.env` from an allowed project root. FULL therefore bind-mounts
+`/dev/null` over secret files and an empty private tmpfs over secret
+directories before Landlock is restricted. FS-ONLY constructs narrower
+concrete read rules and fails closed if it cannot do so.
 
-11. **The agent binary itself.** vetto warns when the agent binary is inside
-    a write scope (the agent could replace its own binary) — it cannot
-    police binaries you point it at.
+The agent retains no usable way to dismantle this view: seccomp rejects
+`umount2`, the mount API and `pivot_root`, and descendants inherit the filter.
+Report/JSONL destinations are opened outside the sandbox with exclusive,
+no-follow semantics and regular-file checks. The secret sanitizer applied to
+reports is **best-effort** and can have both false positives and false
+negatives; it is not a confidentiality guarantee.
 
-## What vetto guarantees anyway
+`~/.gitconfig` is intentionally readable for commit identity. A user who
+stores credentials in URL rewrites inside that file exposes those credentials
+to the agent and should move them to a credential helper.
 
-- **Fail-closed**: if the sandbox cannot be established, the agent does not
-  run. There is no unsandboxed fallback, ever.
-- **Kernel enforcement**: filesystem decisions in Landlock happen in the VFS
-  on the resolved inode (TOCTOU structurally impossible); namespaces/seccomp
-  are kernel primitives; no root required for any of it.
-- **No new attack surface**: no daemon, no sockets listening on the network,
-  no elevated helper, no cloud, no telemetry.
-- **Honest UX**: doctor reports exactly what is enforced and what is merely
-  observed; every artifact says BEST-EFFORT where it means it.
+## Process and kernel hardening
+
+Both Linux tiers reject cross-process access through `ptrace`,
+`process_vm_readv`, `process_vm_writev` and `pidfd_getfd`. The filter also
+rejects `io_uring_setup/enter/register`, `userfaultfd`, mount manipulation,
+kernel module/kexec operations, `bpf`, `perf_event_open`, reboot and swap
+control. This intentionally makes debuggers, eBPF loaders, kernel tools and
+hardware profilers incompatible inside the sandbox; see the rationale in the
+threat model.
+
+FULL mounts an isolated, size-limited `/dev/shm`. Processes within one sandbox
+can still communicate with each other through that shared memory because they
+are members of the same trust boundary. Resource limits reduce accidental or
+malicious exhaustion but are not a defense against every host-level denial of
+service.
+
+## Network policy and DNS rebinding
+
+Network `off` is the default. Allowlist/strict connections use a host-side
+broker; the child has no direct Internet route. The broker validates the DNS
+name, resolves it outside the sandbox, rejects the entire answer set if it
+contains loopback/private/link-local/shared/metadata/multicast/reserved IPv4 or
+IPv6 (including mapped/NAT64 forms), then connects directly to one validated
+`SocketAddr`. The name is not resolved a second time for that connection.
+
+This is CONNECT-level mediation, not content inspection. vetto never performs
+TLS interception, SNI filtering, CA installation or credential injection.
+Non-proxy protocols fail closed unless an explicit relay exists. `--git-ssh`
+uses the same broker and still requires an allowlisted host/port.
+
+## Environment variables
+
+The child environment is allowlist-only. Built-in profiles preserve basic
+terminal, locale, editor and toolchain-location variables. `GH_TOKEN`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `AWS_*` are not passed by default.
+An exact name added to `[environment].pass_through` is an explicit choice to
+expose that value to the agent. Unknown policy fields are errors so a misspelt
+environment restriction cannot silently disappear.
+
+## macOS
+
+The macOS backend uses `sandbox-exec`/Seatbelt. Apple has deprecated and does
+not document `sandbox-exec`; it works on current systems but is a platform
+risk. If the runner or required policy behaviour is unavailable, vetto must
+fail closed rather than execute unsandboxed.
+
+Endpoint Security support is optional and requires Apple's
+`com.apple.developer.endpoint-security.client` entitlement, appropriate code
+signing and system approval. Enabling the Cargo feature does not grant the
+entitlement. Doctor reports present/absent/unavailable and the backend falls
+back to Seatbelt enforcement plus coarse FSEvents changes when ES cannot be
+used.
+
+## Windows
+
+Windows uses different primitives; it must not be described as Landlock-like.
+The native path capability-probes the experimental Windows 11 process-sandbox
+API, AppContainer capabilities, restricted/low-integrity tokens and Job Object
+kill-on-close. Experimental API availability can change between Windows
+builds. A Job Object or Low integrity token alone is not a filesystem/network
+sandbox, so vetto refuses to launch when the complete selected boundary cannot
+be established.
+
+Firewall/WFP mutation, Event Log source registration, some ETW providers and
+minifilter installation require administrator rights. Optional integrations
+must report that requirement and never prompt for or manufacture elevation.
+An already-installed signed minifilter may be detected, but its absence cannot
+be relabelled as enforcement. Windows Sandbox is a separate opt-in
+hardware-virtualized tier and explicitly breaks the “no VM dependency”
+property; it is never a silent fallback.
+
+## Residual risks
+
+- Kernel vulnerabilities can bypass kernel-enforced sandboxes.
+- An allowed project file created after load may not match a secret glob until
+  the next session, depending on tier and overlay availability.
+- Proxy-aware allowlists constrain destinations, not what an allowed service
+  does with uploaded data.
+- Visibility feeds and sanitization are incomplete by design.
+- Availability controls are bounded mitigations, not hard real-time quotas.
+- User-selected pass-through variables, read roots, network destinations and
+  permissive profiles deliberately widen the boundary.

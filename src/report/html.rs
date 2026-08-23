@@ -7,7 +7,7 @@ pub fn render(stats: &SessionStats) -> String {
     for (kind, count) in &stats.counts {
         rows.push_str(&format!(
             "<tr><td>{}</td><td class=\"num\">{count}</td></tr>\n",
-            html_escape(kind)
+            html_escape(&clean(kind))
         ));
     }
 
@@ -54,6 +54,28 @@ pub fn render(stats: &SessionStats) -> String {
     }
     if notices.is_empty() {
         notices.push_str("<li class=\"muted\">none</li>\n");
+    }
+
+    let mut suspicious = String::new();
+    if stats.suspicious_signals.is_empty() {
+        suspicious.push_str(
+            "<p class=\"muted\">None observed. This classifier is advisory and incomplete.</p>\n",
+        );
+    } else {
+        suspicious.push_str(
+            "<table><tr><th>severity</th><th>category</th><th>subject</th><th>reason</th><th>count</th></tr>\n",
+        );
+        for signal in &stats.suspicious_signals {
+            suspicious.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td class=\"path\">{}</td><td>{}</td><td class=\"num\">{}</td></tr>\n",
+                html_escape(&clean(&signal.severity)),
+                html_escape(&clean(&signal.category)),
+                html_escape(&clean(&signal.subject)),
+                html_escape(&clean(&signal.reason)),
+                signal.count
+            ));
+        }
+        suspicious.push_str("</table>\n");
     }
 
     format!(
@@ -104,6 +126,9 @@ observation is best-effort (/proc polling, ~100 ms granularity)</p>
 <h2>Network requests</h2>
 {net_tbl}
 
+<h2>Suspicious signals (best-effort)</h2>
+{suspicious}
+
 <h2>Notices</h2>
 <ul>
 {notices}
@@ -117,8 +142,8 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
 </body>
 </html>
 "#,
-        tier = html_escape(&stats.tier),
-        net = html_escape(&stats.net_mode),
+        tier = html_escape(&clean(&stats.tier)),
+        net = html_escape(&clean(&stats.net_mode)),
         profile = html_escape(&clean(&stats.profile)),
         exit = stats.exit_code,
         dur = stats.duration_secs,
@@ -127,6 +152,7 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
         writes = stats.file_writes,
         blocked = blocked,
         net_tbl = net,
+        suspicious = suspicious,
         notices = notices,
         version = env!("CARGO_PKG_VERSION"),
     )
@@ -137,4 +163,24 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_strings_are_redacted_and_html_escaped() {
+        let secret = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+        let stats = SessionStats {
+            tier: format!("tier-{secret}"),
+            net_mode: "off<script>".into(),
+            profile: "profile".into(),
+            notices: vec![format!("message={secret}")],
+            ..SessionStats::default()
+        };
+        let report = render(&stats);
+        assert!(!report.contains(secret), "secret leaked: {report}");
+        assert!(report.contains("off&lt;script&gt;"), "HTML was not escaped");
+    }
 }
