@@ -3,17 +3,56 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to release
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  GH_REPO: ${{ github.repository }}
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  prepare-release:
+    name: prepare draft GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or verify the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" == v* ]]
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "release $RELEASE_TAG is already published" >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" \
+              --draft \
+              --generate-notes \
+              --title "vetto ${RELEASE_TAG#v}" \
+              --verify-tag
+          fi
+
   build:
     name: build ${{ matrix.target }}
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -46,6 +85,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,7 +98,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_version="${GITHUB_REF_NAME#v}"
+          expected_version="${RELEASE_TAG#v}"
           cargo_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
           npm_version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",$/\1/p' npm/package.json | head -n 1)"
           test -n "$cargo_version"
@@ -105,25 +146,33 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
           "$hash  ${{ matrix.archive }}" | Set-Content -Encoding ascii "$archive.sha256"
 
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.artifact }}
-          path: release-assets/*
-          if-no-files-found: error
+      - name: Upload assets directly to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" release-assets/* --clobber
 
   npm-package:
     name: assemble npm package
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download native release archives
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "$RELEASE_TAG" \
+            --pattern 'vetto-linux-*' \
+            --pattern 'vetto-macos-*' \
+            --pattern 'vetto-windows-*'
 
       - uses: actions/setup-node@v4
         with:
@@ -134,7 +183,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_version="${GITHUB_REF_NAME#v}"
+          expected_version="${RELEASE_TAG#v}"
           package_version="$(node -p "require('./npm/package.json').version")"
           test "$expected_version" = "$package_version"
 
@@ -193,27 +242,33 @@ jobs:
             grep -Fqx "$path" "$package_listing"
           done
 
-      - name: Upload npm package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-package
-          path: npm-dist/*
-          if-no-files-found: error
+      - name: Upload the npm package directly to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" npm-dist/* --clobber
 
   npm-smoke:
     name: npm smoke (${{ matrix.os }})
     needs: npm-package
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
     steps:
       - name: Download npm package artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-package
-          path: npm-dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir npm-dist
+          gh release download "$RELEASE_TAG" \
+            --dir npm-dist \
+            --pattern 'vetto-npm-*.tgz'
 
       - uses: actions/setup-node@v4
         with:
@@ -242,27 +297,33 @@ jobs:
           NODE
 
   github-release:
-    name: create draft GitHub release
+    name: verify draft GitHub release
     needs: [build, npm-package, npm-smoke]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - name: Download all release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          merge-multiple: true
+      - name: Verify the complete draft asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = true
 
-      - name: Download npm package artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-package
-          path: release-assets
-
-      - name: Create draft GitHub release
-        uses: ncipollo/release-action@v1
-        with:
-          draft: true
-          artifacts: "*.tar.gz,*.zip,*.sha256,release-assets/vetto-npm-*.tgz,release-assets/vetto-npm-*.tgz.sha256"
-          generateReleaseNotes: true
+          asset_names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for asset in \
+            vetto-linux-x86_64.tar.gz \
+            vetto-linux-x86_64.tar.gz.sha256 \
+            vetto-linux-aarch64.tar.gz \
+            vetto-linux-aarch64.tar.gz.sha256 \
+            vetto-macos-x86_64.tar.gz \
+            vetto-macos-x86_64.tar.gz.sha256 \
+            vetto-macos-aarch64.tar.gz \
+            vetto-macos-aarch64.tar.gz.sha256 \
+            vetto-windows-x86_64.zip \
+            vetto-windows-x86_64.zip.sha256 \
+            "vetto-npm-${RELEASE_TAG#v}.tgz" \
+            "vetto-npm-${RELEASE_TAG#v}.tgz.sha256"; do
+            grep -Fqx "$asset" <<<"$asset_names"
+          done
