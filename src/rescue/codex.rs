@@ -326,12 +326,19 @@ impl RescueAdapter for CodexAdapter {
         let parent = destination
             .parent()
             .context("snapshot destination must have a parent directory")?;
+        let file_name = destination
+            .file_name()
+            .context("snapshot destination must have a file name")?;
         let canonical_parent = fs::canonicalize(parent)
             .with_context(|| format!("canonicalize snapshot parent {}", parent.display()))?;
         let canonical_root = Self::validate_root(context)?;
         if canonical_parent.starts_with(&canonical_root) {
             bail!("snapshot destination may not be inside the original agent state root");
         }
+        // macOS exposes system aliases such as /var -> /private/var. Resolve
+        // the already-verified parent and then create only the caller's final
+        // filename through the existing no-follow/exclusive writer.
+        let destination = canonical_parent.join(file_name);
         report::write_new_bytes(&destination, &bytes)
             .with_context(|| format!("create snapshot {}", destination.display()))?;
         let written = fs::read(&destination)
