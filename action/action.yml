@@ -45,7 +45,9 @@ runs:
           ${{ github.action_path }}/../target
           ~/.cargo/registry
           ~/.cargo/git
-        key: vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/../Cargo.lock', github.action_path)) }}
+        key: vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_repository }}-${{ github.action_ref }}
+        restore-keys: |
+          vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_repository }}-
 
     - name: Build and run vetto
       id: run
