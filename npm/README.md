@@ -34,6 +34,6 @@ Linux requires a glibc-based distribution with Landlock support for the full
 sandbox tier. The Windows backend is experimental and reports its available
 capabilities through `vetto doctor`.
 
-The npm package is a distribution channel for the native CLI. For policy
-reference, security limitations, and source builds, see the project
+The npm package is the only supported user installation channel for the native
+CLI. For policy reference and security limitations, see the project
 documentation: <https://github.com/shleder/vetto>.

@@ -100,10 +100,17 @@ impl CodexAdapter {
     }
 
     fn read_stable(context: &RescueContext, path: &Path) -> Result<Vec<u8>> {
+        Self::read_stable_with(context, path, |path, limit| Self::read_bounded(path, limit))
+    }
+
+    fn read_stable_with<F>(context: &RescueContext, path: &Path, mut read: F) -> Result<Vec<u8>>
+    where
+        F: FnMut(&Path, u64) -> Result<Vec<u8>>,
+    {
         let canonical = Self::validate_session_path(context, path)?;
-        let first = Self::read_bounded(&canonical, context.max_session_bytes)
+        let first = read(&canonical, context.max_session_bytes)
             .with_context(|| format!("read session {}", canonical.display()))?;
-        let second = Self::read_bounded(&canonical, context.max_session_bytes)
+        let second = read(&canonical, context.max_session_bytes)
             .with_context(|| format!("re-read session {}", canonical.display()))?;
         if Self::sha256(&first) != Self::sha256(&second) {
             bail!("session changed while being read; retry after the writer stops");
@@ -215,7 +222,7 @@ impl RescueAdapter for CodexAdapter {
             Err(error) => Ok(AdapterStatus {
                 adapter: self.id().to_string(),
                 availability: Availability::Unavailable,
-                support_level: "unavailable".to_string(),
+                support_level: "unsupported".to_string(),
                 reason: Some(error.to_string()),
             }),
         }
@@ -356,5 +363,124 @@ impl RescueAdapter for CodexAdapter {
             sha256: written_hash,
             source_preserved: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rescue::types::DEFAULT_MAX_TOTAL_BYTES;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(tag: &str) -> Self {
+            let nonce = NEXT_TEMP_ROOT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "vetto-rescue-contract-{tag}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create rescue test root");
+            Self(path)
+        }
+
+        fn codex_home(&self) -> PathBuf {
+            self.0.join("codex-home")
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn session(root: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = root.join("sessions").join(name);
+        fs::create_dir_all(path.parent().expect("session parent")).expect("session parent");
+        fs::write(&path, bytes).expect("session fixture");
+        path
+    }
+
+    #[test]
+    fn discovery_enforces_entry_aggregate_and_session_budgets() {
+        let temp = TempRoot::new("budgets");
+        let root = temp.codex_home();
+        session(&root, "one.jsonl", b"one\n");
+        session(&root, "two.jsonl", b"two\n");
+
+        let adapter = CodexAdapter;
+        let mut context = RescueContext::new(root.clone());
+        context.max_files = 1;
+        let error = adapter
+            .discover_sessions(&context)
+            .expect_err("entry budget must fail closed");
+        assert!(error.to_string().contains("entry budget"), "{error:#}");
+
+        context.max_files = 10;
+        context.max_total_bytes = 1;
+        let error = adapter
+            .discover_sessions(&context)
+            .expect_err("aggregate byte budget must fail closed");
+        assert!(error.to_string().contains("byte budget"), "{error:#}");
+
+        context.max_total_bytes = DEFAULT_MAX_TOTAL_BYTES;
+        context.max_session_bytes = 1;
+        let error = adapter
+            .discover_sessions(&context)
+            .expect_err("per-session budget must fail closed");
+        assert!(error.to_string().contains("inspection budget"), "{error:#}");
+    }
+
+    #[test]
+    fn diagnose_marks_records_over_the_record_budget_corrupt() {
+        let temp = TempRoot::new("record-budget");
+        let root = temp.codex_home();
+        let path = session(
+            &root,
+            "oversized.jsonl",
+            br#"{"type":"turn"}
+"#,
+        );
+        let adapter = CodexAdapter;
+        let context = RescueContext {
+            max_record_bytes: 3,
+            ..RescueContext::new(root)
+        };
+        let sessions = adapter
+            .discover_sessions(&context)
+            .expect("discover session");
+        let view = adapter
+            .diagnose(&context, &sessions[0])
+            .expect("diagnose session");
+        assert_eq!(view.health, SessionHealth::Corrupt);
+        assert_eq!(view.oversized_records, 1);
+        assert!(path.exists(), "diagnosis must not mutate the source");
+    }
+
+    #[test]
+    fn stable_read_rejects_a_source_changed_between_reads() {
+        let temp = TempRoot::new("source-change");
+        let root = temp.codex_home();
+        let path = session(&root, "changing.jsonl", b"{\"version\":1}\n");
+        let context = RescueContext::new(root);
+        let mut reads = 0;
+        let error = CodexAdapter::read_stable_with(&context, &path, |path, limit| {
+            let bytes = CodexAdapter::read_bounded(path, limit)?;
+            reads += 1;
+            if reads == 1 {
+                fs::write(path, b"{\"version\":2}\n")?;
+            }
+            Ok(bytes)
+        })
+        .expect_err("changing source must fail closed");
+        assert!(
+            error.to_string().contains("changed while being read"),
+            "{error:#}"
+        );
+        assert_eq!(reads, 2, "the stable-read contract requires two reads");
     }
 }

@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/shleder/vetto/blob/main/docs/schema/agent-adapter.schema.json",
-  "title": "Vetto agent adapter manifest",
+  "title": "Vetto agent adapter manifest (rescue contract v1)",
+  "description": "A declarative adapter manifest. Unknown fields are invalid; runtime discovery and recovery remain bounded and read-only as specified by docs/schema/rescue-adapter-contract-v1.md.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -30,6 +31,17 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 40
+    },
+    "support_level": {
+      "type": "string",
+      "enum": [
+        "protected",
+        "integrated",
+        "rescue-only",
+        "observe-only",
+        "unsupported"
+      ],
+      "description": "The strongest support claim this adapter is allowed to make. Availability is reported separately at runtime."
     },
     "surfaces": {
       "type": "array",
@@ -64,6 +76,18 @@
         "type": "string",
         "pattern": "^[A-Za-z0-9._+-]+$"
       }
+    }
+  },
+  "$defs": {
+    "support_level": {
+      "type": "string",
+      "enum": [
+        "protected",
+        "integrated",
+        "rescue-only",
+        "observe-only",
+        "unsupported"
+      ]
     }
   }
 }

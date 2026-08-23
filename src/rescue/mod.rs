@@ -1,4 +1,5 @@
 mod adapter;
+mod claude;
 mod codex;
 pub mod types;
 
@@ -11,14 +12,16 @@ use crate::cli::RescueCommand;
 use crate::report;
 
 use adapter::RescueAdapter;
+use claude::ClaudeAdapter;
 use codex::CodexAdapter;
 use types::{Availability, RescueContext, SessionRef};
 
 fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
     match id {
         "codex" => Ok(Box::new(CodexAdapter)),
+        "claude" => Ok(Box::new(ClaudeAdapter)),
         other => bail!(
-            "rescue adapter {other:?} is not available in {}; available: codex",
+            "unsupported rescue adapter {other:?} in {}; available: codex, claude",
             env!("CARGO_PKG_VERSION")
         ),
     }

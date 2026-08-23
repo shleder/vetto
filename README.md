@@ -84,15 +84,6 @@ remains on the npm `latest` tag while alpha builds use `next`.
 Alpha testers should follow the privacy and reporting checklist in
 [docs/field-testing.md](docs/field-testing.md).
 
-<details>
-<summary><strong>Build directly from source</strong></summary>
-
-```console
-cargo install --locked --git https://github.com/shleder/vetto
-```
-
-</details>
-
 The wrapper accepts any executable:
 
 ```console
@@ -109,22 +100,27 @@ or `--tui=none` for scripts and CI. `vetto init` creates a starter
 
 ## Rescue local sessions
 
-The `0.2` alpha adds a provider-neutral, copy-only recovery surface. Alpha 1
-ships a bounded Codex reference adapter; later adapters use the same contract
-without changing the sandbox core.
+The `0.2` alpha adds a provider-neutral, copy-only recovery surface. The npm
+alpha ships the bounded Codex reference adapter. The main branch also contains
+an experimental Claude adapter; it requires an explicit state root and treats
+Claude JSONL as opaque until its provider format is independently verified.
 
 ```console
 vetto rescue --json scan
 vetto rescue diagnose sessions/2026/08/23/session.jsonl
 mkdir recovery
 vetto rescue snapshot session.jsonl --output recovery/session.jsonl
+
+# Claude: explicit root, read-only and copy-only
+vetto rescue --adapter claude --root ~/.claude --json scan
 ```
 
 Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
 overwrites an existing destination, writes inside the original agent state
 root, or fabricates vendor SQLite rows. `snapshot` and `fork` create a verified
 new copy; ambiguous or changing inputs fail closed. See
-[ADR 0001](docs/adr/0001-universal-rescue-architecture.md).
+[ADR 0001](docs/adr/0001-universal-rescue-architecture.md) and the
+[Antigravity compatibility gate](docs/compatibility/antigravity.md).
 
 ## Why an outer boundary?
 
