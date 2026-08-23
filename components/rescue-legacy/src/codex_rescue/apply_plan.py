@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -13,6 +12,10 @@ from typing import Any
 from .evidence import collect_session_evidence
 from .plan import RecoveryPlan
 from .redact import sanitize_path
+
+
+_SAFE_APPLY_OPERATIONS = {"create_clean_fork"}
+_DIRECT_DERIVED_STATE_OPERATIONS = {"reindex_thread", "realign_projection_cursor"}
 
 
 @dataclass
@@ -52,6 +55,30 @@ def apply_recovery_plan(
             dry_run=dry_run,
             refusal_reason=f"MANDATORY_SAFETY_REFUSAL: {reason}",
         )
+
+    operations = list(plan_dict.get("PROPOSED_OPERATIONS", []))
+    for operation in operations:
+        operation_type = operation.get("type")
+        target = operation.get("target")
+        if (
+            operation_type in _DIRECT_DERIVED_STATE_OPERATIONS
+            or target == "sqlite_state_db"
+        ):
+            return ApplyResult(
+                plan_applied=False,
+                dry_run=dry_run,
+                refusal_reason=(
+                    "DIRECT_DERIVED_STATE_MUTATION_DISABLED: recovery plans may not "
+                    "write vendor SQLite state; use diagnosis, salvage, portable "
+                    "export/import, or restore-to-copy instead."
+                ),
+            )
+        if operation_type not in _SAFE_APPLY_OPERATIONS:
+            return ApplyResult(
+                plan_applied=False,
+                dry_run=dry_run,
+                refusal_reason=f"UNSUPPORTED_RECOVERY_OPERATION: {operation_type!r}",
+            )
 
     session_path_str = plan_dict.get("SESSION_PATH") or ""
     session_ref = plan_dict.get("SESSION_REFERENCE") or ""
@@ -104,7 +131,7 @@ def apply_recovery_plan(
         return ApplyResult(
             plan_applied=True,
             dry_run=True,
-            operations_executed=[op.get("description", "") for op in plan_dict.get("PROPOSED_OPERATIONS", [])],
+            operations_executed=[op.get("description", "") for op in operations],
             verification_passed=True,
             details={"note": "Dry-run validation successful. All preconditions met; zero files mutated."},
         )
@@ -115,43 +142,9 @@ def apply_recovery_plan(
     shutil.copy2(session_path, source_backup)
 
     executed_ops: list[str] = []
-    for op in plan_dict.get("PROPOSED_OPERATIONS", []):
+    for op in operations:
         op_type = op.get("type")
-        if op_type == "reindex_thread":
-            db_path = Path(ev.sqlite.db_path) if ev.sqlite.db_path else None
-            if db_path and db_path.exists():
-                shutil.copy2(db_path, backup_dir / db_path.name)
-                conn = sqlite3.connect(db_path)
-                try:
-                    cur = conn.cursor()
-                    cur.execute("PRAGMA integrity_check")
-                    if cur.fetchone()[0] != "ok":
-                        raise RuntimeError("SQLite database failed integrity check before mutation")
-                    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'")
-                    if cur.fetchone():
-                        cur.execute("INSERT OR REPLACE INTO threads (id, title, updated_at) VALUES (?, ?, ?)", (session_ref, f"Rescued Session {session_ref[:8]}", int(time.time())))
-                        conn.commit()
-                        executed_ops.append(f"Reindexed thread {session_ref} in SQLite DB.")
-                finally:
-                    conn.close()
-        elif op_type == "realign_projection_cursor":
-            db_path = Path(ev.sqlite.db_path) if ev.sqlite.db_path else None
-            if db_path and db_path.exists():
-                shutil.copy2(db_path, backup_dir / db_path.name)
-                conn = sqlite3.connect(db_path)
-                try:
-                    cur = conn.cursor()
-                    cur.execute("PRAGMA integrity_check")
-                    if cur.fetchone()[0] != "ok":
-                        raise RuntimeError("SQLite database failed integrity check before mutation")
-                    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='thread_history_projection_state'")
-                    if cur.fetchone():
-                        cur.execute("UPDATE thread_history_projection_state SET projection_cursor = ?, updated_at = ? WHERE thread_id = ?", (ev.rollout.last_ordinal, int(time.time()), session_ref))
-                        conn.commit()
-                        executed_ops.append(f"Realigned SQLite projection cursor for thread {session_ref} to ordinal {ev.rollout.last_ordinal}.")
-                finally:
-                    conn.close()
-        elif op_type == "create_clean_fork":
+        if op_type == "create_clean_fork":
             executed_ops.append("Created clean fork plan artifact.")
 
     post_ev = collect_session_evidence(session_path, codex_home=codex_home)

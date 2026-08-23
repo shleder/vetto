@@ -174,16 +174,90 @@ class Alpha6FeatureTests(unittest.TestCase):
         plan = generate_recovery_plan(s_path, codex_home=self.home)
         self.assertEqual(plan.plan_schema_version, 1)
         self.assertFalse(plan.source_files_modified)
+        self.assertFalse(plan.is_applicable)
+        self.assertIn("DIRECT_SQLITE", plan.refusal_reason or "")
+        self.assertEqual(plan.proposed_operations, [])
 
         res_dry = apply_recovery_plan(plan, dry_run=True, codex_home=self.home)
-        self.assertTrue(res_dry.plan_applied)
+        self.assertFalse(res_dry.plan_applied)
         self.assertTrue(res_dry.dry_run)
+        self.assertIn("MANDATORY_SAFETY_REFUSAL", res_dry.refusal_reason or "")
 
         plan_dict = plan.to_dict()
         plan_dict["SOURCE_SHA256"] = "invalid_hash_12345"
         res_mismatch = apply_recovery_plan(plan_dict, codex_home=self.home)
         self.assertFalse(res_mismatch.plan_applied)
-        self.assertIn("SOURCE_MUTATED", res_mismatch.refusal_reason or "")
+        self.assertIn("MANDATORY_SAFETY_REFUSAL", res_mismatch.refusal_reason or "")
+
+    def test_apply_plan_refuses_tampered_sqlite_operations_without_writes(self):
+        session_path = self.home / "sessions" / "tampered_plan.jsonl"
+        session_path.write_text(
+            json.dumps({"type": "turn_started", "ordinal": 1}) + "\n",
+            encoding="utf-8",
+        )
+        database_path = self.home / "state.db"
+        conn = sqlite3.connect(database_path)
+        conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, updated_at INTEGER)")
+        conn.execute(
+            "CREATE TABLE thread_history_projection_state "
+            "(thread_id TEXT PRIMARY KEY, projection_cursor INTEGER, updated_at INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO thread_history_projection_state VALUES (?, ?, ?)",
+            ("tampered_plan", 0, 0),
+        )
+        conn.commit()
+        conn.close()
+        before = database_path.read_bytes()
+        backup_root = Path(self.tmp_dir.name) / "must-not-exist"
+
+        base = {
+            "IS_APPLICABLE": True,
+            "SESSION_PATH": str(session_path),
+            "SESSION_REFERENCE": "tampered_plan",
+            "SOURCE_SHA256": hashlib.sha256(session_path.read_bytes()).hexdigest(),
+        }
+        for operation in (
+            {"target": "sqlite_state_db", "type": "reindex_thread"},
+            {"target": "sqlite_state_db", "type": "realign_projection_cursor"},
+        ):
+            plan = {**base, "PROPOSED_OPERATIONS": [operation]}
+            result = apply_recovery_plan(
+                plan,
+                backup_root=backup_root,
+                codex_home=self.home,
+            )
+            self.assertFalse(result.plan_applied)
+            self.assertIn(
+                "DIRECT_DERIVED_STATE_MUTATION_DISABLED",
+                result.refusal_reason or "",
+            )
+            self.assertEqual(database_path.read_bytes(), before)
+            self.assertFalse(backup_root.exists())
+
+    def test_apply_plan_keeps_safe_dry_run_control(self):
+        session_path = self.home / "sessions" / "safe_dry_run.jsonl"
+        session_path.write_text(
+            json.dumps({"type": "turn_started", "ordinal": 1}) + "\n",
+            encoding="utf-8",
+        )
+        plan = {
+            "IS_APPLICABLE": True,
+            "SESSION_PATH": str(session_path),
+            "SESSION_REFERENCE": "safe_dry_run",
+            "SOURCE_SHA256": hashlib.sha256(session_path.read_bytes()).hexdigest(),
+            "PROPOSED_OPERATIONS": [
+                {
+                    "target": "recovery_fork",
+                    "type": "create_clean_fork",
+                    "description": "Create a copy-based recovery fork",
+                }
+            ],
+        }
+        result = apply_recovery_plan(plan, dry_run=True, codex_home=self.home)
+        self.assertTrue(result.plan_applied)
+        self.assertTrue(result.dry_run)
+        self.assertTrue(result.verification_passed)
 
     def test_support_bundle_redaction_and_report(self):
         s_path = self.home / "sessions" / "bundle_test.jsonl"

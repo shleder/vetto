@@ -263,8 +263,16 @@ pub fn write_reports_with_options(
 /// directory fd with `O_DIRECTORY|O_NOFOLLOW`; the final `O_CREAT|O_EXCL`
 /// descriptor is also checked with `fstat` before any bytes are written.
 pub(crate) fn write_new_report(path: &std::path::Path, content: &str) -> io::Result<()> {
+    write_new_bytes(path, content.as_bytes())
+}
+
+/// Create a private regular file without following parent or final symlinks.
+///
+/// Rescue snapshots reuse the same final-path security boundary as reports,
+/// but preserve arbitrary source bytes instead of converting them to text.
+pub(crate) fn write_new_bytes(path: &std::path::Path, content: &[u8]) -> io::Result<()> {
     let mut file = open_new_report(path)?;
-    file.write_all(content.as_bytes())
+    file.write_all(content)
 }
 
 #[cfg(unix)]

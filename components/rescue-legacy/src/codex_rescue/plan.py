@@ -133,42 +133,30 @@ def generate_recovery_plan(
             return plan
 
         plan.derived_state_affected.append("sqlite_thread_inventory")
-        plan.preconditions.extend([
-            f"Source rollout sha256 matches {sha[:16]}...",
-            "SQLite state DB passes PRAGMA integrity_check",
-            "No active writer lock present",
-        ])
-        plan.proposed_operations.append({
-            "target": "sqlite_state_db",
-            "type": "reindex_thread",
-            "description": "Insert thread row into SQLite inventory referencing intact canonical rollout.",
-        })
         plan.verify_steps.extend([
-            "Query SQLite state DB for thread ID matching session reference",
-            "Run 'codex-rescue doctor' on session to confirm alignment",
+            "Create a clean recovery fork or portable export from the canonical rollout",
+            "Import only through a supported vendor entrypoint",
         ])
-        plan.is_applicable = True
+        plan.is_applicable = False
+        plan.refusal_reason = (
+            "DIRECT_SQLITE_RECONSTRUCTION_UNSUPPORTED: authoritative values for "
+            "vendor-derived thread metadata are unavailable; direct database "
+            "fabrication is prohibited."
+        )
         return plan
 
     if "WEDGED_PROJECTION" in ev.findings or "CURSOR_DIVERGENCE" in ev.findings or (ev.sqlite.projection_cursor is not None and ev.rollout.last_ordinal is not None and ev.sqlite.projection_cursor != ev.rollout.last_ordinal):
         if ev.status in ("HEALTHY", "WARNINGS") and "MALFORMED_JSONL" not in ev.findings and "TRUNCATED_JSONL" not in ev.findings:
             plan.derived_state_affected.append("sqlite_projection_cursor")
-            plan.preconditions.extend([
-                f"Source rollout sha256 matches {sha[:16]}...",
-                "SQLite state DB passes PRAGMA integrity_check",
-                "No active writer lock present",
-                "Source rollout contains verified monotonic ordinals",
-            ])
-            plan.proposed_operations.append({
-                "target": "sqlite_state_db",
-                "type": "realign_projection_cursor",
-                "description": f"Update SQLite projection cursor to match canonical rollout boundary ordinal ({ev.rollout.last_ordinal}).",
-            })
             plan.verify_steps.extend([
-                "Query SQLite projection cursor to confirm match with rollout boundary",
-                "Run 'codex-rescue diff' to verify zero remaining divergences",
+                "Preserve the canonical rollout and current derived database as evidence",
+                "Wait for a supported vendor reconciliation or import entrypoint",
             ])
-            plan.is_applicable = True
+            plan.is_applicable = False
+            plan.refusal_reason = (
+                "DIRECT_SQLITE_CURSOR_MUTATION_UNSUPPORTED: projection state is "
+                "vendor-derived and may not be rewritten from inferred ordinals."
+            )
             return plan
         else:
             plan.is_applicable = False
