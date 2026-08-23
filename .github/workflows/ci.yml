@@ -37,7 +37,7 @@ jobs:
         run: cargo build --release --all-features
 
   check-aarch64:
-    name: test (aarch64 via QEMU)
+    name: compile + syscall ABI tests (aarch64 via QEMU)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,8 +51,17 @@ jobs:
         with:
           tool: cross
 
-      - name: Unit + integration tests (aarch64)
-        run: cross test --target aarch64-unknown-linux-gnu --all-features --quiet
+      # Compile the complete test suite for ARM64, then execute the pure BPF
+      # syscall/architecture tests under QEMU. Full filesystem and /proc tests
+      # run natively in the Ubuntu job: qemu-user does not preserve every
+      # openat/procfs behavior those enforcement tests intentionally inspect.
+      - name: Compile complete test suite (aarch64)
+        run: cross test --target aarch64-unknown-linux-gnu --all-features --no-run
+
+      - name: Execute syscall ABI tests (aarch64 via QEMU)
+        run: >-
+          cross test --target aarch64-unknown-linux-gnu --all-features --lib
+          sandbox::linux::seccomp_netblock::tests --quiet
 
   build-macos:
     name: build + test (macOS arm64 and x86_64 check)
