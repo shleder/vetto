@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "case_id": "current-corrupt-1",
+  "created_from_real_codex": true,
+  "corruption_induced_on_copy": true,
+  "doctor": {
+    "status": "TRUNCATED_TRANSCRIPT",
+    "first_invalid_offset": 5284,
+    "valid_record_count": 23
+  },
+  "salvage": {
+    "completed": true,
+    "original_untouched": true,
+    "private_validation_rescue_id": "9f99f80cda39faae49716013"
+  },
+  "verify": {
+    "status": "REVIEW_REQUIRED",
+    "reason": "load-bearing unknowns remain; no automatic replay"
+  }
+}

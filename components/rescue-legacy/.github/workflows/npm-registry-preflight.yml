@@ -1,0 +1,47 @@
+name: NPM Registry Name Preflight
+
+on:
+  push:
+    branches: [feat/alpha5-complete]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-registry-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-provisional-names:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Check provisional package names
+        run: node scripts/check_npm_names.mjs
+      - name: Verify PyPI Alpha5 is not already published
+        run: |
+          python - <<'PY'
+          import urllib.error
+          import urllib.request
+          url = 'https://pypi.org/pypi/codex-rescue/0.1.0a5/json'
+          try:
+              with urllib.request.urlopen(url, timeout=20) as response:
+                  if response.status == 200:
+                      raise SystemExit('STOP: PyPI codex-rescue 0.1.0a5 already exists')
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+              print('PYPI_ALPHA5_STATE=NOT_FOUND')
+          PY
+      - name: Record qualification boundary
+        if: always()
+        run: |
+          echo "This workflow never publishes packages." >> "$GITHUB_STEP_SUMMARY"
+          echo "An npm E404 counts as available only when npm returned an unambiguous registry-not-found response." >> "$GITHUB_STEP_SUMMARY"
+          echo "A registered npm name requires authenticated maintainer verification before release." >> "$GITHUB_STEP_SUMMARY"
+          echo "PyPI Alpha5 must remain absent until the explicit publish phase." >> "$GITHUB_STEP_SUMMARY"

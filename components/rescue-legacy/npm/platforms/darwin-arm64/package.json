@@ -1,0 +1,16 @@
+{
+  "name": "codex-rescue-darwin-arm64",
+  "version": "0.1.0-alpha.7",
+  "description": "macOS arm64 standalone binary for codex-rescue",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/codex-rescue",
+    "README.md"
+  ]
+}

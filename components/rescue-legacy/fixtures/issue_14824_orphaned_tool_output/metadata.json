@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/openai/codex/issues/14824",
+  "comment": "https://github.com/openai/codex/issues/14824#issuecomment-5266609829",
+  "derived_from_public_evidence": true,
+  "created_from_real_rollout": false,
+  "sanitized": true,
+  "codex_cli_version": "0.147.0",
+  "observed_os": "Windows 11 Pro",
+  "observed_shell": "PowerShell 7",
+  "failure_boundary": "durable wait function_call has no matching function_call_output before rollout end"
+}

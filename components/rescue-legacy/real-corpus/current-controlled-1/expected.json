@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "doctor": {"status": "UNFINISHED_TOOL_CALL", "findings": ["UNFINISHED_TOOL_CALL"], "valid_record_count": 24, "compacted": false},
+  "salvage": {"completed": true, "original_untouched": true, "fork_required": true, "rescue_id": "b193a5c32422828681ab8377"},
+  "verify": {"status": "REVIEW_REQUIRED"},
+  "source_sha256_before": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71",
+  "source_sha256_after": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71"
+}

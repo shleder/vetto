@@ -1,0 +1,42 @@
+{
+  "name": "codex-rescue",
+  "version": "0.1.0-alpha.7",
+  "description": "Read-only-first diagnostics and recovery tooling for OpenAI Codex local sessions",
+  "keywords": [
+    "codex",
+    "openai-codex",
+    "codex-cli",
+    "session-recovery",
+    "crash-recovery",
+    "data-recovery",
+    "forensics",
+    "diagnostics",
+    "salvage",
+    "jsonl",
+    "local-first",
+    "developer-tools",
+    "cli",
+    "ai-coding"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shleder/codex-rescue.git"
+  },
+  "bin": {
+    "codex-rescue": "bin/codex-rescue.js"
+  },
+  "files": [
+    "bin/codex-rescue.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "codex-rescue-linux-x64": "0.1.0-alpha.7",
+    "codex-rescue-windows-x64": "0.1.0-alpha.7",
+    "codex-rescue-darwin-arm64": "0.1.0-alpha.7",
+    "codex-rescue-darwin-x64": "0.1.0-alpha.7"
+  }
+}

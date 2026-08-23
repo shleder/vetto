@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "created_from_real_codex": true,
+  "corpus_sanitized": true,
+  "raw_excluded": true,
+  "case_id": "gate2-third-failure",
+  "session_id": "019ff69f-6f1b-7af0-8f15-c5d732fe0dd1",
+  "codex_version": "0.147.0",
+  "failure_class": "side_effect_without_durable_result",
+  "classification": "real Codex-generated shell side effect completed before controller termination, with no durable shell result",
+  "source": {
+    "path_reference": "codex-home/sessions/2026/08/12/rollout-2026-08-12T18-37-51-019ff69f-6f1b-7af0-8f15-c5d732fe0dd1.jsonl",
+    "raw_copy_included": false,
+    "sha256_before": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e",
+    "sha256_after": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e",
+    "size_bytes": 79391,
+    "valid_record_count": 21,
+    "immutable": true
+  },
+  "sanitization": {
+    "messages": "redacted",
+    "reasoning": "redacted",
+    "tool_arguments": "redacted",
+    "tool_outputs": "redacted",
+    "base_instructions": "redacted",
+    "secrets_removed": true,
+    "offsets": "synthetic order-relative offsets, not original",
+    "call_id_pairing": "preserved",
+    "raw_private_content": false
+  },
+  "rollout": {
+    "started_at": "2026-08-12T15:37:49.750244Z",
+    "finished_at": "2026-08-12T15:38:23.147545Z",
+    "termination": "child_exit",
+    "controller_marker_seen": false,
+    "controller_timeout_seconds": 35,
+    "child_exit_code": 0,
+    "stdout_sha256": "851626aac168439a9e75341641ed8d915adc8e05ece082b09334fa9426f7c603",
+    "stderr_sha256": "df8fc3b4232f4f1ff48ef7d999d8168f28d874e8a175aed3f1646da191672512"
+  },
+  "side_effect": {
+    "target": "app.txt",
+    "expected_line": "probe-shell-after-side-effect",
+    "observed": true,
+    "app_sha256_after": "1d9da05cadf18016cdfc6140190e8c5f8b22e0face65835b9ad364a0f32709b8",
+    "git_status_after": "M app.txt",
+    "head_sha_before": "a6cfe48d8e8fea3bbc799719d5ba379bada85c74",
+    "head_sha_after": "a6cfe48d8e8fea3bbc799719d5ba379bada85c74",
+    "diff_sha256": "d5636c3e5eac5baa97ad0d59185ec17abe8602a056889fc5300dd9c457d9c36c"
+  },
+  "results": {
+    "doctor": {
+      "status": "HEALTHY",
+      "findings": ["HEALTHY"],
+      "valid_record_count": 21,
+      "unfinished_tool_calls": 0
+    },
+    "salvage": {
+      "completed": true,
+      "original_untouched": true,
+      "fork_required": true,
+      "rescue_id": "73212274bd947b2112afe48e",
+      "source_sha256_before": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e",
+      "source_sha256_after": "b552130ae044acbaed6cca1ad1babd5cfece36d662e384f8aecba74025ec139e"
+    },
+    "verify": {
+      "status": "SAFE_TO_CONTINUE",
+      "conflicts": [],
+      "review_reasons": []
+    }
+  },
+  "controller": {
+    "method": "run_interrupted_case.py",
+    "termination": "child_exit",
+    "marker_seen": false,
+    "terminated_before_durable_shell_result": true
+  },
+  "automatic_replay": false,
+  "native_resume_attempted": false
+}

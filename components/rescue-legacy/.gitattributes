@@ -1,0 +1,2 @@
+# Preserve exact LF line endings for rollout JSONL files across OS platforms
+*.jsonl text eol=lf

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "case_id": "current-corrupt-1",
+  "created_from_real_codex": true,
+  "codex_version": "0.147.0",
+  "failure_class": "real_origin_controlled_truncation",
+  "classification": "real-origin controlled corruption (induced on disposable copies; not naturally occurring)",
+  "source": {
+    "session_id": "019ff641-7570-7851-96be-7a2f9f9decbc",
+    "raw_copy_included": false,
+    "original_sha256": "45570c1608f6108460cb7d0856ded721fe8e801223e318137482b8e3e0337a71",
+    "original_bytes": 80281,
+    "original_unchanged": true
+  },
+  "private_validation_copy": {
+    "corruption_induced_on_copy": true,
+    "sha256": "cad5adab69afe39c94d8dd09f3772e273a760dcc9a99ff30ac8a55f7bdd8e8cd",
+    "bytes": 79861,
+    "first_invalid_offset": 79443,
+    "stored_only_in_gitignored_runtime": true
+  },
+  "published_sanitized_fixture": {
+    "path": "session/rollout-sanitized-truncated.jsonl",
+    "sha256": "47bc3bc5217e6ed03e118eea28c501e317e192fe9426bcc0987530ce21942aec",
+    "bytes": 5450,
+    "first_invalid_offset": 5284,
+    "raw_private_content": false
+  },
+  "results": {
+    "doctor": "TRUNCATED_TRANSCRIPT",
+    "salvage_original_untouched": true,
+    "verify": "REVIEW_REQUIRED",
+    "native_resume_attempted": false
+  }
+}

@@ -1,0 +1,169 @@
+name: Publish Alpha6 NPM
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Exact Alpha6 tag"
+        required: true
+        default: "v0.1.0-alpha.6-3"
+      expected_sha:
+        description: "Exact commit the tag must resolve to"
+        required: true
+      candidate_run_id:
+        description: "Workflow run ID of Alpha6 Release Artifacts"
+        required: true
+        default: "32276964693"
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+env:
+  EXPECTED_NPM_VERSION: 0.1.0-alpha.6-3
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Download release candidate bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: alpha6-release-bundle
+          path: release-bundle
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify release candidate bundle hashes
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('release-bundle')
+          manifest = json.loads((root / 'release-manifest.json').read_text(encoding='utf-8'))
+          if manifest.get('source_sha') != os.environ['EXPECTED_SHA']:
+              raise SystemExit(f"Candidate source SHA mismatch: {manifest.get('source_sha')} != {os.environ['EXPECTED_SHA']}")
+          if manifest.get('release_tag') != os.environ['RELEASE_TAG']:
+              raise SystemExit(f"Candidate release tag mismatch: {manifest.get('release_tag')} != {os.environ['RELEASE_TAG']}")
+          if manifest.get('npm_version') != '0.1.0-alpha.6-3':
+              raise SystemExit(f"Candidate npm version mismatch: {manifest.get('npm_version')} != 0.1.0-alpha.6-3")
+          for name, digest in manifest['artifacts'].items():
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f"Missing artifact file: {name}")
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f"Hash mismatch for {name}: {actual} != {digest}")
+          print("Candidate bundle verification: OK")
+          PY
+
+      - name: Verify npm identity and registry maintainer permissions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          identity="$(npm whoami)"
+          echo "Authenticated npm identity: $identity"
+          test -n "$identity"
+
+      - name: Publish platform packages in deterministic order
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          identity="$(npm whoami)"
+          PLATFORMS=(
+            "codex-rescue-linux-x64"
+            "codex-rescue-windows-x64"
+            "codex-rescue-darwin-arm64"
+            "codex-rescue-darwin-x64"
+          )
+          for pkg in "${PLATFORMS[@]}"; do
+            tarball="./release-bundle/${pkg}-${EXPECTED_NPM_VERSION}.tgz"
+            if npm view "${pkg}@${EXPECTED_NPM_VERSION}" version >/dev/null 2>&1; then
+              echo "${pkg}@${EXPECTED_NPM_VERSION} already published on npm registry."
+            else
+              echo "Publishing platform package: $tarball"
+              npm publish "$tarball" --access public --tag next
+            fi
+            test "$(npm view "${pkg}@${EXPECTED_NPM_VERSION}" version)" = "${EXPECTED_NPM_VERSION}"
+          done
+          echo "All platform packages published and verified on npm registry."
+
+      - name: Publish top-level npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          tarball="./release-bundle/codex-rescue-${EXPECTED_NPM_VERSION}.tgz"
+          if npm view "codex-rescue@${EXPECTED_NPM_VERSION}" version >/dev/null 2>&1; then
+            echo "codex-rescue@${EXPECTED_NPM_VERSION} already published on npm registry."
+          else
+            echo "Publishing top-level package: $tarball"
+            npm publish "$tarball" --access public --tag next
+          fi
+          test "$(npm view "codex-rescue@${EXPECTED_NPM_VERSION}" version)" = "${EXPECTED_NPM_VERSION}"
+          echo "Top-level package published and verified on npm registry."
+
+      - name: Update latest dist-tags
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          ALL_PACKAGES=(
+            "codex-rescue-linux-x64"
+            "codex-rescue-windows-x64"
+            "codex-rescue-darwin-arm64"
+            "codex-rescue-darwin-x64"
+            "codex-rescue"
+          )
+          for pkg in "${ALL_PACKAGES[@]}"; do
+            echo "Pointing latest dist-tag for ${pkg} to ${EXPECTED_NPM_VERSION}"
+            npm dist-tag add "${pkg}@${EXPECTED_NPM_VERSION}" latest
+          done
+          sleep 5
+          for pkg in "${ALL_PACKAGES[@]}"; do
+            echo "${pkg}@latest is: $(npm view "${pkg}@latest" version)"
+          done
+          echo "All dist-tags updated to latest: ${EXPECTED_NPM_VERSION}"
+
+  smoke-npm:
+    name: smoke npm (${{ matrix.os }})
+    needs: publish-npm
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Smoke unpinned npx execution (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          npx --yes codex-rescue --version
+          npx --yes codex-rescue doctor --help
+          npx --yes codex-rescue@0.1.0-alpha.6-3 --version
+
+      - name: Smoke unpinned npx execution (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          npx --yes codex-rescue --version
+          npx --yes codex-rescue doctor --help
+          npx --yes codex-rescue@0.1.0-alpha.6-3 --version
+        shell: pwsh

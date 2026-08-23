@@ -1,0 +1,265 @@
+name: Alpha6 Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Exact Alpha6 tag"
+        required: true
+        default: "v0.1.0-alpha.6-3"
+      expected_sha:
+        description: "Exact commit the tag must resolve to"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  EXPECTED_NPM_VERSION: 0.1.0-alpha.6-3
+  PYINSTALLER_VERSION: 6.22.1
+
+jobs:
+  build-native-npm:
+    name: build (${{ matrix.platform_id }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform_id: linux-x64
+            platform_package: codex-rescue-linux-x64
+            binary: codex-rescue
+            artifact_binary: codex-rescue-linux-x64
+          - os: windows-latest
+            platform_id: win32-x64
+            platform_package: codex-rescue-windows-x64
+            binary: codex-rescue.exe
+            artifact_binary: codex-rescue.exe
+          - os: macos-15
+            platform_id: darwin-arm64
+            platform_package: codex-rescue-darwin-arm64
+            binary: codex-rescue
+            artifact_binary: codex-rescue-darwin-arm64
+          - os: macos-15-intel
+            platform_id: darwin-x64
+            platform_package: codex-rescue-darwin-x64
+            binary: codex-rescue
+            artifact_binary: codex-rescue-darwin-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact source commit SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          git checkout "$EXPECTED_SHA"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "Verified checkout SHA: $ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: Checked-out SHA ($ACTUAL_SHA) does not match expected SHA ($EXPECTED_SHA)" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install package and PyInstaller
+        run: python -m pip install . "pyinstaller==${{ env.PYINSTALLER_VERSION }}"
+
+      - name: Static npm security tests
+        run: node --test npm/tests/*.test.cjs
+
+      - name: Build standalone executable
+        run: python -m PyInstaller --clean --noconfirm --onefile --name codex-rescue scripts/native_entry.py
+
+      - name: Smoke native executable (POSIX)
+        run: |
+          "dist/${{ matrix.binary }}" --version
+          "dist/${{ matrix.binary }}" --help
+        shell: bash
+        if: runner.os != 'Windows'
+
+      - name: Smoke native executable (Windows)
+        run: |
+          & "dist/${{ matrix.binary }}" --version
+          & "dist/${{ matrix.binary }}" --help
+        shell: pwsh
+        if: runner.os == 'Windows'
+
+      - name: Assemble platform npm package
+        run: python scripts/assemble_npm_platform.py --template "npm/platforms/${{ matrix.platform_id }}" --binary "dist/${{ matrix.binary }}" --output build/npm-platform
+
+      - name: Prepare tarball directory
+        run: python -c "from pathlib import Path; Path('build/tarballs').mkdir(parents=True, exist_ok=True)"
+
+      - name: Pack platform npm package
+        working-directory: build/npm-platform
+        run: npm pack --pack-destination ../tarballs
+
+      - name: Audit platform npm tarball
+        run: python scripts/audit_npm_tarball.py "build/tarballs/${{ matrix.platform_package }}-${{ env.EXPECTED_NPM_VERSION }}.tgz" --kind platform
+
+      - name: Stage platform artifacts
+        shell: bash
+        run: |
+          mkdir -p stage
+          cp "dist/${{ matrix.binary }}" "stage/${{ matrix.artifact_binary }}"
+          cp "build/tarballs/${{ matrix.platform_package }}-${{ env.EXPECTED_NPM_VERSION }}.tgz" stage/
+
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha6-${{ matrix.platform_id }}
+          path: stage/*
+          if-no-files-found: error
+
+  build-top-package:
+    name: build top-level npm package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact source commit SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          git checkout "$EXPECTED_SHA"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "Verified checkout SHA: $ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: Checked-out SHA ($ACTUAL_SHA) does not match expected SHA ($EXPECTED_SHA)" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Pack top-level package
+        working-directory: npm/codex-rescue
+        run: |
+          mkdir -p ../../build/tarballs
+          npm pack --pack-destination ../../build/tarballs
+
+      - name: Audit top-level package tarball
+        run: python scripts/audit_npm_tarball.py "build/tarballs/codex-rescue-${{ env.EXPECTED_NPM_VERSION }}.tgz" --kind top
+
+      - name: Upload top package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha6-top-npm
+          path: build/tarballs/codex-rescue-${{ env.EXPECTED_NPM_VERSION }}.tgz
+          if-no-files-found: error
+
+  bundle-and-manifest:
+    name: bundle release artifacts and manifest
+    needs: [build-native-npm, build-top-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact source commit SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          git checkout "$EXPECTED_SHA"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "Verified checkout SHA: $ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: Checked-out SHA ($ACTUAL_SHA) does not match expected SHA ($EXPECTED_SHA)" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: alpha6-*
+          path: incoming
+          merge-multiple: true
+
+      - name: Verify all artifacts and generate SHA256SUMS and release-manifest.json
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          actual_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          expected_sha = os.environ["EXPECTED_SHA"]
+          if actual_sha != expected_sha:
+              raise SystemExit(f"Verified SHA mismatch: {actual_sha} != {expected_sha}")
+          root = Path('incoming')
+          expected = {
+              'codex-rescue-0.1.0-alpha.6-3.tgz',
+              'codex-rescue-linux-x64-0.1.0-alpha.6-3.tgz',
+              'codex-rescue-windows-x64-0.1.0-alpha.6-3.tgz',
+              'codex-rescue-darwin-arm64-0.1.0-alpha.6-3.tgz',
+              'codex-rescue-darwin-x64-0.1.0-alpha.6-3.tgz',
+              'codex-rescue-linux-x64',
+              'codex-rescue.exe',
+              'codex-rescue-darwin-arm64',
+              'codex-rescue-darwin-x64',
+          }
+          found = {p.name for p in root.iterdir() if p.is_file()}
+          if found != expected:
+              raise SystemExit(f'Release artifact mismatch: missing={sorted(expected-found)} extra={sorted(found-expected)}')
+          rows = []
+          for path in sorted(root.iterdir()):
+              if path.is_file():
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  rows.append((digest, path.name))
+          bundle_dir = Path('release-bundle')
+          bundle_dir.mkdir()
+          for path in root.iterdir():
+              if path.is_file():
+                  (bundle_dir / path.name).write_bytes(path.read_bytes())
+          (bundle_dir / 'SHA256SUMS').write_text(''.join(f'{d}  {n}\n' for d,n in rows), encoding='utf-8')
+          manifest = {
+              'release_tag': os.environ['RELEASE_TAG'],
+              'source_sha': actual_sha,
+              'npm_version': '0.1.0-alpha.6-3',
+              'npm_packages': [
+                  'codex-rescue-linux-x64',
+                  'codex-rescue-windows-x64',
+                  'codex-rescue-darwin-arm64',
+                  'codex-rescue-darwin-x64',
+                  'codex-rescue'
+              ],
+              'artifacts': {n: d for d,n in rows},
+          }
+          (bundle_dir / 'release-manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(f'Release bundle assembled successfully from verified SHA {actual_sha}:')
+          for d, n in rows:
+              print(f'  {d}  {n}')
+          PY
+
+      - name: Upload final release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha6-release-bundle
+          path: release-bundle/*
+          if-no-files-found: error

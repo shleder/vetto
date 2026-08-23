@@ -1,0 +1,71 @@
+name: Build Alpha7 Windows Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-win32:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Qualify Windows launcher package layout
+        run: node --test npm/tests/*.test.cjs
+
+      - name: Install package and PyInstaller
+        run: |
+          python -m pip install . "pyinstaller==6.22.1"
+
+      - name: Compile stabilization surfaces
+        run: python -m compileall -q src tests scripts
+
+      - name: Qualify Windows diagnostic boundaries
+        run: |
+          python -m unittest discover -s tests -p "test_thread_identity.py" -v
+          python -m unittest discover -s tests -p "test_windows_path_identity.py" -v
+          python -m unittest discover -s tests -p "test_thread_spawn_edges.py" -v
+          python -m unittest discover -s tests -p "test_lifecycle_truth.py" -v
+
+      - name: Build Windows standalone executable
+        run: |
+          python -m PyInstaller --clean --noconfirm --onefile --name codex-rescue scripts/native_entry.py
+
+      - name: Test Windows standalone executable
+        run: |
+          & "dist/codex-rescue.exe" --version
+          & "dist/codex-rescue.exe" --help
+
+      - name: Assemble windows-x64 platform package
+        run: |
+          python scripts/assemble_npm_platform.py --template npm/platforms/win32-x64 --binary dist/codex-rescue.exe --output build/npm-platform
+
+      - name: Pack windows-x64 npm tarball
+        working-directory: build/npm-platform
+        run: |
+          mkdir -p ../tarballs
+          npm pack --pack-destination ../tarballs
+
+      - name: Audit windows-x64 npm tarball
+        run: |
+          python scripts/audit_npm_tarball.py build/tarballs/codex-rescue-windows-x64-0.1.0-alpha.7.tgz --kind platform
+
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-package
+          path: |
+            dist/codex-rescue.exe
+            build/tarballs/codex-rescue-windows-x64-0.1.0-alpha.7.tgz
