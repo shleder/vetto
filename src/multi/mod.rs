@@ -34,6 +34,21 @@ pub fn run_cli(
     repeated_agents: Vec<String>,
     legacy_command: Vec<String>,
 ) -> Result<i32> {
+    let manifest = manifest_from_cli_inputs(manifest_path, repeated_agents, legacy_command)?;
+    let project = std::env::current_dir().context("getcwd")?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("$HOME is not set; vetto needs it to resolve multi-agent policy variables")?;
+    let runtime = runtime::MultiRuntime::launch(manifest, project, home)?;
+    let code = crate::tui::full::run_multi(runtime);
+    Ok(code)
+}
+
+fn manifest_from_cli_inputs(
+    manifest_path: Option<PathBuf>,
+    repeated_agents: Vec<String>,
+    legacy_command: Vec<String>,
+) -> Result<Manifest> {
     if manifest_path.is_some() && (!repeated_agents.is_empty() || !legacy_command.is_empty()) {
         bail!(
             "ambiguous multi-agent input: --manifest cannot be combined with --agent or a trailing command"
@@ -60,21 +75,16 @@ pub fn run_cli(
         }
     };
     manifest.validate()?;
-    let project = std::env::current_dir().context("getcwd")?;
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve multi-agent policy variables")?;
-    let runtime = runtime::MultiRuntime::launch(manifest, project, home)?;
-    let code = crate::tui::full::run_multi(runtime);
-    Ok(code)
+    Ok(manifest)
 }
 
 #[cfg(not(unix))]
 pub fn run_cli(
-    _manifest_path: Option<PathBuf>,
-    _repeated_agents: Vec<String>,
-    _legacy_command: Vec<String>,
+    manifest_path: Option<PathBuf>,
+    repeated_agents: Vec<String>,
+    legacy_command: Vec<String>,
 ) -> Result<i32> {
+    let _ = manifest_from_cli_inputs(manifest_path, repeated_agents, legacy_command)?;
     bail!("multi-agent mode is unavailable on this platform; refusing to run unsandboxed")
 }
 

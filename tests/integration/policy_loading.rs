@@ -2,6 +2,7 @@
 
 use crate::common::*;
 
+#[cfg(unix)]
 #[test]
 fn unknown_profile_fails_closed() {
     let proj = TempProject::new("badprofile");

@@ -1097,6 +1097,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unknown_named_profile_fails_closed_without_a_custom_policy() {
+        let root = std::env::temp_dir().join(format!(
+            "vetto-policy-unknown-profile-{}",
+            std::process::id()
+        ));
+        let home = root.join("home");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).expect("create test home");
+        std::fs::create_dir_all(&project).expect("create test project");
+
+        let error = load("definitely-unknown", None, &project, &home, Tier::Full)
+            .expect_err("unknown named profile must fail closed");
+        assert!(error.to_string().contains("unknown profile"), "{error:#}");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn enumeration_budget_returns_error_instead_of_fallback() {
         let root = std::env::temp_dir().join(format!("vetto-policy-budget-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
