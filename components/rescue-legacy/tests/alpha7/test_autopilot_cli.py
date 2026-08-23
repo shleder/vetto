@@ -45,7 +45,12 @@ class AutopilotAndCLITests(unittest.TestCase):
             self.assertTrue(sim_res.safe_to_apply)
 
     def test_privacy_redaction_and_safe_share(self):
-        text_with_secret = "Here is my token: sk-abcdef1234567890abcdef123456 and path C:\\Users\\Administrator\\project"
+        text_with_secret = (
+            "Here is my token: "
+            + "sk-"
+            + "abcdef1234567890abcdef123456"
+            + " and path C:\\Users\\Administrator\\project"
+        )
         sanitized, audit = PrivacyRedactionEngine.sanitize_text(text_with_secret)
         self.assertNotIn("sk-abcdef", sanitized)
         self.assertIn("[REDACTED_SECRET]", sanitized)

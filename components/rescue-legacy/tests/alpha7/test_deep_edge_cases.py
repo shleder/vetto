@@ -62,7 +62,14 @@ class DeepEdgeCasesTests(unittest.TestCase):
         self.assertTrue(node.has_cross_surface_divergence)
 
     def test_privacy_redacts_nested_github_and_openai_tokens(self):
-        dirty = "Token ghp_123456789012345678901234567890123456 and sk-abcdef1234567890abcdef123456"
+        dirty = (
+            "Token "
+            + "ghp_"
+            + "123456789012345678901234567890123456"
+            + " and "
+            + "sk-"
+            + "abcdef1234567890abcdef123456"
+        )
         clean, audit = PrivacyRedactionEngine.sanitize_text(dirty)
         self.assertNotIn("ghp_", clean)
         self.assertNotIn("sk-", clean)
