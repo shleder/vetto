@@ -304,7 +304,7 @@ jobs:
     needs: [build, npm-package, npm-smoke]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Verify the complete draft asset set
         env:
