@@ -5,8 +5,8 @@ Target length: 2 minutes.
 1. Show the supported-platform table and explain FULL versus FS-ONLY in one
    sentence.
 2. Install the stable cross-platform package with
-   `npm install --global vetto`. To pin this release, use
-   `npm install --global vetto@0.1.0`. The package contains native
+   `npm install --global @shleddy/vetto`. To pin this release, use
+   `npm install --global @shleddy/vetto@0.1.0`. The package contains native
    executables for Linux x64/ARM64, macOS x64/Apple Silicon, and Windows x64;
    it does not download a binary during installation. For source builds, use
    `cargo install --git https://github.com/shleder/vetto --locked`.

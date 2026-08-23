@@ -3,7 +3,7 @@
 Install the stable release globally with npm:
 
 ```bash
-npm install --global vetto
+npm install --global @shleddy/vetto
 vetto doctor
 ```
 

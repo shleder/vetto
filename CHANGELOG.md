@@ -14,7 +14,7 @@ AI coding agents.
 
 ### Distribution
 
-- Publish the cross-platform `vetto` npm package with bundled native
+- Publish the cross-platform `@shleddy/vetto` npm package with bundled native
   executables for Linux x64/ARM64, macOS x64/Apple Silicon, and Windows x64.
 - Publish matching native archives and SHA-256 checksums in the GitHub release.
 - Keep crates.io publication out of this release; Cargo remains the build and

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status for main"></a>
-  <a href="https://www.npmjs.com/package/vetto"><img src="https://img.shields.io/npm/v/vetto?logo=npm&label=npm" alt="npm package version"></a>
+  <a href="https://www.npmjs.com/package/@shleddy/vetto"><img src="https://img.shields.io/npm/v/%40shleddy%2Fvetto?logo=npm&label=npm" alt="npm package version"></a>
 </p>
 
 <p align="center">
@@ -70,7 +70,7 @@ Install the stable package from npm, inspect the machine, then add `vetto --`
 before the command you already use:
 
 ```console
-npm install --global vetto
+npm install --global @shleddy/vetto
 vetto doctor
 cd my-project
 vetto --agent codex --profile default -- codex exec "review auth"
@@ -79,7 +79,7 @@ vetto --agent codex --profile default -- codex exec "review auth"
 The npm package includes native executables for Linux x64/ARM64, macOS
 x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
 there is no install-time binary downloader. To install this release exactly,
-use `npm install --global vetto@0.1.0`.
+use `npm install --global @shleddy/vetto@0.1.0`.
 
 <details>
 <summary><strong>Build directly from source</strong></summary>

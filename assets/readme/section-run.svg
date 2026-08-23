@@ -8,7 +8,7 @@
   <text x="150" y="40" fill="#6f6b63" font-size="17" letter-spacing="2" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">FIRST SUCCESSFUL ACTION</text>
   <text x="150" y="91" fill="#171717" font-size="48" font-weight="800" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">RUN IT</text>
   <rect x="620" y="26" width="540" height="78" fill="#171717"/>
-  <text x="644" y="58" fill="#aaa69d" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">$ npm install --global vetto</text>
+  <text x="644" y="58" fill="#aaa69d" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">$ npm install -g @shleddy/vetto</text>
   <text x="644" y="86" fill="#f4f1e8" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">$ vetto -- agent command</text>
   <rect x="926" y="69" width="9" height="21" fill="#ff4d3d"/>
 </svg>

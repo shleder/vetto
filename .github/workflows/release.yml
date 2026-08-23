@@ -253,7 +253,7 @@ jobs:
     needs: npm-package
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      contents: write
     strategy:
       fail-fast: false
       matrix:
