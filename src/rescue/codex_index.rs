@@ -60,7 +60,8 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
         bail!("rescue scan --limit must be greater than zero");
     }
 
-    let root = canonical_root(&context.root)?;
+    let configured_root = context.root.clone();
+    let root = canonical_root(&configured_root)?;
     let max_index_rows = context.max_files.min(MAX_INDEX_ROWS);
     if max_index_rows == 0 {
         bail!("limited rescue scan requires a positive max_files budget");
@@ -99,7 +100,7 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     let mut seen = HashSet::new();
     let mut sessions = Vec::with_capacity(paths.len());
     for index_path in paths {
-        let session = verify_index_path(context, &root, &roots, &index_path.raw)?;
+        let session = verify_index_path(context, &configured_root, &root, &roots, &index_path.raw)?;
         if seen.insert(session.source_path.clone()) {
             sessions.push(session);
         }
@@ -164,7 +165,8 @@ fn session_roots(root: &Path) -> Result<Vec<PathBuf>> {
 
 fn verify_index_path(
     context: &RescueContext,
-    root: &Path,
+    configured_root: &Path,
+    canonical_root: &Path,
     roots: &[PathBuf],
     raw: &str,
 ) -> Result<SessionRef> {
@@ -174,9 +176,9 @@ fn verify_index_path(
     let candidate = if Path::new(raw).is_absolute() {
         PathBuf::from(raw)
     } else {
-        root.join(raw)
+        configured_root.join(raw)
     };
-    let verified = safe_fs::open_regular(root, &candidate, "indexed rollout")
+    let verified = safe_fs::open_regular(configured_root, &candidate, "indexed rollout")
         .context("Codex index references an unavailable rollout")?;
     let canonical = verified.path().to_path_buf();
     if canonical.extension().and_then(|value| value.to_str()) != Some("jsonl") {
@@ -197,7 +199,7 @@ fn verify_index_path(
     }
     verified.ensure_unchanged("indexed rollout")?;
     let relative = canonical
-        .strip_prefix(root)
+        .strip_prefix(canonical_root)
         .context("indexed rollout is outside the Codex root")?
         .to_string_lossy()
         .replace('\\', "/");

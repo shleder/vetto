@@ -126,6 +126,7 @@ pub fn inspect_session(
     session_bytes: Option<&[u8]>,
     metadata: Option<&SessionMetadata>,
 ) -> Result<CodexInventoryReport> {
+    let configured_root = context.root.clone();
     let root = canonical_root(&context.root)?;
     let metadata = metadata.cloned().unwrap_or_default();
     let requested_path = session_path
@@ -141,12 +142,12 @@ pub fn inspect_session(
             Some(bytes.to_vec())
         }
         None => requested_path
-            .map(|path| read_stable_session(&root, path, context.max_session_bytes))
+            .map(|path| read_stable_session(&configured_root, path, context.max_session_bytes))
             .transpose()?,
     };
 
     let canonical_session_path = requested_path
-        .map(|path| validate_session_path(&root, path))
+        .map(|path| validate_session_path(&configured_root, path))
         .transpose()?;
     let session_id = metadata
         .session_id
