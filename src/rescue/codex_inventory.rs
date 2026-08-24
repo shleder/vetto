@@ -191,17 +191,18 @@ pub fn inspect_session(
     extend_unique(&mut report.findings, projection_result.findings);
     extend_unique(&mut report.notices, projection_result.notices);
 
-    report.status = if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
-        InventoryStatus::Unknown
-    } else if !report.findings.is_empty() {
-        InventoryStatus::Findings
-    } else if report.thread_store.status == "not_applicable"
-        && report.projection.status == "not_applicable"
-    {
-        InventoryStatus::NotApplicable
-    } else {
-        InventoryStatus::Consistent
-    };
+    report.status =
+        if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
+            InventoryStatus::Unknown
+        } else if !report.findings.is_empty() {
+            InventoryStatus::Findings
+        } else if report.thread_store.status == "not_applicable"
+            && report.projection.status == "not_applicable"
+        {
+            InventoryStatus::NotApplicable
+        } else {
+            InventoryStatus::Consistent
+        };
     Ok(report)
 }
 
