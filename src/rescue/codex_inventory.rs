@@ -733,7 +733,12 @@ fn inspect_thread_store(
     let mut read_error = false;
     let mut schema_unknown = false;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        let Ok(connection) = safe_fs::open_sqlite_read_only_bounded(
+            root,
+            &db_path,
+            max_database_bytes,
+            "SQLite database",
+        )
         else {
             read_error = true;
             continue;
@@ -1100,7 +1105,12 @@ fn inspect_projection(
     let mut states = Vec::new();
     let mut relevant_error = candidate_set.rejected;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        let Ok(connection) = safe_fs::open_sqlite_read_only_bounded(
+            root,
+            &db_path,
+            max_database_bytes,
+            "SQLite database",
+        )
         else {
             relevant_error = true;
             continue;
@@ -1594,6 +1604,30 @@ mod tests {
         .unwrap();
         assert_eq!(report.thread_store.status, "unknown");
         assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+    }
+
+    #[test]
+    fn wal_or_shm_presence_is_unknown_not_a_false_inventory_finding() {
+        let temp = TempRoot::new("wal-uncertain");
+        let id = "019fffff-9999-7999-8999-999999999999";
+        let (path, bytes) = rollout(&temp.0, id);
+        create_empty_sidebar_db(&temp.0, id, &path.to_string_lossy());
+        let wal = PathBuf::from(format!("{}-wal", temp.0.join("state_5.sqlite").display()));
+        fs::write(wal, b"unproven wal bytes").unwrap();
+
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.status, InventoryStatus::Unknown);
+        assert_eq!(report.thread_store.status, "unknown");
+        assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+        assert!(report
+            .findings
+            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
     }
 
     #[test]

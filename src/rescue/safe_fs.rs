@@ -5,6 +5,8 @@
 //! be replaced by a symlink, junction, or another file between validation and
 //! the eventual open.  This module centralises the checks used by the rescue
 //! adapters so that every byte read follows the same boundary.
+//! SQLite sources are copied into a private, bounded snapshot before opening;
+//! the provider-owned pathname is never reopened for queries.
 //!
 //! The checks are deliberately conservative.  Unix uses `O_NOFOLLOW` for the
 //! final component and compares device/inode identity from the path with the
@@ -17,8 +19,10 @@
 //! helper never mutates a source file.
 
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -28,9 +32,6 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 #[cfg(windows)]
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-
-#[cfg(test)]
-use std::io::{Seek, SeekFrom};
 
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -71,6 +72,71 @@ pub(crate) struct VerifiedFile {
     canonical_path: PathBuf,
     identity: FileIdentity,
     length: u64,
+}
+
+/// The largest SQLite main-file snapshot accepted by the generic opener.
+/// Adapters should pass their tighter context budget through
+/// [`open_sqlite_read_only_bounded`].
+const DEFAULT_SQLITE_SNAPSHOT_BYTES: u64 = 512 * 1024 * 1024;
+const SQLITE_SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+const SNAPSHOT_DIRECTORY_ATTEMPTS: usize = 32;
+
+static NEXT_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(0);
+
+/// A private, owned copy of a SQLite main database.
+///
+/// SQLite is deliberately opened against this path, never against the
+/// provider-owned pathname.  The directory is private and the guard removes
+/// it when the connection wrapper is dropped.  Keeping the guard alongside
+/// the connection is important on Windows, where an open file cannot be
+/// unlinked like it can on Unix.
+struct PrivateSqliteSnapshot {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+impl Drop for PrivateSqliteSnapshot {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Ok(metadata) = fs::metadata(&self.path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(&self.path, permissions);
+        }
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_dir(&self.directory);
+    }
+}
+
+/// SQLite connection backed by a verified immutable snapshot.
+///
+/// The `Deref` implementation preserves the existing internal call sites'
+/// `&Connection` API while retaining ownership of the snapshot until SQLite
+/// has finished all reads.
+pub(crate) struct VerifiedSqliteConnection {
+    connection: Connection,
+    _snapshot: PrivateSqliteSnapshot,
+}
+
+impl Deref for VerifiedSqliteConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+impl DerefMut for VerifiedSqliteConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
+    }
+}
+
+#[cfg(test)]
+impl VerifiedSqliteConnection {
+    fn snapshot_path_for_test(&self) -> &Path {
+        &self._snapshot.path
+    }
 }
 
 impl std::fmt::Debug for VerifiedFile {
@@ -304,22 +370,188 @@ fn read_bounded_from_opened(
 
 /// Open a SQLite database with `READ_ONLY` and `NO_CREATE` semantics after
 /// the same file/path checks used for JSONL sources.
-pub(crate) fn open_sqlite_read_only(root: &Path, path: &Path, label: &str) -> Result<Connection> {
-    let verified = open_regular(root, path, label)?;
-    let canonical = verified.path().to_path_buf();
+pub(crate) fn open_sqlite_read_only(
+    root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<VerifiedSqliteConnection> {
+    open_sqlite_read_only_bounded(root, path, DEFAULT_SQLITE_SNAPSHOT_BYTES, label)
+}
+
+pub(crate) fn open_sqlite_read_only_bounded(
+    root: &Path,
+    path: &Path,
+    limit: u64,
+    label: &str,
+) -> Result<VerifiedSqliteConnection> {
+    let mut verified = open_regular(root, path, label)?;
+    if verified.len() > limit {
+        bail!("{label} exceeds the inspection budget");
+    }
+
+    // SQLite rollback journals and WAL/SHM files carry state which is not
+    // represented by the main database bytes. Copying only the main file in
+    // those modes could produce a plausible but false inventory. Treat any
+    // observable sidecar as an unproven snapshot and fail closed.
+    let sidecars_before = sqlite_sidecar_state(verified.path(), label)?;
+    if sidecars_before {
+        bail!("{label} has active SQLite WAL, SHM, or journal state");
+    }
+
+    let bytes = read_stable_bounded_from_opened(&mut verified, limit, label)?;
+    let sidecars_after = sqlite_sidecar_state(verified.path(), label)?;
+    if sidecars_after || sidecars_before != sidecars_after {
+        bail!("{label} changed SQLite journal state while being inspected");
+    }
+    verified.ensure_unchanged(label)?;
+
+    let snapshot = create_private_sqlite_snapshot(&bytes, label)?;
+    if sqlite_sidecar_state(verified.path(), label)? {
+        bail!("{label} changed SQLite journal state while being inspected");
+    }
+    verified.ensure_unchanged(label)?;
     let connection = Connection::open_with_flags(
-        &canonical,
+        &snapshot.path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|_| anyhow::anyhow!("{label} could not be opened read-only"))?;
-    // SQLite's flags prevent creation.  query_only protects against accidental
-    // writes in future diagnostic queries; identity is checked before the
-    // connection is returned so a path swap cannot be silently accepted.
+    .map_err(|_| anyhow::anyhow!("{label} snapshot could not be opened read-only"))?;
+    // SQLite's flags prevent creation. query_only protects against accidental
+    // writes in future diagnostic queries. The connection points only to the
+    // private snapshot, so provider-path replacement after this point cannot
+    // change the evidence being queried.
     connection
         .execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=250;")
-        .map_err(|_| anyhow::anyhow!("{label} could not be configured read-only"))?;
-    verified.ensure_unchanged(label)?;
-    Ok(connection)
+        .map_err(|_| anyhow::anyhow!("{label} snapshot could not be configured read-only"))?;
+    Ok(VerifiedSqliteConnection {
+        connection,
+        _snapshot: snapshot,
+    })
+}
+
+/// Read the same verified source twice. A size/inode check alone does not
+/// detect an in-place database rewrite of equal length, while comparing the
+/// two bounded byte reads does. The source handle stays open for both passes
+/// and ensure_unchanged also rechecks the pathname identity.
+fn read_stable_bounded_from_opened(
+    verified: &mut VerifiedFile,
+    limit: u64,
+    label: &str,
+) -> Result<Vec<u8>> {
+    let first = read_bounded_from_opened(verified, limit, label)?;
+    verified
+        .file_mut()
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {label}"))?;
+    let second = read_bounded_from_opened(verified, limit, label)?;
+    if first != second {
+        bail!("{label} bytes changed while being inspected");
+    }
+    Ok(first)
+}
+
+/// Return whether any SQLite sidecar exists next to path.
+///
+/// A sidecar is not treated as a harmless stale file: without a coordinated
+/// SQLite backup API we cannot prove whether it contains committed state,
+/// rollback state, or a writer's in-flight transaction. Symlink/reparse
+/// sidecars are errors rather than existence claims, so they cannot become a
+/// metadata oracle outside the rescue root.
+fn sqlite_sidecar_state(path: &Path, label: &str) -> Result<bool> {
+    let mut present = false;
+    for suffix in SQLITE_SIDECARS {
+        let sidecar = PathBuf::from(format!("{}{}", path.display(), suffix));
+        match fs::symlink_metadata(&sidecar) {
+            Ok(metadata) => {
+                validate_not_reparse(&metadata, label)?;
+                if !metadata.is_file() {
+                    bail!("{label} has an unsupported SQLite sidecar");
+                }
+                present = true;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("inspect {label} SQLite sidecar"));
+            }
+        }
+    }
+    Ok(present)
+}
+
+fn create_private_sqlite_snapshot(bytes: &[u8], label: &str) -> Result<PrivateSqliteSnapshot> {
+    let base = fs::canonicalize(std::env::temp_dir())
+        .with_context(|| format!("resolve private {label} snapshot directory"))?;
+    let base_metadata = fs::symlink_metadata(&base)
+        .with_context(|| format!("inspect private {label} snapshot directory"))?;
+    validate_directory_metadata(&base_metadata, "private snapshot directory")?;
+    let process = std::process::id();
+    let nonce = NEXT_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed);
+    for attempt in 0..SNAPSHOT_DIRECTORY_ATTEMPTS {
+        let directory = base.join(format!(
+            "vetto-sqlite-snapshot-{process}-{nonce}-{attempt}"
+        ));
+        match create_private_directory(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("create private {label} snapshot"));
+            }
+        }
+        let path = directory.join("database.sqlite");
+        let result = (|| {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            #[cfg(windows)]
+            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            let mut file = options
+                .open(&path)
+                .with_context(|| format!("create private {label} snapshot file"))?;
+            file.write_all(bytes)
+                .with_context(|| format!("write private {label} snapshot"))?;
+            file.sync_all()
+                .with_context(|| format!("flush private {label} snapshot"))?;
+            drop(file);
+            make_snapshot_read_only(&path)
+                .with_context(|| format!("protect private {label} snapshot"))?;
+            Ok::<(), anyhow::Error>(())
+        })();
+        match result {
+            Ok(()) => return Ok(PrivateSqliteSnapshot { directory, path }),
+            Err(error) => {
+                let _ = fs::remove_file(&path);
+                let _ = fs::remove_dir(&directory);
+                return Err(error);
+            }
+        }
+    }
+    bail!("could not allocate a private {label} snapshot directory")
+}
+
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        return builder.create(path);
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir(path)
+    }
+}
+
+fn make_snapshot_read_only(path: &Path) -> std::io::Result<()> {
+    let mut permissions = fs::metadata(path)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o400);
+    }
+    #[cfg(windows)]
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions)
 }
 
 fn candidate_under_root(root: &Path, path: &Path, label: &str) -> Result<PathBuf> {
@@ -580,5 +812,91 @@ mod tests {
         let missing = root.join("missing.sqlite");
         assert!(open_sqlite_read_only(root, &missing, "SQLite database").is_err());
         assert!(!missing.exists(), "read-only open must not create a file");
+    }
+
+    #[test]
+    fn sqlite_uses_private_snapshot_and_survives_source_path_replacement() {
+        let temp = TempRoot::new("sqlite-snapshot");
+        let root = &temp.0;
+        let path = root.join("state.sqlite");
+        let source = Connection::open(&path).expect("fixture database");
+        source
+            .execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+            .expect("fixture schema");
+        source
+            .execute("INSERT INTO threads VALUES ('original')", [])
+            .expect("fixture row");
+        drop(source);
+
+        let connection =
+            open_sqlite_read_only(root, &path, "SQLite database").expect("open snapshot");
+        let snapshot_path = connection.snapshot_path_for_test().to_path_buf();
+        assert!(snapshot_path.exists(), "snapshot must stay alive with connection");
+
+        fs::remove_file(&path).expect("remove source");
+        fs::write(&path, b"this replacement is not sqlite").expect("replacement");
+
+        let value: String = connection
+            .query_row("SELECT id FROM threads", [], |row| row.get(0))
+            .expect("query original snapshot");
+        assert_eq!(value, "original");
+
+        drop(connection);
+        assert!(
+            !snapshot_path.exists(),
+            "private snapshot must be removed after connection drop"
+        );
+    }
+
+    #[test]
+    fn sqlite_rejects_oversized_and_malformed_snapshots() {
+        let temp = TempRoot::new("sqlite-invalid");
+        let root = &temp.0;
+        let oversized = root.join("oversized.sqlite");
+        fs::write(&oversized, [0u8; 64]).expect("oversized fixture");
+        assert!(open_sqlite_read_only_bounded(root, &oversized, 8, "SQLite database").is_err());
+
+        let malformed = root.join("malformed.sqlite");
+        fs::write(&malformed, b"not a sqlite database").expect("malformed fixture");
+        assert!(open_sqlite_read_only(root, &malformed, "SQLite database").is_err());
+    }
+
+    #[test]
+    fn sqlite_rejects_uncertain_wal_state() {
+        let temp = TempRoot::new("sqlite-wal");
+        let root = &temp.0;
+        let path = root.join("state.sqlite");
+        let source = Connection::open(&path).expect("fixture database");
+        source
+            .execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+            .expect("fixture schema");
+        drop(source);
+        let wal = PathBuf::from(format!("{}-wal", path.display()));
+        fs::write(&wal, b"unproven wal bytes").expect("wal marker");
+        let error = match open_sqlite_read_only(root, &path, "SQLite database") {
+            Ok(_) => panic!("WAL must be treated as unknown"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("WAL"), "{error:#}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_rejects_symlinked_wal_state() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempRoot::new("sqlite-wal-symlink");
+        let root = &temp.0;
+        let path = root.join("state.sqlite");
+        let source = Connection::open(&path).expect("fixture database");
+        source
+            .execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+            .expect("fixture schema");
+        drop(source);
+        let outside = temp.0.join("outside-wal");
+        fs::write(&outside, b"outside").expect("outside marker");
+        let wal = PathBuf::from(format!("{}-wal", path.display()));
+        symlink(&outside, &wal).expect("symlink wal");
+        assert!(open_sqlite_read_only(root, &path, "SQLite database").is_err());
     }
 }
