@@ -531,7 +531,9 @@ mod tests {
             .seek(SeekFrom::Start(0))
             .expect("seek source");
         let mut bytes = Vec::new();
-        file.file_mut().read_to_end(&mut bytes).expect("read source");
+        file.file_mut()
+            .read_to_end(&mut bytes)
+            .expect("read source");
         file.ensure_unchanged("session").expect("unchanged");
         assert_eq!(bytes, b"read-only\n");
         assert_eq!(fs::read(&path).expect("source bytes"), b"read-only\n");
