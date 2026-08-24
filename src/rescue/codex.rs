@@ -110,7 +110,11 @@ impl SemanticDiagnostics {
         }
     }
 
-    fn check_persisted_id(&mut self, payload: &serde_json::Map<String, serde_json::Value>, kind: &str) {
+    fn check_persisted_id(
+        &mut self,
+        payload: &serde_json::Map<String, serde_json::Value>,
+        kind: &str,
+    ) {
         let Some(expected) = response_item_id_prefix(kind) else {
             return;
         };
@@ -155,7 +159,11 @@ impl SemanticDiagnostics {
 
         let identity_present = payload
             .get("call_id")
-            .or_else(|| (outer_type == "response_item").then(|| payload.get("id")).flatten())
+            .or_else(|| {
+                (outer_type == "response_item")
+                    .then(|| payload.get("id"))
+                    .flatten()
+            })
             .is_some_and(|value| !value.is_null() && value.as_str().is_some_and(|s| !s.is_empty()));
         let lower = kind.to_ascii_lowercase();
         let looks_operational = is_known_event_msg_type(kind)
@@ -206,7 +214,11 @@ impl SemanticDiagnostics {
         false
     }
 
-    fn add_correlation(&mut self, kind: &str, payload: &serde_json::Map<String, serde_json::Value>) {
+    fn add_correlation(
+        &mut self,
+        kind: &str,
+        payload: &serde_json::Map<String, serde_json::Value>,
+    ) {
         let call_kind = is_call_family(kind);
         let output_kind = output_family(kind);
         if !call_kind && output_kind.is_none() {
@@ -428,8 +440,9 @@ impl CodexAdapter {
     }
 
     fn normalized_relative(context: &RescueContext, path: &Path) -> Result<String> {
+        let canonical_root = Self::validate_root(context)?;
         let relative = path
-            .strip_prefix(&context.root)
+            .strip_prefix(&canonical_root)
             .with_context(|| format!("session {} is outside rescue root", path.display()))?;
         Ok(relative.to_string_lossy().replace('\\', "/"))
     }
@@ -889,7 +902,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}),
             ],
         );
-        assert!(!view.findings.contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
+        assert!(!view
+            .findings
+            .contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
         assert!(!view.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
     }
 
@@ -902,7 +917,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"reasoning","id":"item_wrong","summary":[]}}),
             ],
         );
-        assert!(view.findings.contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
+        assert!(view
+            .findings
+            .contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
         assert_eq!(view.health, SessionHealth::Warning);
     }
 
@@ -921,7 +938,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"image_generation_call","id":"ig_1","status":"completed","result":""}}),
             ],
         );
-        assert!(!view.findings.contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(!view
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
         assert!(!view.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
     }
 
@@ -935,7 +954,11 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"reasoning","summary":[]}}),
             ],
         );
-        assert!(view.findings.is_empty(), "unexpected findings: {:?}", view.findings);
+        assert!(
+            view.findings.is_empty(),
+            "unexpected findings: {:?}",
+            view.findings
+        );
     }
 
     #[test]
@@ -947,7 +970,9 @@ mod tests {
                 serde_json::json!({"type":"event_msg","payload":{"type":"future_event_v99","call_id":"future-1"}}),
             ],
         );
-        assert!(view.findings.contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(view
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
     }
 
     #[test]
@@ -960,7 +985,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}),
             ],
         );
-        assert!(!complete.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
+        assert!(!complete
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
 
         let unfinished = diagnose_records(
             "semantic-unfinished-call",
@@ -969,7 +996,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"c2","name":"echo","arguments":"{}"}}),
             ],
         );
-        assert!(unfinished.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
+        assert!(unfinished
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
     }
 
     #[test]
@@ -981,7 +1010,9 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"orphan","output":"ok"}}),
             ],
         );
-        assert!(orphan.findings.contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(orphan
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
 
         let duplicate_call = diagnose_records(
             "semantic-duplicate-call",
@@ -992,7 +1023,11 @@ mod tests {
                 serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"dup","output":"ok"}}),
             ],
         );
-        assert!(duplicate_call.findings.contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
-        assert!(duplicate_call.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
+        assert!(duplicate_call
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(duplicate_call
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
     }
 }

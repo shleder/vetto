@@ -38,15 +38,6 @@ pub struct SessionMetadata {
     pub rollout_path: Option<PathBuf>,
 }
 
-impl SessionMetadata {
-    pub fn with_session_id(session_id: impl Into<String>) -> Self {
-        Self {
-            session_id: Some(session_id.into()),
-            rollout_path: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InventoryStatus {
@@ -127,7 +118,9 @@ pub fn inspect_session(
 ) -> Result<CodexInventoryReport> {
     let root = canonical_root(&context.root)?;
     let metadata = metadata.cloned().unwrap_or_default();
-    let requested_path = session_path.map(Path::to_path_buf).or_else(|| metadata.rollout_path.clone());
+    let requested_path = session_path
+        .map(Path::to_path_buf)
+        .or_else(|| metadata.rollout_path.clone());
     let requested_path = requested_path.as_deref();
 
     let bytes = match session_bytes {
@@ -137,7 +130,9 @@ pub fn inspect_session(
             }
             Some(bytes.to_vec())
         }
-        None => requested_path.map(|path| read_stable_session(&root, path, context.max_session_bytes)).transpose()?,
+        None => requested_path
+            .map(|path| read_stable_session(&root, path, context.max_session_bytes))
+            .transpose()?,
     };
 
     let canonical_session_path = requested_path
@@ -147,7 +142,11 @@ pub fn inspect_session(
         .session_id
         .clone()
         .or_else(|| bytes.as_deref().and_then(parse_session_id))
-        .or_else(|| canonical_session_path.as_deref().and_then(session_id_from_path));
+        .or_else(|| {
+            canonical_session_path
+                .as_deref()
+                .and_then(session_id_from_path)
+        });
 
     let mut report = CodexInventoryReport {
         status: InventoryStatus::NotApplicable,
@@ -192,18 +191,6 @@ pub fn inspect_session(
     Ok(report)
 }
 
-pub fn inspect_path(context: &RescueContext, session_path: &Path) -> Result<CodexInventoryReport> {
-    inspect_session(context, Some(session_path), None, None)
-}
-
-pub fn inspect_bytes(
-    context: &RescueContext,
-    bytes: &[u8],
-    metadata: Option<&SessionMetadata>,
-) -> Result<CodexInventoryReport> {
-    inspect_session(context, None, Some(bytes), metadata)
-}
-
 #[derive(Debug, Default)]
 struct ThreadStoreResult {
     evidence: ThreadStoreEvidence,
@@ -219,7 +206,8 @@ struct ProjectionResult {
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(root).map_err(|_| anyhow::anyhow!("rescue root is unavailable"))?;
+    let metadata =
+        fs::symlink_metadata(root).map_err(|_| anyhow::anyhow!("rescue root is unavailable"))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         bail!("rescue root must be a real directory");
     }
@@ -227,7 +215,8 @@ fn canonical_root(root: &Path) -> Result<PathBuf> {
 }
 
 fn validate_session_path(root: &Path, path: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| anyhow::anyhow!("session evidence is unavailable"))?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| anyhow::anyhow!("session evidence is unavailable"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         bail!("session evidence must be a regular file");
     }
@@ -238,7 +227,8 @@ fn validate_session_path(root: &Path, path: &Path) -> Result<PathBuf> {
             bail!("session hardlinks are not accepted");
         }
     }
-    let canonical = fs::canonicalize(path).map_err(|_| anyhow::anyhow!("session evidence cannot be canonicalized"))?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|_| anyhow::anyhow!("session evidence cannot be canonicalized"))?;
     if !canonical.starts_with(root) {
         bail!("session evidence is outside the configured rescue root");
     }
@@ -256,7 +246,8 @@ fn read_stable_session(root: &Path, path: &Path, limit: u64) -> Result<Vec<u8>> 
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-    let mut file = File::open(path).map_err(|_| anyhow::anyhow!("session evidence cannot be opened"))?;
+    let mut file =
+        File::open(path).map_err(|_| anyhow::anyhow!("session evidence cannot be opened"))?;
     let mut bytes = Vec::new();
     file.by_ref()
         .take(limit.saturating_add(1))
@@ -281,7 +272,9 @@ fn parse_session_id(bytes: &[u8]) -> Option<String> {
             continue;
         }
         if let Some(payload) = value.get("payload") {
-            if let Some(id) = value_string(payload, "session_id").or_else(|| value_string(payload, "id")) {
+            if let Some(id) =
+                value_string(payload, "session_id").or_else(|| value_string(payload, "id"))
+            {
                 return Some(id);
             }
         }
@@ -290,7 +283,11 @@ fn parse_session_id(bytes: &[u8]) -> Option<String> {
 }
 
 fn value_string(value: &serde_json::Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|value| value.as_str()).filter(|value| !value.is_empty()).map(ToOwned::to_owned)
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn session_id_from_path(path: &Path) -> Option<String> {
@@ -343,7 +340,15 @@ fn database_candidates(root: &Path, max_files: usize) -> Vec<PathBuf> {
         }
     }
     names.sort_by_key(|name| {
-        if name == "state_5.sqlite" { 0 } else if name == "state.sqlite" { 1 } else if name == "state.db" { 2 } else { 3 }
+        if name == "state_5.sqlite" {
+            0
+        } else if name == "state.sqlite" {
+            1
+        } else if name == "state.db" {
+            2
+        } else {
+            3
+        }
     });
     names
         .into_iter()
@@ -412,7 +417,10 @@ fn quote_identifier(value: &str) -> String {
 }
 
 fn first_column(columns: &HashSet<String>, names: &[&str]) -> Option<String> {
-    names.iter().find(|name| columns.contains(**name)).map(|name| (*name).to_string())
+    names
+        .iter()
+        .find(|name| columns.contains(**name))
+        .map(|name| (*name).to_string())
 }
 
 fn value_text(value: ValueRef<'_>) -> Option<String> {
@@ -441,7 +449,7 @@ enum PathRelation {
 }
 
 fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
-    let discovered = discovered.to_string_lossy();
+    let discovered = discovered_logical_path(&discovered.to_string_lossy());
     if stored == discovered {
         return PathRelation::Exact;
     }
@@ -458,6 +466,22 @@ fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
     } else {
         PathRelation::Different
     }
+}
+
+fn discovered_logical_path(raw: &str) -> String {
+    if cfg!(windows) {
+        let replaced = raw.replace('\', "/");
+        if replaced
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("//?/UNC/"))
+        {
+            return format!("//{}", &replaced[8..]);
+        }
+        if replaced.starts_with("//?/") {
+            return replaced[4..].to_string();
+        }
+    }
+    raw.to_string()
 }
 
 fn normalize_path(raw: &str) -> Option<(String, bool)> {
@@ -527,14 +551,20 @@ fn inspect_thread_store(
     let mut result = ThreadStoreResult::default();
     let candidates = database_candidates(root, max_files);
     if candidates.is_empty() {
-        result.notices.push("no compatible Codex SQLite store was found".to_string());
+        result
+            .notices
+            .push("no compatible Codex SQLite store was found".to_string());
         return result;
     }
     let mut compatible_store = false;
     let mut read_error = false;
     for db_path in candidates {
         let Ok(connection) = open_read_only(&db_path) else {
-            if db_path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.to_ascii_lowercase().contains("state")) {
+            if db_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().contains("state"))
+            {
                 read_error = true;
             }
             continue;
@@ -550,7 +580,8 @@ fn inspect_thread_store(
             read_error = true;
             continue;
         };
-        let Some(path_column) = first_column(&columns, &["rollout_path", "session_path", "path"]) else {
+        let Some(path_column) = first_column(&columns, &["rollout_path", "session_path", "path"])
+        else {
             continue;
         };
         compatible_store = true;
@@ -559,7 +590,10 @@ fn inspect_thread_store(
         let first_user_column = first_column(&columns, &["first_user_message"]);
         let sql = format!(
             "SELECT {}, {}, {}, {} FROM {}{} LIMIT {}",
-            id_column.as_deref().map(quote_identifier).unwrap_or_else(|| "NULL".to_string()),
+            id_column
+                .as_deref()
+                .map(quote_identifier)
+                .unwrap_or_else(|| "NULL".to_string()),
             quote_identifier(&path_column),
             preview_column
                 .as_deref()
@@ -570,8 +604,12 @@ fn inspect_thread_store(
                 .map(quote_identifier)
                 .unwrap_or_else(|| "NULL".to_string()),
             quote_identifier(THREAD_TABLE),
-            if let (Some(id_column), Some(session_id)) = (id_column.as_deref(), session_id) {
-                format!(" WHERE {} = {}", quote_identifier(id_column), quote_literal_placeholder())
+            if let (Some(id_column), Some(_)) = (id_column.as_deref(), session_id) {
+                format!(
+                    " WHERE {} = {}",
+                    quote_identifier(id_column),
+                    quote_literal_placeholder()
+                )
             } else {
                 String::new()
             },
@@ -604,7 +642,8 @@ fn inspect_thread_store(
                 _ => PathRelation::Unknown,
             };
             let by_id = matched_by_id;
-            let by_path = session_id.is_none() && !matches!(relation, PathRelation::Different | PathRelation::Unknown);
+            let by_path = session_id.is_none()
+                && !matches!(relation, PathRelation::Different | PathRelation::Unknown);
             if !by_id && !by_path {
                 continue;
             }
@@ -624,51 +663,72 @@ fn inspect_thread_store(
                 None => {
                     result.evidence.status = "unknown".to_string();
                     result.evidence.path_relation = "unknown".to_string();
-                    result.notices.push("thread row has no usable rollout path; divergence was not inferred".to_string());
+                    result.notices.push(
+                        "thread row has no usable rollout path; divergence was not inferred"
+                            .to_string(),
+                    );
                 }
-                Some(stored) => match relation {
-                    PathRelation::Exact => {
-                        result.evidence.status = "consistent".to_string();
-                        result.evidence.path_relation = "exact".to_string();
-                        result.evidence.rollout_present = Some(true);
-                    }
-                    PathRelation::Equivalent { namespace_divergence } => {
-                        result.evidence.status = if namespace_divergence { "diverged" } else { "consistent" }.to_string();
-                        result.evidence.path_relation = "equivalent".to_string();
-                        result.evidence.windows_namespace_divergence = namespace_divergence;
-                        result.evidence.rollout_present = Some(true);
-                        if namespace_divergence {
-                            result.findings.push(INDEX_DIVERGENCE.to_string());
-                            result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
+                Some(stored) => {
+                    match relation {
+                        PathRelation::Exact => {
+                            result.evidence.status = "consistent".to_string();
+                            result.evidence.path_relation = "exact".to_string();
+                            result.evidence.rollout_present = Some(true);
                         }
-                    }
-                    PathRelation::Different => {
-                        result.evidence.status = "diverged".to_string();
-                        result.evidence.path_relation = "different".to_string();
-                        match stored_path_exists(&stored) {
-                            Some(true) => {
-                                result.evidence.rollout_present = Some(true);
-                                result.findings.push(INDEX_DIVERGENCE.to_string());
-                                result.notices.push("thread index points to a different rollout reference".to_string());
+                        PathRelation::Equivalent {
+                            namespace_divergence,
+                        } => {
+                            result.evidence.status = if namespace_divergence {
+                                "diverged"
+                            } else {
+                                "consistent"
                             }
-                            Some(false) => {
-                                result.evidence.rollout_present = Some(false);
-                                result.findings.push(ROLLOUT_MISSING.to_string());
-                                result.notices.push("thread index references a rollout that is not present".to_string());
-                            }
-                            None => {
-                                result.evidence.rollout_present = None;
+                            .to_string();
+                            result.evidence.path_relation = "equivalent".to_string();
+                            result.evidence.windows_namespace_divergence = namespace_divergence;
+                            result.evidence.rollout_present = Some(true);
+                            if namespace_divergence {
                                 result.findings.push(INDEX_DIVERGENCE.to_string());
-                                result.notices.push("thread index and discovered rollout identity differ; exact filesystem cause is unknown".to_string());
+                                result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
                             }
                         }
+                        PathRelation::Different => {
+                            result.evidence.status = "diverged".to_string();
+                            result.evidence.path_relation = "different".to_string();
+                            match stored_path_exists(&stored) {
+                                Some(true) => {
+                                    result.evidence.rollout_present = Some(true);
+                                    result.findings.push(INDEX_DIVERGENCE.to_string());
+                                    result.notices.push(
+                                        "thread index points to a different rollout reference"
+                                            .to_string(),
+                                    );
+                                }
+                                Some(false) => {
+                                    result.evidence.rollout_present = Some(false);
+                                    result.findings.push(ROLLOUT_MISSING.to_string());
+                                    result.notices.push(
+                                        "thread index references a rollout that is not present"
+                                            .to_string(),
+                                    );
+                                }
+                                None => {
+                                    result.evidence.rollout_present = None;
+                                    result.findings.push(INDEX_DIVERGENCE.to_string());
+                                    result.notices.push("thread index and discovered rollout identity differ; exact filesystem cause is unknown".to_string());
+                                }
+                            }
+                        }
+                        PathRelation::Unknown => {
+                            result.evidence.status = "unknown".to_string();
+                            result.evidence.path_relation = "unknown".to_string();
+                            result.notices.push(
+                                "thread index path identity could not be established safely"
+                                    .to_string(),
+                            );
+                        }
                     }
-                    PathRelation::Unknown => {
-                        result.evidence.status = "unknown".to_string();
-                        result.evidence.path_relation = "unknown".to_string();
-                        result.notices.push("thread index path identity could not be established safely".to_string());
-                    }
-                },
+                }
             }
             if by_id {
                 break;
@@ -684,17 +744,23 @@ fn inspect_thread_store(
             result.evidence.path_relation = "not_indexed".to_string();
             result.evidence.row_present = Some(false);
             result.findings.push(INDEX_DIVERGENCE.to_string());
-            result.notices.push("rollout exists on disk but no matching thread index row was found".to_string());
+            result.notices.push(
+                "rollout exists on disk but no matching thread index row was found".to_string(),
+            );
         } else if read_error {
             result.evidence.status = "unknown".to_string();
-            result.notices.push("a state SQLite store could not be inspected read-only".to_string());
+            result
+                .notices
+                .push("a state SQLite store could not be inspected read-only".to_string());
         } else if compatible_store {
             result.evidence.status = "not_recorded".to_string();
             result.evidence.row_present = Some(false);
             result.notices.push("no matching thread index row was found; absence is not treated as rollout deletion".to_string());
         } else {
             result.evidence.status = "unknown".to_string();
-            result.notices.push("SQLite exists but no compatible threads rollout schema was found".to_string());
+            result.notices.push(
+                "SQLite exists but no compatible threads rollout schema was found".to_string(),
+            );
         }
     }
     result
@@ -746,18 +812,27 @@ fn record_boundaries(bytes: &[u8], max_record_bytes: usize) -> Vec<RecordBoundar
             None
         };
         if !raw.iter().all(|byte| byte.is_ascii_whitespace()) {
-            result.push(RecordBoundary { ordinal, end: bytes.len() });
+            result.push(RecordBoundary {
+                ordinal,
+                end: bytes.len(),
+            });
         }
     }
     result
 }
 
-fn boundary_at(bytes: &[u8], offset: usize, max_record_bytes: usize) -> Option<(RecordBoundary, Option<RecordBoundary>)> {
+fn boundary_at(
+    bytes: &[u8],
+    offset: usize,
+    max_record_bytes: usize,
+) -> Option<(RecordBoundary, Option<RecordBoundary>)> {
     if offset >= bytes.len() || (offset > 0 && bytes[offset - 1] != b'\n') {
         return None;
     }
     let boundaries = record_boundaries(bytes, max_record_bytes);
-    let index = boundaries.iter().position(|boundary| boundary.end > offset && boundary.end - offset > 0)?;
+    let index = boundaries
+        .iter()
+        .position(|boundary| boundary.end > offset && boundary.end - offset > 0)?;
     let current_start = boundaries
         .get(index.wrapping_sub(1))
         .map(|boundary| boundary.end)
@@ -769,7 +844,10 @@ fn boundary_at(bytes: &[u8], offset: usize, max_record_bytes: usize) -> Option<(
 }
 
 fn last_ordinal(bytes: &[u8], max_record_bytes: usize) -> Option<u64> {
-    record_boundaries(bytes, max_record_bytes).into_iter().rev().find_map(|boundary| boundary.ordinal)
+    record_boundaries(bytes, max_record_bytes)
+        .into_iter()
+        .rev()
+        .find_map(|boundary| boundary.ordinal)
 }
 
 fn inspect_projection(
@@ -781,7 +859,9 @@ fn inspect_projection(
 ) -> ProjectionResult {
     let mut result = ProjectionResult::default();
     let Some(session_id) = session_id else {
-        result.notices.push("projection inspection requires a stable session identity".to_string());
+        result
+            .notices
+            .push("projection inspection requires a stable session identity".to_string());
         return result;
     };
     let candidates = database_candidates(root, max_files);
@@ -789,7 +869,11 @@ fn inspect_projection(
     let mut relevant_error = false;
     for db_path in candidates {
         let Ok(connection) = open_read_only(&db_path) else {
-            if db_path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.to_ascii_lowercase().contains("thread")) {
+            if db_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().contains("thread"))
+            {
                 relevant_error = true;
             }
             continue;
@@ -800,7 +884,9 @@ fn inspect_projection(
         };
         let mut projection_tables = tables
             .into_iter()
-            .filter(|table| table == PROJECTION_TABLE || table.to_ascii_lowercase().contains("projection"))
+            .filter(|table| {
+                table == PROJECTION_TABLE || table.to_ascii_lowercase().contains("projection")
+            })
             .collect::<Vec<_>>();
         projection_tables.sort_by_key(|table| if table == PROJECTION_TABLE { 0 } else { 1 });
         for table in projection_tables {
@@ -808,20 +894,56 @@ fn inspect_projection(
                 relevant_error = true;
                 continue;
             };
-            let Some(id_column) = first_column(&columns, &["thread_id", "session_id"]) else { continue };
-            let Some(offset_column) = first_column(&columns, &["next_rollout_byte_offset", "next_byte_offset", "rollout_byte_offset"]) else { continue };
-            let Some(ordinal_column) = first_column(&columns, &["next_rollout_ordinal", "next_ordinal"]) else { continue };
+            let Some(id_column) = first_column(&columns, &["thread_id", "session_id"]) else {
+                continue;
+            };
+            let Some(offset_column) = first_column(
+                &columns,
+                &[
+                    "next_rollout_byte_offset",
+                    "next_byte_offset",
+                    "rollout_byte_offset",
+                ],
+            ) else {
+                continue;
+            };
+            let Some(ordinal_column) =
+                first_column(&columns, &["next_rollout_ordinal", "next_ordinal"])
+            else {
+                continue;
+            };
             let sql = format!(
                 "SELECT {}, {} FROM {} WHERE {} = ? LIMIT 2",
-                quote_identifier(&offset_column), quote_identifier(&ordinal_column), quote_identifier(&table), quote_identifier(&id_column)
+                quote_identifier(&offset_column),
+                quote_identifier(&ordinal_column),
+                quote_identifier(&table),
+                quote_identifier(&id_column)
             );
-            let mut statement = match connection.prepare(&sql) { Ok(statement) => statement, Err(_) => { relevant_error = true; continue } };
-            let mut rows = match statement.query([session_id]) { Ok(rows) => rows, Err(_) => { relevant_error = true; continue } };
+            let mut statement = match connection.prepare(&sql) {
+                Ok(statement) => statement,
+                Err(_) => {
+                    relevant_error = true;
+                    continue;
+                }
+            };
+            let mut rows = match statement.query([session_id]) {
+                Ok(rows) => rows,
+                Err(_) => {
+                    relevant_error = true;
+                    continue;
+                }
+            };
             while let Ok(Some(row)) = rows.next() {
                 let offset = value_i64(row.get_ref(0).unwrap_or(ValueRef::Null));
                 let ordinal = value_i64(row.get_ref(1).unwrap_or(ValueRef::Null));
-                let (Some(offset), Some(ordinal)) = (offset, ordinal) else { relevant_error = true; continue };
-                if offset < 0 || ordinal < 0 { relevant_error = true; continue }
+                let (Some(offset), Some(ordinal)) = (offset, ordinal) else {
+                    relevant_error = true;
+                    continue;
+                };
+                if offset < 0 || ordinal < 0 {
+                    relevant_error = true;
+                    continue;
+                }
                 states.push((offset as u64, ordinal as u64));
             }
         }
@@ -831,9 +953,13 @@ fn inspect_projection(
             result.evidence.status = "unknown".to_string();
             result.evidence.confidence = "unknown".to_string();
             result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-            result.notices.push("projection database/schema could not be read safely".to_string());
+            result
+                .notices
+                .push("projection database/schema could not be read safely".to_string());
         } else {
-            result.notices.push("no readable projection row was found for this session".to_string());
+            result
+                .notices
+                .push("no readable projection row was found for this session".to_string());
         }
         return result;
     }
@@ -841,7 +967,9 @@ fn inspect_projection(
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
         result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-        result.notices.push("readable projection stores disagree on the cursor".to_string());
+        result
+            .notices
+            .push("readable projection stores disagree on the cursor".to_string());
         return result;
     }
     let (next_offset, next_ordinal) = states[0];
@@ -851,7 +979,9 @@ fn inspect_projection(
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
         result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-        result.notices.push("projection row exists but rollout bytes were not supplied".to_string());
+        result
+            .notices
+            .push("projection row exists but rollout bytes were not supplied".to_string());
         return result;
     };
     result.evidence.canonical_size = Some(bytes.len() as u64);
@@ -859,7 +989,9 @@ fn inspect_projection(
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
         result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-        result.notices.push("projection byte cursor is beyond the rollout".to_string());
+        result
+            .notices
+            .push("projection byte cursor is beyond the rollout".to_string());
         return result;
     }
     let final_ordinal = last_ordinal(bytes, max_record_bytes);
@@ -868,7 +1000,9 @@ fn inspect_projection(
             if next_ordinal == final_ordinal.saturating_add(1) {
                 result.evidence.status = "exact".to_string();
                 result.evidence.confidence = "strong".to_string();
-                result.notices.push("projection byte and ordinal cursors match the exact rollout EOF".to_string());
+                result.notices.push(
+                    "projection byte and ordinal cursors match the exact rollout EOF".to_string(),
+                );
             } else {
                 result.evidence.status = "unknown".to_string();
                 result.evidence.confidence = "unknown".to_string();
@@ -879,15 +1013,21 @@ fn inspect_projection(
             result.evidence.status = "unknown".to_string();
             result.evidence.confidence = "unknown".to_string();
             result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-            result.notices.push("rollout EOF has no usable paginated ordinal".to_string());
+            result
+                .notices
+                .push("rollout EOF has no usable paginated ordinal".to_string());
         }
         return result;
     }
-    let Some((boundary, next_boundary)) = boundary_at(bytes, next_offset as usize, max_record_bytes) else {
+    let Some((boundary, next_boundary)) =
+        boundary_at(bytes, next_offset as usize, max_record_bytes)
+    else {
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
         result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-        result.notices.push("projection byte cursor is not aligned to a rollout record boundary".to_string());
+        result
+            .notices
+            .push("projection byte cursor is not aligned to a rollout record boundary".to_string());
         return result;
     };
     result.evidence.boundary_ordinal = boundary.ordinal;
@@ -896,7 +1036,9 @@ fn inspect_projection(
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
         result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-        result.notices.push("rollout suffix at the projection cursor has no usable ordinal".to_string());
+        result
+            .notices
+            .push("rollout suffix at the projection cursor has no usable ordinal".to_string());
         return result;
     };
     let replayed = next_ordinal > 0
@@ -909,7 +1051,9 @@ fn inspect_projection(
         if replayed {
             result.notices.push(format!("stable projection boundary replays ordinal {first_ordinal} before expected ordinal {next_ordinal}"));
         } else {
-            result.notices.push(format!("stable rollout suffix begins at persisted next ordinal {next_ordinal}"));
+            result.notices.push(format!(
+                "stable rollout suffix begins at persisted next ordinal {next_ordinal}"
+            ));
         }
     } else {
         result.evidence.status = "unknown".to_string();
@@ -933,7 +1077,10 @@ mod tests {
     impl TempRoot {
         fn new(label: &str) -> Self {
             let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("vetto-inventory-{label}-{}-{nonce}", std::process::id()));
+            let path = std::env::temp_dir().join(format!(
+                "vetto-inventory-{label}-{}-{nonce}",
+                std::process::id()
+            ));
             fs::create_dir_all(&path).expect("create temp root");
             Self(path)
         }
@@ -959,8 +1106,15 @@ mod tests {
     fn create_threads_db(root: &Path, id: &str, stored_path: &str) -> PathBuf {
         let path = root.join("state_5.sqlite");
         let connection = Connection::open(&path).unwrap();
-        connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)", []).unwrap();
-        connection.execute("INSERT INTO threads VALUES (?1, ?2)", (id, stored_path)).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("INSERT INTO threads VALUES (?1, ?2)", (id, stored_path))
+            .unwrap();
         drop(connection);
         path
     }
@@ -991,10 +1145,12 @@ mod tests {
             "CREATE TABLE thread_history_projection_state (thread_id TEXT PRIMARY KEY, next_rollout_byte_offset INTEGER, next_rollout_ordinal INTEGER)",
             [],
         ).unwrap();
-        connection.execute(
-            "INSERT INTO thread_history_projection_state VALUES (?1, ?2, ?3)",
-            (id, offset, ordinal),
-        ).unwrap();
+        connection
+            .execute(
+                "INSERT INTO thread_history_projection_state VALUES (?1, ?2, ?3)",
+                (id, offset, ordinal),
+            )
+            .unwrap();
         drop(connection);
         path
     }
@@ -1005,6 +1161,7 @@ mod tests {
         format!("{:x}", hasher.finalize())
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_namespace_difference_is_index_divergence_without_path_leak() {
         let temp = TempRoot::new("windows");
@@ -1013,11 +1170,36 @@ mod tests {
         let normal = path.to_string_lossy().replace('/', "\\");
         let extended = format!("\\\\?\\{normal}");
         create_threads_db(&temp.0, id, &extended);
-        let report = inspect_session(&RescueContext::new(temp.0.clone()), Some(&path), Some(&bytes), None).unwrap();
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
         assert!(report.findings.contains(&INDEX_DIVERGENCE.to_string()));
         assert!(report.thread_store.windows_namespace_divergence);
-        assert!(report.notices.iter().all(|notice| !notice.contains(&normal)));
-        assert!(report.notices.iter().all(|notice| !notice.contains(&extended)));
+        assert!(report
+            .notices
+            .iter()
+            .all(|notice| !notice.contains(&normal)));
+        assert!(report
+            .notices
+            .iter()
+            .all(|notice| !notice.contains(&extended)));
+    }
+
+    #[test]
+    fn windows_namespace_relation_is_detected_lexically() {
+        assert_eq!(
+            path_relation(
+                r"\\?\C:\Users\Alice\.codex\sessions\rollout.jsonl",
+                Path::new(r"C:\Users\Alice\.codex\sessions\rollout.jsonl"),
+            ),
+            PathRelation::Equivalent {
+                namespace_divergence: true,
+            }
+        );
     }
 
     #[test]
@@ -1033,7 +1215,9 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(report.findings.contains(&SIDEBAR_METADATA_EMPTY.to_string()));
+        assert!(report
+            .findings
+            .contains(&SIDEBAR_METADATA_EMPTY.to_string()));
         assert!(report.notices.iter().all(|notice| !notice.contains(id)));
     }
 
@@ -1061,7 +1245,13 @@ mod tests {
         let (path, bytes) = rollout(&temp.0, id);
         let db_path = create_projection_db(&temp.0, id, bytes.len() as u64, 2);
         let before = sha(&db_path);
-        let report = inspect_session(&RescueContext::new(temp.0.clone()), Some(&path), Some(&bytes), None).unwrap();
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
         let after = sha(&db_path);
         assert_eq!(before, after);
         assert_eq!(report.projection.status, "exact");
@@ -1075,7 +1265,13 @@ mod tests {
         let (path, bytes) = rollout(&temp.0, id);
         let first_end = bytes.iter().position(|byte| *byte == b'\n').unwrap() + 1;
         create_projection_db(&temp.0, id, first_end as u64, 1);
-        let report = inspect_session(&RescueContext::new(temp.0.clone()), Some(&path), Some(&bytes), None).unwrap();
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
         assert_eq!(report.projection.status, "wedged");
         assert!(report.findings.contains(&WEDGED_PROJECTION.to_string()));
         assert_eq!(report.projection.boundary_ordinal, Some(1));
@@ -1087,9 +1283,17 @@ mod tests {
         let id = "019fffff-4444-7444-8444-444444444444";
         let (path, bytes) = rollout(&temp.0, id);
         create_projection_db(&temp.0, id, 1, 1);
-        let report = inspect_session(&RescueContext::new(temp.0.clone()), Some(&path), Some(&bytes), None).unwrap();
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
         assert_eq!(report.projection.status, "unknown");
-        assert!(report.findings.contains(&PROJECTION_STATE_UNKNOWN.to_string()));
+        assert!(report
+            .findings
+            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
         assert!(!report.findings.contains(&WEDGED_PROJECTION.to_string()));
     }
 }
