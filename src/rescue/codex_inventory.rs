@@ -470,7 +470,7 @@ fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
 
 fn discovered_logical_path(raw: &str) -> String {
     if cfg!(windows) {
-        let replaced = raw.replace('\', "/");
+        let replaced = raw.replace('\\', "/");
         if replaced
             .get(..8)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("//?/UNC/"))
