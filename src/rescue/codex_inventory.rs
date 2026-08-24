@@ -485,8 +485,8 @@ fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>
                 "SQLite table schema exceeded the configured row budget"
             ));
         }
-        if let Some(column) = row
-            .map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?
+        if let Some(column) =
+            row.map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?
         {
             columns.insert(column);
         }
@@ -732,11 +732,8 @@ fn inspect_thread_store(
     let mut read_error = false;
     let mut schema_unknown = false;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(
-            root,
-            &db_path,
-            "SQLite database",
-        ) else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        else {
             read_error = true;
             continue;
         };
@@ -1102,11 +1099,8 @@ fn inspect_projection(
     let mut states = Vec::new();
     let mut relevant_error = candidate_set.rejected;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(
-            root,
-            &db_path,
-            "SQLite database",
-        ) else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        else {
             relevant_error = true;
             continue;
         };

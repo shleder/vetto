@@ -34,6 +34,8 @@ use std::io::{Seek, SeekFrom};
 
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
 /// An identity which is stable for the lifetime of an opened source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,9 +93,7 @@ impl VerifiedFile {
     }
 
     pub(crate) fn metadata(&self) -> Result<Metadata> {
-        self.file
-            .metadata()
-            .context("stat verified file handle")
+        self.file.metadata().context("stat verified file handle")
     }
 
     pub(crate) fn file_mut(&mut self) -> &mut File {
@@ -147,21 +147,16 @@ pub(crate) fn canonical_root(root: &Path) -> Result<PathBuf> {
 /// This is useful for preflight and path-only diagnostics.  Callers which
 /// consume bytes should use [`open_regular`] instead so the acquired handle
 /// and the path are checked together.
-pub(crate) fn canonical_regular_path(
-    root: &Path,
-    path: &Path,
-    label: &str,
-) -> Result<PathBuf> {
+pub(crate) fn canonical_regular_path(root: &Path, path: &Path, label: &str) -> Result<PathBuf> {
     let root = canonical_root(root)?;
     let candidate = candidate_under_root(&root, path, label)?;
     walk_without_links(&root, &candidate, label)?;
-    let canonical = fs::canonicalize(&candidate)
-        .with_context(|| format!("canonicalize {label}"))?;
+    let canonical =
+        fs::canonicalize(&candidate).with_context(|| format!("canonicalize {label}"))?;
     if !canonical.starts_with(&root) {
         bail!("{label} is outside the configured rescue root");
     }
-    let metadata = fs::symlink_metadata(&canonical)
-        .with_context(|| format!("inspect {label}"))?;
+    let metadata = fs::symlink_metadata(&canonical).with_context(|| format!("inspect {label}"))?;
     validate_regular_metadata(&metadata, label)?;
     Ok(canonical)
 }
@@ -172,13 +167,13 @@ pub(crate) fn open_regular(root: &Path, path: &Path, label: &str) -> Result<Veri
     let candidate = candidate_under_root(&root, path, label)?;
     walk_without_links(&root, &candidate, label)?;
 
-    let canonical_before = fs::canonicalize(&candidate)
-        .with_context(|| format!("canonicalize {label}"))?;
+    let canonical_before =
+        fs::canonicalize(&candidate).with_context(|| format!("canonicalize {label}"))?;
     if !canonical_before.starts_with(&root) {
         bail!("{label} is outside the configured rescue root");
     }
-    let path_metadata = fs::symlink_metadata(&candidate)
-        .with_context(|| format!("inspect {label}"))?;
+    let path_metadata =
+        fs::symlink_metadata(&candidate).with_context(|| format!("inspect {label}"))?;
     validate_regular_metadata(&path_metadata, label)?;
     let expected_identity = identity(&path_metadata, label)?;
     let expected_length = path_metadata.len();
@@ -209,8 +204,8 @@ pub(crate) fn open_regular(root: &Path, path: &Path, label: &str) -> Result<Veri
     // A canonical-path recheck catches parent-directory replacement on all
     // platforms.  It cannot make a race atomic with stable std APIs; if the
     // replacement is observed, the operation fails closed.
-    let canonical_after = fs::canonicalize(&candidate)
-        .with_context(|| format!("recheck {label}"))?;
+    let canonical_after =
+        fs::canonicalize(&candidate).with_context(|| format!("recheck {label}"))?;
     if canonical_after != canonical_before || !canonical_after.starts_with(&root) {
         bail!("{label} changed while being opened");
     }
@@ -224,12 +219,7 @@ pub(crate) fn open_regular(root: &Path, path: &Path, label: &str) -> Result<Veri
 }
 
 /// Read a bounded snapshot while keeping the validated handle open.
-pub(crate) fn read_bounded(
-    root: &Path,
-    path: &Path,
-    limit: u64,
-    label: &str,
-) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded(root: &Path, path: &Path, limit: u64, label: &str) -> Result<Vec<u8>> {
     let mut verified = open_regular(root, path, label)?;
     read_bounded_from_opened(&mut verified, limit, label)
 }
@@ -238,13 +228,8 @@ pub(crate) fn read_bounded(
 /// caller.  This is used by the Codex adapter's two-pass stability check; the
 /// final component is still opened with the platform-specific no-follow
 /// policy and handle/path identity checks.
-pub(crate) fn read_bounded_existing(
-    path: &Path,
-    limit: u64,
-    label: &str,
-) -> Result<Vec<u8>> {
-    let path_metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("inspect {label}"))?;
+pub(crate) fn read_bounded_existing(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>> {
+    let path_metadata = fs::symlink_metadata(path).with_context(|| format!("inspect {label}"))?;
     validate_regular_metadata(&path_metadata, label)?;
     let expected_identity = identity(&path_metadata, label)?;
     let expected_length = path_metadata.len();
@@ -266,8 +251,8 @@ pub(crate) fn read_bounded_existing(
         bail!("{label} changed while being opened");
     }
     let canonical = fs::canonicalize(path).with_context(|| format!("canonicalize {label}"))?;
-    let canonical_metadata = fs::symlink_metadata(&canonical)
-        .with_context(|| format!("recheck {label}"))?;
+    let canonical_metadata =
+        fs::symlink_metadata(&canonical).with_context(|| format!("recheck {label}"))?;
     validate_regular_metadata(&canonical_metadata, label)?;
     if identity(&canonical_metadata, label)? != expected_identity
         || canonical_metadata.len() != expected_length
@@ -306,11 +291,7 @@ fn read_bounded_from_opened(
 
 /// Open a SQLite database with `READ_ONLY` and `NO_CREATE` semantics after
 /// the same file/path checks used for JSONL sources.
-pub(crate) fn open_sqlite_read_only(
-    root: &Path,
-    path: &Path,
-    label: &str,
-) -> Result<Connection> {
+pub(crate) fn open_sqlite_read_only(root: &Path, path: &Path, label: &str) -> Result<Connection> {
     let verified = open_regular(root, path, label)?;
     let canonical = verified.path().to_path_buf();
     let connection = Connection::open_with_flags(
@@ -401,6 +382,7 @@ fn validate_not_reparse(metadata: &Metadata, label: &str) -> Result<()> {
 }
 
 fn identity(metadata: &Metadata, label: &str) -> Result<FileIdentity> {
+    let _ = label;
     #[cfg(unix)]
     {
         return Ok(FileIdentity::Unix {

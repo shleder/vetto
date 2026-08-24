@@ -17,6 +17,9 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{types::ValueRef, Connection};
 use serde_json::Value;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use super::{
     safe_fs,
     types::{RescueContext, SessionRef},
