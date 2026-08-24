@@ -65,14 +65,16 @@ class Alpha6FeatureTests(unittest.TestCase):
         self.assertTrue(len(violations) > 0)
 
     def test_batch_doctor_all_and_changed(self):
-        s1 = self.home / "sessions" / "session_1.jsonl"
+        s1 = self.home / "sessions" / "2026" / "08" / "19" / "session_1.jsonl"
+        s1.parent.mkdir(parents=True, exist_ok=True)
         s1.write_text(
             json.dumps({"type": "turn_started", "ordinal": 1}) + "\n" +
             json.dumps({"type": "task_complete", "ordinal": 2}) + "\n",
             encoding="utf-8",
         )
 
-        s2 = self.home / "archived_sessions" / "session_2.jsonl"
+        s2 = self.home / "archived_sessions" / "2026" / "08" / "18" / "session_2.jsonl"
+        s2.parent.mkdir(parents=True, exist_ok=True)
         s2.write_text(
             json.dumps({"type": "turn_started", "ordinal": 1}) + "\n",
             encoding="utf-8",
@@ -81,6 +83,10 @@ class Alpha6FeatureTests(unittest.TestCase):
         summary = run_doctor_all(self.home)
         self.assertEqual(summary.sessions_scanned, 2)
         self.assertTrue(summary.healthy >= 1)
+        self.assertEqual(
+            {Path(result["path"]).name for result in summary.results},
+            {"session_1.jsonl", "session_2.jsonl"},
+        )
 
         changed_summary = run_doctor_changed(self.home)
         self.assertEqual(changed_summary.sessions_scanned, 2)

@@ -28,6 +28,7 @@ clap_complete = "4"
 crossterm = "0.27"
 glob = "0.3"
 ratatui = "0.26"
+rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

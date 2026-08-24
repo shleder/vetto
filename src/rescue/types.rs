@@ -75,6 +75,10 @@ pub struct SessionView {
     pub malformed_records: usize,
     pub oversized_records: usize,
     pub terminated_with_newline: bool,
+    /// Stable, machine-readable semantic findings discovered without replaying
+    /// the provider state.  Adapters must keep these bounded and must never
+    /// include raw prompts, tool arguments, or credentials.
+    pub findings: Vec<String>,
     pub notices: Vec<String>,
 }
 

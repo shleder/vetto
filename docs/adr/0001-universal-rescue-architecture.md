@@ -74,11 +74,11 @@ recovery without a verified adapter.
 
 The historical Codex Rescue tree is imported under `components/rescue-legacy`
 with its MIT license and commit ancestry preserved. New Rust rescue code is
-Apache-2.0. The original public repository remains available during the alpha
-line and receives a migration notice only after the replacement passes its
-published acceptance gates.
+Apache-2.0. The original public repository remains available as compatibility
+history and points users to Vetto; active development and npm installation use
+`shleder/vetto` and `@shleddy/vetto`.
 
-## Alpha 1 acceptance gates
+## Alpha acceptance gates
 
 - the original Codex SQLite mutation cannot be reached, including through a
   hand-edited recovery plan;

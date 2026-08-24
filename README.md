@@ -101,9 +101,14 @@ or `--tui=none` for scripts and CI. `vetto init` creates a starter
 ## Rescue local sessions
 
 The `0.2` alpha adds a provider-neutral, copy-only recovery surface. The npm
-alpha ships the bounded Codex reference adapter. The main branch also contains
-an experimental Claude adapter; it requires an explicit state root and treats
-Claude JSONL as opaque until its provider format is independently verified.
+package ships the bounded Codex reference adapter and an experimental Claude
+adapter. Claude requires an explicit state root and remains opaque until its
+provider format is independently verified.
+
+Codex Rescue development has moved into Vetto. The standalone
+[`shleder/codex-rescue`](https://github.com/shleder/codex-rescue) repository
+remains public as historical compatibility evidence; new user installations
+use only `npm install --global @shleddy/vetto@next`.
 
 ```console
 vetto rescue --json scan
@@ -118,7 +123,10 @@ vetto rescue --adapter claude --root ~/.claude --json scan
 Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
 overwrites an existing destination, writes inside the original agent state
 root, or fabricates vendor SQLite rows. `snapshot` and `fork` create a verified
-new copy; ambiguous or changing inputs fail closed. See
+new copy; ambiguous or changing inputs fail closed. Codex diagnosis reads
+compatible SQLite inventory/projection state with a read-only connection and
+emits bounded findings without exposing stored paths or rewriting derived
+state. See
 [ADR 0001](docs/adr/0001-universal-rescue-architecture.md) and the
 [Antigravity compatibility gate](docs/compatibility/antigravity.md).
 

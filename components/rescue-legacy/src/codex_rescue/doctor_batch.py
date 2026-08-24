@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .discovery import _rollout_paths
 from .discovery_alpha5 import discover_sessions
 from .doctor import doctor_session
 from .evidence import collect_session_evidence
@@ -47,6 +48,43 @@ def compute_file_fingerprint(p: Path) -> dict[str, Any] | None:
 def _filename_thread_id(path: Path) -> str | None:
     parsed = parse_rollout_filename(path)
     return parsed.thread_id if parsed else None
+
+
+def _batch_session_paths(home: Path) -> list[Path]:
+    """Return every regular JSONL candidate under known Codex state roots."""
+
+    candidates: set[Path] = set(_rollout_paths(home, include_archived=True))
+    for directory in (
+        home / "sessions",
+        home / "archived_sessions",
+        home / "subagents",
+    ):
+        try:
+            if not directory.is_dir() or directory.is_symlink():
+                continue
+            paths = directory.rglob("*.jsonl")
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                candidates.add(path.resolve())
+            except OSError:
+                continue
+
+    try:
+        root_paths = home.glob("*.jsonl")
+    except OSError:
+        root_paths = ()
+    for path in root_paths:
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            candidates.add(path.resolve())
+        except OSError:
+            continue
+    return sorted(candidates, key=lambda path: str(path))
 
 
 @dataclass
@@ -90,11 +128,7 @@ def run_doctor_all(
     if not home.exists():
         return summary
 
-    session_paths: list[Path] = []
-    for pat in ("sessions/*.jsonl", "archived_sessions/*.jsonl", "subagents/*.jsonl", "*.jsonl"):
-        session_paths.extend(home.glob(pat))
-
-    unique_paths = sorted(list({p.resolve() for p in session_paths}))[:limit]
+    unique_paths = _batch_session_paths(home)[:limit]
 
     for p in unique_paths:
         summary.sessions_scanned += 1
@@ -151,12 +185,7 @@ def run_doctor_changed(
             cache_data = {}
 
     summary = BatchDoctorSummary()
-    session_paths: list[Path] = []
-    if home.exists():
-        for pat in ("sessions/*.jsonl", "archived_sessions/*.jsonl", "subagents/*.jsonl", "*.jsonl"):
-            session_paths.extend(home.glob(pat))
-
-    unique_paths = sorted(list({p.resolve() for p in session_paths}))
+    unique_paths = _batch_session_paths(home) if home.exists() else []
     new_cache: dict[str, Any] = {}
     now = time.time()
 
