@@ -21,6 +21,8 @@ use super::types::RescueContext;
 pub const INDEX_DIVERGENCE: &str = "INDEX_DIVERGENCE";
 pub const ROLLOUT_MISSING: &str = "ROLLOUT_MISSING";
 pub const SIDEBAR_METADATA_EMPTY: &str = "SIDEBAR_METADATA_EMPTY";
+pub const WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE: &str =
+    "WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE";
 pub const WEDGED_PROJECTION: &str = "WEDGED_PROJECTION";
 pub const PROJECTION_STATE_UNKNOWN: &str = "PROJECTION_STATE_UNKNOWN";
 
@@ -319,7 +321,7 @@ fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
 }
 
 fn database_candidates(root: &Path, max_files: usize) -> Vec<PathBuf> {
-    let limit = max_files.min(MAX_SQLITE_CANDIDATES).max(1);
+    let limit = max_files.clamp(1, MAX_SQLITE_CANDIDATES);
     let mut names = vec![
         "state_5.sqlite".to_string(),
         "state.sqlite".to_string(),
@@ -477,8 +479,8 @@ fn discovered_logical_path(raw: &str) -> String {
         {
             return format!("//{}", &replaced[8..]);
         }
-        if replaced.starts_with("//?/") {
-            return replaced[4..].to_string();
+        if let Some(stripped) = replaced.strip_prefix("//?/") {
+            return stripped.to_string();
         }
     }
     raw.to_string()
@@ -686,10 +688,12 @@ fn inspect_thread_store(
                             .to_string();
                             result.evidence.path_relation = "equivalent".to_string();
                             result.evidence.windows_namespace_divergence = namespace_divergence;
-                            result.evidence.rollout_present = Some(true);
-                            if namespace_divergence {
-                                result.findings.push(INDEX_DIVERGENCE.to_string());
-                                result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
+                        result.evidence.rollout_present = Some(true);
+                        if namespace_divergence {
+                            result.findings.push(
+                                WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE.to_string(),
+                            );
+                            result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
                             }
                         }
                         PathRelation::Different => {
@@ -1103,6 +1107,7 @@ mod tests {
         (path, bytes)
     }
 
+    #[cfg(windows)]
     fn create_threads_db(root: &Path, id: &str, stored_path: &str) -> PathBuf {
         let path = root.join("state_5.sqlite");
         let connection = Connection::open(&path).unwrap();
@@ -1167,7 +1172,8 @@ mod tests {
         let temp = TempRoot::new("windows");
         let id = "019fffff-1111-7111-8111-111111111111";
         let (path, bytes) = rollout(&temp.0, id);
-        let normal = path.to_string_lossy().replace('/', "\\");
+        let canonical = fs::canonicalize(&path).unwrap();
+        let normal = discovered_logical_path(&canonical.to_string_lossy()).replace('/', "\\");
         let extended = format!("\\\\?\\{normal}");
         create_threads_db(&temp.0, id, &extended);
         let report = inspect_session(
@@ -1177,7 +1183,9 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+        assert!(report
+            .findings
+            .contains(&WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE.to_string()));
         assert!(report.thread_store.windows_namespace_divergence);
         assert!(report
             .notices

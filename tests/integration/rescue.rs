@@ -145,13 +145,12 @@ fn scan_discovers_nested_sessions_beyond_the_legacy_twenty_item_window() {
 
     let scan = run_rescue(&root, &["scan"]);
     assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
-    let value: serde_json::Value =
-        serde_json::from_slice(&scan.stdout).expect("scan JSON output");
+    let value: serde_json::Value = serde_json::from_slice(&scan.stdout).expect("scan JSON output");
     let sessions = value["sessions"].as_array().expect("session array");
     assert_eq!(sessions.len(), 25, "scan output: {}", stdout(&scan));
-    assert!(sessions.iter().any(|session| {
-        session["key"] == "sessions/2026/08/25/rollout-24.jsonl"
-    }));
+    assert!(sessions
+        .iter()
+        .any(|session| { session["key"] == "sessions/2026/08/25/rollout-24.jsonl" }));
 }
 
 #[test]
