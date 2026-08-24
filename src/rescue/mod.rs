@@ -1,8 +1,8 @@
 mod adapter;
 mod claude;
 mod codex;
-mod codex_inventory;
 mod codex_index;
+mod codex_inventory;
 pub mod types;
 
 use std::path::{Path, PathBuf};
@@ -126,13 +126,8 @@ pub fn run_cli(
 
             let status = adapter.detect(&context)?;
             let use_index = adapter_id == "codex" && !*all;
-            let effective_limit =
-                use_index.then_some((*limit).unwrap_or(DEFAULT_INDEX_SCAN_LIMIT));
-            let filesystem_mode = if *all {
-                "filesystem-all"
-            } else {
-                "filesystem"
-            };
+            let effective_limit = use_index.then_some((*limit).unwrap_or(DEFAULT_INDEX_SCAN_LIMIT));
+            let filesystem_mode = if *all { "filesystem-all" } else { "filesystem" };
             let (sessions, discovery) = if status.availability == Availability::Available {
                 if let Some(limit) = effective_limit {
                     let indexed = codex_index::discover(&context, limit)?;

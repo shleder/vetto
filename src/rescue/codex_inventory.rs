@@ -191,10 +191,10 @@ pub fn inspect_session(
     extend_unique(&mut report.findings, projection_result.findings);
     extend_unique(&mut report.notices, projection_result.notices);
 
-    report.status = if !report.findings.is_empty() {
-        InventoryStatus::Findings
-    } else if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
+    report.status = if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
         InventoryStatus::Unknown
+    } else if !report.findings.is_empty() {
+        InventoryStatus::Findings
     } else if report.thread_store.status == "not_applicable"
         && report.projection.status == "not_applicable"
     {
@@ -297,9 +297,7 @@ fn parse_session_id(bytes: &[u8]) -> Option<String> {
 }
 
 fn validate_session_id(value: &str) -> Option<String> {
-    if value.is_empty()
-        || value.len() > MAX_SESSION_ID_BYTES
-        || value.chars().any(char::is_control)
+    if value.is_empty() || value.len() > MAX_SESSION_ID_BYTES || value.chars().any(char::is_control)
     {
         return None;
     }
@@ -462,7 +460,10 @@ fn database_candidates(
             rejected: true,
         };
     }
-    DatabaseCandidates { paths, rejected: false }
+    DatabaseCandidates {
+        paths,
+        rejected: false,
+    }
 }
 
 fn open_read_only(path: &Path) -> Result<Connection> {
@@ -1610,7 +1611,8 @@ mod tests {
         let temp = TempRoot::new("candidate-single-budget");
         let path = temp.0.join("a.sqlite");
         fs::write(&path, b"sqlite-placeholder").unwrap();
-        let candidates = database_candidates(&temp.0, 1, MAX_SQLITE_BYTES);
+        let canonical_root = fs::canonicalize(&temp.0).unwrap();
+        let candidates = database_candidates(&canonical_root, 1, MAX_SQLITE_BYTES);
         assert!(!candidates.rejected);
         assert_eq!(candidates.paths, vec![fs::canonicalize(path).unwrap()]);
     }
@@ -1637,10 +1639,9 @@ mod tests {
         let oversized = "x".repeat(MAX_SESSION_ID_BYTES + 1);
         assert_eq!(validate_session_id(&oversized), None);
         assert_eq!(validate_session_id("session\n1"), None);
-        let bytes = format!(
-            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{oversized}\"}}}}\n"
-        )
-        .into_bytes();
+        let bytes =
+            format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{oversized}\"}}}}\n")
+                .into_bytes();
         assert_eq!(parse_session_id(&bytes), None);
     }
 

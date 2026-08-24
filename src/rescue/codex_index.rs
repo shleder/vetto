@@ -132,9 +132,8 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(root).with_context(|| {
-        "Codex rescue root is unavailable; pass --root to a real Codex home"
-    })?;
+    let metadata = fs::symlink_metadata(root)
+        .with_context(|| "Codex rescue root is unavailable; pass --root to a real Codex home")?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         bail!("Codex rescue root must be a real directory");
     }
@@ -227,7 +226,10 @@ fn verify_index_path(
         bail!("Codex index references a non-JSONL rollout file");
     }
     let canonical = fs::canonicalize(&candidate).context("canonicalize indexed rollout")?;
-    if !roots.iter().any(|session_root| canonical.starts_with(session_root)) {
+    if !roots
+        .iter()
+        .any(|session_root| canonical.starts_with(session_root))
+    {
         bail!("Codex index references a rollout outside the session roots");
     }
     let (_file, canonical_metadata) = open_regular_file(&canonical, "indexed rollout")?;
@@ -299,7 +301,10 @@ fn read_session_index(
             continue;
         }
         if raw.len() > context.max_record_bytes {
-            bail!("Codex session index record {} exceeds the record budget", line_number + 1);
+            bail!(
+                "Codex session index record {} exceeds the record budget",
+                line_number + 1
+            );
         }
         let value: Value = serde_json::from_slice(raw).with_context(|| {
             format!(
@@ -665,10 +670,7 @@ mod tests {
         context.max_files = 1;
 
         let error = discover(&context, 10).expect_err("index row budget");
-        assert!(
-            error.to_string().contains("entry budget"),
-            "{error:#}"
-        );
+        assert!(error.to_string().contains("entry budget"), "{error:#}");
     }
 
     #[test]
@@ -682,7 +684,7 @@ mod tests {
 
         let error = discover(&context, 10).expect_err("oversized SQLite index");
         assert!(
-            error.to_string().contains("SQLite index exceeds"),
+            error.to_string().contains("SQLite") && error.to_string().contains("byte budget"),
             "{error:#}"
         );
     }
@@ -696,7 +698,9 @@ mod tests {
         let first_db = root.join("state_5.sqlite");
         let second_db = root.join("state.sqlite");
         fs::copy(&first_db, &second_db).expect("copy second SQLite index");
-        let first_size = fs::metadata(&first_db).expect("first SQLite metadata").len();
+        let first_size = fs::metadata(&first_db)
+            .expect("first SQLite metadata")
+            .len();
         let second_size = fs::metadata(&second_db)
             .expect("second SQLite metadata")
             .len();
@@ -708,8 +712,7 @@ mod tests {
 
         let error = discover(&context, 10).expect_err("aggregate SQLite size");
         assert!(
-            error.to_string().contains("aggregate")
-                && error.to_string().contains("SQLite indexes"),
+            error.to_string().contains("aggregate") && error.to_string().contains("SQLite indexes"),
             "{error:#}"
         );
     }
@@ -740,8 +743,7 @@ mod tests {
 
         let error = discover(&RescueContext::new(root), 10).expect_err("stale index");
         assert!(
-            error.to_string().contains("unavailable")
-                || error.to_string().contains("rollout"),
+            error.to_string().contains("unavailable") || error.to_string().contains("rollout"),
             "{error:#}"
         );
     }
@@ -753,7 +755,9 @@ mod tests {
         let _session = rollout(&root, "filesystem-only.jsonl");
 
         let error = discover(&RescueContext::new(root), 10).expect_err("missing index");
-        assert!(error.to_string().contains("requires a readable Codex index"));
+        assert!(error
+            .to_string()
+            .contains("requires a readable Codex index"));
     }
 
     #[test]
@@ -764,7 +768,10 @@ mod tests {
         fs::create_dir_all(&root).expect("codex root");
         fs::write(
             root.join(SESSION_INDEX_NAME),
-            format!("{{\"rollout_path\":\"{}\"}}\n", indexed.to_string_lossy()),
+            format!(
+                "{}\n",
+                serde_json::json!({ "rollout_path": indexed.to_string_lossy() })
+            ),
         )
         .expect("session index");
 
@@ -782,9 +789,9 @@ mod tests {
         fs::write(
             root.join(SESSION_INDEX_NAME),
             format!(
-                "{{\"rollout_path\":\"{}\"}}\n{{\"rollout_path\":\"{}\"}}\n",
-                first.to_string_lossy(),
-                second.to_string_lossy()
+                "{}\n{}\n",
+                serde_json::json!({ "rollout_path": first.to_string_lossy() }),
+                serde_json::json!({ "rollout_path": second.to_string_lossy() })
             ),
         )
         .expect("session index");
@@ -820,11 +827,8 @@ mod tests {
         let root = temp.codex_home();
         let indexed = rollout(&root, "indexed.jsonl");
         sqlite_index(&root, &[&indexed]);
-        fs::hard_link(
-            root.join("state_5.sqlite"),
-            root.join("state-alias.sqlite"),
-        )
-        .expect("hardlink SQLite index");
+        fs::hard_link(root.join("state_5.sqlite"), root.join("state-alias.sqlite"))
+            .expect("hardlink SQLite index");
 
         let error = discover(&RescueContext::new(root), 10).expect_err("hardlinked SQLite");
         assert!(error.to_string().contains("hardlinked"), "{error:#}");

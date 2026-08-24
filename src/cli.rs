@@ -326,8 +326,8 @@ mod tests {
 
     #[test]
     fn rescue_scan_exposes_explicit_index_limit_and_full_walk_modes() {
-        let default = Cli::try_parse_from(["vetto", "rescue", "scan"])
-            .expect("default rescue scan syntax");
+        let default =
+            Cli::try_parse_from(["vetto", "rescue", "scan"]).expect("default rescue scan syntax");
         assert!(matches!(
             default.command,
             Some(Command::Rescue {
