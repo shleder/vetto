@@ -10,20 +10,23 @@
 //! trusted.  It never falls back to a partial directory walk.
 
 use std::collections::HashSet;
-use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use rusqlite::{types::ValueRef, Connection};
 use serde_json::Value;
 
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 
-use super::types::{RescueContext, SessionRef};
+use super::{
+    safe_fs,
+    types::{RescueContext, SessionRef},
+};
 
 const MAX_INDEX_ROWS: usize = 100_000;
+const MAX_SQLITE_CELL_BYTES: usize = 64 * 1024;
 const MAX_SQLITE_DATABASES: usize = 64;
 const SQLITE_NAMES: [&str; 3] = ["state_5.sqlite", "state.sqlite", "state.db"];
 const SESSION_INDEX_NAME: &str = "session_index.jsonl";
@@ -57,7 +60,8 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
         bail!("rescue scan --limit must be greater than zero");
     }
 
-    let root = canonical_root(&context.root)?;
+    let configured_root = context.root.clone();
+    let root = canonical_root(&configured_root)?;
     let max_index_rows = context.max_files.min(MAX_INDEX_ROWS);
     if max_index_rows == 0 {
         bail!("limited rescue scan requires a positive max_files budget");
@@ -96,7 +100,7 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     let mut seen = HashSet::new();
     let mut sessions = Vec::with_capacity(paths.len());
     for index_path in paths {
-        let session = verify_index_path(context, &root, &roots, &index_path.raw)?;
+        let session = verify_index_path(context, &configured_root, &root, &roots, &index_path.raw)?;
         if seen.insert(session.source_path.clone()) {
             sessions.push(session);
         }
@@ -132,12 +136,8 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(root)
-        .with_context(|| "Codex rescue root is unavailable; pass --root to a real Codex home")?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!("Codex rescue root must be a real directory");
-    }
-    fs::canonicalize(root).context("Codex rescue root cannot be canonicalized")
+    safe_fs::canonical_root(root)
+        .with_context(|| "Codex rescue root is unavailable; pass --root to a real Codex home")
 }
 
 fn session_roots(root: &Path) -> Result<Vec<PathBuf>> {
@@ -163,49 +163,10 @@ fn session_roots(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(roots)
 }
 
-/// Open a read-only regular file and validate the metadata of the acquired
-/// handle. Unix uses O_NOFOLLOW for the final path component and rejects
-/// hardlinks. Windows has no safe, stable std-only equivalent for every
-/// reparse-point type; callers still reject an observed symlink before open
-/// and re-check the canonical identity after the handle is acquired.
-fn open_regular_file(path: &Path, label: &str) -> Result<(File, Metadata)> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
-    let file = options
-        .open(path)
-        .with_context(|| format!("open {label}"))?;
-    let metadata = file.metadata().with_context(|| format!("stat {label}"))?;
-    if !metadata.is_file() {
-        bail!("{label} is not a regular file");
-    }
-    #[cfg(unix)]
-    if metadata.nlink() != 1 {
-        bail!("{label} must not be hardlinked");
-    }
-    Ok((file, metadata))
-}
-
-fn ensure_path_unchanged(path: &Path, before: &Metadata, label: &str) -> Result<()> {
-    let after = fs::symlink_metadata(path).with_context(|| format!("recheck {label}"))?;
-    if after.file_type().is_symlink() || !after.is_file() {
-        bail!("{label} changed to a non-regular file");
-    }
-    #[cfg(unix)]
-    if after.dev() != before.dev() || after.ino() != before.ino() {
-        bail!("{label} changed while being verified");
-    }
-    #[cfg(not(unix))]
-    if after.len() != before.len() || after.modified().ok() != before.modified().ok() {
-        bail!("{label} changed while being verified");
-    }
-    Ok(())
-}
-
 fn verify_index_path(
     context: &RescueContext,
-    root: &Path,
+    configured_root: &Path,
+    canonical_root: &Path,
     roots: &[PathBuf],
     raw: &str,
 ) -> Result<SessionRef> {
@@ -215,42 +176,30 @@ fn verify_index_path(
     let candidate = if Path::new(raw).is_absolute() {
         PathBuf::from(raw)
     } else {
-        root.join(raw)
+        configured_root.join(raw)
     };
-    let candidate_metadata = fs::symlink_metadata(&candidate)
+    let verified = safe_fs::open_regular(configured_root, &candidate, "indexed rollout")
         .context("Codex index references an unavailable rollout")?;
-    if candidate_metadata.file_type().is_symlink() || !candidate_metadata.is_file() {
-        bail!("Codex index references a non-regular rollout file");
-    }
-    if candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+    let canonical = verified.path().to_path_buf();
+    if canonical.extension().and_then(|value| value.to_str()) != Some("jsonl") {
         bail!("Codex index references a non-JSONL rollout file");
     }
-    let canonical = fs::canonicalize(&candidate).context("canonicalize indexed rollout")?;
     if !roots
         .iter()
         .any(|session_root| canonical.starts_with(session_root))
     {
         bail!("Codex index references a rollout outside the session roots");
     }
-    let (_file, canonical_metadata) = open_regular_file(&canonical, "indexed rollout")?;
-    ensure_path_unchanged(&canonical, &canonical_metadata, "indexed rollout")?;
+    let canonical_metadata = verified.metadata().context("stat indexed rollout")?;
     if canonical_metadata.len() > context.max_session_bytes {
         bail!(
             "Codex index references a rollout over the {} byte inspection budget",
             context.max_session_bytes
         );
     }
-    // The canonical path was checked before opening. Re-canonicalizing after
-    // the handle is acquired detects a parent-directory replacement on all
-    // platforms. Unix additionally uses O_NOFOLLOW for the final component;
-    // Windows reparse-point races cannot be made atomic with safe std APIs,
-    // so a changed identity is rejected and no recovery action is performed.
-    let rechecked = fs::canonicalize(&canonical).context("recheck indexed rollout")?;
-    if rechecked != canonical {
-        bail!("indexed rollout changed while being verified");
-    }
+    verified.ensure_unchanged("indexed rollout")?;
     let relative = canonical
-        .strip_prefix(root)
+        .strip_prefix(canonical_root)
         .context("indexed rollout is outside the Codex root")?
         .to_string_lossy()
         .replace('\\', "/");
@@ -275,22 +224,23 @@ fn read_session_index(
     max_index_rows: usize,
 ) -> Result<Option<Vec<IndexPath>>> {
     let path = root.join(SESSION_INDEX_NAME);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("inspect Codex session index"),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        bail!("Codex session index is not a regular file");
     }
-    if metadata.len() > context.max_session_bytes {
-        bail!(
-            "Codex session index exceeds the {} byte inspection budget",
-            context.max_session_bytes
-        );
-    }
-    let first = read_bounded(&path, context.max_session_bytes)?;
-    let second = read_bounded(&path, context.max_session_bytes)?;
+    let first = safe_fs::read_bounded(
+        root,
+        &path,
+        context.max_session_bytes,
+        "Codex session index",
+    )?;
+    let second = safe_fs::read_bounded(
+        root,
+        &path,
+        context.max_session_bytes,
+        "Codex session index",
+    )?;
     if first != second {
         bail!("Codex session index changed while being read; retry after the writer stops");
     }
@@ -433,16 +383,15 @@ fn read_sqlite_indexes(
                 context.max_total_bytes
             );
         }
-        verified_candidates.push((path, metadata));
+        let canonical = safe_fs::canonical_regular_path(root, &path, "Codex SQLite index")?;
+        verified_candidates.push(canonical);
     }
 
     let mut found = false;
     let mut paths = Vec::new();
-    for (path, metadata) in verified_candidates {
+    for path in verified_candidates {
         found = true;
-        let canonical = fs::canonicalize(&path).context("canonicalize Codex SQLite index")?;
-        let connection = open_read_only(&canonical)?;
-        ensure_path_unchanged(&path, &metadata, "Codex SQLite index")?;
+        let connection = safe_fs::open_sqlite_read_only(root, &path, "Codex SQLite index")?;
         let tables = table_names(&connection)?;
         if !tables.iter().any(|table| table == "threads") {
             continue;
@@ -494,32 +443,30 @@ fn read_sqlite_indexes(
     }
 }
 
-fn open_read_only(path: &Path) -> Result<Connection> {
-    // rusqlite's portable path API cannot be given an already-open std::fs
-    // handle. The caller therefore performs regular-file, hardlink, size,
-    // and post-open identity checks around this read-only open. This is a
-    // bounded diagnostic path, not an atomic no-follow guarantee on Windows
-    // reparse points.
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|_| anyhow::anyhow!("Codex SQLite index could not be opened read-only"))?;
-    connection
-        .execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=250;")
-        .map_err(|_| anyhow::anyhow!("Codex SQLite index could not be configured read-only"))?;
-    Ok(connection)
-}
-
 fn table_names(connection: &Connection) -> Result<Vec<String>> {
     let mut statement = connection
         .prepare("SELECT name FROM sqlite_schema WHERE type='table'")
         .context("read Codex SQLite schema")?;
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            let value = row.get_ref(0)?;
+            Ok(bounded_text_value(value))
+        })
         .context("read Codex SQLite schema")?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .context("read Codex SQLite schema")
+    let mut names = Vec::new();
+    let mut rows_seen = 0usize;
+    for row in rows {
+        rows_seen = rows_seen
+            .checked_add(1)
+            .context("Codex SQLite schema row counter overflow")?;
+        if rows_seen > MAX_INDEX_ROWS {
+            bail!("Codex SQLite schema exceeded the configured row budget");
+        }
+        if let Some(value) = row.context("read Codex SQLite schema")? {
+            names.push(value);
+        }
+    }
+    Ok(names)
 }
 
 fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>> {
@@ -528,12 +475,25 @@ fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>
         .prepare(&sql)
         .context("read Codex SQLite table schema")?;
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(1))
+        .query_map([], |row| {
+            let value = row.get_ref(1)?;
+            Ok(bounded_text_value(value))
+        })
         .context("read Codex SQLite table schema")?;
-    Ok(rows
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter()
-        .collect())
+    let mut columns = HashSet::new();
+    let mut rows_seen = 0usize;
+    for row in rows {
+        rows_seen = rows_seen
+            .checked_add(1)
+            .context("Codex SQLite table schema row counter overflow")?;
+        if rows_seen > MAX_INDEX_ROWS {
+            bail!("Codex SQLite table schema exceeded the configured row budget");
+        }
+        if let Some(value) = row.context("read Codex SQLite table schema")? {
+            columns.insert(value);
+        }
+    }
+    Ok(columns)
 }
 
 fn quote_identifier(value: &str) -> String {
@@ -542,28 +502,24 @@ fn quote_identifier(value: &str) -> String {
 
 fn value_text(value: ValueRef<'_>) -> Option<String> {
     match value {
-        ValueRef::Text(value) => std::str::from_utf8(value).ok().map(ToOwned::to_owned),
+        ValueRef::Text(value) if value.len() <= MAX_SQLITE_CELL_BYTES => {
+            std::str::from_utf8(value).ok().map(ToOwned::to_owned)
+        }
+        ValueRef::Text(_) => None,
         ValueRef::Integer(value) => Some(value.to_string()),
         ValueRef::Real(value) => Some(value.to_string()),
         ValueRef::Null | ValueRef::Blob(_) => None,
     }
 }
 
-fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-    let (mut file, metadata) = open_regular_file(path, "Codex session index")?;
-    ensure_path_unchanged(path, &metadata, "Codex session index")?;
-    if metadata.len() > limit {
-        bail!("Codex session index exceeds the inspection budget");
+fn bounded_text_value(value: ValueRef<'_>) -> Option<String> {
+    let ValueRef::Text(value) = value else {
+        return None;
+    };
+    if value.len() > MAX_SQLITE_CELL_BYTES {
+        return None;
     }
-    let mut bytes = Vec::new();
-    file.by_ref()
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .context("read Codex session index")?;
-    if bytes.len() as u64 > limit {
-        bail!("Codex session index exceeds the inspection budget");
-    }
-    Ok(bytes)
+    std::str::from_utf8(value).ok().map(ToOwned::to_owned)
 }
 
 #[cfg(test)]

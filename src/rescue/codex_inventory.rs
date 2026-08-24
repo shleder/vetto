@@ -7,23 +7,21 @@
 //! report contains only classifications and numeric cursor evidence; provider
 //! paths read from SQLite are never serialized or included in errors.
 //!
-//! Residual boundary: path validation and the later file/SQLite open are still
-//! separate operations.  A concurrent writer can replace a validated path
-//! between those operations.  Closing that TOCTOU window requires a shared,
-//! platform-specific no-follow/handle-based opener used by all rescue
-//! adapters; this module therefore fails closed on unstable byte snapshots but
-//! does not claim atomic path authorization yet.
+//! The shared [`super::safe_fs`] opener keeps source/handle identity checks in
+//! one place.  It is intentionally fail-closed when a path or acquired handle
+//! changes; on Windows the stable std API cannot expose file-index/hard-link
+//! identity, so the helper documents that remaining limitation instead of
+//! claiming an atomic guarantee it cannot provide.
 
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use rusqlite::{types::ValueRef, Connection};
 use serde::Serialize;
 
-use super::types::RescueContext;
+use super::{safe_fs, types::RescueContext};
 
 pub const INDEX_DIVERGENCE: &str = "INDEX_DIVERGENCE";
 pub const ROLLOUT_MISSING: &str = "ROLLOUT_MISSING";
@@ -37,6 +35,7 @@ const THREAD_TABLE: &str = "threads";
 const PROJECTION_TABLE: &str = "thread_history_projection_state";
 const MAX_SQLITE_CANDIDATES: usize = 32;
 const MAX_SQLITE_ROWS: usize = 100_000;
+const MAX_SQLITE_CELL_BYTES: usize = 64 * 1024;
 const MAX_SQLITE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 256;
 
@@ -127,6 +126,7 @@ pub fn inspect_session(
     session_bytes: Option<&[u8]>,
     metadata: Option<&SessionMetadata>,
 ) -> Result<CodexInventoryReport> {
+    let configured_root = context.root.clone();
     let root = canonical_root(&context.root)?;
     let metadata = metadata.cloned().unwrap_or_default();
     let requested_path = session_path
@@ -142,12 +142,12 @@ pub fn inspect_session(
             Some(bytes.to_vec())
         }
         None => requested_path
-            .map(|path| read_stable_session(&root, path, context.max_session_bytes))
+            .map(|path| read_stable_session(&configured_root, path, context.max_session_bytes))
             .transpose()?,
     };
 
     let canonical_session_path = requested_path
-        .map(|path| validate_session_path(&root, path))
+        .map(|path| validate_session_path(&configured_root, path))
         .transpose()?;
     let session_id = metadata
         .session_id
@@ -221,57 +221,26 @@ struct ProjectionResult {
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let metadata =
-        fs::symlink_metadata(root).map_err(|_| anyhow::anyhow!("rescue root is unavailable"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!("rescue root must be a real directory");
-    }
-    fs::canonicalize(root).map_err(|_| anyhow::anyhow!("rescue root cannot be canonicalized"))
+    safe_fs::canonical_root(root)
+        .map_err(|_| anyhow::anyhow!("rescue root cannot be canonicalized"))
 }
 
 fn validate_session_path(root: &Path, path: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| anyhow::anyhow!("session evidence is unavailable"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        bail!("session evidence must be a regular file");
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 {
-            bail!("session hardlinks are not accepted");
-        }
-    }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| anyhow::anyhow!("session evidence cannot be canonicalized"))?;
-    if !canonical.starts_with(root) {
-        bail!("session evidence is outside the configured rescue root");
-    }
-    Ok(canonical)
+    let verified = safe_fs::open_regular(root, path, "session evidence")
+        .map_err(|_| anyhow::anyhow!("session evidence cannot be opened safely"))?;
+    verified
+        .ensure_unchanged("session evidence")
+        .map_err(|_| anyhow::anyhow!("session evidence changed while being inspected"))?;
+    Ok(verified.path().to_path_buf())
 }
 
 fn read_stable_session(root: &Path, path: &Path, limit: u64) -> Result<Vec<u8>> {
-    let canonical = validate_session_path(root, path)?;
-    let first = read_bounded(&canonical, limit)?;
-    let second = read_bounded(&canonical, limit)?;
+    let first = safe_fs::read_bounded(root, path, limit, "session evidence")?;
+    let second = safe_fs::read_bounded(root, path, limit, "session evidence")?;
     if first != second {
         bail!("session changed while being read; retry after the writer stops");
     }
     Ok(first)
-}
-
-fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-    let mut file =
-        File::open(path).map_err(|_| anyhow::anyhow!("session evidence cannot be opened"))?;
-    let mut bytes = Vec::new();
-    file.by_ref()
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|_| anyhow::anyhow!("session evidence cannot be read"))?;
-    if bytes.len() as u64 > limit {
-        bail!("session evidence exceeds the inspection budget");
-    }
-    Ok(bytes)
 }
 
 fn parse_session_id(bytes: &[u8]) -> Option<String> {
@@ -446,7 +415,7 @@ fn database_candidates(
             };
         }
         total_bytes = next_total;
-        let canonical = match fs::canonicalize(&path) {
+        let canonical = match safe_fs::canonical_regular_path(root, &path, "SQLite database") {
             Ok(canonical) if canonical.starts_with(root) => canonical,
             Ok(_) | Err(_) => {
                 rejected = true;
@@ -467,28 +436,30 @@ fn database_candidates(
     }
 }
 
-fn open_read_only(path: &Path) -> Result<Connection> {
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|_| anyhow::anyhow!("SQLite database could not be opened read-only"))?;
-    connection
-        .execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=250;")
-        .map_err(|_| anyhow::anyhow!("SQLite database could not be configured read-only"))?;
-    Ok(connection)
-}
-
 fn table_names(connection: &Connection) -> Result<Vec<String>> {
     let mut statement = connection
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
         .map_err(|_| anyhow::anyhow!("SQLite schema could not be read"))?;
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            let value = row.get_ref(0)?;
+            Ok(bounded_text_value(value))
+        })
         .map_err(|_| anyhow::anyhow!("SQLite schema could not be read"))?;
     let mut names = Vec::new();
-    for row in rows.take(MAX_SQLITE_ROWS) {
-        names.push(row.map_err(|_| anyhow::anyhow!("SQLite schema could not be read"))?);
+    let mut rows_seen = 0usize;
+    for row in rows {
+        rows_seen = rows_seen
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("SQLite schema row counter overflow"))?;
+        if rows_seen > MAX_SQLITE_ROWS {
+            return Err(anyhow::anyhow!(
+                "SQLite schema exceeded the configured row budget"
+            ));
+        }
+        if let Some(name) = row.map_err(|_| anyhow::anyhow!("SQLite schema could not be read"))? {
+            names.push(name);
+        }
     }
     Ok(names)
 }
@@ -499,11 +470,27 @@ fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>
         .prepare(&sql)
         .map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?;
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(1))
+        .query_map([], |row| {
+            let value = row.get_ref(1)?;
+            Ok(bounded_text_value(value))
+        })
         .map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?;
     let mut columns = HashSet::new();
+    let mut rows_seen = 0usize;
     for row in rows {
-        columns.insert(row.map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?);
+        rows_seen = rows_seen
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("SQLite table schema row counter overflow"))?;
+        if rows_seen > MAX_SQLITE_ROWS {
+            return Err(anyhow::anyhow!(
+                "SQLite table schema exceeded the configured row budget"
+            ));
+        }
+        if let Some(column) =
+            row.map_err(|_| anyhow::anyhow!("SQLite table schema could not be read"))?
+        {
+            columns.insert(column);
+        }
     }
     Ok(columns)
 }
@@ -521,10 +508,24 @@ fn first_column(columns: &HashSet<String>, names: &[&str]) -> Option<String> {
 
 fn value_text(value: ValueRef<'_>) -> Option<String> {
     match value {
-        ValueRef::Text(value) => std::str::from_utf8(value).ok().map(ToOwned::to_owned),
+        ValueRef::Text(value) if value.len() <= MAX_SQLITE_CELL_BYTES => {
+            std::str::from_utf8(value).ok().map(ToOwned::to_owned)
+        }
+        ValueRef::Text(_) => None,
         ValueRef::Integer(value) => Some(value.to_string()),
         ValueRef::Real(value) => Some(value.to_string()),
         ValueRef::Null | ValueRef::Blob(_) => None,
+    }
+}
+
+fn bounded_text_value(value: ValueRef<'_>) -> Option<String> {
+    match value {
+        ValueRef::Text(value) if value.len() <= MAX_SQLITE_CELL_BYTES => {
+            std::str::from_utf8(value).ok().map(ToOwned::to_owned)
+        }
+        ValueRef::Text(_) | ValueRef::Null | ValueRef::Blob(_) => None,
+        ValueRef::Integer(value) => Some(value.to_string()),
+        ValueRef::Real(value) => Some(value.to_string()),
     }
 }
 
@@ -690,7 +691,14 @@ fn stored_path_exists_within_root(root: &Path, stored: &str) -> Option<bool> {
         }
     }
     let metadata = fs::symlink_metadata(&candidate).ok()?;
-    Some(metadata.is_file() && !metadata.file_type().is_symlink())
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Some(false);
+    }
+    // Re-run the shared final-component/reparse policy before treating a
+    // provider-supplied alternate path as present.  Any unestablished
+    // identity is deliberately reported as unknown rather than true.
+    safe_fs::canonical_regular_path(root, &candidate, "stored rollout").ok()?;
+    Some(true)
 }
 
 fn looks_windows_path(value: &str) -> bool {
@@ -725,7 +733,8 @@ fn inspect_thread_store(
     let mut read_error = false;
     let mut schema_unknown = false;
     for db_path in candidates {
-        let Ok(connection) = open_read_only(&db_path) else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        else {
             read_error = true;
             continue;
         };
@@ -1091,7 +1100,8 @@ fn inspect_projection(
     let mut states = Vec::new();
     let mut relevant_error = candidate_set.rejected;
     for db_path in candidates {
-        let Ok(connection) = open_read_only(&db_path) else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
+        else {
             relevant_error = true;
             continue;
         };

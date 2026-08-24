@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -14,6 +13,7 @@ use crate::report;
 
 use super::adapter::RescueAdapter;
 use super::codex_inventory;
+use super::safe_fs;
 use super::types::{
     AdapterStatus, Availability, RescueContext, SessionHealth, SessionRef, SessionView,
     SnapshotReceipt,
@@ -381,16 +381,8 @@ impl CodexAdapter {
     }
 
     fn validate_root(context: &RescueContext) -> Result<PathBuf> {
-        let metadata = fs::symlink_metadata(&context.root)
-            .with_context(|| format!("inspect rescue root {}", context.root.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            bail!(
-                "rescue root must be a real directory, not a symlink: {}",
-                context.root.display()
-            );
-        }
-        fs::canonicalize(&context.root)
-            .with_context(|| format!("canonicalize rescue root {}", context.root.display()))
+        safe_fs::canonical_root(&context.root)
+            .with_context(|| format!("inspect rescue root {}", context.root.display()))
     }
 
     fn canonical_session_roots(context: &RescueContext) -> Result<Vec<PathBuf>> {
@@ -415,27 +407,19 @@ impl CodexAdapter {
     }
 
     fn validate_session_path(context: &RescueContext, path: &Path) -> Result<PathBuf> {
-        let metadata = fs::symlink_metadata(path)
-            .with_context(|| format!("inspect session {}", path.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            bail!("session must be a regular non-symlink file");
-        }
-        #[cfg(unix)]
-        if metadata.nlink() != 1 {
-            bail!("session hardlinks are not accepted");
-        }
-        if metadata.len() > context.max_session_bytes {
+        let verified = safe_fs::open_regular(&context.root, path, "session")?;
+        if verified.len() > context.max_session_bytes {
             bail!(
                 "session exceeds the {} byte inspection budget",
                 context.max_session_bytes
             );
         }
-        let canonical = fs::canonicalize(path)
-            .with_context(|| format!("canonicalize session {}", path.display()))?;
+        let canonical = verified.path().to_path_buf();
         let roots = Self::canonical_session_roots(context)?;
         if !roots.iter().any(|root| canonical.starts_with(root)) {
             bail!("session is outside the configured Codex session roots");
         }
+        verified.ensure_unchanged("session")?;
         Ok(canonical)
     }
 
@@ -454,7 +438,9 @@ impl CodexAdapter {
     }
 
     fn read_stable(context: &RescueContext, path: &Path) -> Result<Vec<u8>> {
-        Self::read_stable_with(context, path, Self::read_bounded)
+        Self::read_stable_with(context, path, |path, limit| {
+            safe_fs::read_bounded(&context.root, path, limit, "session")
+        })
     }
 
     fn read_stable_with<F>(context: &RescueContext, path: &Path, mut read: F) -> Result<Vec<u8>>
@@ -472,14 +458,11 @@ impl CodexAdapter {
         Ok(first)
     }
 
+    #[allow(dead_code)]
     fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-        let file = File::open(path)?;
-        let mut bytes = Vec::new();
-        file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > limit {
-            bail!("session grew beyond the inspection budget while reading");
-        }
-        Ok(bytes)
+        safe_fs::read_bounded_existing(path, limit, "session").map_err(|error| {
+            anyhow::anyhow!("session grew beyond the inspection budget while reading: {error}")
+        })
     }
 
     fn scan_directory(
