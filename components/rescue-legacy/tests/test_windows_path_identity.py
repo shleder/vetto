@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from codex_rescue.doctor_batch import run_doctor_all
 from codex_rescue.thread_store import (
     INDEX_DIVERGENCE,
     NEVER_PERSISTED_TEMP_CHILD,
@@ -130,8 +131,8 @@ class WindowsPathIdentityTests(unittest.TestCase):
     def test_windows_state5_extended_path_integration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            sessions = root / "sessions"
-            sessions.mkdir()
+            sessions = root / "sessions" / "2026" / "08" / "19"
+            sessions.mkdir(parents=True)
             thread_id = "019fffff-1000-7000-8000-000000001000"
             rollout = sessions / f"rollout-2026-08-19T00-00-00-{thread_id}.jsonl"
             rollout.write_text('{}\n', encoding="utf-8")
@@ -148,6 +149,13 @@ class WindowsPathIdentityTests(unittest.TestCase):
             self.assertEqual(report.status, "DIVERGED")
             self.assertEqual(report.path_relation, "EQUIVALENT")
             self.assertIn(WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE, report.findings)
+
+            batch = run_doctor_all(root, limit=10)
+            self.assertEqual(batch.sessions_scanned, 1)
+            self.assertIn(
+                WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE,
+                batch.results[0]["findings"],
+            )
 
 
 class ThreadStoreContractTests(unittest.TestCase):

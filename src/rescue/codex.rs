@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,12 +13,364 @@ use sha2::{Digest, Sha256};
 use crate::report;
 
 use super::adapter::RescueAdapter;
+use super::codex_inventory;
 use super::types::{
     AdapterStatus, Availability, RescueContext, SessionHealth, SessionRef, SessionView,
     SnapshotReceipt,
 };
 
 pub struct CodexAdapter;
+
+// Semantic inspection is intentionally separate from replay.  These limits
+// keep attacker-controlled IDs and future schemas from turning diagnosis into
+// an unbounded allocation while still covering ordinary long-lived rollouts.
+const MAX_SEMANTIC_FINDINGS: usize = 128;
+const MAX_CORRELATION_STATES: usize = 1024;
+const MAX_CALL_OCCURRENCES: usize = 2;
+const MAX_RETIRED_CALL_IDS: usize = 1024;
+const MAX_SEMANTIC_ID_BYTES: usize = 4096;
+
+const CALL_FAMILIES: [&str; 3] = ["function_call", "custom_tool_call", "tool_search_call"];
+
+fn output_family(kind: &str) -> Option<&'static str> {
+    match kind {
+        "function_call_output" => Some("function_call"),
+        "custom_tool_call_output" => Some("custom_tool_call"),
+        "tool_search_output" => Some("tool_search_call"),
+        _ => None,
+    }
+}
+
+fn response_item_id_prefix(kind: &str) -> Option<&'static str> {
+    // Keep this table aligned with Codex's ResponseItem::id_prefix().  A
+    // missing prefix is not rejected: upstream deliberately accepts legacy
+    // unprefixed IDs and clears them before replay.
+    match kind {
+        "additional_tools" => Some("at"),
+        "message" => Some("msg"),
+        "agent_message" => Some("amsg"),
+        "reasoning" => Some("rs"),
+        "local_shell_call" => Some("lsh"),
+        "function_call" => Some("fc"),
+        "tool_search_call" => Some("tsc"),
+        "function_call_output" => Some("fco"),
+        "custom_tool_call" => Some("ctc"),
+        "custom_tool_call_output" => Some("ctco"),
+        "tool_search_output" => Some("tso"),
+        "web_search_call" => Some("ws"),
+        "image_generation_call" => Some("ig"),
+        "compaction" | "context_compaction" => Some("cmp"),
+        _ => None,
+    }
+}
+
+fn is_known_response_item_type(kind: &str) -> bool {
+    response_item_id_prefix(kind).is_some()
+}
+
+fn is_known_event_msg_type(kind: &str) -> bool {
+    // These current operational events used to be mistaken for future
+    // schemas.  They carry a call identity but are not response-item call /
+    // output pairs, so they are recognized without inventing correlation.
+    matches!(
+        kind,
+        "mcp_tool_call_begin"
+            | "mcp_tool_call_end"
+            | "view_image_tool_call"
+            | "dynamic_tool_call_request"
+            | "dynamic_tool_call_response"
+    )
+}
+
+fn is_call_family(kind: &str) -> bool {
+    CALL_FAMILIES.contains(&kind)
+}
+
+#[derive(Default)]
+struct CallState {
+    families: Vec<String>,
+}
+
+#[derive(Default)]
+struct SemanticDiagnostics {
+    findings: Vec<String>,
+    calls: HashMap<String, CallState>,
+    outputs: HashMap<String, CallState>,
+    retired_ids: HashSet<String>,
+    retired_order: VecDeque<String>,
+    correlation_overflow: bool,
+}
+
+impl SemanticDiagnostics {
+    fn push_finding(&mut self, finding: &'static str) {
+        if self.findings.len() < MAX_SEMANTIC_FINDINGS
+            && !self.findings.iter().any(|item| item == finding)
+        {
+            self.findings.push(finding.to_string());
+        }
+    }
+
+    fn check_persisted_id(
+        &mut self,
+        payload: &serde_json::Map<String, serde_json::Value>,
+        kind: &str,
+    ) {
+        let Some(expected) = response_item_id_prefix(kind) else {
+            return;
+        };
+        let Some(value) = payload.get("id") else {
+            return;
+        };
+        // Optional IDs are valid when explicitly null as well as when absent.
+        if value.is_null() {
+            return;
+        }
+        let Some(raw_id) = value.as_str() else {
+            self.push_finding("INVALID_PERSISTED_ITEM_ID");
+            return;
+        };
+        if raw_id.is_empty() {
+            self.push_finding("INVALID_PERSISTED_ITEM_ID");
+            return;
+        }
+        let Some((prefix, suffix)) = raw_id.split_once('_') else {
+            // Legacy persisted IDs are intentionally compatible.
+            return;
+        };
+        if prefix != expected || suffix.is_empty() {
+            self.push_finding("INVALID_PERSISTED_ITEM_ID");
+        }
+    }
+
+    fn operational_schema_issue(
+        &self,
+        payload: &serde_json::Map<String, serde_json::Value>,
+        outer_type: Option<&str>,
+    ) -> bool {
+        let Some(outer_type) = outer_type else {
+            return false;
+        };
+        if outer_type != "response_item" && outer_type != "event_msg" {
+            return false;
+        }
+        let Some(kind) = payload.get("type").and_then(serde_json::Value::as_str) else {
+            return true;
+        };
+
+        let identity_present = payload
+            .get("call_id")
+            .or_else(|| {
+                (outer_type == "response_item")
+                    .then(|| payload.get("id"))
+                    .flatten()
+            })
+            .is_some_and(|value| !value.is_null() && value.as_str().is_some_and(|s| !s.is_empty()));
+        let lower = kind.to_ascii_lowercase();
+        let looks_operational = is_known_event_msg_type(kind)
+            || output_family(kind).is_some()
+            || is_call_family(kind)
+            || kind.ends_with("_call")
+            || kind.ends_with("_output")
+            || lower.contains("tool")
+            || (identity_present
+                && (lower.contains("event")
+                    || lower.starts_with("future_")
+                    || lower.starts_with("unknown_")));
+        if !looks_operational {
+            return false;
+        }
+
+        let known = if outer_type == "response_item" {
+            is_known_response_item_type(kind)
+        } else {
+            is_known_event_msg_type(kind)
+        };
+        if !known {
+            return true;
+        }
+
+        let requires_identity = is_call_family(kind)
+            || output_family(kind).is_some()
+            || (outer_type == "event_msg" && is_known_event_msg_type(kind))
+            || matches!(kind, "web_search_call" | "image_generation_call");
+        if requires_identity {
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty());
+            if call_id.is_none() {
+                return true;
+            }
+            if is_call_family(kind)
+                && payload
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn add_correlation(
+        &mut self,
+        kind: &str,
+        payload: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        let call_kind = is_call_family(kind);
+        let output_kind = output_family(kind);
+        if !call_kind && output_kind.is_none() {
+            return;
+        }
+
+        let Some(call_id) = payload
+            .get("call_id")
+            .or_else(|| payload.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        if call_id.len() > MAX_SEMANTIC_ID_BYTES {
+            self.correlation_overflow = true;
+            self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+            return;
+        }
+
+        if call_kind {
+            if !self.calls.contains_key(call_id)
+                && !self.outputs.contains_key(call_id)
+                && self.calls.len().saturating_add(self.outputs.len()) >= MAX_CORRELATION_STATES
+            {
+                self.correlation_overflow = true;
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+                return;
+            }
+            let occurrences_overflow = {
+                let state = self.calls.entry(call_id.to_string()).or_default();
+                if state.families.len() < MAX_CALL_OCCURRENCES {
+                    state.families.push(kind.to_string());
+                    false
+                } else {
+                    true
+                }
+            };
+            if occurrences_overflow {
+                self.correlation_overflow = true;
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+            }
+            if self.retired_ids.contains(call_id) {
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+            }
+        } else if let Some(output_family) = output_kind {
+            if !self.outputs.contains_key(call_id)
+                && !self.calls.contains_key(call_id)
+                && self.calls.len().saturating_add(self.outputs.len()) >= MAX_CORRELATION_STATES
+            {
+                self.correlation_overflow = true;
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+                return;
+            }
+            let occurrences_overflow = {
+                let state = self.outputs.entry(call_id.to_string()).or_default();
+                if state.families.len() < MAX_CALL_OCCURRENCES {
+                    state.families.push(output_family.to_string());
+                    false
+                } else {
+                    true
+                }
+            };
+            if occurrences_overflow {
+                self.correlation_overflow = true;
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+            }
+        }
+
+        self.retire_completed(call_id);
+    }
+
+    fn retire_completed(&mut self, call_id: &str) {
+        let completed = self
+            .calls
+            .get(call_id)
+            .zip(self.outputs.get(call_id))
+            .is_some_and(|(call_state, output_state)| {
+                call_state.families.len() == 1
+                    && output_state.families.len() == 1
+                    && call_state.families[0] == output_state.families[0]
+            });
+        if !completed {
+            return;
+        }
+        self.calls.remove(call_id);
+        self.outputs.remove(call_id);
+        if self.retired_order.len() == MAX_RETIRED_CALL_IDS {
+            if let Some(oldest) = self.retired_order.pop_front() {
+                self.retired_ids.remove(&oldest);
+            }
+        }
+        let owned = call_id.to_string();
+        self.retired_order.push_back(owned.clone());
+        self.retired_ids.insert(owned);
+    }
+
+    fn inspect(&mut self, value: &serde_json::Value) {
+        let Some(record) = value.as_object() else {
+            return;
+        };
+        let outer_type = record.get("type").and_then(serde_json::Value::as_str);
+        let Some(payload) = record.get("payload").and_then(serde_json::Value::as_object) else {
+            return;
+        };
+        let Some(kind) = payload.get("type").and_then(serde_json::Value::as_str) else {
+            if outer_type == Some("response_item") || outer_type == Some("event_msg") {
+                self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+            }
+            return;
+        };
+        if outer_type == Some("response_item") {
+            self.check_persisted_id(payload, kind);
+        }
+        if self.operational_schema_issue(payload, outer_type) {
+            self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+        }
+        self.add_correlation(kind, payload);
+    }
+
+    fn finish(mut self) -> Vec<String> {
+        let mut unfinished = false;
+        let mut ambiguous = false;
+        for (call_id, call_state) in &self.calls {
+            let Some(output_state) = self.outputs.get(call_id) else {
+                unfinished = true;
+                continue;
+            };
+            let one_to_one = call_state.families.len() == 1
+                && output_state.families.len() == 1
+                && call_state.families[0] == output_state.families[0];
+            if !one_to_one {
+                ambiguous = true;
+                unfinished = true;
+            }
+        }
+        if self
+            .outputs
+            .keys()
+            .any(|call_id| !self.calls.contains_key(call_id))
+        {
+            ambiguous = true;
+        }
+        if ambiguous || self.correlation_overflow {
+            self.push_finding("UNKNOWN_OPERATIONAL_SCHEMA");
+        }
+        if unfinished {
+            self.push_finding("UNFINISHED_TOOL_CALL");
+        }
+        self.findings
+    }
+}
 
 impl CodexAdapter {
     fn session_roots(context: &RescueContext) -> [PathBuf; 2] {
@@ -87,8 +440,9 @@ impl CodexAdapter {
     }
 
     fn normalized_relative(context: &RescueContext, path: &Path) -> Result<String> {
+        let canonical_root = Self::validate_root(context)?;
         let relative = path
-            .strip_prefix(&context.root)
+            .strip_prefix(&canonical_root)
             .with_context(|| format!("session {} is outside rescue root", path.display()))?;
         Ok(relative.to_string_lossy().replace('\\', "/"))
     }
@@ -263,6 +617,7 @@ impl RescueAdapter for CodexAdapter {
         let mut records = 0usize;
         let mut malformed_records = 0usize;
         let mut oversized_records = 0usize;
+        let mut semantic = SemanticDiagnostics::default();
 
         for raw_record in bytes.split_inclusive(|byte| *byte == b'\n') {
             let mut record = raw_record;
@@ -280,7 +635,10 @@ impl RescueAdapter for CodexAdapter {
                 continue;
             }
             match serde_json::from_slice::<serde_json::Value>(record) {
-                Ok(_) => records += 1,
+                Ok(value) => {
+                    records += 1;
+                    semantic.inspect(&value);
+                }
                 Err(_) => malformed_records += 1,
             }
         }
@@ -298,11 +656,27 @@ impl RescueAdapter for CodexAdapter {
                 context.max_record_bytes
             ));
         }
+        let mut findings = semantic.finish();
+        let inventory = codex_inventory::inspect_session(
+            context,
+            Some(&session.source_path),
+            Some(&bytes),
+            None,
+        )?;
+        for finding in inventory.findings {
+            if !findings.iter().any(|existing| existing == &finding) {
+                findings.push(finding);
+            }
+        }
+        notices.extend(inventory.notices);
+        for finding in &findings {
+            notices.push(format!("diagnostic finding: {finding}"));
+        }
         let health = if malformed_records > 0 || oversized_records > 0 {
             SessionHealth::Corrupt
         } else if records == 0 {
             SessionHealth::Unknown
-        } else if !terminated_with_newline {
+        } else if !findings.is_empty() || !terminated_with_newline {
             SessionHealth::Warning
         } else {
             SessionHealth::Healthy
@@ -319,6 +693,7 @@ impl RescueAdapter for CodexAdapter {
             malformed_records,
             oversized_records,
             terminated_with_newline,
+            findings,
             notices,
         })
     }
@@ -488,5 +863,171 @@ mod tests {
             "{error:#}"
         );
         assert_eq!(reads, 2, "the stable-read contract requires two reads");
+    }
+
+    fn diagnose_records(tag: &str, records: &[serde_json::Value]) -> SessionView {
+        let temp = TempRoot::new(tag);
+        let root = temp.codex_home();
+        let bytes = records
+            .iter()
+            .map(|record| serde_json::to_vec(record).expect("serialize fixture"))
+            .fold(Vec::new(), |mut output, mut record| {
+                output.append(&mut record);
+                output.push(b'\n');
+                output
+            });
+        session(&root, "semantic.jsonl", &bytes);
+        let adapter = CodexAdapter;
+        let context = RescueContext::new(root);
+        let sessions = adapter
+            .discover_sessions(&context)
+            .expect("discover semantic fixture");
+        // Keep the temporary directory alive until the diagnosis has read it.
+        let view = adapter
+            .diagnose(&context, &sessions[0])
+            .expect("diagnose semantic fixture");
+        drop(temp);
+        view
+    }
+
+    #[test]
+    fn semantic_check_accepts_current_and_legacy_item_ids() {
+        let view = diagnose_records(
+            "semantic-valid-ids",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"message","id":"msg_123","role":"assistant","content":[]}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"reasoning","id":"rs_123","summary":[]}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","id":"legacy-id","call_id":"c1","name":"echo","arguments":"{}"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}),
+            ],
+        );
+        assert!(!view
+            .findings
+            .contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
+        assert!(!view.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
+    }
+
+    #[test]
+    fn semantic_check_rejects_type_incompatible_prefixed_ids() {
+        let view = diagnose_records(
+            "semantic-invalid-id",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"reasoning","id":"item_wrong","summary":[]}}),
+            ],
+        );
+        assert!(view
+            .findings
+            .contains(&"INVALID_PERSISTED_ITEM_ID".to_string()));
+        assert_eq!(view.health, SessionHealth::Warning);
+    }
+
+    #[test]
+    fn semantic_check_recognizes_current_operational_types() {
+        let view = diagnose_records(
+            "semantic-known-types",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"event_msg","payload":{"type":"mcp_tool_call_begin","call_id":"mcp-1","invocation":{"server":"s","tool":"t"}}}),
+                serde_json::json!({"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"mcp-1","result":{"ok":true}}}),
+                serde_json::json!({"type":"event_msg","payload":{"type":"dynamic_tool_call_request","call_id":"dyn-1"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"tool_search_call","id":"tsc_1","call_id":"search-1","name":"search","arguments":{}}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"tool_search_output","call_id":"search-1","output":[]}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"web_search_call","id":"ws_1","status":"completed"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"image_generation_call","id":"ig_1","status":"completed","result":""}}),
+            ],
+        );
+        assert!(!view
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(!view.findings.contains(&"UNFINISHED_TOOL_CALL".to_string()));
+    }
+
+    #[test]
+    fn semantic_check_accepts_message_and_reasoning_without_optional_ids() {
+        let view = diagnose_records(
+            "semantic-missing-optional-ids",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[]}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"reasoning","summary":[]}}),
+            ],
+        );
+        assert!(
+            view.findings.is_empty(),
+            "unexpected findings: {:?}",
+            view.findings
+        );
+    }
+
+    #[test]
+    fn semantic_check_fails_closed_for_future_operational_type() {
+        let view = diagnose_records(
+            "semantic-future-type",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"event_msg","payload":{"type":"future_event_v99","call_id":"future-1"}}),
+            ],
+        );
+        assert!(view
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+    }
+
+    #[test]
+    fn semantic_check_correlates_tool_calls_without_replaying_them() {
+        let complete = diagnose_records(
+            "semantic-complete-call",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"echo","arguments":"{}"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}),
+            ],
+        );
+        assert!(!complete
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
+
+        let unfinished = diagnose_records(
+            "semantic-unfinished-call",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"c2","name":"echo","arguments":"{}"}}),
+            ],
+        );
+        assert!(unfinished
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
+    }
+
+    #[test]
+    fn semantic_check_marks_orphan_and_duplicate_correlations_unknown() {
+        let orphan = diagnose_records(
+            "semantic-orphan-output",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"orphan","output":"ok"}}),
+            ],
+        );
+        assert!(orphan
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+
+        let duplicate_call = diagnose_records(
+            "semantic-duplicate-call",
+            &[
+                serde_json::json!({"type":"session_meta","payload":{"id":"fixture"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"dup","name":"echo","arguments":"{}"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"dup","name":"echo","arguments":"{}"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"dup","output":"ok"}}),
+            ],
+        );
+        assert!(duplicate_call
+            .findings
+            .contains(&"UNKNOWN_OPERATIONAL_SCHEMA".to_string()));
+        assert!(duplicate_call
+            .findings
+            .contains(&"UNFINISHED_TOOL_CALL".to_string()));
     }
 }

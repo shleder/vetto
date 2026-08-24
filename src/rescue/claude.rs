@@ -385,6 +385,7 @@ impl RescueAdapter for ClaudeAdapter {
             malformed_records,
             oversized_records,
             terminated_with_newline,
+            findings: Vec::new(),
             notices,
         })
     }

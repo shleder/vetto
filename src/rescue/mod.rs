@@ -1,6 +1,7 @@
 mod adapter;
 mod claude;
 mod codex;
+mod codex_inventory;
 pub mod types;
 
 use std::path::{Path, PathBuf};

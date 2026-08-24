@@ -5,7 +5,21 @@ Keep a Changelog; versioning follows SemVer.
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Fixed
+
+- Make imported Codex Rescue batch doctor discovery recursive across nested
+  active, archived, and subagent JSONL trees; shallow discovery previously
+  omitted date-partitioned rollouts from `doctor --all` and `--changed`.
+- Restore bounded Codex semantic diagnostics in the Rust adapter for invalid
+  persisted item IDs, unknown operational schemas, and unfinished tool calls.
+- Add read-only SQLite inventory/projection diagnostics for Windows path
+  identity divergence, missing/index-only rollouts, empty sidebar metadata,
+  wedged projection cursors, and unknown projection state.
+
+### Changed
+
+- Clarify that Codex Rescue development and npm installation have moved to
+  Vetto while the standalone repository remains public compatibility history.
 
 ## [0.2.0-alpha.2] — 2026-08-23
 

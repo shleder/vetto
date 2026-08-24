@@ -130,6 +130,30 @@ fn scan_and_diagnose_are_bounded_to_codex_session_roots() {
 }
 
 #[test]
+fn scan_discovers_nested_sessions_beyond_the_legacy_twenty_item_window() {
+    let project = TempProject::new("rescue-scan-many-nested");
+    let root = project.path().join("codex-home");
+    for index in 0..25 {
+        write_file(
+            &root.join(format!(
+                "sessions/2026/08/{:02}/rollout-{index:02}.jsonl",
+                index + 1
+            )),
+            "{\"type\":\"turn\"}\n",
+        );
+    }
+
+    let scan = run_rescue(&root, &["scan"]);
+    assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
+    let value: serde_json::Value = serde_json::from_slice(&scan.stdout).expect("scan JSON output");
+    let sessions = value["sessions"].as_array().expect("session array");
+    assert_eq!(sessions.len(), 25, "scan output: {}", stdout(&scan));
+    assert!(sessions
+        .iter()
+        .any(|session| { session["key"] == "sessions/2026/08/25/rollout-24.jsonl" }));
+}
+
+#[test]
 fn diagnose_reports_malformed_and_unterminated_jsonl() {
     let project = TempProject::new("rescue-corrupt");
     let root = project.path().join("codex-home");

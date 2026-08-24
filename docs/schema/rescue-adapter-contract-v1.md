@@ -28,6 +28,12 @@ never edit, delete, rename, replace, or reconstruct an original vendor
 session/database. A future adapter must explicitly document any additional
 capability before it is exposed.
 
+Provider-derived inventory may be inspected only through a read-only/no-create
+database connection. Schema disagreement, a moving cursor, or unreadable
+derived state produces a bounded finding or `unknown`; it never authorizes a
+repair. Stored provider paths and database values are evidence, not reportable
+user content, and must not be emitted verbatim.
+
 ## Bounded input and identity rules
 
 The reference Codex adapter enforces these defaults for every invocation:
@@ -72,6 +78,10 @@ An adapter change is conforming only when the rescue test suite covers:
 4. source-change detection during a read;
 5. exclusive, no-follow destination creation outside the source root; and
 6. repeatable sanitized JSON output with no credential-shaped input leakage.
+
+Codex semantic and inventory diagnostics additionally require bounded finding
+counts, type-aware persisted-ID checks, call/output correlation limits, and
+proof that SQLite bytes are unchanged after every diagnostic path.
 
 The Codex reference adapter is the conformance baseline. Provider-specific
 fixtures must be synthetic and must not contain credentials, prompts, or raw
