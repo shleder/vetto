@@ -3,6 +3,7 @@ mod claude;
 mod codex;
 mod codex_index;
 mod codex_inventory;
+mod safe_fs;
 pub mod types;
 
 use std::path::{Path, PathBuf};
