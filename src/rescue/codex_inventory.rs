@@ -688,12 +688,12 @@ fn inspect_thread_store(
                             .to_string();
                             result.evidence.path_relation = "equivalent".to_string();
                             result.evidence.windows_namespace_divergence = namespace_divergence;
-                        result.evidence.rollout_present = Some(true);
-                        if namespace_divergence {
-                            result.findings.push(
-                                WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE.to_string(),
-                            );
-                            result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
+                            result.evidence.rollout_present = Some(true);
+                            if namespace_divergence {
+                                result
+                                    .findings
+                                    .push(WINDOWS_ROLLOUT_PATH_IDENTITY_DIVERGENCE.to_string());
+                                result.notices.push("thread index and rollout use different Windows path namespaces".to_string());
                             }
                         }
                         PathRelation::Different => {
