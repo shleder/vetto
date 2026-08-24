@@ -2,6 +2,7 @@ mod adapter;
 mod claude;
 mod codex;
 mod codex_inventory;
+mod codex_index;
 pub mod types;
 
 use std::path::{Path, PathBuf};
@@ -16,6 +17,8 @@ use adapter::RescueAdapter;
 use claude::ClaudeAdapter;
 use codex::CodexAdapter;
 use types::{Availability, RescueContext, SessionRef};
+
+const DEFAULT_INDEX_SCAN_LIMIT: usize = 50;
 
 fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
     match id {
@@ -88,6 +91,22 @@ fn print_json<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct ScanDiscovery {
+    /// `filesystem-all` is the bounded recursive walker. `index-first` means
+    /// every returned candidate came from a verified provider index.
+    mode: &'static str,
+    /// The evidence set whose completeness is described by `complete`.
+    /// Index completeness never proves that the provider indexed every file
+    /// in the state root.
+    scope: &'static str,
+    source: String,
+    complete: bool,
+    limit: Option<usize>,
+    candidate_count: usize,
+    returned_count: usize,
+}
+
 pub fn run_cli(
     adapter_id: &str,
     root: Option<&Path>,
@@ -97,17 +116,83 @@ pub fn run_cli(
     let adapter = adapter_by_id(adapter_id)?;
     let context = RescueContext::new(default_root(adapter_id, root)?);
     match command {
-        RescueCommand::Scan => {
+        RescueCommand::Scan { limit, all } => {
+            if *limit == Some(0) {
+                bail!("rescue scan --limit must be greater than zero");
+            }
+            if limit.is_some() && adapter_id != "codex" {
+                bail!("`rescue scan --limit` is supported only by the Codex index-first adapter");
+            }
+
             let status = adapter.detect(&context)?;
-            let sessions = if status.availability == Availability::Available {
-                adapter.discover_sessions(&context)?
+            let use_index = adapter_id == "codex" && !*all;
+            let effective_limit =
+                use_index.then_some((*limit).unwrap_or(DEFAULT_INDEX_SCAN_LIMIT));
+            let filesystem_mode = if *all {
+                "filesystem-all"
             } else {
-                Vec::new()
+                "filesystem"
+            };
+            let (sessions, discovery) = if status.availability == Availability::Available {
+                if let Some(limit) = effective_limit {
+                    let indexed = codex_index::discover(&context, limit)?;
+                    let returned_count = indexed.sessions.len();
+                    let complete = !indexed.truncated;
+                    (
+                        indexed.sessions,
+                        ScanDiscovery {
+                            mode: "index-first",
+                            scope: "provider-index",
+                            source: indexed.source,
+                            complete,
+                            limit: Some(limit),
+                            candidate_count: indexed.candidate_count,
+                            returned_count,
+                        },
+                    )
+                } else {
+                    let sessions = adapter.discover_sessions(&context)?;
+                    let returned_count = sessions.len();
+                    (
+                        sessions,
+                        ScanDiscovery {
+                            mode: filesystem_mode,
+                            scope: "session-roots",
+                            source: "session-roots".to_string(),
+                            complete: true,
+                            limit: None,
+                            candidate_count: returned_count,
+                            returned_count,
+                        },
+                    )
+                }
+            } else {
+                (
+                    Vec::new(),
+                    ScanDiscovery {
+                        mode: if use_index {
+                            "index-first"
+                        } else {
+                            filesystem_mode
+                        },
+                        scope: if use_index {
+                            "provider-index"
+                        } else {
+                            "session-roots"
+                        },
+                        source: "unavailable".to_string(),
+                        complete: false,
+                        limit: effective_limit,
+                        candidate_count: 0,
+                        returned_count: 0,
+                    },
+                )
             };
             if json {
                 print_json(&serde_json::json!({
                     "status": status,
                     "sessions": sessions,
+                    "discovery": discovery,
                 }))
             } else {
                 println!("adapter: {} ({})", adapter.id(), status.support_level);
@@ -115,6 +200,20 @@ pub fn run_cli(
                     println!("status: unavailable ({})", report::clean(&reason));
                 } else {
                     println!("status: available");
+                }
+                println!(
+                    "discovery: {} ({}, {} candidate(s), {} returned)",
+                    discovery.mode,
+                    discovery.source,
+                    discovery.candidate_count,
+                    discovery.returned_count
+                );
+                if let Some(limit) = discovery.limit {
+                    if !discovery.complete {
+                        println!(
+                            "notice: result is limited to {limit}; use a larger --limit or `--all` for the bounded filesystem walk"
+                        );
+                    }
                 }
                 println!("sessions: {}", sessions.len());
                 for session in sessions {

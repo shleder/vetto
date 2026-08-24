@@ -81,7 +81,9 @@ x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
 there is no install-time binary downloader. To install this release exactly,
 use `npm install --global @shleddy/vetto@0.2.0-alpha.2`. Stable `0.1.x`
 remains on the npm `latest` tag while alpha builds use `next`.
-Alpha testers should follow the privacy and reporting checklist in
+The supported npm name is the scoped `@shleddy/vetto`; the unscoped `vetto`
+package is not the installation path. Alpha testers should follow the
+npm-only privacy, desktop-support, and reporting checklist in
 [docs/field-testing.md](docs/field-testing.md).
 
 The wrapper accepts any executable:
@@ -111,7 +113,13 @@ remains public as historical compatibility evidence; new user installations
 use only `npm install --global @shleddy/vetto@next`.
 
 ```console
+# Current published alpha: bounded session discovery
 vetto rescue --json scan
+# The commands below are on main and are not in 0.2.0-alpha.2 yet.
+# Codex: choose a different provider-index limit
+vetto rescue --json scan --limit 200
+# Codex: explicitly walk the bounded session roots, including unindexed files
+vetto rescue --json scan --all
 vetto rescue diagnose sessions/2026/08/23/session.jsonl
 mkdir recovery
 vetto rescue snapshot session.jsonl --output recovery/session.jsonl
@@ -119,6 +127,18 @@ vetto rescue snapshot session.jsonl --output recovery/session.jsonl
 # Claude: explicit root, read-only and copy-only
 vetto rescue --adapter claude --root ~/.claude --json scan
 ```
+
+On `main`, Codex `scan` is index-first by default and returns at most 50 verified index
+candidates. `--limit N` changes that cap; a missing, stale, or unreadable
+provider index fails closed instead of silently walking the state directory.
+Use `--all` when a bounded filesystem walk is intentional, for example with a
+synthetic fixture or a copied state tree that has no provider index. The JSON
+`discovery.complete` field describes completeness of the selected evidence
+source only: `true` means that all verified candidates from the selected index
+fit within the requested limit, or that the bounded session-root walk finished.
+It never proves that the provider index contains every file in the state root.
+These index-first flags require a later npm alpha; `0.2.0-alpha.2` remains the
+current published build and must not be represented as containing them.
 
 Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
 overwrites an existing destination, writes inside the original agent state
@@ -129,6 +149,13 @@ emits bounded findings without exposing stored paths or rewriting derived
 state. See
 [ADR 0001](docs/adr/0001-universal-rescue-architecture.md) and the
 [Antigravity compatibility gate](docs/compatibility/antigravity.md).
+
+The rescue adapter is not an injector for an already-running desktop app. A
+Codex or Claude desktop process without a documented CLI remains
+`observe-only`/`unavailable`; it must not be reported as sandboxed by wrapping a
+different process. For the exact npm installation, support levels, safe
+Windows/PowerShell commands, and issue-report redaction rules, see
+[the field-testing checklist](docs/field-testing.md).
 
 ## Why an outer boundary?
 
