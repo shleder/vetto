@@ -39,23 +39,19 @@ fn default_root(adapter: &str, explicit: Option<&Path>) -> Result<PathBuf> {
         } else {
             std::env::current_dir()?.join(path)
         };
-        return Ok(fs_canonical_or_original(candidate));
+        return Ok(candidate);
     }
     if adapter != "codex" {
         bail!("adapter {adapter:?} requires an explicit --root");
     }
     if let Some(path) = std::env::var_os("CODEX_HOME") {
-        return Ok(fs_canonical_or_original(PathBuf::from(path)));
+        return Ok(PathBuf::from(path));
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("neither CODEX_HOME, HOME nor USERPROFILE is set; pass --root")?;
-    Ok(fs_canonical_or_original(home.join(".codex")))
-}
-
-fn fs_canonical_or_original(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or(path)
+    Ok(home.join(".codex"))
 }
 
 fn select_session(
