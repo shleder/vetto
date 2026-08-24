@@ -148,12 +148,18 @@ pub(crate) fn canonical_root(root: &Path) -> Result<PathBuf> {
 /// consume bytes should use [`open_regular`] instead so the acquired handle
 /// and the path are checked together.
 pub(crate) fn canonical_regular_path(root: &Path, path: &Path, label: &str) -> Result<PathBuf> {
-    let root = canonical_root(root)?;
-    let candidate = candidate_under_root(&root, path, label)?;
-    walk_without_links(&root, &candidate, label)?;
+    let canonical_root = canonical_root(root)?;
+    let lexical_root = lexical_root(root)?;
+    let boundary_root = path
+        .is_absolute()
+        .then_some(&canonical_root)
+        .filter(|candidate_root| path.starts_with(*candidate_root))
+        .unwrap_or(&lexical_root);
+    let candidate = candidate_under_root(boundary_root, path, label)?;
+    walk_without_links(boundary_root, &candidate, label)?;
     let canonical =
         fs::canonicalize(&candidate).with_context(|| format!("canonicalize {label}"))?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(&canonical_root) {
         bail!("{label} is outside the configured rescue root");
     }
     let metadata = fs::symlink_metadata(&canonical).with_context(|| format!("inspect {label}"))?;
@@ -163,13 +169,19 @@ pub(crate) fn canonical_regular_path(root: &Path, path: &Path, label: &str) -> R
 
 /// Open a regular file read-only after root-bound and no-follow checks.
 pub(crate) fn open_regular(root: &Path, path: &Path, label: &str) -> Result<VerifiedFile> {
-    let root = canonical_root(root)?;
-    let candidate = candidate_under_root(&root, path, label)?;
-    walk_without_links(&root, &candidate, label)?;
+    let canonical_root = canonical_root(root)?;
+    let lexical_root = lexical_root(root)?;
+    let boundary_root = path
+        .is_absolute()
+        .then_some(&canonical_root)
+        .filter(|candidate_root| path.starts_with(*candidate_root))
+        .unwrap_or(&lexical_root);
+    let candidate = candidate_under_root(boundary_root, path, label)?;
+    walk_without_links(boundary_root, &candidate, label)?;
 
     let canonical_before =
         fs::canonicalize(&candidate).with_context(|| format!("canonicalize {label}"))?;
-    if !canonical_before.starts_with(&root) {
+    if !canonical_before.starts_with(&canonical_root) {
         bail!("{label} is outside the configured rescue root");
     }
     let path_metadata =
@@ -206,7 +218,7 @@ pub(crate) fn open_regular(root: &Path, path: &Path, label: &str) -> Result<Veri
     // replacement is observed, the operation fails closed.
     let canonical_after =
         fs::canonicalize(&candidate).with_context(|| format!("recheck {label}"))?;
-    if canonical_after != canonical_before || !canonical_after.starts_with(&root) {
+    if canonical_after != canonical_before || !canonical_after.starts_with(&canonical_root) {
         bail!("{label} changed while being opened");
     }
 
@@ -228,6 +240,7 @@ pub(crate) fn read_bounded(root: &Path, path: &Path, limit: u64, label: &str) ->
 /// caller.  This is used by the Codex adapter's two-pass stability check; the
 /// final component is still opened with the platform-specific no-follow
 /// policy and handle/path identity checks.
+#[allow(dead_code)]
 pub(crate) fn read_bounded_existing(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>> {
     let path_metadata = fs::symlink_metadata(path).with_context(|| format!("inspect {label}"))?;
     validate_regular_metadata(&path_metadata, label)?;
@@ -328,6 +341,15 @@ fn candidate_under_root(root: &Path, path: &Path, label: &str) -> Result<PathBuf
         bail!("{label} is outside the configured rescue root");
     }
     Ok(candidate)
+}
+
+fn lexical_root(root: &Path) -> Result<PathBuf> {
+    if root.is_absolute() {
+        return Ok(root.to_path_buf());
+    }
+    Ok(std::env::current_dir()
+        .context("resolve rescue root")?
+        .join(root))
 }
 
 fn walk_without_links(root: &Path, candidate: &Path, label: &str) -> Result<()> {

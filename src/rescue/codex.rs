@@ -458,6 +458,7 @@ impl CodexAdapter {
         Ok(first)
     }
 
+    #[allow(dead_code)]
     fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
         safe_fs::read_bounded_existing(path, limit, "session").map_err(|error| {
             anyhow::anyhow!("session grew beyond the inspection budget while reading: {error}")
