@@ -23,10 +23,12 @@ fields with `additionalProperties: false`.
 ## Operations
 
 An adapter may implement `detect`, `discover_sessions`, `diagnose`,
-`snapshot`, and `fork`. `snapshot` and `fork` are copy-only operations. They
-never edit, delete, rename, replace, or reconstruct an original vendor
-session/database. A future adapter must explicitly document any additional
-capability before it is exposed.
+`snapshot`, and `fork`. `snapshot` and `fork` are copy-only operations. In the
+current CLI, `fork` is an alias of the `snapshot` implementation: it creates a
+new verified copy and does not claim provider-side resume, reconstruction, or
+database mutation. Both operations never edit, delete, rename, replace, or
+reconstruct an original vendor session/database. A future adapter must
+explicitly document any additional capability before it is exposed.
 
 Provider-derived inventory may be inspected only through a read-only/no-create
 database connection. Schema disagreement, a moving cursor, or unreadable
@@ -40,10 +42,17 @@ The reference Codex adapter enforces these defaults for every invocation:
 
 | Budget | Default |
 | --- | ---: |
-| discovered entries | 10,000 |
+| filesystem-walk discovered entries | 10,000 |
 | all discovered session bytes | 512 MiB |
 | one session | 64 MiB |
 | one JSONL record | 16 MiB |
+
+Codex `rescue scan` is index-first by default and returns at most 50 verified
+provider-index candidates. `--limit N` selects a different positive return
+limit, still subject to the bounded discovery and byte budgets. `--all` is the
+explicit bounded filesystem walk and is the only scan mode that enumerates
+unindexed session files. A missing or unreadable provider index is an error in
+index-first mode; it never causes an implicit partial filesystem fallback.
 
 Exceeding a discovery or session budget is an error. Oversized JSONL records
 are counted as corrupt and are not parsed. Adapters must not recurse through a
@@ -67,6 +76,24 @@ result types. Internal source paths are omitted. All user-derived strings are
 passed through Vetto's best-effort sanitizer before serialization. Consumers
 must treat unknown JSON fields as forward-compatible and must not infer a
 stronger support level from a missing capability.
+
+For `rescue scan`, the public result contains `sessions` and a `discovery`
+object with these fields:
+
+- `mode`: `index-first`, `filesystem-all` for Codex `--all`, or `filesystem`
+  for adapters whose normal discovery is filesystem-based (such as Claude);
+- `scope`: `provider-index` or `session-roots`;
+- `source`: a stable source label such as `sqlite`, `session-index`,
+  `session-index+sqlite`, or `session-roots`; it contains no user path;
+- `complete`: whether the selected evidence source was fully returned within
+  its limit/budget. For `provider-index`, `true` means all verified candidates
+  from that index fit within the selected limit. It never proves that the
+  provider index covers every file in the state root;
+- `limit`: the effective index return limit, or `null` for filesystem
+  discovery (including `--all`);
+- `candidate_count`: verified candidates from the selected source before the
+  return limit;
+- `returned_count`: sessions included in `sessions`.
 
 ## Conformance requirements
 

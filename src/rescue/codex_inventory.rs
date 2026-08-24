@@ -6,6 +6,13 @@
 //! every diagnostic is bounded by the caller's [`RescueContext`].  The public
 //! report contains only classifications and numeric cursor evidence; provider
 //! paths read from SQLite are never serialized or included in errors.
+//!
+//! Residual boundary: path validation and the later file/SQLite open are still
+//! separate operations.  A concurrent writer can replace a validated path
+//! between those operations.  Closing that TOCTOU window requires a shared,
+//! platform-specific no-follow/handle-based opener used by all rescue
+//! adapters; this module therefore fails closed on unstable byte snapshots but
+//! does not claim atomic path authorization yet.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -30,6 +37,8 @@ const THREAD_TABLE: &str = "threads";
 const PROJECTION_TABLE: &str = "thread_history_projection_state";
 const MAX_SQLITE_CANDIDATES: usize = 32;
 const MAX_SQLITE_ROWS: usize = 100_000;
+const MAX_SQLITE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_SESSION_ID_BYTES: usize = 256;
 
 /// Optional identity/path metadata supplied by a caller that already parsed
 /// the session.  The values are used only for matching; they are not exposed
@@ -142,7 +151,8 @@ pub fn inspect_session(
         .transpose()?;
     let session_id = metadata
         .session_id
-        .clone()
+        .as_deref()
+        .and_then(validate_session_id)
         .or_else(|| bytes.as_deref().and_then(parse_session_id))
         .or_else(|| {
             canonical_session_path
@@ -163,6 +173,7 @@ pub fn inspect_session(
         canonical_session_path.as_deref(),
         session_id.as_deref(),
         context.max_files,
+        context.max_total_bytes.min(MAX_SQLITE_BYTES),
     );
     report.thread_store = thread_result.evidence;
     extend_unique(&mut report.findings, thread_result.findings);
@@ -174,22 +185,24 @@ pub fn inspect_session(
         session_id.as_deref(),
         context.max_files,
         context.max_record_bytes,
+        context.max_total_bytes.min(MAX_SQLITE_BYTES),
     );
     report.projection = projection_result.evidence;
     extend_unique(&mut report.findings, projection_result.findings);
     extend_unique(&mut report.notices, projection_result.notices);
 
-    report.status = if !report.findings.is_empty() {
-        InventoryStatus::Findings
-    } else if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
-        InventoryStatus::Unknown
-    } else if report.thread_store.status == "not_applicable"
-        && report.projection.status == "not_applicable"
-    {
-        InventoryStatus::NotApplicable
-    } else {
-        InventoryStatus::Consistent
-    };
+    report.status =
+        if report.projection.status == "unknown" || report.thread_store.status == "unknown" {
+            InventoryStatus::Unknown
+        } else if !report.findings.is_empty() {
+            InventoryStatus::Findings
+        } else if report.thread_store.status == "not_applicable"
+            && report.projection.status == "not_applicable"
+        {
+            InventoryStatus::NotApplicable
+        } else {
+            InventoryStatus::Consistent
+        };
     Ok(report)
 }
 
@@ -284,12 +297,19 @@ fn parse_session_id(bytes: &[u8]) -> Option<String> {
     None
 }
 
+fn validate_session_id(value: &str) -> Option<String> {
+    if value.is_empty() || value.len() > MAX_SESSION_ID_BYTES || value.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
 fn value_string(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+        .and_then(validate_session_id)
 }
 
 fn session_id_from_path(path: &Path) -> Option<String> {
@@ -320,26 +340,58 @@ fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
     }
 }
 
-fn database_candidates(root: &Path, max_files: usize) -> Vec<PathBuf> {
-    let limit = max_files.clamp(1, MAX_SQLITE_CANDIDATES);
-    let mut names = vec![
-        "state_5.sqlite".to_string(),
-        "state.sqlite".to_string(),
-        "state.db".to_string(),
-    ];
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            let lower = name.to_ascii_lowercase();
-            if (lower.ends_with(".sqlite") || lower.ends_with(".sqlite3") || lower.ends_with(".db"))
-                && !names.iter().any(|known| known == name)
-            {
-                names.push(name.to_string());
+#[derive(Debug, Default)]
+struct DatabaseCandidates {
+    paths: Vec<PathBuf>,
+    rejected: bool,
+}
+
+fn database_candidates(
+    root: &Path,
+    max_files: usize,
+    max_database_bytes: u64,
+) -> DatabaseCandidates {
+    let limit = max_files.min(MAX_SQLITE_CANDIDATES);
+    if limit == 0 {
+        return DatabaseCandidates {
+            paths: Vec::new(),
+            rejected: true,
+        };
+    }
+    // Only real directory entries belong in the candidate list.  Seeding
+    // missing defaults would consume a small caller budget before reaching a
+    // real provider database such as `a.sqlite`.
+    let mut names = Vec::new();
+    let mut rejected = false;
+    match fs::read_dir(root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(_) => {
+                        rejected = true;
+                        break;
+                    }
+                };
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                let lower = name.to_ascii_lowercase();
+                if (lower.ends_with(".sqlite")
+                    || lower.ends_with(".sqlite3")
+                    || lower.ends_with(".db"))
+                    && !names.iter().any(|known| known == name)
+                {
+                    if names.len() >= limit {
+                        rejected = true;
+                        break;
+                    }
+                    names.push(name.to_string());
+                }
             }
         }
+        Err(_) => rejected = true,
     }
     names.sort_by_key(|name| {
         if name == "state_5.sqlite" {
@@ -352,25 +404,67 @@ fn database_candidates(root: &Path, max_files: usize) -> Vec<PathBuf> {
             3
         }
     });
-    names
-        .into_iter()
-        .take(limit)
-        .filter_map(|name| {
-            let path = root.join(name);
-            let metadata = fs::symlink_metadata(&path).ok()?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return None;
+    let mut paths = Vec::new();
+    let mut total_bytes = 0u64;
+    for name in names.into_iter().take(limit) {
+        let path = root.join(name);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                rejected = true;
+                continue;
             }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if metadata.nlink() != 1 {
-                    return None;
-                }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            rejected = true;
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                rejected = true;
+                continue;
             }
-            fs::canonicalize(path).ok()
-        })
-        .collect()
+        }
+        let size = metadata.len();
+        if size > max_database_bytes {
+            rejected = true;
+            continue;
+        }
+        let Some(next_total) = total_bytes.checked_add(size) else {
+            return DatabaseCandidates {
+                paths: Vec::new(),
+                rejected: true,
+            };
+        };
+        if next_total > max_database_bytes {
+            // No earlier path may be opened after aggregate preflight fails.
+            return DatabaseCandidates {
+                paths: Vec::new(),
+                rejected: true,
+            };
+        }
+        total_bytes = next_total;
+        let canonical = match fs::canonicalize(&path) {
+            Ok(canonical) if canonical.starts_with(root) => canonical,
+            Ok(_) | Err(_) => {
+                rejected = true;
+                continue;
+            }
+        };
+        paths.push(canonical);
+    }
+    if rejected {
+        return DatabaseCandidates {
+            paths: Vec::new(),
+            rejected: true,
+        };
+    }
+    DatabaseCandidates {
+        paths,
+        rejected: false,
+    }
 }
 
 fn open_read_only(path: &Path) -> Result<Connection> {
@@ -531,11 +625,71 @@ fn normalize_path(raw: &str) -> Option<(String, bool)> {
     Some((value, extended))
 }
 
-fn stored_path_exists(stored: &str) -> Option<bool> {
+/// Check a stored rollout path only when every component is lexically inside
+/// the already-canonicalized rescue root.  SQLite is provider-derived input;
+/// its path column must never turn diagnosis into an arbitrary filesystem or
+/// UNC/network metadata probe.
+fn stored_path_exists_within_root(root: &Path, stored: &str) -> Option<bool> {
+    if stored.is_empty() || stored.contains('\0') {
+        return None;
+    }
     if cfg!(not(windows)) && looks_windows_path(stored) {
         return None;
     }
-    let metadata = fs::symlink_metadata(stored).ok()?;
+    let raw = Path::new(stored);
+    if raw
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    if !raw.is_absolute()
+        && raw.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::RootDir | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    let candidate = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        root.join(raw)
+    };
+    if !candidate.starts_with(root) {
+        return None;
+    }
+
+    let relative = candidate.strip_prefix(root).ok()?;
+    let components = relative.components().collect::<Vec<_>>();
+    let mut current = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        let std::path::Component::Normal(name) = *component else {
+            return None;
+        };
+        current.push(name);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(false),
+            Err(_) => return None,
+        };
+        if metadata.file_type().is_symlink() {
+            return None;
+        }
+        if index + 1 < components.len() && !metadata.is_dir() {
+            return Some(false);
+        }
+        #[cfg(unix)]
+        if index + 1 == components.len() {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                return None;
+            }
+        }
+    }
+    let metadata = fs::symlink_metadata(&candidate).ok()?;
     Some(metadata.is_file() && !metadata.file_type().is_symlink())
 }
 
@@ -549,26 +703,30 @@ fn inspect_thread_store(
     session_path: Option<&Path>,
     session_id: Option<&str>,
     max_files: usize,
+    max_database_bytes: u64,
 ) -> ThreadStoreResult {
     let mut result = ThreadStoreResult::default();
-    let candidates = database_candidates(root, max_files);
-    if candidates.is_empty() {
+    let candidate_set = database_candidates(root, max_files, max_database_bytes);
+    if candidate_set.paths.is_empty() {
+        if candidate_set.rejected {
+            result.evidence.status = "unknown".to_string();
+            result
+                .notices
+                .push("a SQLite candidate exceeded the safe inspection boundary".to_string());
+            return result;
+        }
         result
             .notices
             .push("no compatible Codex SQLite store was found".to_string());
         return result;
     }
+    let candidates = candidate_set.paths;
     let mut compatible_store = false;
     let mut read_error = false;
+    let mut schema_unknown = false;
     for db_path in candidates {
         let Ok(connection) = open_read_only(&db_path) else {
-            if db_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.to_ascii_lowercase().contains("state"))
-            {
-                read_error = true;
-            }
+            read_error = true;
             continue;
         };
         let Ok(tables) = table_names(&connection) else {
@@ -588,6 +746,10 @@ fn inspect_thread_store(
         };
         compatible_store = true;
         let id_column = first_column(&columns, &["id", "thread_id", "session_id"]);
+        if id_column.is_none() && session_id.is_some() {
+            schema_unknown = true;
+            continue;
+        }
         let preview_column = first_column(&columns, &["preview"]);
         let first_user_column = first_column(&columns, &["first_user_message"]);
         let sql = format!(
@@ -635,10 +797,36 @@ fn inspect_thread_store(
             continue;
         };
         let mut matched = false;
-        while let Ok(Some(row)) = rows.next() {
-            let stored = value_text(row.get_ref(1).unwrap_or(ValueRef::Null));
-            let preview = value_text(row.get_ref(2).unwrap_or(ValueRef::Null));
-            let first_user = value_text(row.get_ref(3).unwrap_or(ValueRef::Null));
+        loop {
+            let row = match rows.next() {
+                Ok(Some(row)) => row,
+                Ok(None) => break,
+                Err(_) => {
+                    read_error = true;
+                    break;
+                }
+            };
+            let stored = match row.get_ref(1) {
+                Ok(value) => value_text(value),
+                Err(_) => {
+                    read_error = true;
+                    break;
+                }
+            };
+            let preview = match row.get_ref(2) {
+                Ok(value) => value_text(value),
+                Err(_) => {
+                    read_error = true;
+                    break;
+                }
+            };
+            let first_user = match row.get_ref(3) {
+                Ok(value) => value_text(value),
+                Err(_) => {
+                    read_error = true;
+                    break;
+                }
+            };
             let relation = match (&stored, session_path) {
                 (Some(stored), Some(session_path)) => path_relation(stored, session_path),
                 _ => PathRelation::Unknown,
@@ -699,7 +887,7 @@ fn inspect_thread_store(
                         PathRelation::Different => {
                             result.evidence.status = "diverged".to_string();
                             result.evidence.path_relation = "different".to_string();
-                            match stored_path_exists(&stored) {
+                            match stored_path_exists_within_root(root, &stored) {
                                 Some(true) => {
                                     result.evidence.rollout_present = Some(true);
                                     result.findings.push(INDEX_DIVERGENCE.to_string());
@@ -742,6 +930,19 @@ fn inspect_thread_store(
             break;
         }
     }
+    if candidate_set.rejected || read_error || schema_unknown {
+        result.evidence.status = "unknown".to_string();
+        result.evidence.path_relation = "unknown".to_string();
+        result.evidence.row_present = None;
+        result.evidence.rollout_present = None;
+        result.evidence.windows_namespace_divergence = false;
+        result.findings.clear();
+        result.notices.push(
+            "SQLite inventory evidence was incomplete or could not be correlated safely"
+                .to_string(),
+        );
+        return result;
+    }
     if !matched_or_row(&result.evidence) {
         if compatible_store && session_path.is_some() {
             result.evidence.status = "diverged".to_string();
@@ -751,11 +952,6 @@ fn inspect_thread_store(
             result.notices.push(
                 "rollout exists on disk but no matching thread index row was found".to_string(),
             );
-        } else if read_error {
-            result.evidence.status = "unknown".to_string();
-            result
-                .notices
-                .push("a state SQLite store could not be inspected read-only".to_string());
         } else if compatible_store {
             result.evidence.status = "not_recorded".to_string();
             result.evidence.row_present = Some(false);
@@ -784,45 +980,72 @@ struct RecordBoundary {
     end: usize,
 }
 
-fn record_boundaries(bytes: &[u8], max_record_bytes: usize) -> Vec<RecordBoundary> {
-    let mut result = Vec::new();
-    let mut start = 0usize;
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte != b'\n' {
-            continue;
-        }
-        let end = index + 1;
-        let raw = &bytes[start..index];
-        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-        let ordinal = if raw.len() <= max_record_bytes {
-            serde_json::from_slice::<serde_json::Value>(raw)
-                .ok()
-                .and_then(|value| value.get("ordinal").and_then(|value| value.as_u64()))
-        } else {
-            None
-        };
-        if !raw.iter().all(|byte| byte.is_ascii_whitespace()) {
-            result.push(RecordBoundary { ordinal, end });
-        }
-        start = end;
-    }
-    if start < bytes.len() {
-        let raw = &bytes[start..];
-        let ordinal = if raw.len() <= max_record_bytes {
-            serde_json::from_slice::<serde_json::Value>(raw)
-                .ok()
-                .and_then(|value| value.get("ordinal").and_then(|value| value.as_u64()))
-        } else {
-            None
-        };
-        if !raw.iter().all(|byte| byte.is_ascii_whitespace()) {
-            result.push(RecordBoundary {
-                ordinal,
-                end: bytes.len(),
-            });
+struct RecordBoundaryIter<'a> {
+    bytes: &'a [u8],
+    start: usize,
+    max_record_bytes: usize,
+}
+
+impl<'a> RecordBoundaryIter<'a> {
+    fn new(bytes: &'a [u8], max_record_bytes: usize) -> Self {
+        Self {
+            bytes,
+            start: 0,
+            max_record_bytes,
         }
     }
-    result
+}
+
+impl Iterator for RecordBoundaryIter<'_> {
+    type Item = RecordBoundary;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.start < self.bytes.len() {
+            let start = self.start;
+            let bytes = self.bytes;
+            let relative_end = bytes[start..].iter().position(|byte| *byte == b'\n');
+            let (index, end) = match relative_end {
+                Some(relative_end) => {
+                    let index = start + relative_end;
+                    (index, index + 1)
+                }
+                None => (bytes.len(), bytes.len()),
+            };
+            let raw = bytes[start..index]
+                .strip_suffix(b"\r")
+                .unwrap_or(&bytes[start..index]);
+            self.start = end;
+            if raw.iter().all(|byte| byte.is_ascii_whitespace()) {
+                continue;
+            }
+            let ordinal = if raw.len() <= self.max_record_bytes {
+                serde_json::from_slice::<serde_json::Value>(raw)
+                    .ok()
+                    .and_then(|value| value.get("ordinal").and_then(|value| value.as_u64()))
+            } else {
+                None
+            };
+            return Some(RecordBoundary { ordinal, end });
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BoundarySummary {
+    last_ordinal: Option<u64>,
+    invalid_record: bool,
+}
+
+fn boundary_summary(bytes: &[u8], max_record_bytes: usize) -> BoundarySummary {
+    let mut summary = BoundarySummary::default();
+    for boundary in RecordBoundaryIter::new(bytes, max_record_bytes) {
+        match boundary.ordinal {
+            Some(ordinal) => summary.last_ordinal = Some(ordinal),
+            None => summary.invalid_record = true,
+        }
+    }
+    summary
 }
 
 fn boundary_at(
@@ -833,25 +1056,19 @@ fn boundary_at(
     if offset >= bytes.len() || (offset > 0 && bytes[offset - 1] != b'\n') {
         return None;
     }
-    let boundaries = record_boundaries(bytes, max_record_bytes);
-    let index = boundaries
-        .iter()
-        .position(|boundary| boundary.end > offset && boundary.end - offset > 0)?;
-    let current_start = boundaries
-        .get(index.wrapping_sub(1))
-        .map(|boundary| boundary.end)
-        .unwrap_or(0);
-    if current_start != offset {
-        return None;
+    let mut current_start = 0usize;
+    let mut boundaries = RecordBoundaryIter::new(bytes, max_record_bytes);
+    while let Some(boundary) = boundaries.next() {
+        if boundary.end <= offset {
+            current_start = boundary.end;
+            continue;
+        }
+        if current_start != offset {
+            return None;
+        }
+        return Some((boundary, boundaries.next()));
     }
-    Some((boundaries[index], boundaries.get(index + 1).copied()))
-}
-
-fn last_ordinal(bytes: &[u8], max_record_bytes: usize) -> Option<u64> {
-    record_boundaries(bytes, max_record_bytes)
-        .into_iter()
-        .rev()
-        .find_map(|boundary| boundary.ordinal)
+    None
 }
 
 fn inspect_projection(
@@ -860,6 +1077,7 @@ fn inspect_projection(
     session_id: Option<&str>,
     max_files: usize,
     max_record_bytes: usize,
+    max_database_bytes: u64,
 ) -> ProjectionResult {
     let mut result = ProjectionResult::default();
     let Some(session_id) = session_id else {
@@ -868,18 +1086,13 @@ fn inspect_projection(
             .push("projection inspection requires a stable session identity".to_string());
         return result;
     };
-    let candidates = database_candidates(root, max_files);
+    let candidate_set = database_candidates(root, max_files, max_database_bytes);
+    let candidates = candidate_set.paths;
     let mut states = Vec::new();
-    let mut relevant_error = false;
+    let mut relevant_error = candidate_set.rejected;
     for db_path in candidates {
         let Ok(connection) = open_read_only(&db_path) else {
-            if db_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.to_ascii_lowercase().contains("thread"))
-            {
-                relevant_error = true;
-            }
+            relevant_error = true;
             continue;
         };
         let Ok(tables) = table_names(&connection) else {
@@ -937,34 +1150,54 @@ fn inspect_projection(
                     continue;
                 }
             };
-            while let Ok(Some(row)) = rows.next() {
-                let offset = value_i64(row.get_ref(0).unwrap_or(ValueRef::Null));
-                let ordinal = value_i64(row.get_ref(1).unwrap_or(ValueRef::Null));
+            loop {
+                let row = match rows.next() {
+                    Ok(Some(row)) => row,
+                    Ok(None) => break,
+                    Err(_) => {
+                        relevant_error = true;
+                        break;
+                    }
+                };
+                let offset = match row.get_ref(0) {
+                    Ok(value) => value_i64(value),
+                    Err(_) => {
+                        relevant_error = true;
+                        break;
+                    }
+                };
+                let ordinal = match row.get_ref(1) {
+                    Ok(value) => value_i64(value),
+                    Err(_) => {
+                        relevant_error = true;
+                        break;
+                    }
+                };
                 let (Some(offset), Some(ordinal)) = (offset, ordinal) else {
                     relevant_error = true;
-                    continue;
+                    break;
                 };
                 if offset < 0 || ordinal < 0 {
                     relevant_error = true;
-                    continue;
+                    break;
                 }
                 states.push((offset as u64, ordinal as u64));
             }
         }
     }
+    if relevant_error {
+        result.evidence.status = "unknown".to_string();
+        result.evidence.confidence = "unknown".to_string();
+        result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
+        result
+            .notices
+            .push("projection database/schema could not be read safely".to_string());
+        return result;
+    }
     if states.is_empty() {
-        if relevant_error {
-            result.evidence.status = "unknown".to_string();
-            result.evidence.confidence = "unknown".to_string();
-            result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
-            result
-                .notices
-                .push("projection database/schema could not be read safely".to_string());
-        } else {
-            result
-                .notices
-                .push("no readable projection row was found for this session".to_string());
-        }
+        result
+            .notices
+            .push("no readable projection row was found for this session".to_string());
         return result;
     }
     if states.windows(2).any(|window| window[0] != window[1]) {
@@ -989,6 +1222,17 @@ fn inspect_projection(
         return result;
     };
     result.evidence.canonical_size = Some(bytes.len() as u64);
+    let summary = boundary_summary(bytes, max_record_bytes);
+    if summary.invalid_record {
+        result.evidence.status = "unknown".to_string();
+        result.evidence.confidence = "unknown".to_string();
+        result.findings.push(PROJECTION_STATE_UNKNOWN.to_string());
+        result.notices.push(
+            "rollout contains a malformed or ordinal-less record; projection parity is unknown"
+                .to_string(),
+        );
+        return result;
+    }
     if next_offset > bytes.len() as u64 {
         result.evidence.status = "unknown".to_string();
         result.evidence.confidence = "unknown".to_string();
@@ -998,7 +1242,7 @@ fn inspect_projection(
             .push("projection byte cursor is beyond the rollout".to_string());
         return result;
     }
-    let final_ordinal = last_ordinal(bytes, max_record_bytes);
+    let final_ordinal = summary.last_ordinal;
     if next_offset == bytes.len() as u64 {
         if let Some(final_ordinal) = final_ordinal {
             if next_ordinal == final_ordinal.saturating_add(1) {
@@ -1071,6 +1315,7 @@ fn inspect_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rescue::types::DEFAULT_MAX_RECORD_BYTES;
     use sha2::{Digest, Sha256};
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1138,6 +1383,19 @@ mod tests {
                 "INSERT INTO threads VALUES (?1, ?2, '', '')",
                 (id, stored_path),
             )
+            .unwrap();
+        drop(connection);
+        path
+    }
+
+    fn create_threads_db_without_id(root: &Path, stored_path: &str) -> PathBuf {
+        let path = root.join("state_5.sqlite");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute("CREATE TABLE threads (rollout_path TEXT)", [])
+            .unwrap();
+        connection
+            .execute("INSERT INTO threads VALUES (?1)", [stored_path])
             .unwrap();
         drop(connection);
         path
@@ -1230,6 +1488,137 @@ mod tests {
     }
 
     #[test]
+    fn external_sqlite_path_is_not_probed() {
+        let temp = TempRoot::new("external-path");
+        let root = fs::canonicalize(&temp.0).unwrap();
+        let external = if cfg!(windows) {
+            r"\\127.0.0.1\vetto\outside.jsonl"
+        } else {
+            "/etc/passwd"
+        };
+        assert_eq!(stored_path_exists_within_root(&root, external), None);
+    }
+
+    #[test]
+    fn schema_without_id_is_unknown_when_session_id_is_present() {
+        let temp = TempRoot::new("schema-without-id");
+        let id = "019fffff-5555-7555-8555-555555555555";
+        let (path, bytes) = rollout(&temp.0, id);
+        create_threads_db_without_id(&temp.0, &path.to_string_lossy());
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.thread_store.status, "unknown");
+        assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+    }
+
+    #[test]
+    fn malformed_projection_tail_is_unknown_at_eof() {
+        let temp = TempRoot::new("malformed-tail");
+        let id = "019fffff-6666-7666-8666-666666666666";
+        let (path, _) = rollout(&temp.0, id);
+        let bytes = format!(
+            "{{\"type\":\"session_meta\",\"ordinal\":0,\"payload\":{{\"id\":\"{id}\"}}}}\nnot-json\n"
+        )
+        .into_bytes();
+        fs::write(&path, &bytes).unwrap();
+        create_projection_db(&temp.0, id, bytes.len() as u64, 1);
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.projection.status, "unknown");
+        assert!(report
+            .findings
+            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
+    }
+
+    #[test]
+    fn boundary_summary_is_stream_like_for_many_short_records() {
+        let mut bytes = Vec::with_capacity(100_000 * 3);
+        for _ in 0..100_000 {
+            bytes.extend_from_slice(b"{}\n");
+        }
+        let summary = boundary_summary(&bytes, DEFAULT_MAX_RECORD_BYTES);
+        assert!(summary.invalid_record);
+        assert_eq!(summary.last_ordinal, None);
+    }
+
+    #[test]
+    fn oversized_sqlite_is_unknown_not_index_divergence() {
+        let temp = TempRoot::new("oversized-db");
+        let id = "019fffff-7777-7777-8777-777777777777";
+        let (path, bytes) = rollout(&temp.0, id);
+        create_empty_sidebar_db(&temp.0, id, &path.to_string_lossy());
+        let context = RescueContext {
+            max_total_bytes: 1,
+            ..RescueContext::new(temp.0.clone())
+        };
+        let report = inspect_session(&context, Some(&path), Some(&bytes), None).unwrap();
+        assert_eq!(report.status, InventoryStatus::Unknown);
+        assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+        assert!(report
+            .findings
+            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
+    }
+
+    #[test]
+    fn malformed_sqlite_is_unknown_not_index_divergence() {
+        let temp = TempRoot::new("malformed-db");
+        let id = "019fffff-8888-7888-8888-888888888888";
+        let (path, bytes) = rollout(&temp.0, id);
+        fs::write(temp.0.join("state_5.sqlite"), b"not a sqlite database").unwrap();
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.thread_store.status, "unknown");
+        assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+    }
+
+    #[test]
+    fn sqlite_candidate_enumeration_is_bounded() {
+        let temp = TempRoot::new("candidate-bound");
+        for index in 0..(MAX_SQLITE_CANDIDATES + 8) {
+            fs::write(temp.0.join(format!("candidate-{index}.sqlite")), b"").unwrap();
+        }
+        let candidates = database_candidates(&temp.0, 10_000, MAX_SQLITE_BYTES);
+        assert!(candidates.paths.is_empty());
+        assert!(candidates.rejected);
+    }
+
+    #[test]
+    fn cumulative_sqlite_size_is_preflighted_before_open() {
+        let temp = TempRoot::new("candidate-total-size");
+        fs::write(temp.0.join("a.sqlite"), [0u8; 16]).unwrap();
+        fs::write(temp.0.join("b.sqlite"), [0u8; 16]).unwrap();
+        let candidates = database_candidates(&temp.0, 10_000, 24);
+        assert!(candidates.paths.is_empty());
+        assert!(candidates.rejected);
+    }
+
+    #[test]
+    fn one_file_budget_selects_existing_non_default_database() {
+        let temp = TempRoot::new("candidate-single-budget");
+        let path = temp.0.join("a.sqlite");
+        fs::write(&path, b"sqlite-placeholder").unwrap();
+        let canonical_root = fs::canonicalize(&temp.0).unwrap();
+        let candidates = database_candidates(&canonical_root, 1, MAX_SQLITE_BYTES);
+        assert!(!candidates.rejected);
+        assert_eq!(candidates.paths, vec![fs::canonicalize(path).unwrap()]);
+    }
+
+    #[test]
     fn filename_identity_uses_the_complete_uuid_suffix() {
         let path = Path::new(
             "sessions/2026/08/19/rollout-2026-08-19T00-00-00-019fffff-1111-7111-8111-111111111111.jsonl",
@@ -1244,6 +1633,17 @@ mod tests {
     fn unrelated_record_id_is_not_used_as_session_identity() {
         let bytes = b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\",\"id\":\"rs_not_a_session\"}}\n";
         assert_eq!(parse_session_id(bytes), None);
+    }
+
+    #[test]
+    fn session_identity_is_bounded_and_rejects_control_bytes() {
+        let oversized = "x".repeat(MAX_SESSION_ID_BYTES + 1);
+        assert_eq!(validate_session_id(&oversized), None);
+        assert_eq!(validate_session_id("session\n1"), None);
+        let bytes =
+            format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{oversized}\"}}}}\n")
+                .into_bytes();
+        assert_eq!(parse_session_id(&bytes), None);
     }
 
     #[test]

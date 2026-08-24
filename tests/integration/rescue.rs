@@ -2,6 +2,7 @@
 //! sandbox tier. These tests run on every supported platform.
 
 use crate::common::*;
+use rusqlite::Connection;
 use std::fs;
 use std::process::Command;
 
@@ -25,6 +26,25 @@ fn run_rescue_with_adapter(
         .args(trailing)
         .output()
         .expect("spawn rescue command")
+}
+
+fn create_codex_sqlite_index(root: &std::path::Path, paths: &[&std::path::Path]) {
+    let database = root.join("state_5.sqlite");
+    let connection = Connection::open(database).expect("create synthetic Codex index");
+    connection
+        .execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)",
+            [],
+        )
+        .expect("create synthetic threads table");
+    for (index, path) in paths.iter().enumerate() {
+        connection
+            .execute(
+                "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+                rusqlite::params![index.to_string(), path.to_string_lossy().to_string()],
+            )
+            .expect("insert synthetic rollout index row");
+    }
 }
 
 #[test]
@@ -103,7 +123,7 @@ fn scan_and_diagnose_are_bounded_to_codex_session_roots() {
         "{\"secret\":true}\n",
     );
 
-    let scan = run_rescue(&root, &["scan"]);
+    let scan = run_rescue(&root, &["scan", "--all"]);
     assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
     let scan_json: serde_json::Value =
         serde_json::from_slice(&scan.stdout).expect("scan JSON output");
@@ -143,7 +163,7 @@ fn scan_discovers_nested_sessions_beyond_the_legacy_twenty_item_window() {
         );
     }
 
-    let scan = run_rescue(&root, &["scan"]);
+    let scan = run_rescue(&root, &["scan", "--all"]);
     assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
     let value: serde_json::Value = serde_json::from_slice(&scan.stdout).expect("scan JSON output");
     let sessions = value["sessions"].as_array().expect("session array");
@@ -151,6 +171,99 @@ fn scan_discovers_nested_sessions_beyond_the_legacy_twenty_item_window() {
     assert!(sessions
         .iter()
         .any(|session| { session["key"] == "sessions/2026/08/25/rollout-24.jsonl" }));
+}
+
+#[test]
+fn codex_default_scan_uses_index_first_with_a_fifty_session_limit() {
+    let project = TempProject::new("rescue-index-default");
+    let root = project.path().join("codex-home");
+    let paths = (0..3)
+        .map(|index| {
+            let path = root.join(format!("sessions/2026/08/rollout-{index:02}.jsonl"));
+            write_file(&path, "{\"type\":\"turn\"}\n");
+            path
+        })
+        .collect::<Vec<_>>();
+    let path_refs = paths
+        .iter()
+        .map(std::path::PathBuf::as_path)
+        .collect::<Vec<_>>();
+    create_codex_sqlite_index(&root, &path_refs);
+
+    let output = run_rescue(&root, &["scan"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
+    let discovery = &value["discovery"];
+    assert_eq!(discovery["mode"], "index-first");
+    assert_eq!(discovery["scope"], "provider-index");
+    assert_eq!(discovery["source"], "sqlite");
+    assert_eq!(discovery["limit"], 50);
+    assert_eq!(discovery["complete"], true);
+    assert_eq!(discovery["candidate_count"], 3);
+    assert_eq!(discovery["returned_count"], 3);
+    assert_eq!(value["sessions"].as_array().map(Vec::len), Some(3));
+}
+
+#[test]
+fn codex_index_scan_reports_truncation_without_claiming_state_root_completeness() {
+    let project = TempProject::new("rescue-index-limit");
+    let root = project.path().join("codex-home");
+    let paths = (0..55)
+        .map(|index| {
+            let path = root.join(format!("sessions/2026/08/rollout-{index:02}.jsonl"));
+            write_file(&path, "{\"type\":\"turn\"}\n");
+            path
+        })
+        .collect::<Vec<_>>();
+    let path_refs = paths
+        .iter()
+        .map(std::path::PathBuf::as_path)
+        .collect::<Vec<_>>();
+    create_codex_sqlite_index(&root, &path_refs);
+
+    let output = run_rescue(&root, &["scan", "--limit", "2"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
+    let discovery = &value["discovery"];
+    assert_eq!(discovery["mode"], "index-first");
+    assert_eq!(discovery["scope"], "provider-index");
+    assert_eq!(discovery["source"], "sqlite");
+    assert_eq!(discovery["limit"], 2);
+    assert_eq!(discovery["complete"], false);
+    assert_eq!(discovery["candidate_count"], 55);
+    assert_eq!(discovery["returned_count"], 2);
+    assert_eq!(value["sessions"].as_array().map(Vec::len), Some(2));
+}
+
+#[test]
+fn codex_all_scan_uses_the_bounded_filesystem_source() {
+    let project = TempProject::new("rescue-index-all");
+    let root = project.path().join("codex-home");
+    let indexed = root.join("sessions/indexed.jsonl");
+    let unindexed = root.join("sessions/unindexed.jsonl");
+    write_file(&indexed, "{\"type\":\"turn\"}\n");
+    write_file(&unindexed, "{\"type\":\"turn\"}\n");
+    create_codex_sqlite_index(&root, &[&indexed]);
+
+    let output = run_rescue(&root, &["scan", "--all"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
+    let discovery = &value["discovery"];
+    assert_eq!(discovery["mode"], "filesystem-all");
+    assert_eq!(discovery["scope"], "session-roots");
+    assert_eq!(discovery["source"], "session-roots");
+    assert_eq!(discovery["limit"], serde_json::Value::Null);
+    assert_eq!(discovery["complete"], true);
+    assert_eq!(discovery["candidate_count"], 2);
+    assert_eq!(discovery["returned_count"], 2);
+    let sessions = value["sessions"].as_array().expect("session array");
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions
+        .iter()
+        .any(|session| session["key"] == "sessions/indexed.jsonl"));
+    assert!(sessions
+        .iter()
+        .any(|session| session["key"] == "sessions/unindexed.jsonl"));
 }
 
 #[test]
@@ -245,8 +358,8 @@ fn json_scan_is_repeatable_and_sanitizes_user_derived_session_names() {
         "{\"type\":\"turn\"}\n",
     );
 
-    let first = run_rescue(&root, &["scan"]);
-    let second = run_rescue(&root, &["scan"]);
+    let first = run_rescue(&root, &["scan", "--all"]);
+    let second = run_rescue(&root, &["scan", "--all"]);
     assert!(first.status.success(), "stderr: {}", stderr(&first));
     assert!(second.status.success(), "stderr: {}", stderr(&second));
     assert_eq!(
@@ -294,7 +407,7 @@ fn scan_does_not_follow_session_symlinks() {
     write_file(&outside, "{\"type\":\"outside\"}\n");
     symlink(&outside, sessions.join("linked.jsonl")).expect("session symlink");
 
-    let output = run_rescue(&root, &["scan"]);
+    let output = run_rescue(&root, &["scan", "--all"]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("scan JSON output");
@@ -312,7 +425,7 @@ fn scan_does_not_accept_hardlinked_session_aliases() {
     write_file(&outside, "{\"type\":\"outside\"}\n");
     fs::hard_link(&outside, sessions.join("linked.jsonl")).expect("session hardlink");
 
-    let output = run_rescue(&root, &["scan"]);
+    let output = run_rescue(&root, &["scan", "--all"]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("scan JSON output");

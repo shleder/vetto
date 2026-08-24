@@ -16,7 +16,8 @@ Examples:
   vetto multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
   vetto doctor
   vetto doctor --probe
-  vetto rescue --json scan
+  vetto rescue --json scan --limit 25
+  vetto rescue --json scan --all
   vetto rescue diagnose sessions/2026/08/23/session.jsonl
   vetto rescue snapshot session.jsonl --output ./recovery/session.jsonl
   vetto report compare session-a.json session-b.json
@@ -208,8 +209,18 @@ pub enum ReportCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum RescueCommand {
-    /// Discover bounded regular JSONL sessions under the adapter state root.
-    Scan,
+    /// Discover sessions. Codex defaults to verified index-first (limit 50);
+    /// other adapters use their bounded filesystem discovery.
+    Scan {
+        /// For Codex, use a verified provider index and return at most COUNT
+        /// sessions. This never falls back to a filesystem walk.
+        #[arg(long, value_name = "COUNT", conflicts_with = "all")]
+        limit: Option<usize>,
+        /// Explicitly use the bounded recursive filesystem walk. For Codex,
+        /// this opts out of the default index-first scan.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
+    },
     /// Diagnose one exact session key without changing agent state.
     Diagnose {
         #[arg(value_name = "SESSION")]
@@ -310,6 +321,48 @@ mod tests {
                 command: RescueCommand::Diagnose { ref session },
                 ..
             }) if adapter == "codex" && session == "sessions/example.jsonl"
+        ));
+    }
+
+    #[test]
+    fn rescue_scan_exposes_explicit_index_limit_and_full_walk_modes() {
+        let default =
+            Cli::try_parse_from(["vetto", "rescue", "scan"]).expect("default rescue scan syntax");
+        assert!(matches!(
+            default.command,
+            Some(Command::Rescue {
+                command: RescueCommand::Scan {
+                    limit: None,
+                    all: false,
+                },
+                ..
+            })
+        ));
+
+        let limited = Cli::try_parse_from(["vetto", "rescue", "scan", "--limit", "25"])
+            .expect("limited rescue scan syntax");
+        assert!(matches!(
+            limited.command,
+            Some(Command::Rescue {
+                command: RescueCommand::Scan {
+                    limit: Some(25),
+                    all: false,
+                },
+                ..
+            })
+        ));
+
+        let full = Cli::try_parse_from(["vetto", "rescue", "scan", "--all"])
+            .expect("full rescue scan syntax");
+        assert!(matches!(
+            full.command,
+            Some(Command::Rescue {
+                command: RescueCommand::Scan {
+                    limit: None,
+                    all: true,
+                },
+                ..
+            })
         ));
     }
 }
