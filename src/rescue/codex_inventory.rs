@@ -546,18 +546,15 @@ enum PathRelation {
 }
 
 /// True only when both paths resolve to the same existing file on disk.
-/// Used to override a purely lexical mismatch caused by symlinked roots
-/// (macOS /var -> /private/var); any verification failure returns false and
-/// leaves the lexical verdict standing.
-fn canonical_identity_matches(root: &Path, stored: &str, discovered: &Path) -> bool {
-    let candidate = std::path::PathBuf::from(stored);
-    // The stored reference may spell the root either way once symlinks are
-    // involved; accept both spellings before refusing.
-    let root_canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    if !(candidate.starts_with(root) || candidate.starts_with(&root_canonical)) {
-        return false;
-    }
-    let Ok(stored_canonical) = fs::canonicalize(&candidate) else {
+/// Used to override a purely lexical mismatch caused by aliased roots
+/// (macOS /var -> /private/var, Windows 8.3 short names); any verification
+/// failure returns false and leaves the lexical verdict standing.
+///
+/// Safety note: nothing is opened or created through the stored reference;
+/// canonicalization feeds an EQUALITY comparison against an already verified
+/// discovery path, so a hostile row cannot widen access.
+fn canonical_identity_matches(stored: &str, discovered: &Path) -> bool {
+    let Ok(stored_canonical) = fs::canonicalize(stored) else {
         return false;
     };
     let Ok(discovered_canonical) = fs::canonicalize(discovered) else {
@@ -871,7 +868,7 @@ fn inspect_thread_store(
                     // divergence; when verification fails, keep the lexical
                     // verdict.
                     if matches!(lexical, PathRelation::Different)
-                        && canonical_identity_matches(root, stored, session_path)
+                        && canonical_identity_matches(stored, session_path)
                     {
                         PathRelation::Equivalent {
                             namespace_divergence: false,
@@ -1522,6 +1519,39 @@ mod tests {
                 namespace_divergence: true,
             }
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliased_root_spelling_matches_by_filesystem_identity() {
+        // macOS (/var vs /private/var) and Windows 8.3 short names both
+        // surface as a lexically different stored path naming the same file.
+        let temp = TempRoot::new("alias-identity");
+        let real = temp.0.join("real");
+        std::fs::create_dir_all(&real).expect("real root");
+        let alias = temp.0.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).expect("alias symlink");
+
+        let discovered = real.join("rollout.jsonl");
+        std::fs::write(&discovered, b"{}\n").expect("rollout fixture");
+        let stored = alias.join("rollout.jsonl");
+
+        // The lexical verdict is Different; identity verification rescues it.
+        assert!(matches!(
+            path_relation(&stored.to_string_lossy(), &discovered),
+            PathRelation::Different
+        ));
+        assert!(canonical_identity_matches(
+            &stored.to_string_lossy(),
+            &discovered
+        ));
+
+        // A stored path that names a DIFFERENT file must not be rescued.
+        std::fs::write(temp.0.join("other.jsonl"), b"{}\n").expect("other fixture");
+        assert!(!canonical_identity_matches(
+            &temp.0.join("other.jsonl").to_string_lossy(),
+            &discovered
+        ));
     }
 
     #[test]
