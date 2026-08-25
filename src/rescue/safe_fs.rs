@@ -99,9 +99,16 @@ impl Drop for PrivateSqliteSnapshot {
     fn drop(&mut self) {
         #[cfg(windows)]
         if let Ok(metadata) = fs::metadata(&self.path) {
-            let mut permissions = metadata.permissions();
-            permissions.set_readonly(false);
-            let _ = fs::set_permissions(&self.path, permissions);
+            // Windows refuses to unlink a read-only file. This path is our
+            // own private, bounded snapshot inside a private directory that
+            // is removed immediately afterwards, so clearing the bit first
+            // is safe and intentional.
+            #[allow(clippy::permissions_set_readonly_false)]
+            {
+                let mut permissions = metadata.permissions();
+                permissions.set_readonly(false);
+                let _ = fs::set_permissions(&self.path, permissions);
+            }
         }
         let _ = fs::remove_file(&self.path);
         let _ = fs::remove_dir(&self.directory);
