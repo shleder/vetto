@@ -532,7 +532,7 @@ fn create_private_directory(path: &Path) -> std::io::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
-        return builder.create(path);
+        builder.create(path)
     }
     #[cfg(not(unix))]
     {
