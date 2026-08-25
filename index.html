@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vetto — recover lost Codex sessions, run agents in an OS boundary</title>
+<meta name="description" content="vetto rescue recovers lost Codex CLI sessions with read-only diagnosis and verified copy-only snapshots. vetto also wraps any coding agent in a fail-closed OS sandbox: Landlock on Linux, Seatbelt on macOS. Open source, Apache-2.0.">
+<meta property="og:title" content="vetto — recover lost Codex sessions, run agents in an OS boundary">
+<meta property="og:description" content="Read-only session recovery plus a fail-closed sandbox for AI coding agents. Linux/macOS first, Windows experimental. npm install --global @shleddy/vetto">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e14'/%3E%3Cpath d='M11 8 L5 16 L11 24 M21 8 L27 16 L21 24' stroke='%233fb950' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-raised: #10151f;
+    --bg-term: #0d1117;
+    --border: #1e2633;
+    --text: #dbe2ee;
+    --muted: #8a94a6;
+    --faint: #5b6572;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 400 17px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection { background: rgba(63,185,80,.25); }
+
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(11,14,20,.72);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border-bottom: 1px solid rgba(30,38,51,.6);
+  }
+  .nav-inner { display: flex; align-items: center; gap: 28px; height: 58px; }
+  .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+  .logo svg { display: block; }
+  .logo b { font-family: var(--mono); font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .logo .ver { font-family: var(--mono); font-size: 11px; color: var(--green); background: rgba(63,185,80,.09); border: 1px solid rgba(63,185,80,.25); padding: 1px 7px; border-radius: 99px; }
+  nav .links { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+  nav .links a { color: var(--muted); text-decoration: none; font-size: 14.5px; transition: color .15s ease; }
+  nav .links a:hover { color: var(--text); }
+  nav .links a.gh { font-family: var(--mono); color: var(--text); }
+
+  /* ---------- hero ---------- */
+  header { padding: 84px 0 56px; position: relative; overflow: hidden; }
+  header::before {
+    content: ""; position: absolute; inset: -40% -20% auto; height: 130%;
+    background:
+      radial-gradient(52% 42% at 22% 18%, rgba(63,185,80,.07), transparent 70%),
+      radial-gradient(46% 40% at 82% 8%, rgba(88,166,255,.055), transparent 70%);
+    pointer-events: none;
+  }
+  .eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; color: var(--faint); text-transform: uppercase; margin-bottom: 22px; }
+  .eyebrow b { color: var(--green); font-weight: 500; }
+  h1 {
+    font-size: clamp(2.35rem, 5.4vw, 4.05rem);
+    line-height: 1.04; letter-spacing: -.028em; font-weight: 650;
+    max-width: 15ch;
+  }
+  h1 .strike { position: relative; white-space: nowrap; color: var(--faint); }
+  h1 .strike::after {
+    content: ""; position: absolute; left: -2%; right: -2%; top: 54%; height: .075em;
+    background: var(--red); transform: rotate(-1.6deg); border-radius: 2px;
+  }
+  .sub { margin-top: 26px; max-width: 62ch; color: var(--muted); font-size: 18.5px; }
+  .sub strong { color: var(--text); font-weight: 550; }
+  .sub .r { color: var(--green); }
+
+  .install {
+    margin-top: 34px; display: inline-flex; align-items: stretch;
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: var(--bg-term); max-width: 100%;
+  }
+  .install code { font-family: var(--mono); font-size: 15px; padding: 13px 18px; color: var(--text); white-space: nowrap; overflow-x: auto; }
+  .install code .p { color: var(--green); }
+  .install button {
+    border: 0; cursor: pointer; padding: 0 16px; font-family: var(--mono); font-size: 12.5px;
+    background: rgba(63,185,80,.1); color: var(--green); border-left: 1px solid var(--border);
+    transition: background .15s ease, transform .1s ease;
+  }
+  .install button:active { transform: scale(.97); }
+  .cta-row { margin-top: 26px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    font-size: 15px; font-weight: 550; padding: 10px 18px; border-radius: 9px;
+    border: 1px solid var(--border); color: var(--text); background: var(--bg-raised);
+    transition: transform .1s ease, border-color .15s ease;
+  }
+  .btn:hover { border-color: #33405466; }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--green); border-color: var(--green); color: #06130a; }
+  .btn svg { flex: none; }
+
+  /* ---------- terminals ---------- */
+  .demo { padding: 40px 0 30px; display: grid; grid-template-columns: 1.35fr 1fr; gap: 22px; align-items: stretch; }
+  @media (max-width: 900px) { .demo { grid-template-columns: 1fr; } }
+  .term {
+    background: var(--bg-term); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 18px 44px -22px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.03);
+    display: flex; flex-direction: column; min-width: 0;
+  }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #232c3b; }
+  .term-title { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .tag { margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; color: var(--amber); border: 1px solid rgba(210,153,34,.35); border-radius: 99px; padding: 2px 9px; }
+  .term-body { padding: 18px 18px 20px; font-family: var(--mono); font-size: 13.6px; line-height: 1.72; min-height: 218px; white-space: pre-wrap; word-break: break-word; }
+  .t-prompt { color: var(--green); } .t-cmd { color: var(--text); }
+  .t-ok { color: var(--green); } .t-dim { color: var(--faint); } .t-block { color: var(--red); } .t-key { color: var(--blue); }
+  .caret { display: inline-block; width: 8px; height: 1.15em; background: var(--green); vertical-align: text-bottom; animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- sections ---------- */
+  section { padding: 64px 0; border-top: 1px solid rgba(30,38,51,.55); }
+  .kicker { font-family: var(--mono); font-size: 12.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--green); margin-bottom: 14px; }
+  h2 { font-size: clamp(1.55rem, 3vw, 2.15rem); letter-spacing: -.02em; line-height: 1.15; font-weight: 640; max-width: 26ch; }
+  .lead { margin-top: 14px; color: var(--muted); max-width: 68ch; }
+
+  .duo { margin-top: 44px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  @media (max-width: 820px) { .duo { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px;
+    padding: 26px 26px 28px; position: relative; overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(63,185,80,.4), transparent); opacity: 0; transition: opacity .3s ease; }
+  .card:hover::before { opacity: 1; }
+  .card h3 { font-size: 19px; font-weight: 620; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+  .card p { margin-top: 12px; color: var(--muted); font-size: 15.5px; }
+  .card code { font-family: var(--mono); font-size: .86em; color: var(--text); background: rgba(110,118,129,.16); padding: .1em .38em; border-radius: 5px; }
+  .pill { font-family: var(--mono); font-size: 11px; padding: 2px 9px; border-radius: 99px; letter-spacing: .04em; }
+  .pill.g { color: var(--green); border: 1px solid rgba(63,185,80,.35); background: rgba(63,185,80,.08); }
+  .pill.b { color: var(--blue); border: 1px solid rgba(88,166,255,.35); background: rgba(88,166,255,.08); }
+
+  .platforms { margin-top: 44px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .plat { font-family: var(--mono); font-size: 13px; color: var(--text); border: 1px solid var(--border); background: var(--bg-raised); border-radius: 9px; padding: 9px 14px; display: flex; gap: 9px; align-items: baseline; }
+  .plat small { color: var(--faint); font-size: 11.5px; }
+
+  ul.checks { list-style: none; margin-top: 26px; display: grid; gap: 13px; }
+  ul.checks li { display: flex; gap: 12px; color: var(--muted); font-size: 15.5px; }
+  ul.checks li::before { content: "→"; color: var(--green); font-family: var(--mono); flex: none; }
+  ul.checks li strong { color: var(--text); font-weight: 550; }
+
+  /* ---------- faq ---------- */
+  details {
+    border: 1px solid var(--border); border-radius: 11px; background: var(--bg-raised);
+    padding: 0 22px; margin-top: 12px;
+  }
+  details summary {
+    cursor: pointer; padding: 17px 0; font-weight: 570; font-size: 15.8px; list-style: none;
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: "+"; font-family: var(--mono); color: var(--faint); font-size: 17px; transition: transform .2s ease; flex: none; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details .a { padding: 0 0 19px; color: var(--muted); font-size: 15.3px; max-width: 74ch; }
+  details .a a { color: var(--blue); text-decoration: none; }
+  details .a a:hover { text-decoration: underline; }
+  details .a code { font-family: var(--mono); font-size: .87em; color: var(--text); background: rgba(110,118,129,.16); padding: .1em .38em; border-radius: 5px; }
+
+  /* ---------- waitlist ---------- */
+  .waitlist { text-align: center; }
+  .waitlist h2 { margin: 0 auto; }
+  .waitlist .lead { margin-inline: auto; }
+  .wl-form { margin-top: 30px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .wl-form input {
+    font: 400 15px var(--sans); color: var(--text); background: var(--bg-term);
+    border: 1px solid var(--border); border-radius: 9px; padding: 11px 15px; width: min(320px, 100%);
+    outline: none; transition: border-color .15s ease;
+  }
+  .wl-form input:focus { border-color: rgba(63,185,80,.55); }
+  .wl-alt { margin-top: 16px; color: var(--faint); font-size: 13.5px; }
+  .wl-alt a { color: var(--blue); text-decoration: none; }
+  .wl-alt a:hover { text-decoration: underline; }
+
+  footer { border-top: 1px solid rgba(30,38,51,.55); padding: 36px 0 48px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; color: var(--faint); font-size: 13.5px; }
+  .foot a { color: var(--muted); text-decoration: none; }
+  .foot a:hover { color: var(--text); }
+  .foot .sp { flex: 1; }
+
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .caret { animation: none; }
+    * { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="logo" href="#top">
+      <svg width="22" height="22" viewBox="0 0 32 32"><path d="M11 8 L5 16 L11 24 M21 8 L27 16 L21 24" stroke="#3fb950" stroke-width="2.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <b>vetto</b><span class="ver">v0.2.0</span>
+    </a>
+    <div class="links">
+      <a href="#rescue">Rescue</a>
+      <a href="#sandbox">Sandbox</a>
+      <a href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/shleder/vetto?utm_source=landing&amp;utm_medium=nav&amp;utm_campaign=v020" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header id="top">
+  <div class="wrap">
+    <div class="eyebrow"><b>open source</b> · Apache-2.0 · Rust · no daemon · no telemetry</div>
+    <h1>The agent ate your sessions.<br>You can have them <span class="strike">gone</span>&nbsp;back.</h1>
+    <p class="sub">
+      <strong>vetto rescue</strong> recovers lost Codex CLI sessions — <span class="r">read-only diagnosis,
+      verified copy-only snapshots</span>, straight from the JSONL that providers leave behind when their
+      index breaks. And when you launch any coding agent through <strong>vetto</strong>, it runs inside a
+      kernel-enforced boundary — <span class="r">or it does not run at all.</span>
+    </p>
+    <div class="install">
+      <code><span class="p">$</span> npm install --global @shleddy/vetto</code>
+      <button id="copybtn" type="button">copy</button>
+    </div>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/shleder/vetto?utm_source=landing&amp;utm_medium=hero_primary&amp;utm_campaign=v020" target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        Get started
+      </a>
+      <a class="btn" href="#rescue">See how rescue works</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap demo">
+  <div class="term reveal">
+    <div class="term-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="term-title">vetto rescue — Codex adapter</span>
+      <span class="tag">SYNTHETIC FIXTURE</span>
+    </div>
+    <div class="term-body" id="term-rescue"></div>
+  </div>
+  <div class="term reveal">
+    <div class="term-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="term-title">vetto -- sandbox</span>
+      <span class="tag">SYNTHETIC FIXTURE</span>
+    </div>
+    <div class="term-body" id="term-sandbox"></div>
+  </div>
+</div>
+
+<section id="rescue">
+  <div class="wrap">
+    <div class="kicker reveal">01 · rescue</div>
+    <h2 class="reveal">Your transcript is fine.<br>The index is what breaks.</h2>
+    <p class="lead reveal">
+      When Claude Code and Codex CLI lose history, the JSONL transcripts usually survive — the metadata
+      index around them does not. One consolidated report in claude-code collected twelve independent
+      reports and sixty reactions: hundreds of valid <code style="font-family:var(--mono);font-size:.85em">.jsonl</code> files
+      on disk, a fraction visible in the picker. vetto rescue reads the transcripts directly instead of trusting the index.
+    </p>
+    <div class="duo">
+      <div class="card reveal">
+        <h3><span class="pill g">stable</span> Codex adapter</h3>
+        <p>Bounded, index-first discovery with explicit caps. <code>scan</code>, <code>diagnose</code>,
+           <code>snapshot</code>, <code>fork</code>. Every snapshot is a verified new copy — SHA-256 checked,
+           created exclusively, never overwriting, never writing inside the provider state root.</p>
+      </div>
+      <div class="card reveal">
+        <h3><span class="pill b">experimental</span> Claude adapter</h3>
+        <p>Treats provider JSONL as opaque until the format is independently verified. Requires an explicit
+           root, fails closed on unknown state rather than guessing. Honest about what it does not know yet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sandbox">
+  <div class="wrap">
+    <div class="kicker reveal">02 · sandbox</div>
+    <h2 class="reveal">No boundary,<br>no process.</h2>
+    <p class="lead reveal">
+      If the sandbox cannot be established, vetto refuses to launch your agent. There is no unsandboxed
+      fallback, ever. Policy is resolved before <code style="font-family:var(--mono);font-size:.85em">exec</code>;
+      descendants inherit it; the network defaults to off.
+    </p>
+    <ul class="checks reveal" style="margin-top:26px">
+      <li><span><strong>Kernel-enforced, not prompt-enforced.</strong> Landlock, namespaces and seccomp on Linux; Seatbelt on macOS. An OS sandbox is a contract with the kernel, not a suggestion the agent may renegotiate.</span></li>
+      <li><span><strong>Secrets stay secret.</strong> <code>.env</code>, keys and credential paths are masked before the agent can read them, and credential variables are stripped from the child environment by default.</span></li>
+      <li><span><strong>Network off by default.</strong> Domain allowlists resolve outside the cell with DNS pinning. No TLS interception, no CA injection, nothing to abuse.</span></li>
+      <li><span><strong>Evidence, not vibes.</strong> Session reports as JSONL, HTML, Markdown and SARIF; a CI mode with <code>--fail-on-block</code>; observation never widens policy.</span></li>
+    </ul>
+    <div class="platforms reveal">
+      <span class="plat">Linux FULL <small>Landlock + namespaces + seccomp</small></span>
+      <span class="plat">Linux FS-only <small>smaller boundary, fewer host needs</small></span>
+      <span class="plat">macOS <small>Seatbelt via sandbox-exec</small></span>
+      <span class="plat">Windows <small>experimental, capability-gated</small></span>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="kicker reveal">03 · straight answers</div>
+    <h2 class="reveal">Questions we would ask.</h2>
+    <div class="reveal" style="margin-top:30px;">
+      <details>
+        <summary>Why not just use the sandbox built into my agent?</summary>
+        <div class="a">Built-in sandboxes are tied to one tool, differ per platform and version, and ship escape
+        hatches like <code>dangerouslyDisableSandbox</code>. vetto is one operator-controlled outer policy and one
+        report model across Codex, Claude Code, Aider, opencode, custom scripts — without detecting or weakening
+        whatever the agent does internally.</div>
+      </details>
+      <details>
+        <summary>How is this different from landrun or ai-jail?</summary>
+        <div class="a">landrun is a general single-purpose Landlock wrapper for Linux. ai-jail wraps agents with
+        bubblewrap/Landlock under GPL-3.0. vetto is a cross-platform daemonless binary (Linux tiers, macOS,
+        experimental Windows) with fail-closed capability probing, network allowlisting through a DNS-pinned relay,
+        SARIF evidence reports and the rescue surface — none of which are part of those projects.</div>
+      </details>
+      <details>
+        <summary>There are tools that repair session indexes. Why rescue?</summary>
+        <div class="a">Index fixers rewrite vendor state, which is exactly what you should not do with the only copy
+        of your work. vetto rescue is read-only diagnosis plus a verified copy-only snapshot of the raw transcript:
+        the original is never modified, ambiguous or changing inputs fail closed, and output follows a versioned
+        schema (<code>rescue-output-v1</code>). Repair stays possible later — destruction does not.</div>
+      </details>
+      <details>
+        <summary>What does it cost in performance?</summary>
+        <div class="a">We deliberately publish no percentage claims — benchmarks without your workload are marketing.
+        The overhead is bounded syscall/path checks after policy resolution. Measure on your machine:
+        <code>vetto doctor</code>, then time the same command wrapped and unwrapped. The measurement rules live in
+        docs/performance.md in the repository.</div>
+      </details>
+      <details>
+        <summary>Why should I trust installing it globally?</summary>
+        <div class="a">Fair question for a security tool. The npm package ships only a launcher and prebuilt native
+        binaries — there are no lifecycle scripts, no postinstall steps, and no runtime downloads. Every release
+        asset carries a published SHA-256 checksum, builds are locked (<code>cargo build --locked</code>) from the
+        Apache-2.0 sources, so everything is auditable and reproducible from the repository.</div>
+      </details>
+      <details>
+        <summary>Does it work on Windows?</summary>
+        <div class="a">Windows support is real but experimental: a capability-gated AppContainer/restricted-token
+        backend with network-off launches and inherited stdio. No domain allowlist relay and no multi-agent runtime
+        there yet, and missing APIs stop the launch instead of degrading silently. Linux and macOS are the supported
+        first platforms.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="waitlist" id="updates">
+  <div class="wrap">
+    <div class="kicker reveal" style="display:inline-block">04 · stay in the loop</div>
+    <h2 class="reveal" style="margin-inline:auto">One email when it matters.</h2>
+    <p class="lead reveal">Launch notes, release announcements, nothing else. No telemetry in the product means no telemetry in the inbox either.</p>
+    <form class="wl-form reveal" id="wlform">
+      <input type="email" name="email" placeholder="you@company.dev" required aria-label="Email address">
+      <button class="btn primary" type="submit">Keep me posted</button>
+    </form>
+    <p class="wl-alt reveal">or <a href="https://github.com/shleder/vetto?utm_source=landing&amp;utm_medium=waitlist&amp;utm_campaign=v020" target="_blank" rel="noopener">watch releases on GitHub</a> — same signal, zero emails.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <span>© 2026 vetto contributors · Apache-2.0</span>
+    <span class="sp"></span>
+    <a href="https://github.com/shleder/vetto?utm_source=landing&amp;utm_medium=footer&amp;utm_campaign=v020" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/shleder/vetto/blob/main/SECURITY.md" target="_blank" rel="noopener">Security model</a>
+    <a href="https://www.npmjs.com/package/@shleddy/vetto" target="_blank" rel="noopener">npm</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // copy button
+  var btn = document.getElementById("copybtn");
+  if (btn) btn.addEventListener("click", function () {
+    var t = "npm install --global @shleddy/vetto";
+    function done() { btn.textContent = "copied"; setTimeout(function () { btn.textContent = "copy"; }, 1400); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done);
+    else done();
+  });
+
+  // waitlist -> mailto fallback (no third-party form service, nothing tracked)
+  var f = document.getElementById("wlform");
+  if (f) f.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var em = f.email.value.trim();
+    location.href = "mailto:maksboreichuk88@gmail.com?subject=" +
+      encodeURIComponent("vetto waitlist") + "&body=" + encodeURIComponent("Please add me to launch updates: " + em);
+  });
+
+  // terminal scripts (synthetic fixtures, clearly labelled)
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  var scenes = [
+    {
+      el: "term-rescue",
+      lines: [
+        { t: "$ ", c: "t-prompt" }, { t: "vetto rescue --json scan", c: "t-cmd", nl: true },
+        { t: '{ "adapter": "codex",', c: "t-dim", nl: true },
+        { t: '  "candidates": 314,', c: "t-dim", nl: true },
+        { t: '  "index_healthy": false }', c: "t-dim", nl: true },
+        { t: "", nl: true },
+        { t: "$ ", c: "t-prompt" }, { t: "vetto rescue snapshot session.jsonl \\", c: "t-cmd", nl: true },
+        { t: "    --output ./recovery/", c: "t-cmd", nl: true },
+        { t: "snapshot ok", c: "t-ok" }, { t: "  sha256 verified · exclusive copy", c: "t-dim", nl: true },
+        { t: "source untouched", c: "t-dim", nl: true }
+      ]
+    },
+    {
+      el: "term-sandbox",
+      lines: [
+        { t: "$ ", c: "t-prompt" }, { t: "vetto --profile strict --net off \\", c: "t-cmd", nl: true },
+        { t: "    codex exec \"review auth\"", c: "t-cmd", nl: true },
+        { t: "boundary:", c: "t-dim" }, { t: " landlock abi4 + namespaces", c: "t-ok", nl: true },
+        { t: "", nl: true },
+        { t: "[blocked]", c: "t-block" }, { t: " openat(\"~/.ssh/id_ed25519\")", c: "t-cmd", nl: true },
+        { t: "  reason:", c: "t-dim" }, { t: " outside read scope", c: "t-dim", nl: true },
+        { t: "[blocked]", c: "t-block" }, { t: " connect(\"api.attacker.example\")", c: "t-cmd", nl: true },
+        { t: "  reason:", c: "t-dim" }, { t: " network is off", c: "t-dim" }
+      ]
+    }
+  ];
+
+  function typeScene(scene, done) {
+    var el = document.getElementById(scene.el);
+    el.innerHTML = "";
+    var li = 0;
+    function nextLine() {
+      if (li >= scene.lines.length) { el.insertAdjacentHTML("beforeend", '<span class="caret"></span>'); done(); return; }
+      var L = scene.lines[li++];
+      if (L.nl && L.t === "") { el.insertAdjacentHTML("beforeend", "\n"); nextLine(); return; }
+      var span = document.createElement("span");
+      span.className = L.c;
+      el.appendChild(span);
+      if (reduce || L.t === "") { span.textContent = L.t; if (L.nl) el.appendChild(document.createTextNode("\n")); nextLine(); return; }
+      var ci = 0;
+      (function tick() {
+        span.textContent = L.t.slice(0, ++ci);
+        if (ci < L.t.length) setTimeout(tick, 10 + Math.random() * 22);
+        else { if (L.nl) el.appendChild(document.createTextNode("\n")); nextLine(); }
+      })();
+    }
+    nextLine();
+  }
+
+  function cycle(i) {
+    typeScene(scenes[i], function () {
+      setTimeout(function () { cycle((i + 1) % scenes.length); }, 5200);
+    });
+  }
+
+  var started = false;
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (en.isIntersecting && !started) { started = true; cycle(0); io.disconnect(); }
+    });
+  }, { threshold: 0.25 });
+  var r = document.getElementById("term-rescue");
+  if (r) io.observe(r);
+
+  // scroll reveals
+  var ro = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add("in"); ro.unobserve(en.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach(function (n) { ro.observe(n); });
+})();
+</script>
+</body>
+</html>
