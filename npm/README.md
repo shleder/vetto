@@ -1,13 +1,13 @@
 # vetto — cross-platform npm distribution
 
-Install the current alpha globally with npm:
+Install globally with npm:
 
 ```bash
-npm install --global @shleddy/vetto@next
+npm install --global @shleddy/vetto
 vetto doctor
 ```
 
-Alpha 1 also includes copy-only Codex session inspection:
+The package also includes copy-only Codex session inspection:
 
 ```bash
 vetto rescue --json scan
@@ -20,7 +20,7 @@ not run an install script, download code at install time, or require a Rust
 toolchain. The small launcher runs on the Node.js installation that provides
 npm.
 
-Prebuilt targets in `0.2.0-alpha.2`:
+Prebuilt targets in `0.2.0`:
 
 | Platform | Architecture | Native path |
 | --- | --- | --- |

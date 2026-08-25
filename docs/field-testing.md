@@ -9,12 +9,12 @@ The supported npm package name is the scoped package
 
 ## Install one published build
 
-Use the `next` tag for the current alpha and record the exact version printed by
+Use the `latest` tag for the current stable release and record the exact version printed by
 the first command. Do not paste an npm token into an issue and do not install
 from a Git URL.
 
 ```console
-npm install --global @shleddy/vetto@next
+npm install --global @shleddy/vetto
 vetto --version
 vetto doctor
 ```
@@ -25,8 +25,8 @@ unsupported platform, record the platform and architecture and stop; do not
 work around the package selector by copying a binary from another platform.
 
 For a repeatable test, pin the version shown by `vetto --version` in the issue
-and reinstall that exact version when reproducing. The alpha tag can move
-between test runs.
+and reinstall that exact version when reproducing. The `latest` tag can move
+between releases.
 
 ## What is supported
 
@@ -84,19 +84,16 @@ Codex uses `CODEX_HOME`, then the platform home directory. An explicit root is
 useful for a fixture or a copied state tree:
 
 ```console
-# Current published alpha
+# Current stable release
 vetto rescue --json scan
 vetto rescue --json diagnose "sessions/2026/08/23/session.jsonl"
 vetto rescue --json snapshot "sessions/2026/08/23/session.jsonl" --output "./recovery/session.jsonl"
 ```
 
-The current unpublished `main` changes Codex scan to index-first, adds a
-default return cap of 50, `--limit N`, explicit `--all`, and the JSON
-`discovery` object. Those main-only features are not in the published
-`0.2.0-alpha.2` package. Do not put their commands or fields in a public
-field-test result until a later npm alpha actually contains them. For that
-later build, `discovery.complete` will describe only the selected evidence
-source; it will not prove that the provider index covers every file under the
+Codex scan is index-first and returns at most 50 verified index candidates,
+with `--limit N`, explicit `--all`, and the JSON `discovery` object shipping in
+the current `0.2.0` package. `discovery.complete` describes only the selected
+evidence source; it will not prove that the provider index covers every file under the
 state root. The public result shapes are defined in
 [`docs/schema/rescue-output-v1.schema.json`](schema/rescue-output-v1.schema.json).
 

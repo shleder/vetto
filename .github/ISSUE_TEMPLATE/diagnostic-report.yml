@@ -15,7 +15,7 @@ body:
     attributes:
       label: Vetto version
       description: Copy only the version from `vetto --version`.
-      placeholder: 0.2.0-alpha.2
+      placeholder: 0.2.0
     validations:
       required: true
   - type: dropdown

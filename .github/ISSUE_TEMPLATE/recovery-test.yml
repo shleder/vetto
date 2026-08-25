@@ -6,12 +6,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Recovery is copy-only in this alpha. Never upload the original session or vendor database.
+        Recovery is copy-only. Never upload the original session or vendor database.
   - type: input
     id: version
     attributes:
       label: Vetto version
-      placeholder: 0.2.0-alpha.2
+      placeholder: 0.2.0
     validations:
       required: true
   - type: input

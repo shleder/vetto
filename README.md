@@ -35,7 +35,7 @@ Codespace. Your host is probed at runtime; the tier is never assumed.
 
 ```console
 $ vetto doctor
-vetto v0.2.0-alpha.2 doctor
+vetto v0.2.0 doctor
 landlock:                available (ABI 4)
 unprivileged userns:     yes
 full namespace stack:    yes
@@ -66,23 +66,22 @@ and reports sit below a one-way boundary; none of them can grant an operation.
 
 ## Run it
 
-Install the current public alpha from npm, inspect the machine, then add
+Install from npm, inspect the machine, then add
 `vetto --` before the command you already use:
 
 ```console
-npm install --global @shleddy/vetto@next
+npm install --global @shleddy/vetto
 vetto doctor
 cd my-project
 vetto --agent codex --profile default -- codex exec "review auth"
 ```
 
-The alpha npm package includes native executables for Linux x64/ARM64, macOS
+The npm package includes native executables for Linux x64/ARM64, macOS
 x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
 there is no install-time binary downloader. To install this release exactly,
-use `npm install --global @shleddy/vetto@0.2.0-alpha.2`. Stable `0.1.x`
-remains on the npm `latest` tag while alpha builds use `next`.
-The supported npm name is the scoped `@shleddy/vetto`; the unscoped `vetto`
-package is not the installation path. Alpha testers should follow the
+use `npm install --global @shleddy/vetto@0.2.0`. Stable releases stay on the
+npm `latest` tag while pre-release builds use `next`.
+Field testers should follow the
 npm-only privacy, desktop-support, and reporting checklist in
 [docs/field-testing.md](docs/field-testing.md).
 
@@ -102,7 +101,7 @@ or `--tui=none` for scripts and CI. `vetto init` creates a starter
 
 ## Rescue local sessions
 
-The `0.2` alpha adds a provider-neutral, copy-only recovery surface. The npm
+The `0.2` release adds a provider-neutral, copy-only recovery surface. The npm
 package ships the bounded Codex reference adapter and an experimental Claude
 adapter. Claude requires an explicit state root and remains opaque until its
 provider format is independently verified.
@@ -110,7 +109,7 @@ provider format is independently verified.
 Codex Rescue development has moved into Vetto. The standalone
 [`shleder/codex-rescue`](https://github.com/shleder/codex-rescue) repository
 remains public as historical compatibility evidence; new user installations
-use only `npm install --global @shleddy/vetto@next`.
+use only `npm install --global @shleddy/vetto`.
 
 ```console
 # Current published alpha: bounded session discovery
@@ -140,8 +139,7 @@ synthetic fixture or a copied state tree that has no provider index. The JSON
 source only: `true` means that all verified candidates from the selected index
 fit within the requested limit, or that the bounded session-root walk finished.
 It never proves that the provider index contains every file in the state root.
-These index-first flags require a later npm alpha; `0.2.0-alpha.2` remains the
-current published build and must not be represented as containing them.
+These index-first behaviors ship in the current stable package.
 
 The public JSON shapes are specified in
 [`docs/schema/rescue-output-v1.schema.json`](docs/schema/rescue-output-v1.schema.json).
