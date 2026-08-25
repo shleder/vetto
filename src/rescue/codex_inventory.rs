@@ -545,6 +545,26 @@ enum PathRelation {
     Unknown,
 }
 
+/// True only when both paths resolve to the same existing file on disk.
+/// Used to override a purely lexical mismatch caused by symlinked roots
+/// (macOS /var -> /private/var); any verification failure returns false and
+/// leaves the lexical verdict standing.
+fn canonical_identity_matches(root: &Path, stored: &str, discovered: &Path) -> bool {
+    let candidate = std::path::PathBuf::from(stored);
+    if !candidate.starts_with(root) {
+        return false;
+    }
+    match (
+        fs::canonicalize(&candidate),
+        fs::canonicalize(discovered),
+    ) {
+        (Ok(stored_canonical), Ok(discovered_canonical)) => {
+            stored_canonical == discovered_canonical && discovered_canonical.is_file()
+        }
+        _ => false,
+    }
+}
+
 fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
     let discovered = discovered_logical_path(&discovered.to_string_lossy());
     if stored == discovered {
@@ -841,7 +861,24 @@ fn inspect_thread_store(
                 }
             };
             let relation = match (&stored, session_path) {
-                (Some(stored), Some(session_path)) => path_relation(stored, session_path),
+                (Some(stored), Some(session_path)) => {
+                    let lexical = path_relation(stored, session_path);
+                    // A symlinked root (e.g. /var -> /private/var on macOS)
+                    // makes a stored provider path differ LEXICALLY from the
+                    // canonicalized discovery path while both name the same
+                    // file. Verify filesystem identity before reporting a
+                    // divergence; when verification fails, keep the lexical
+                    // verdict.
+                    if matches!(lexical, PathRelation::Different)
+                        && canonical_identity_matches(root, stored, session_path)
+                    {
+                        PathRelation::Equivalent {
+                            namespace_divergence: false,
+                        }
+                    } else {
+                        lexical
+                    }
+                }
                 _ => PathRelation::Unknown,
             };
             let by_id = matched_by_id;
