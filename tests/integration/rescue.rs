@@ -280,8 +280,7 @@ fn codex_index_end_to_end_stays_index_first_over_ten_thousand_files() {
     let view: serde_json::Value =
         serde_json::from_slice(&diagnose.stdout).expect("large diagnose JSON");
     assert_eq!(
-        view["health"],
-        "healthy",
+        view["health"], "healthy",
         "unexpected diagnose view: {view}"
     );
     assert_eq!(view["records"], 1);
