@@ -551,18 +551,19 @@ enum PathRelation {
 /// leaves the lexical verdict standing.
 fn canonical_identity_matches(root: &Path, stored: &str, discovered: &Path) -> bool {
     let candidate = std::path::PathBuf::from(stored);
-    if !candidate.starts_with(root) {
+    // The stored reference may spell the root either way once symlinks are
+    // involved; accept both spellings before refusing.
+    let root_canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if !(candidate.starts_with(root) || candidate.starts_with(&root_canonical)) {
         return false;
     }
-    match (
-        fs::canonicalize(&candidate),
-        fs::canonicalize(discovered),
-    ) {
-        (Ok(stored_canonical), Ok(discovered_canonical)) => {
-            stored_canonical == discovered_canonical && discovered_canonical.is_file()
-        }
-        _ => false,
-    }
+    let Ok(stored_canonical) = fs::canonicalize(&candidate) else {
+        return false;
+    };
+    let Ok(discovered_canonical) = fs::canonicalize(discovered) else {
+        return false;
+    };
+    stored_canonical == discovered_canonical && discovered_canonical.is_file()
 }
 
 fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
