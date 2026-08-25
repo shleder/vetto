@@ -42,11 +42,7 @@ impl Drop for TempRoot {
 
 fn run_rescue(root: &Path, args: &[String]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vetto"));
-    command
-        .arg("rescue")
-        .arg("--root")
-        .arg(root)
-        .arg("--json");
+    command.arg("rescue").arg("--root").arg(root).arg("--json");
     for arg in args {
         command.arg(OsString::from(arg));
     }
@@ -139,10 +135,7 @@ fn assert_diagnose_shape(value: &Value) {
     ] {
         assert!(object.contains_key(key), "missing diagnose.{key}");
     }
-    assert_eq!(
-        value["sha256"].as_str().expect("diagnose hash").len(),
-        64
-    );
+    assert_eq!(value["sha256"].as_str().expect("diagnose hash").len(), 64);
     assert!(value["findings"].is_array());
     assert!(value["notices"].is_array());
 }
@@ -159,10 +152,7 @@ fn assert_receipt_shape(value: &Value) {
     ] {
         assert!(object.contains_key(key), "missing receipt.{key}");
     }
-    assert_eq!(
-        value["sha256"].as_str().expect("receipt hash").len(),
-        64
-    );
+    assert_eq!(value["sha256"].as_str().expect("receipt hash").len(), 64);
     assert_eq!(value["source_preserved"], true);
 }
 
@@ -209,7 +199,10 @@ fn scan_json_is_public_repeatable_and_redacts_secret_shaped_names() {
     let (first_text, first_json) = stdout_json(&first);
     let (second_text, second_json) = stdout_json(&second);
 
-    assert_eq!(first_text, second_text, "stable input must produce stable JSON");
+    assert_eq!(
+        first_text, second_text,
+        "stable input must produce stable JSON"
+    );
     assert_eq!(first_json, second_json);
     assert_scan_shape(&first_json);
     assert_no_internal_source_field(&first_json);

@@ -738,8 +738,7 @@ fn inspect_thread_store(
             &db_path,
             max_database_bytes,
             "SQLite database",
-        )
-        else {
+        ) else {
             read_error = true;
             continue;
         };
@@ -1110,8 +1109,7 @@ fn inspect_projection(
             &db_path,
             max_database_bytes,
             "SQLite database",
-        )
-        else {
+        ) else {
             relevant_error = true;
             continue;
         };

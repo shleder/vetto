@@ -486,9 +486,7 @@ fn create_private_sqlite_snapshot(bytes: &[u8], label: &str) -> Result<PrivateSq
     let process = std::process::id();
     let nonce = NEXT_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed);
     for attempt in 0..SNAPSHOT_DIRECTORY_ATTEMPTS {
-        let directory = base.join(format!(
-            "vetto-sqlite-snapshot-{process}-{nonce}-{attempt}"
-        ));
+        let directory = base.join(format!("vetto-sqlite-snapshot-{process}-{nonce}-{attempt}"));
         match create_private_directory(&directory) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -831,7 +829,10 @@ mod tests {
         let connection =
             open_sqlite_read_only(root, &path, "SQLite database").expect("open snapshot");
         let snapshot_path = connection.snapshot_path_for_test().to_path_buf();
-        assert!(snapshot_path.exists(), "snapshot must stay alive with connection");
+        assert!(
+            snapshot_path.exists(),
+            "snapshot must stay alive with connection"
+        );
 
         fs::remove_file(&path).expect("remove source");
         fs::write(&path, b"this replacement is not sqlite").expect("replacement");

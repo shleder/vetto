@@ -321,7 +321,10 @@ fn codex_index_missing_rollout_fails_closed() {
     create_codex_sqlite_index(&root, &[&missing]);
 
     let output = run_rescue(&root, &["scan", "--limit", "1"]);
-    assert!(!output.status.success(), "stale index unexpectedly succeeded");
+    assert!(
+        !output.status.success(),
+        "stale index unexpectedly succeeded"
+    );
     let error = stderr(&output);
     assert!(
         error.contains("unavailable") || error.contains("rollout"),
@@ -343,7 +346,10 @@ fn codex_short_basename_is_rejected_when_sessions_are_ambiguous() {
     );
 
     let output = run_rescue(&root, &["diagnose", "shared"]);
-    assert!(!output.status.success(), "ambiguous basename unexpectedly worked");
+    assert!(
+        !output.status.success(),
+        "ambiguous basename unexpectedly worked"
+    );
     assert!(
         stderr(&output).contains("ambiguous"),
         "ambiguity error: {}",
