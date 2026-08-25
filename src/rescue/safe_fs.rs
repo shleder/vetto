@@ -422,6 +422,12 @@ pub(crate) fn open_sqlite_read_only_bounded(
     connection
         .execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=250;")
         .map_err(|_| anyhow::anyhow!("{label} snapshot could not be configured read-only"))?;
+    // SQLite opens lazily: a non-SQLite payload would only fail at first
+    // read. Probe the schema header eagerly so malformed input fails closed
+    // at open time instead of surfacing later as confusing query errors.
+    let _schema_probe: i64 = connection
+        .query_row("PRAGMA schema_version", [], |row| row.get(0))
+        .map_err(|_| anyhow::anyhow!("{label} snapshot is not a readable SQLite database"))?;
     Ok(VerifiedSqliteConnection {
         connection,
         _snapshot: snapshot,

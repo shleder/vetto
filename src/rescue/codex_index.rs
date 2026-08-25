@@ -77,6 +77,9 @@ impl CandidateAccumulator {
         roots: &[PathBuf],
         raw: String,
     ) -> Result<()> {
+        if roots.is_empty() {
+            bail!("Codex index is present but no real sessions directory exists");
+        }
         self.indexed_rows_seen = self
             .indexed_rows_seen
             .checked_add(1)
@@ -158,7 +161,10 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     if max_index_rows == 0 {
         bail!("limited rescue scan requires a positive max_files budget");
     }
-    let roots = session_roots(&root)?;
+    // Session roots are resolved lazily-honestly: an absent sessions tree
+    // must not preempt coarse index budgets (e.g. SQLite fanout), yet no
+    // index row may be accepted without a real root to verify against.
+    let roots = session_roots(&root).unwrap_or_default();
     let mut candidates = CandidateAccumulator::new(limit);
     let mut sources = Vec::new();
 
