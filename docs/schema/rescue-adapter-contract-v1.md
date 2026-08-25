@@ -4,9 +4,11 @@ Status: frozen for the `0.2` alpha line.
 
 This is the normative contract for the host-side `vetto rescue` surface. The
 contract is provider-neutral: adding an adapter must not change the sandbox
-backends or weaken their policy. The declarative metadata shape is described by
-[`agent-adapter.schema.json`](agent-adapter.schema.json), which rejects unknown
-fields with `additionalProperties: false`.
+backends or weaken their policy. The declarative adapter metadata shape is
+described by [`agent-adapter.schema.json`](agent-adapter.schema.json), which
+rejects unknown fields with `additionalProperties: false`. The public JSON
+result shapes are described separately by
+[`rescue-output-v1.schema.json`](rescue-output-v1.schema.json).
 
 ## Registry and support claims
 
@@ -72,10 +74,19 @@ hard-linked destinations are refused without modifying the target.
 ## JSON output
 
 `--json` output is a stable, machine-readable representation of the public
-result types. Internal source paths are omitted. All user-derived strings are
-passed through Vetto's best-effort sanitizer before serialization. Consumers
-must treat unknown JSON fields as forward-compatible and must not infer a
-stronger support level from a missing capability.
+result types. The v1 schema covers the scan result, `SessionView` diagnosis,
+and the shared copy-only receipt returned by both `snapshot` and `fork`.
+Internal source handles and provider state paths are omitted; in particular,
+`source_path` is not a public field. All user-derived strings are passed
+through Vetto's best-effort sanitizer before serialization. The sanitizer is a
+privacy convenience, not an enforcement boundary, so a tester must inspect
+every line before sharing a result.
+
+The JSON schema deliberately permits unknown fields in the root and known
+objects. Consumers must ignore fields they do not understand and must not
+infer a stronger support level from a missing capability. A future field must
+not expose internal source handles, raw provider paths, credentials, prompts,
+or other private provider state.
 
 For `rescue scan`, the public result contains `sessions` and a `discovery`
 object with these fields:

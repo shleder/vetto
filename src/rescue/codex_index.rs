@@ -43,9 +43,101 @@ pub struct IndexDiscovery {
     pub source: String,
 }
 
-#[derive(Debug, Clone)]
-struct IndexPath {
-    raw: String,
+struct CandidateAccumulator {
+    limit: usize,
+    /// These sets are bounded by the provider-index row budget. They avoid
+    /// retaining every SessionRef while still making candidate_count honest
+    /// in the presence of duplicate index rows or aliases.
+    seen_raw: HashSet<String>,
+    seen_paths: HashSet<PathBuf>,
+    sessions: Vec<SessionRef>,
+    indexed_rows_seen: usize,
+    candidate_count: usize,
+    total_bytes: u64,
+}
+
+impl CandidateAccumulator {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            seen_raw: HashSet::new(),
+            seen_paths: HashSet::new(),
+            sessions: Vec::with_capacity(limit),
+            indexed_rows_seen: 0,
+            candidate_count: 0,
+            total_bytes: 0,
+        }
+    }
+
+    fn accept(
+        &mut self,
+        context: &RescueContext,
+        configured_root: &Path,
+        canonical_root: &Path,
+        roots: &[PathBuf],
+        raw: String,
+    ) -> Result<()> {
+        self.indexed_rows_seen = self
+            .indexed_rows_seen
+            .checked_add(1)
+            .context("indexed row counter overflow")?;
+        if self.indexed_rows_seen > context.max_files {
+            bail!(
+                "Codex index exceeded the configured {} entry budget",
+                context.max_files
+            );
+        }
+        if !self.seen_raw.insert(raw.clone()) {
+            return Ok(());
+        }
+        let session = verify_index_path(context, configured_root, canonical_root, roots, &raw)?;
+        if !self.seen_paths.insert(session.source_path.clone()) {
+            return Ok(());
+        }
+        self.candidate_count = self
+            .candidate_count
+            .checked_add(1)
+            .context("indexed session counter overflow")?;
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(session.bytes)
+            .context("indexed session byte counter overflow")?;
+        if self.total_bytes > context.max_total_bytes {
+            bail!(
+                "limited rescue scan exceeded the {} byte budget",
+                context.max_total_bytes
+            );
+        }
+
+        self.sessions.push(session);
+        self.sessions.sort_by(session_order);
+        if self.sessions.len() > self.limit {
+            self.sessions.pop();
+        }
+        Ok(())
+    }
+
+    fn finish(self, source: String) -> Result<IndexDiscovery> {
+        if self.candidate_count == 0 {
+            bail!(
+                "Codex index was found but contained no rollout paths; refusing to return a misleading empty limited scan"
+            );
+        }
+        let truncated = self.candidate_count > self.limit;
+        Ok(IndexDiscovery {
+            sessions: self.sessions,
+            candidate_count: self.candidate_count,
+            truncated,
+            source,
+        })
+    }
+}
+
+fn session_order(left: &SessionRef, right: &SessionRef) -> std::cmp::Ordering {
+    right
+        .modified_unix_secs
+        .cmp(&left.modified_unix_secs)
+        .then_with(|| left.key.cmp(&right.key))
 }
 
 /// Discover sessions from provider indexes, with an optional caller limit.
@@ -66,73 +158,28 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     if max_index_rows == 0 {
         bail!("limited rescue scan requires a positive max_files budget");
     }
-    let mut paths = Vec::new();
+    let roots = session_roots(&root)?;
+    let mut candidates = CandidateAccumulator::new(limit);
     let mut sources = Vec::new();
 
-    if let Some(index_paths) = read_session_index(&root, context, max_index_rows)? {
+    if read_session_index(&root, context, max_index_rows, |raw| {
+        candidates.accept(context, &configured_root, &root, &roots, raw)
+    })? {
         sources.push("session-index");
-        paths.extend(index_paths);
     }
 
-    if let Some(sqlite_paths) = read_sqlite_indexes(context, &root, max_index_rows)? {
+    if read_sqlite_indexes(context, &root, max_index_rows, |raw| {
+        candidates.accept(context, &configured_root, &root, &roots, raw)
+    })? {
         sources.push("sqlite");
-        paths.extend(sqlite_paths);
     }
 
     if sources.is_empty() {
         bail!(
-            "limited rescue scan requires a readable Codex index (state SQLite or session_index.jsonl); use `vetto rescue scan --all` for an explicit filesystem walk"
+            "limited rescue scan requires a readable Codex index (state SQLite or session_index.jsonl); use rescue scan --all for an explicit filesystem walk"
         );
     }
-    if paths.is_empty() {
-        bail!(
-            "Codex index was found but contained no rollout paths; refusing to return a misleading empty limited scan"
-        );
-    }
-    if paths.len() > max_index_rows {
-        bail!(
-            "Codex index exceeded the configured {} entry budget",
-            context.max_files
-        );
-    }
-
-    let roots = session_roots(&root)?;
-    let mut seen = HashSet::new();
-    let mut sessions = Vec::with_capacity(paths.len());
-    for index_path in paths {
-        let session = verify_index_path(context, &configured_root, &root, &roots, &index_path.raw)?;
-        if seen.insert(session.source_path.clone()) {
-            sessions.push(session);
-        }
-    }
-
-    sessions.sort_by(|left, right| {
-        right
-            .modified_unix_secs
-            .cmp(&left.modified_unix_secs)
-            .then_with(|| left.key.cmp(&right.key))
-    });
-    let candidate_count = sessions.len();
-    let truncated = candidate_count > limit;
-    let total_bytes = sessions.iter().try_fold(0u64, |total, session| {
-        total
-            .checked_add(session.bytes)
-            .context("indexed session byte counter overflow")
-    })?;
-    if total_bytes > context.max_total_bytes {
-        bail!(
-            "limited rescue scan exceeded the {} byte budget",
-            context.max_total_bytes
-        );
-    }
-    sessions.truncate(limit);
-
-    Ok(IndexDiscovery {
-        sessions,
-        candidate_count,
-        truncated,
-        source: sources.join("+"),
-    })
+    candidates.finish(sources.join("+"))
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
@@ -222,11 +269,12 @@ fn read_session_index(
     root: &Path,
     context: &RescueContext,
     max_index_rows: usize,
-) -> Result<Option<Vec<IndexPath>>> {
+    mut consume: impl FnMut(String) -> Result<()>,
+) -> Result<bool> {
     let path = root.join(SESSION_INDEX_NAME);
     match fs::symlink_metadata(&path) {
         Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).context("inspect Codex session index"),
     }
     let first = safe_fs::read_bounded(
@@ -244,7 +292,7 @@ fn read_session_index(
     if first != second {
         bail!("Codex session index changed while being read; retry after the writer stops");
     }
-    let mut paths = Vec::new();
+    let mut paths_seen = 0usize;
     for (line_number, raw) in first.split(|byte| *byte == b'\n').enumerate() {
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         if raw.is_empty() {
@@ -263,16 +311,19 @@ fn read_session_index(
             )
         })?;
         for path in extract_paths(&value, 0) {
-            paths.push(IndexPath { raw: path });
-        }
-        if paths.len() > max_index_rows {
-            bail!(
-                "Codex session index exceeded the configured {} entry budget",
-                context.max_files
-            );
+            paths_seen = paths_seen
+                .checked_add(1)
+                .context("Codex session index row counter overflow")?;
+            if paths_seen > max_index_rows {
+                bail!(
+                    "Codex session index exceeded the configured {} entry budget",
+                    context.max_files
+                );
+            }
+            consume(path)?;
         }
     }
-    Ok(Some(paths))
+    Ok(true)
 }
 
 fn extract_paths(value: &Value, depth: usize) -> Vec<String> {
@@ -304,7 +355,8 @@ fn read_sqlite_indexes(
     context: &RescueContext,
     root: &Path,
     max_index_rows: usize,
-) -> Result<Option<Vec<IndexPath>>> {
+    mut consume: impl FnMut(String) -> Result<()>,
+) -> Result<bool> {
     let max_database_candidates = max_index_rows.min(MAX_SQLITE_DATABASES);
     if max_database_candidates == 0 {
         bail!("limited rescue scan requires a positive SQLite candidate budget");
@@ -388,7 +440,6 @@ fn read_sqlite_indexes(
     }
 
     let mut found = false;
-    let mut paths = Vec::new();
     for path in verified_candidates {
         found = true;
         let connection = safe_fs::open_sqlite_read_only(root, &path, "Codex SQLite index")?;
@@ -426,21 +477,11 @@ fn read_sqlite_indexes(
                 .context("read Codex SQLite rollout path")?
                 .filter(|path| !path.is_empty())
             {
-                paths.push(IndexPath { raw: path });
-                if paths.len() > max_index_rows {
-                    bail!(
-                        "Codex SQLite index exceeded the configured {} entry budget",
-                        context.max_files
-                    );
-                }
+                consume(path)?;
             }
         }
     }
-    if found {
-        Ok(Some(paths))
-    } else {
-        Ok(None)
-    }
+    Ok(found)
 }
 
 fn table_names(connection: &Connection) -> Result<Vec<String>> {

@@ -115,14 +115,17 @@ use only `npm install --global @shleddy/vetto@next`.
 ```console
 # Current published alpha: bounded session discovery
 vetto rescue --json scan
-# The commands below are on main and are not in 0.2.0-alpha.2 yet.
+
+# Published alpha: read-only diagnosis and copy-only recovery
+vetto rescue diagnose sessions/2026/08/23/session.jsonl
+mkdir recovery
+vetto rescue snapshot session.jsonl --output recovery/session.jsonl
+
+# Main-only until a later npm alpha; do not use these for alpha2 reports.
 # Codex: choose a different provider-index limit
 vetto rescue --json scan --limit 200
 # Codex: explicitly walk the bounded session roots, including unindexed files
 vetto rescue --json scan --all
-vetto rescue diagnose sessions/2026/08/23/session.jsonl
-mkdir recovery
-vetto rescue snapshot session.jsonl --output recovery/session.jsonl
 
 # Claude: explicit root, read-only and copy-only
 vetto rescue --adapter claude --root ~/.claude --json scan
@@ -139,6 +142,12 @@ fit within the requested limit, or that the bounded session-root walk finished.
 It never proves that the provider index contains every file in the state root.
 These index-first flags require a later npm alpha; `0.2.0-alpha.2` remains the
 current published build and must not be represented as containing them.
+
+The public JSON shapes are specified in
+[`docs/schema/rescue-output-v1.schema.json`](docs/schema/rescue-output-v1.schema.json).
+Unknown fields are forward-compatible, but internal `source_path` handles and
+raw provider paths are never part of the public contract. Vetto's sanitizer is
+best-effort; review every JSON line before sharing it.
 
 Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
 overwrites an existing destination, writes inside the original agent state
