@@ -90,12 +90,15 @@ vetto rescue --json diagnose "sessions/2026/08/23/session.jsonl"
 vetto rescue --json snapshot "sessions/2026/08/23/session.jsonl" --output "./recovery/session.jsonl"
 ```
 
-The next unpublished code on `main` changes Codex scan to index-first, adds a
+The current unpublished `main` changes Codex scan to index-first, adds a
 default return cap of 50, `--limit N`, explicit `--all`, and the JSON
-`discovery` object. Do not put those commands in a public field-test result
-until a later npm alpha actually contains them. For that later build,
-`discovery.complete` will describe only the selected evidence source; it will
-not prove that the provider index covers every file under the state root.
+`discovery` object. Those main-only features are not in the published
+`0.2.0-alpha.2` package. Do not put their commands or fields in a public
+field-test result until a later npm alpha actually contains them. For that
+later build, `discovery.complete` will describe only the selected evidence
+source; it will not prove that the provider index covers every file under the
+state root. The public result shapes are defined in
+[`docs/schema/rescue-output-v1.schema.json`](schema/rescue-output-v1.schema.json).
 
 On Windows PowerShell, an explicit Claude root looks like this:
 

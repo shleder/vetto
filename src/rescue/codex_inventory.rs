@@ -545,6 +545,24 @@ enum PathRelation {
     Unknown,
 }
 
+/// True only when both paths resolve to the same existing file on disk.
+/// Used to override a purely lexical mismatch caused by aliased roots
+/// (macOS /var -> /private/var, Windows 8.3 short names); any verification
+/// failure returns false and leaves the lexical verdict standing.
+///
+/// Safety note: nothing is opened or created through the stored reference;
+/// canonicalization feeds an EQUALITY comparison against an already verified
+/// discovery path, so a hostile row cannot widen access.
+fn canonical_identity_matches(stored: &str, discovered: &Path) -> bool {
+    let Ok(stored_canonical) = fs::canonicalize(stored) else {
+        return false;
+    };
+    let Ok(discovered_canonical) = fs::canonicalize(discovered) else {
+        return false;
+    };
+    stored_canonical == discovered_canonical && discovered_canonical.is_file()
+}
+
 fn path_relation(stored: &str, discovered: &Path) -> PathRelation {
     let discovered = discovered_logical_path(&discovered.to_string_lossy());
     if stored == discovered {
@@ -733,8 +751,12 @@ fn inspect_thread_store(
     let mut read_error = false;
     let mut schema_unknown = false;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
-        else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only_bounded(
+            root,
+            &db_path,
+            max_database_bytes,
+            "SQLite database",
+        ) else {
             read_error = true;
             continue;
         };
@@ -837,7 +859,24 @@ fn inspect_thread_store(
                 }
             };
             let relation = match (&stored, session_path) {
-                (Some(stored), Some(session_path)) => path_relation(stored, session_path),
+                (Some(stored), Some(session_path)) => {
+                    let lexical = path_relation(stored, session_path);
+                    // A symlinked root (e.g. /var -> /private/var on macOS)
+                    // makes a stored provider path differ LEXICALLY from the
+                    // canonicalized discovery path while both name the same
+                    // file. Verify filesystem identity before reporting a
+                    // divergence; when verification fails, keep the lexical
+                    // verdict.
+                    if matches!(lexical, PathRelation::Different)
+                        && canonical_identity_matches(stored, session_path)
+                    {
+                        PathRelation::Equivalent {
+                            namespace_divergence: false,
+                        }
+                    } else {
+                        lexical
+                    }
+                }
                 _ => PathRelation::Unknown,
             };
             let by_id = matched_by_id;
@@ -1100,8 +1139,12 @@ fn inspect_projection(
     let mut states = Vec::new();
     let mut relevant_error = candidate_set.rejected;
     for db_path in candidates {
-        let Ok(connection) = safe_fs::open_sqlite_read_only(root, &db_path, "SQLite database")
-        else {
+        let Ok(connection) = safe_fs::open_sqlite_read_only_bounded(
+            root,
+            &db_path,
+            max_database_bytes,
+            "SQLite database",
+        ) else {
             relevant_error = true;
             continue;
         };
@@ -1478,6 +1521,39 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn aliased_root_spelling_matches_by_filesystem_identity() {
+        // macOS (/var vs /private/var) and Windows 8.3 short names both
+        // surface as a lexically different stored path naming the same file.
+        let temp = TempRoot::new("alias-identity");
+        let real = temp.0.join("real");
+        std::fs::create_dir_all(&real).expect("real root");
+        let alias = temp.0.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).expect("alias symlink");
+
+        let discovered = real.join("rollout.jsonl");
+        std::fs::write(&discovered, b"{}\n").expect("rollout fixture");
+        let stored = alias.join("rollout.jsonl");
+
+        // The lexical verdict is Different; identity verification rescues it.
+        assert!(matches!(
+            path_relation(&stored.to_string_lossy(), &discovered),
+            PathRelation::Different
+        ));
+        assert!(canonical_identity_matches(
+            &stored.to_string_lossy(),
+            &discovered
+        ));
+
+        // A stored path that names a DIFFERENT file must not be rescued.
+        std::fs::write(temp.0.join("other.jsonl"), b"{}\n").expect("other fixture");
+        assert!(!canonical_identity_matches(
+            &temp.0.join("other.jsonl").to_string_lossy(),
+            &discovered
+        ));
+    }
+
     #[test]
     fn empty_sidebar_metadata_is_reported_without_exposing_content() {
         let temp = TempRoot::new("sidebar-empty");
@@ -1594,6 +1670,30 @@ mod tests {
         .unwrap();
         assert_eq!(report.thread_store.status, "unknown");
         assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+    }
+
+    #[test]
+    fn wal_or_shm_presence_is_unknown_not_a_false_inventory_finding() {
+        let temp = TempRoot::new("wal-uncertain");
+        let id = "019fffff-9999-7999-8999-999999999999";
+        let (path, bytes) = rollout(&temp.0, id);
+        create_empty_sidebar_db(&temp.0, id, &path.to_string_lossy());
+        let wal = PathBuf::from(format!("{}-wal", temp.0.join("state_5.sqlite").display()));
+        fs::write(wal, b"unproven wal bytes").unwrap();
+
+        let report = inspect_session(
+            &RescueContext::new(temp.0.clone()),
+            Some(&path),
+            Some(&bytes),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.status, InventoryStatus::Unknown);
+        assert_eq!(report.thread_store.status, "unknown");
+        assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
+        assert!(report
+            .findings
+            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
     }
 
     #[test]

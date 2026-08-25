@@ -71,11 +71,31 @@ body:
         - unavailable
     validations:
       required: true
+  - type: dropdown
+    id: rescue-output-kind
+    attributes:
+      label: Rescue JSON output kind (if applicable)
+      description: Select the public result shape only when this report includes a sanitized rescue JSON result.
+      options:
+        - Not applicable
+        - scan
+        - diagnose
+        - snapshot or fork
+    validations:
+      required: true
+  - type: input
+    id: rescue-schema-version
+    attributes:
+      label: Rescue JSON schema version (if applicable)
+      description: Use v1 for the public rescue output schema, or N/A when this is not a rescue JSON report.
+      placeholder: v1 or N/A
+    validations:
+      required: true
   - type: textarea
     id: doctor
     attributes:
       label: Sanitized doctor or JSON output
-      description: Remove paths, usernames, hostnames, prompts, and all secrets. The sanitizer is best-effort; review it yourself.
+      description: Remove paths, usernames, hostnames, prompts, and all secrets. For rescue scan JSON, keep only the public discovery metadata when possible. The sanitizer is best-effort; review it yourself.
       render: text
     validations:
       required: true
@@ -97,6 +117,8 @@ body:
       label: Privacy confirmation
       options:
         - label: I removed raw sessions, SQLite/state files, auth/config files, tokens, keys, cookies, prompts, source code, private project names, and unreviewed paths.
+          required: true
+        - label: I did not include an internal `source_path` field or raw provider state path in a rescue result.
           required: true
         - label: I understand that Vetto's sanitizer is best-effort and I reviewed every attached or pasted line.
           required: true

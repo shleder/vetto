@@ -236,6 +236,131 @@ fn codex_index_scan_reports_truncation_without_claiming_state_root_completeness(
 }
 
 #[test]
+fn codex_index_end_to_end_stays_index_first_over_ten_thousand_files() {
+    let project = TempProject::new("rescue-index-large-e2e");
+    let root = project.path().join("codex-home");
+    let indexed = root.join("sessions/indexed/target.jsonl");
+    write_file(&indexed, "{\"type\":\"turn\",\"ordinal\":1}\n");
+
+    // A full filesystem walk would exceed the default 10,000-entry budget.
+    // The provider index contains exactly one rollout, so the default scan
+    // must still produce a trustworthy candidate and the exact-key commands
+    // must not rediscover the tree.
+    for bucket in 0..101 {
+        let directory = root.join(format!("sessions/unindexed/{bucket:03}"));
+        fs::create_dir_all(&directory).expect("large session directory");
+        for item in 0..100 {
+            fs::write(
+                directory.join(format!("rollout-{item:03}.jsonl")),
+                b"{\"type\":\"turn\"}\n",
+            )
+            .expect("large unindexed rollout");
+        }
+    }
+    create_codex_sqlite_index(&root, &[&indexed]);
+
+    let scan = run_rescue(&root, &["scan"]);
+    assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
+    let scan_json: serde_json::Value =
+        serde_json::from_slice(&scan.stdout).expect("large scan JSON");
+    assert_eq!(scan_json["discovery"]["mode"], "index-first");
+    assert_eq!(scan_json["discovery"]["candidate_count"], 1);
+    assert_eq!(scan_json["sessions"].as_array().map(Vec::len), Some(1));
+    let key = scan_json["sessions"][0]["key"]
+        .as_str()
+        .expect("indexed exact key");
+    assert_eq!(key, "sessions/indexed/target.jsonl");
+
+    let diagnose = run_rescue(&root, &["diagnose", key]);
+    assert!(
+        diagnose.status.success(),
+        "diagnose stderr: {}",
+        stderr(&diagnose)
+    );
+    let view: serde_json::Value =
+        serde_json::from_slice(&diagnose.stdout).expect("large diagnose JSON");
+    assert_eq!(
+        view["health"], "healthy",
+        "unexpected diagnose view: {view}"
+    );
+    assert_eq!(view["records"], 1);
+
+    let recovery = project.path().join("recovery");
+    fs::create_dir_all(&recovery).expect("recovery directory");
+    let output_path = recovery.join("target.jsonl");
+    let snapshot = Command::new(vetto_bin())
+        .args([
+            "rescue",
+            "--adapter",
+            "codex",
+            "--root",
+            root.to_str().expect("UTF-8 root"),
+            "--json",
+            "snapshot",
+            key,
+            "--output",
+            output_path.to_str().expect("UTF-8 output"),
+        ])
+        .output()
+        .expect("snapshot command");
+    assert!(
+        snapshot.status.success(),
+        "snapshot stderr: {}",
+        stderr(&snapshot)
+    );
+    assert_eq!(
+        fs::read(&output_path).expect("snapshot bytes"),
+        b"{\"type\":\"turn\",\"ordinal\":1}\n"
+    );
+}
+
+#[test]
+fn codex_index_missing_rollout_fails_closed() {
+    let project = TempProject::new("rescue-index-stale-e2e");
+    let root = project.path().join("codex-home");
+    let real = root.join("sessions/real.jsonl");
+    write_file(&real, "{\"type\":\"turn\"}\n");
+    let missing = root.join("sessions/missing.jsonl");
+    create_codex_sqlite_index(&root, &[&missing]);
+
+    let output = run_rescue(&root, &["scan", "--limit", "1"]);
+    assert!(
+        !output.status.success(),
+        "stale index unexpectedly succeeded"
+    );
+    let error = stderr(&output);
+    assert!(
+        error.contains("unavailable") || error.contains("rollout"),
+        "stale index error: {error}"
+    );
+}
+
+#[test]
+fn codex_short_basename_is_rejected_when_sessions_are_ambiguous() {
+    let project = TempProject::new("rescue-exact-key-ambiguous");
+    let root = project.path().join("codex-home");
+    write_file(
+        &root.join("sessions/shared.jsonl"),
+        "{\"type\":\"turn\",\"root\":\"sessions\"}\n",
+    );
+    write_file(
+        &root.join("archived_sessions/shared.jsonl"),
+        "{\"type\":\"turn\",\"root\":\"archived\"}\n",
+    );
+
+    let output = run_rescue(&root, &["diagnose", "shared"]);
+    assert!(
+        !output.status.success(),
+        "ambiguous basename unexpectedly worked"
+    );
+    assert!(
+        stderr(&output).contains("ambiguous"),
+        "ambiguity error: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn codex_all_scan_uses_the_bounded_filesystem_source() {
     let project = TempProject::new("rescue-index-all");
     let root = project.path().join("codex-home");

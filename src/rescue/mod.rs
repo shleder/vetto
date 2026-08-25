@@ -59,6 +59,14 @@ fn select_session(
     context: &RescueContext,
     selector: &str,
 ) -> Result<SessionRef> {
+    // Codex keys are stable root-relative paths emitted by scan. Resolve them
+    // directly so diagnose/snapshot/fork never performs a complete discovery
+    // pass. Basename matching is intentionally not used for Codex: nested
+    // rollouts may legitimately share one filename.
+    if adapter.id() == "codex" {
+        return codex::CodexAdapter::resolve_exact(&context.root, selector);
+    }
+
     let selector = selector.replace('\\', "/");
     let sessions = adapter.discover_sessions(context)?;
     if let Some(session) = sessions.iter().find(|session| session.key == selector) {

@@ -423,6 +423,126 @@ impl CodexAdapter {
         Ok(canonical)
     }
 
+    /// Resolve a Codex session key without discovering the session tree.
+    ///
+    /// Scan emits a root-relative key such as
+    /// sessions/2026/08/23/rollout.jsonl. That key is treated as an exact
+    /// path, never as a basename. The two short forms (rollout and
+    /// rollout.jsonl) are retained for compatibility with the original
+    /// rescue CLI, but they only address a file directly below
+    /// sessions/ or archived_sessions/; if both roots contain that name the
+    /// request fails closed as ambiguous.
+    pub(crate) fn resolve_exact(root: &Path, selector: &str) -> Result<SessionRef> {
+        let context = RescueContext::new(root.to_path_buf());
+        let selector = selector.replace('\\', "/");
+        if selector.is_empty() || selector.contains('\0') {
+            bail!("session selector must be a non-empty exact Codex key");
+        }
+
+        let selector_path = Path::new(&selector);
+        if selector_path.is_absolute()
+            || selector_path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Prefix(_)
+                        | std::path::Component::RootDir
+                        | std::path::Component::CurDir
+                        | std::path::Component::ParentDir
+                )
+            })
+        {
+            bail!("session selector must be a root-relative exact Codex key");
+        }
+
+        let mut candidates = Vec::new();
+        let explicit_root = selector_path
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+            .filter(|component| *component == "sessions" || *component == "archived_sessions");
+
+        if explicit_root.is_some() {
+            if selector_path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                bail!("session selector must name a .jsonl rollout");
+            }
+            candidates.push((selector.clone(), context.root.join(selector_path)));
+        } else if !selector.contains('/') {
+            // Compatibility shorthand is deliberately limited to the two
+            // root directories. It cannot select a nested basename.
+            let filename = if selector.ends_with(".jsonl") {
+                selector.clone()
+            } else {
+                format!("{selector}.jsonl")
+            };
+            candidates.push((
+                format!("sessions/{filename}"),
+                context.root.join("sessions").join(&filename),
+            ));
+            candidates.push((
+                format!("archived_sessions/{filename}"),
+                context.root.join("archived_sessions").join(&filename),
+            ));
+        } else {
+            bail!(
+                "session selector {selector:?} is not an exact Codex key; use the key from rescue scan"
+            );
+        }
+
+        let mut matches = Vec::new();
+        for (expected_key, candidate) in candidates {
+            match fs::symlink_metadata(&candidate) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error).context("inspect exact Codex session key"),
+            }
+
+            let verified = safe_fs::open_regular(&context.root, &candidate, "session")?;
+            if verified.len() > context.max_session_bytes {
+                bail!(
+                    "session exceeds the {} byte inspection budget",
+                    context.max_session_bytes
+                );
+            }
+            let canonical = verified.path().to_path_buf();
+            let roots = Self::canonical_session_roots(&context)?;
+            if !roots.iter().any(|root| canonical.starts_with(root)) {
+                bail!("session is outside the configured Codex session roots");
+            }
+            if canonical.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                bail!("session selector must name a .jsonl rollout");
+            }
+            verified.ensure_unchanged("session")?;
+            let metadata = verified.metadata()?;
+            let actual_key = Self::normalized_relative(&context, &canonical)?;
+            if actual_key != expected_key {
+                bail!("session key resolves to a different path; refusing an ambiguous selector");
+            }
+            let modified_unix_secs = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs());
+            matches.push(SessionRef {
+                adapter: "codex".to_string(),
+                key: actual_key.clone(),
+                relative_path: actual_key,
+                bytes: metadata.len(),
+                modified_unix_secs,
+                source_path: canonical,
+            });
+        }
+
+        match matches.len() {
+            0 => bail!(
+                "session {selector:?} was not found; use the exact key from rescue scan"
+            ),
+            1 => Ok(matches.remove(0)),
+            count => bail!(
+                "session selector {selector:?} is ambiguous ({count} matches); use the exact key from rescue scan"
+            ),
+        }
+    }
+
     fn normalized_relative(context: &RescueContext, path: &Path) -> Result<String> {
         let canonical_root = Self::validate_root(context)?;
         let relative = path
@@ -474,11 +594,14 @@ impl CodexAdapter {
     ) -> Result<()> {
         let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
-            let mut entries = fs::read_dir(&directory)
+            // Keep the directory iterator streaming. The entry budget must
+            // bound allocations as well as the number of inspected nodes: a
+            // single hostile directory must not be collected into a Vec
+            // before the budget is enforced.
+            for entry in fs::read_dir(&directory)
                 .with_context(|| format!("scan session directory {}", directory.display()))?
-                .collect::<std::io::Result<Vec<_>>>()?;
-            entries.sort_by_key(|entry| entry.path());
-            for entry in entries {
+            {
+                let entry = entry?;
                 *entries_seen = entries_seen
                     .checked_add(1)
                     .context("session entry counter overflow")?;
