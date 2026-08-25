@@ -224,7 +224,10 @@ fn diagnose_snapshot_and_fork_match_public_shapes() {
     assert_diagnose_shape(&diagnose_json);
     assert_no_internal_source_field(&diagnose_json);
 
-    let recovery = temp.0.join("recovery");
+    // Recovery output must live OUTSIDE the agent state root: the rescue
+    // contract refuses copy destinations inside it (fail-closed).
+    let recovery_root = TempRoot::new("recovery");
+    let recovery = recovery_root.0.join("out");
     fs::create_dir_all(&recovery).expect("recovery directory");
     let snapshot_path = recovery.join("snapshot.jsonl");
     let snapshot_args = vec![
