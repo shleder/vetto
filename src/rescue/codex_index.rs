@@ -167,8 +167,8 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     // index row may be accepted without a real root to verify against.
     // Real IO failures (e.g. EACCES) are surfaced instead of being flattened
     // into an empty list that would misreport the cause.
-    let roots = session_roots(&root)
-        .context("limited rescue scan could not verify Codex session roots")?;
+    let roots =
+        session_roots(&root).context("limited rescue scan could not verify Codex session roots")?;
     let mut candidates = CandidateAccumulator::new(limit, limit.min(context.max_files));
     let mut sources = Vec::new();
 
