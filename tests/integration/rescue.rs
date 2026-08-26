@@ -48,6 +48,47 @@ fn create_codex_sqlite_index(root: &std::path::Path, paths: &[&std::path::Path])
 }
 
 #[test]
+fn codex_limited_scan_fails_closed_when_session_roots_are_missing() {
+    let project = TempProject::new("rescue-index-no-roots");
+    let root = project.path().join("codex-home");
+    create_codex_sqlite_index(&root, &[]);
+
+    let output = run_rescue(&root, &["scan", "--limit", "2"]);
+    assert!(
+        !output.status.success(),
+        "an index without verifiable session roots must fail closed"
+    );
+    assert!(
+        stderr(&output).contains("no real sessions directory exists"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_scan_skips_symlinked_transcripts_instead_of_following_them() {
+    let project = TempProject::new("rescue-claude-symlink");
+    let root = project.path().join("claude-state");
+    let target = root.join("projects/demo/real.jsonl");
+    write_file(&target, "{\"type\":\"user\"}\n");
+    std::os::unix::fs::symlink(&target, &root.join("projects/demo/session.jsonl"))
+        .expect("create transcript symlink");
+
+    let scan = run_rescue_with_adapter("claude", &root, &["scan"]);
+    assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
+    let value: serde_json::Value =
+        serde_json::from_slice(&scan.stdout).expect("Claude scan JSON output");
+    let keys = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .map(|session| session["key"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(keys, vec!["projects/demo/real.jsonl".to_string()]);
+}
+
+#[test]
 fn unknown_adapter_is_explicitly_unsupported() {
     let project = TempProject::new("rescue-unknown-adapter");
     let output = Command::new(vetto_bin())

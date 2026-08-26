@@ -7,8 +7,7 @@
 //! reconstruct provider state.  In particular, credentials and settings are
 //! never discovery candidates, and snapshot/fork are copy-only operations.
 
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -21,6 +20,7 @@ use sha2::{Digest, Sha256};
 use crate::report;
 
 use super::adapter::RescueAdapter;
+use super::safe_fs;
 use super::types::{
     AdapterStatus, Availability, RescueContext, SessionHealth, SessionRef, SessionView,
     SnapshotReceipt,
@@ -154,21 +154,19 @@ impl ClaudeAdapter {
         Ok(canonical)
     }
 
-    fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-        let file = File::open(path)?;
-        let mut bytes = Vec::new();
-        file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > limit {
-            bail!("Claude transcript grew beyond the inspection budget while reading");
-        }
-        Ok(bytes)
+    fn read_bounded(context: &RescueContext, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        // Open through the shared safe-fs opener: no-follow on the final
+        // component (O_NOFOLLOW / reparse-point flag), root containment,
+        // and pre/post-open identity checks. A bare File::open here would
+        // silently follow a symlink swapped in after validation.
+        safe_fs::read_bounded(&context.root, path, limit, "Claude transcript")
     }
 
     fn read_stable(context: &RescueContext, path: &Path) -> Result<Vec<u8>> {
         let canonical = Self::validate_session_path(context, path)?;
-        let first = Self::read_bounded(&canonical, context.max_session_bytes)
+        let first = Self::read_bounded(context, &canonical, context.max_session_bytes)
             .with_context(|| format!("read Claude transcript {}", canonical.display()))?;
-        let second = Self::read_bounded(&canonical, context.max_session_bytes)
+        let second = Self::read_bounded(context, &canonical, context.max_session_bytes)
             .with_context(|| format!("re-read Claude transcript {}", canonical.display()))?;
         if Self::sha256(&first) != Self::sha256(&second) {
             bail!("Claude transcript changed while being read; retry after the writer stops");
@@ -185,11 +183,15 @@ impl ClaudeAdapter {
     ) -> Result<()> {
         let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
-            let mut entries = fs::read_dir(&directory)
-                .with_context(|| format!("scan Claude state directory {}", directory.display()))?
-                .collect::<std::io::Result<Vec<_>>>()?;
-            entries.sort_by_key(|entry| entry.path());
+            // Stream entries and enforce the budget per entry. Collecting the
+            // directory into a Vec first would let a hostile state root with
+            // millions of entries exhaust memory before any budget applies.
+            let entries = fs::read_dir(&directory)
+                .with_context(|| format!("scan Claude state directory {}", directory.display()))?;
             for entry in entries {
+                let entry = entry.with_context(|| {
+                    format!("read Claude state directory entry {}", directory.display())
+                })?;
                 *entries_seen = entries_seen
                     .checked_add(1)
                     .context("Claude entry counter overflow")?;
