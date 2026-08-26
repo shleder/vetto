@@ -288,9 +288,7 @@ fn session_id_from_path(path: &Path) -> Option<String> {
     }
     // A multi-byte character may straddle this byte offset in a hostile or
     // merely unusual filename; slicing would panic the whole tool mid-incident.
-    let Some(candidate) = stem.get(stem.len() - 36..) else {
-        return None;
-    };
+    let candidate = stem.get(stem.len() - 36..)?;
     let valid = candidate.bytes().enumerate().all(|(index, byte)| {
         if matches!(index, 8 | 13 | 18 | 23) {
             byte == b'-'
