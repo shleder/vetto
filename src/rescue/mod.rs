@@ -125,11 +125,8 @@ pub fn run_cli(
             if *limit == Some(0) {
                 bail!("rescue scan --limit must be greater than zero");
             }
-            if *all && limit.is_some() {
-                bail!(
-                    "`rescue scan --limit` has no effect together with `--all`; the bounded filesystem walk applies its own aggregate budgets"
-                );
-            }
+            // clap rejects --all combined with --limit at parse time; nothing
+            // else to enforce here for that pair.
             if limit.is_some() && adapter_id != "codex" {
                 bail!("`rescue scan --limit` is supported only by the Codex index-first adapter");
             }
