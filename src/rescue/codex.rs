@@ -99,6 +99,9 @@ struct SemanticDiagnostics {
     retired_ids: HashSet<String>,
     retired_order: VecDeque<String>,
     correlation_overflow: bool,
+    last_ordinal: Option<u64>,
+    duplicate_ordinals: u64,
+    regressed_ordinals: u64,
 }
 
 impl SemanticDiagnostics {
@@ -320,6 +323,18 @@ impl SemanticDiagnostics {
         let Some(record) = value.as_object() else {
             return;
         };
+        // Persisted paginated ordinals must strictly increase. A repeated
+        // ordinal at the resume boundary or a regression freezes projection
+        // replay upstream (openai/codex#35746 family); both are visible from
+        // the rollout alone and never require the provider state database.
+        if let Some(ordinal) = record.get("ordinal").and_then(serde_json::Value::as_u64) {
+            match self.last_ordinal {
+                Some(previous) if ordinal == previous => self.duplicate_ordinals += 1,
+                Some(previous) if ordinal < previous => self.regressed_ordinals += 1,
+                _ => {}
+            }
+            self.last_ordinal = Some(ordinal);
+        }
         let outer_type = record.get("type").and_then(serde_json::Value::as_str);
         let Some(payload) = record.get("payload").and_then(serde_json::Value::as_object) else {
             return;
@@ -367,6 +382,12 @@ impl SemanticDiagnostics {
         }
         if unfinished {
             self.push_finding("UNFINISHED_TOOL_CALL");
+        }
+        if self.duplicate_ordinals > 0 {
+            self.push_finding("DUPLICATE_ORDINAL_BOUNDARY");
+        }
+        if self.regressed_ordinals > 0 {
+            self.push_finding("ORDINAL_REGRESSION");
         }
         self.findings
     }
@@ -920,6 +941,89 @@ mod tests {
             .discover_sessions(&context)
             .expect_err("per-session budget must fail closed");
         assert!(error.to_string().contains("inspection budget"), "{error:#}");
+    }
+
+    #[test]
+    fn diagnose_flags_duplicate_ordinal_resume_boundary() {
+        let temp = TempRoot::new("ordinal-duplicate");
+        let root = temp.codex_home();
+        let body = concat!(
+            r#"{"ordinal":5,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":6,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":6,"type":"event_msg","payload":{"type":"thread_settings_applied"}}"#,
+            "\n",
+            r#"{"ordinal":7,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+        );
+        session(&root, "duplicate-ordinal.jsonl", body.as_bytes());
+        let adapter = CodexAdapter;
+        let context = RescueContext::new(root);
+        let sessions = adapter
+            .discover_sessions(&context)
+            .expect("discover session");
+        let view = adapter
+            .diagnose(&context, &sessions[0])
+            .expect("diagnose session");
+        assert!(view
+            .findings
+            .contains(&"DUPLICATE_ORDINAL_BOUNDARY".to_string()));
+        assert!(!view.findings.contains(&"ORDINAL_REGRESSION".to_string()));
+        assert_eq!(view.health, SessionHealth::Warning);
+    }
+
+    #[test]
+    fn diagnose_flags_regressed_ordinal_sequence() {
+        let temp = TempRoot::new("ordinal-regression");
+        let root = temp.codex_home();
+        let body = concat!(
+            r#"{"ordinal":5,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":6,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":4,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+        );
+        session(&root, "regressed-ordinal.jsonl", body.as_bytes());
+        let adapter = CodexAdapter;
+        let context = RescueContext::new(root);
+        let sessions = adapter
+            .discover_sessions(&context)
+            .expect("discover session");
+        let view = adapter
+            .diagnose(&context, &sessions[0])
+            .expect("diagnose session");
+        assert!(view.findings.contains(&"ORDINAL_REGRESSION".to_string()));
+        assert_eq!(view.health, SessionHealth::Warning);
+    }
+
+    #[test]
+    fn diagnose_stays_healthy_on_strictly_increasing_ordinals() {
+        let temp = TempRoot::new("ordinal-healthy");
+        let root = temp.codex_home();
+        let body = concat!(
+            r#"{"ordinal":1,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":3,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+        );
+        session(&root, "healthy-ordinals.jsonl", body.as_bytes());
+        let adapter = CodexAdapter;
+        let context = RescueContext::new(root);
+        let sessions = adapter
+            .discover_sessions(&context)
+            .expect("discover session");
+        let view = adapter
+            .diagnose(&context, &sessions[0])
+            .expect("diagnose session");
+        assert!(!view
+            .findings
+            .contains(&"DUPLICATE_ORDINAL_BOUNDARY".to_string()));
+        assert!(!view.findings.contains(&"ORDINAL_REGRESSION".to_string()));
+        assert_eq!(view.health, SessionHealth::Healthy);
     }
 
     #[test]
