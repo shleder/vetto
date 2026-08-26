@@ -1,34 +1,59 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled policy ledger and OS boundary around local AI coding agents">
+  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled OS boundary around local AI coding agents">
+</p>
+
+<p align="center">
+  <strong>Your AI agent runs with your tokens, your files, and your network.</strong><br>
+  vetto puts one operator-controlled OS boundary around it — before the agent exists.<br>
+  <em>If the boundary cannot be established, nothing launches.</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status for main"></a>
   <a href="https://www.npmjs.com/package/@shleddy/vetto"><img src="https://img.shields.io/npm/v/%40shleddy%2Fvetto?logo=npm&label=npm" alt="npm package version"></a>
+  <a href="https://www.npmjs.com/package/@shleddy/vetto"><img src="https://img.shields.io/npm/dw/%40shleddy%2Fvetto?logo=npm&label=downloads%2Fweek" alt="npm weekly downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0 license"></a>
+  <a href="https://github.com/shleder/vetto/blob/main/SECURITY.md"><img src="https://img.shields.io/badge/telemetry-zero-success" alt="Zero telemetry"></a>
 </p>
 
 <p align="center">
   <a href="#run-it">Run it</a> ·
-  <a href="#boundary">Boundary</a> ·
-  <a href="#controls">Controls</a> ·
-  <a href="#platforms">Platforms</a> ·
-  <a href="#configuration">Configuration</a> ·
-  <a href="#limits">Limits</a> ·
+  <a href="#what-the-boundary-controls">Controls</a> ·
+  <a href="#platform-matrix">Platforms</a> ·
+  <a href="#profiles-and-policy">Profiles</a> ·
+  <a href="#rescue-local-sessions">Rescue</a> ·
+  <a href="#what-vetto-does-not-promise">Honest limits</a> ·
   <a href="SECURITY.md">Security</a>
 </p>
 
-`vetto` launches Codex, Claude Code, Aider, custom scripts, and other local
-commands inside an operator-controlled OS security boundary. It applies the
-policy before `exec`, makes descendants inherit it, filters the child
-environment, defaults the network to off, and leaves session evidence without
-turning observation into enforcement.
+---
+
+## The problem vetto solves
+
+Every local coding agent you launch — Codex, Claude Code, Aider, a custom
+script — starts with **your full environment**: API tokens in env variables,
+read/write access to your home directory, and an open network route. A single
+injected instruction inside fetched content is enough to turn that access into
+exfiltration.
+
+Agent-built sandboxes are useful defense in depth, but their policies,
+platform coverage, defaults, and reporting differ. vetto gives the operator
+**one outer boundary** without detecting, disabling, or weakening the sandbox
+inside the agent.
+
+| Without vetto | With vetto |
+| --- | --- |
+| Agent reads `$HOME`, `.env`, `.ssh`, cloud credentials | Secrets masked and denied by default |
+| Agent talks to any endpoint | Network off by default; allowlist relay where the platform supports it |
+| Every agent invents its own sandbox policy | One policy model across agents, one report format |
+| You hope the agent behaves | You set the capability before `exec` |
 
 > [!IMPORTANT]
 > **No boundary, no process.** If the selected sandbox cannot be established,
 > vetto refuses to launch the agent. It never falls back to an ordinary
 > unsandboxed command.
 
-### A real capability probe
+### Proof: a real capability probe
 
 This is an excerpt from `vetto doctor` on the project's current GitHub
 Codespace. Your host is probed at runtime; the tier is never assumed.
@@ -48,15 +73,14 @@ chosen tier:             full
 The last two lines are deliberate: enforcement can be fully active even when
 the host does not expose a readable audit feed.
 
-<a id="boundary"></a>
-
 <p align="center">
   <img src="./assets/readme/boundary.svg" width="100%" alt="vetto resolves policy, probes capabilities, applies an OS boundary, executes the agent, and keeps observation separate from enforcement">
 </p>
 
 The startup order is the security property: policy resolution and capability
-checks happen before the agent exists. The TUI, event readers, JSONL stream,
-and reports sit below a one-way boundary; none of them can grant an operation.
+checks happen **before the agent exists**. The TUI, event readers, JSONL
+stream, and reports sit below a one-way boundary; none of them can grant an
+operation.
 
 <a id="run-it"></a>
 
@@ -66,8 +90,8 @@ and reports sit below a one-way boundary; none of them can grant an operation.
 
 ## Run it
 
-Install from npm, inspect the machine, then add
-`vetto --` before the command you already use:
+Install from npm, inspect the machine, then add `vetto --` before the command
+you already use:
 
 ```console
 npm install --global @shleddy/vetto
@@ -75,15 +99,6 @@ vetto doctor
 cd my-project
 vetto --agent codex --profile default -- codex exec "review auth"
 ```
-
-The npm package includes native executables for Linux x64/ARM64, macOS
-x64/Apple Silicon, and Windows x64. It selects the matching executable locally;
-there is no install-time binary downloader. To install this release exactly,
-use `npm install --global @shleddy/vetto@0.2.0`. Stable releases stay on the
-npm `latest` tag while pre-release builds use `next`.
-Field testers should follow the
-npm-only privacy, desktop-support, and reporting checklist in
-[docs/field-testing.md](docs/field-testing.md).
 
 The wrapper accepts any executable:
 
@@ -94,92 +109,18 @@ vetto -- opencode
 vetto -- python agent.py
 ```
 
-For an interactive agent, the default `--tui=statusline` preserves the
-agent's PTY and reserves one row for vetto. Use `--tui=full` for the dashboard
-or `--tui=none` for scripts and CI. `vetto init` creates a starter
-`vetto.toml` in the current project.
+For an interactive agent, the default `--tui=statusline` preserves the agent's
+PTY and reserves one row for vetto. Use `--tui=full` for the dashboard or
+`--tui=none` for scripts and CI. `vetto init` creates a starter `vetto.toml`
+in the current project.
 
-## Rescue local sessions
+The npm package includes native executables for Linux x64/ARM64, macOS
+x64/Apple Silicon, and Windows x64. It selects the matching executable
+locally; there is no install-time binary downloader. To install this release
+exactly, use `npm install --global @shleddy/vetto@0.2.0`. Stable releases stay
+on the npm `latest` tag while pre-release builds use `next`.
 
-The `0.2` release adds a provider-neutral, copy-only recovery surface. The npm
-package ships the bounded Codex reference adapter and an experimental Claude
-adapter. Claude requires an explicit state root and remains opaque until its
-provider format is independently verified.
-
-Codex Rescue development has moved into Vetto. The standalone
-[`shleder/codex-rescue`](https://github.com/shleder/codex-rescue) repository
-remains public as historical compatibility evidence; new user installations
-use only `npm install --global @shleddy/vetto`.
-
-```console
-# Current published alpha: bounded session discovery
-vetto rescue --json scan
-
-# Published alpha: read-only diagnosis and copy-only recovery
-vetto rescue diagnose sessions/2026/08/23/session.jsonl
-mkdir recovery
-vetto rescue snapshot session.jsonl --output recovery/session.jsonl
-
-# Main-only until a later npm alpha; do not use these for alpha2 reports.
-# Codex: choose a different provider-index limit
-vetto rescue --json scan --limit 200
-# Codex: explicitly walk the bounded session roots, including unindexed files
-vetto rescue --json scan --all
-
-# Claude: explicit root, read-only and copy-only
-vetto rescue --adapter claude --root ~/.claude --json scan
-```
-
-On `main`, Codex `scan` is index-first by default and returns at most 50 verified index
-candidates. `--limit N` changes that cap; a missing, stale, or unreadable
-provider index fails closed instead of silently walking the state directory.
-Use `--all` when a bounded filesystem walk is intentional, for example with a
-synthetic fixture or a copied state tree that has no provider index. The JSON
-`discovery.complete` field describes completeness of the selected evidence
-source only: `true` means that all verified candidates from the selected index
-fit within the requested limit, or that the bounded session-root walk finished.
-It never proves that the provider index contains every file in the state root.
-These index-first behaviors ship in the current stable package.
-
-The public JSON shapes are specified in
-[`docs/schema/rescue-output-v1.schema.json`](docs/schema/rescue-output-v1.schema.json).
-Unknown fields are forward-compatible, but internal `source_path` handles and
-raw provider paths are never part of the public contract. Vetto's sanitizer is
-best-effort; review every JSON line before sharing it.
-
-Rescue never reads `auth.json` or `config.toml`, follows session symlinks,
-overwrites an existing destination, writes inside the original agent state
-root, or fabricates vendor SQLite rows. `snapshot` and `fork` create a verified
-new copy; ambiguous or changing inputs fail closed. Codex diagnosis reads
-compatible SQLite inventory/projection state with a read-only connection and
-emits bounded findings without exposing stored paths or rewriting derived
-state. See
-[ADR 0001](docs/adr/0001-universal-rescue-architecture.md) and the
-[Antigravity compatibility gate](docs/compatibility/antigravity.md).
-
-The rescue adapter is not an injector for an already-running desktop app. A
-Codex or Claude desktop process without a documented CLI remains
-`observe-only`/`unavailable`; it must not be reported as sandboxed by wrapping a
-different process. For the exact npm installation, support levels, safe
-Windows/PowerShell commands, and issue-report redaction rules, see
-[the field-testing checklist](docs/field-testing.md).
-
-## Why an outer boundary?
-
-Agent-built sandboxes are useful defense in depth, but their policies,
-platform coverage, defaults, and reporting differ. vetto gives the operator
-one outer policy without detecting, disabling, or weakening the sandbox
-inside the agent.
-
-| Competitor / alternative | Overlap | What vetto adds |
-| --- | --- | --- |
-| AgentJail | High | Daemon-less core path; no OPA/Rego service |
-| Watchfire | High | No persistent `watchfired` service |
-| ZeroClaw | Medium | Terminal-native operation and post-session artifacts; no web dashboard |
-| landrun | Medium | Agent presets, TUI, reports, and a macOS backend |
-| **Agent built-in sandboxes (Codex, Claude Code, etc.)** | High | One operator-controlled policy and report model across agents; a consistent outer layer for custom, optional, older, or absent built-ins |
-
-<a id="controls"></a>
+<a id="what-the-boundary-controls"></a>
 
 ## What the boundary controls
 
@@ -191,7 +132,8 @@ inside the agent.
 | Environment | Child environment rebuilt from an allowlist | Explicit `[environment].pass_through`; token, cloud, and API-key variables are stripped by default |
 | Session evidence | PTY/TUI, optional event feeds, JSONL, HTML, Markdown, JSON, SARIF | `--observe-seccomp`, `--fail-on-block`, `--report-dir`, and bounded retention; evidence never changes allow/deny |
 
-### Network modes
+<details>
+<summary><strong>Network modes</strong></summary>
 
 ```console
 # No external network. This is the default.
@@ -208,12 +150,15 @@ vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
 ```
 
 The broker resolves DNS outside the sandbox, rejects loopback, private,
-link-local, metadata, and other special-use destinations, pins the approved
-IP for the connection, and pumps opaque bytes. There is no SNI parsing, TLS
+link-local, metadata, and other special-use destinations, pins the approved IP
+for the connection, and pumps opaque bytes. There is no SNI parsing, TLS
 decryption, CA injection, or TLS MITM. Non-proxy protocols have no route
 unless an explicit helper exists. See [docs/network.md](docs/network.md).
 
-### Reports and CI
+</details>
+
+<details>
+<summary><strong>Reports and CI</strong></summary>
 
 ```console
 vetto --ci --tui=none --profile=strict --net=off \
@@ -226,7 +171,31 @@ sanitizer is explicitly best-effort: false positives and false negatives are
 possible, and reports contain observed events rather than proof of complete
 denial visibility.
 
-<a id="platforms"></a>
+GitHub Actions:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+steps:
+  - uses: actions/checkout@v4
+  - uses: shleder/vetto/action@main
+    with:
+      command: codex exec "review this PR"
+      profile: strict
+      net: off
+      report: json,sarif
+      upload-sarif: "true"
+```
+
+The action builds the checked-out source with `--locked`; it does not download
+or publish a release. Do not interpolate untrusted pull-request text into its
+shell command. See [docs/ci-cd.md](docs/ci-cd.md).
+
+</details>
+
+<a id="platform-matrix"></a>
 
 <p align="center">
   <img src="./assets/readme/section-platforms.svg" width="100%" alt="02 Capability first: Linux, macOS, and Windows expose different verified boundaries">
@@ -247,7 +216,8 @@ minifilter, or Windows Sandbox integrations remain capability/privilege gated
 and are never silently enabled. Details:
 [docs/platform-backends.md](docs/platform-backends.md).
 
-### Linux tier difference
+<details>
+<summary><strong>Linux tier difference (FULL vs FS-ONLY)</strong></summary>
 
 | | FULL | FS-ONLY |
 | --- | --- | --- |
@@ -256,13 +226,15 @@ and are never silently enabled. Details:
 | Network | Off, allowlist, strict, Git SSH relay | Off only |
 | Compatibility | Requires usable unprivileged namespaces and private `/proc` | Smaller boundary with fewer host requirements |
 
-<a id="configuration"></a>
+</details>
+
+<a id="profiles-and-policy"></a>
 
 ## Profiles and policy
 
-Named agent presets add narrowly scoped compatibility reads; they never turn
-off the base policy. Available presets include `codex`, `claude`, `aider`,
-`cursor`, `cline`, `opencode`, `copilot`, and `custom`.
+Named agent presets (`codex`, `claude`, `aider`, `cursor`, `cline`,
+`opencode`, `copilot`, `custom`) add narrowly scoped compatibility reads; they
+never turn off the base policy.
 
 | Profile | Read/write posture | Use when |
 | --- | --- | --- |
@@ -274,8 +246,6 @@ off the base policy. Available presets include `codex`, `claude`, `aider`,
 ```console
 vetto profiles
 vetto --profile strict -- codex exec "review this change"
-vetto --profile audit --observe-seccomp --jsonl session.jsonl \
-  --report html,md,json -- codex exec "review this change"
 ```
 
 <details>
@@ -301,22 +271,20 @@ branch = ["main"]
 file_exists = ["package.json"]
 ```
 
-</details>
-
 Project policy is loaded only from a non-symlink `vetto.toml`; `--policy`
 adds another layer. Unknown tables and fields are errors. Network, reporting,
 and CI remain CLI settings: `[network]`, `[project]`, `[secrets]`,
 `[agent_overrides]`, and `[ci]` are not accepted policy tables. See
 [docs/profiles.md](docs/profiles.md).
 
-### Isolated multi-agent sessions
+</details>
+
+<details>
+<summary><strong>Isolated multi-agent sessions</strong></summary>
 
 Each manifest entry receives its own policy resolution, backend, process
 container, event stream, output buffer, and report directory. Commands are
 argv arrays rather than shell strings.
-
-<details>
-<summary><strong>Multi-agent manifest</strong></summary>
 
 ```toml
 version = 1
@@ -340,32 +308,45 @@ observe_seccomp = true
 vetto multi --manifest vetto-agents.toml
 ```
 
-</details>
-
 The split-pane runtime currently launches on Unix. Windows fails closed
 instead of silently running an uncontained multi-agent session.
 
-### GitHub Actions
+</details>
 
-```yaml
-permissions:
-  contents: read
-  security-events: write
+## Rescue local sessions
 
-steps:
-  - uses: actions/checkout@v4
-  - uses: shleder/vetto/action@main
-    with:
-      command: codex exec "review this PR"
-      profile: strict
-      net: off
-      report: json,sarif
-      upload-sarif: "true"
+The same package ships a provider-neutral, **copy-only recovery surface** for
+damaged or interrupted agent sessions: bounded discovery, read-only
+diagnosis, and verified snapshots that never touch source state.
+
+```console
+# Discover local Codex sessions
+vetto rescue --json scan
+
+# Diagnose a session read-only
+vetto rescue diagnose sessions/2026/08/23/session.jsonl
+
+# Copy a verified recovery snapshot
+mkdir recovery
+vetto rescue snapshot session.jsonl --output recovery/session.jsonl
+
+# Claude adapter: explicit root, read-only and copy-only (experimental)
+vetto rescue --adapter claude --root ~/.claude --json scan
 ```
 
-The action builds the checked-out source with `--locked`; it does not download
-or publish a release. Do not interpolate untrusted pull-request text into its
-shell command. See [docs/ci-cd.md](docs/ci-cd.md).
+Safety guarantees: Rescue never reads `auth.json` or `config.toml`, follows
+session symlinks, overwrites an existing destination, or writes inside the
+original agent state root. Ambiguous or changing inputs fail closed. The
+public JSON contract lives in
+[`docs/schema/rescue-output-v1.schema.json`](docs/schema/rescue-output-v1.schema.json);
+operational details and support levels are in
+[docs/field-testing.md](docs/field-testing.md) and
+[ADR 0001](docs/adr/0001-universal-rescue-architecture.md).
+
+Codex Rescue development has moved into Vetto. The standalone
+[`shleder/codex-rescue`](https://github.com/shleder/codex-rescue) repository
+remains public as historical compatibility evidence; new installations use
+only `npm install --global @shleddy/vetto`.
 
 <a id="limits"></a>
 
