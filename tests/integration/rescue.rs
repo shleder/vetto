@@ -51,6 +51,7 @@ fn create_codex_sqlite_index(root: &std::path::Path, paths: &[&std::path::Path])
 fn codex_limited_scan_fails_closed_when_session_roots_are_missing() {
     let project = TempProject::new("rescue-index-no-roots");
     let root = project.path().join("codex-home");
+    fs::create_dir_all(&root).expect("codex home");
     create_codex_sqlite_index(&root, &[]);
 
     let output = run_rescue(&root, &["scan", "--limit", "2"]);
