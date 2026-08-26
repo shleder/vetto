@@ -286,7 +286,9 @@ fn session_id_from_path(path: &Path) -> Option<String> {
     if stem.len() < 36 {
         return None;
     }
-    let candidate = &stem[stem.len() - 36..];
+    // A multi-byte character may straddle this byte offset in a hostile or
+    // merely unusual filename; slicing would panic the whole tool mid-incident.
+    let candidate = stem.get(stem.len() - 36..)?;
     let valid = candidate.bytes().enumerate().all(|(index, byte)| {
         if matches!(index, 8 | 13 | 18 | 23) {
             byte == b'-'
@@ -1392,6 +1394,20 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn session_id_from_path_survives_multibyte_stem_at_slice_boundary() {
+        // 39 bytes: the four-byte character straddles stem.len() - 36, so a
+        // byte-offset slice would panic on a non-char boundary. The lookup
+        // must return None instead of crashing mid-incident.
+        let mut name = String::from("x");
+        name.push('\u{1F389}');
+        name.push_str(&"b".repeat(34));
+        assert!(name.len() >= 36);
+        assert!(name.get(name.len() - 36..).is_none());
+        let path = PathBuf::from(format!("/state/sessions/{name}.jsonl"));
+        assert_eq!(session_id_from_path(&path), None);
     }
 
     fn rollout(root: &Path, id: &str) -> (PathBuf, Vec<u8>) {

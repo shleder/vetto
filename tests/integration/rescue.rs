@@ -71,6 +71,26 @@ fn unknown_adapter_is_explicitly_unsupported() {
 }
 
 #[test]
+fn codex_scan_rejects_limit_together_with_all_instead_of_ignoring_it() {
+    let project = TempProject::new("rescue-all-limit-conflict");
+    let root = project.path().join("codex-state");
+    write_file(
+        &root.join("sessions/2026/08/23/rollout-1.jsonl"),
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"one\"}}\n",
+    );
+    let output = run_rescue(&root, &["scan", "--all", "--limit", "2"]);
+    assert!(
+        !output.status.success(),
+        "--limit together with --all must fail closed instead of being ignored"
+    );
+    assert!(
+        stderr(&output).contains("cannot be used with '--limit"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn claude_adapter_requires_explicit_root_and_keeps_schema_opaque() {
     let project = TempProject::new("rescue-claude");
     let root = project.path().join("claude-state");
@@ -356,6 +376,22 @@ fn codex_short_basename_is_rejected_when_sessions_are_ambiguous() {
     assert!(
         stderr(&output).contains("ambiguous"),
         "ambiguity error: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn codex_index_scan_tolerates_an_unbounded_cli_limit_without_aborting() {
+    let project = TempProject::new("rescue-index-unbounded-limit");
+    let root = project.path().join("codex-home");
+    let path = root.join("sessions/2026/08/rollout-00.jsonl");
+    write_file(&path, "{\"type\":\"turn\"}\n");
+    create_codex_sqlite_index(&root, &[path.as_path()]);
+
+    let output = run_rescue(&root, &["scan", "--limit", "1000000000000000"]);
+    assert!(
+        output.status.success(),
+        "an unbounded --limit must not abort on allocation; stderr: {}",
         stderr(&output)
     );
 }

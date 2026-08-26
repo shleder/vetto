@@ -569,17 +569,20 @@ fn candidate_under_root(root: &Path, path: &Path, label: &str) -> Result<PathBuf
     if path.as_os_str().is_empty() {
         bail!("{label} path is empty");
     }
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    if candidate
+    // Scope the component check to the derived part of the path. The operator
+    // chooses the rescue root (`CODEX_HOME=./codex-home` is legitimate); the
+    // threat model targets non-canonical provider-derived paths, not the root.
+    if path
         .components()
         .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
     {
         bail!("{label} contains an unsafe path component");
     }
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
     if !candidate.starts_with(root) {
         bail!("{label} is outside the configured rescue root");
     }
@@ -691,6 +694,31 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn candidate_under_root_accepts_operator_root_with_dot_component() {
+        // CODEX_HOME=./codex-home is a legitimate operator choice; only
+        // provider-derived path parts are hostile.
+        let root = Path::new("./rel-root");
+        let candidate =
+            candidate_under_root(root, Path::new("sessions/2026/rollout.jsonl"), "session")
+                .expect("relative path under a dotted operator root");
+        assert_eq!(
+            candidate,
+            Path::new("./rel-root/sessions/2026/rollout.jsonl")
+        );
+    }
+
+    #[test]
+    fn candidate_under_root_still_rejects_parent_dir_in_derived_paths() {
+        let error = candidate_under_root(
+            Path::new("/state"),
+            Path::new("sessions/../../etc/passwd"),
+            "session",
+        )
+        .expect_err("derived parent-dir escape must fail closed");
+        assert!(error.to_string().contains("unsafe path component"));
+    }
 
     struct TempRoot(PathBuf);
 
