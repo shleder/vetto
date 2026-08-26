@@ -703,7 +703,10 @@ mod tests {
         let candidate =
             candidate_under_root(root, Path::new("sessions/2026/rollout.jsonl"), "session")
                 .expect("relative path under a dotted operator root");
-        assert_eq!(candidate, Path::new("./rel-root/sessions/2026/rollout.jsonl"));
+        assert_eq!(
+            candidate,
+            Path::new("./rel-root/sessions/2026/rollout.jsonl")
+        );
     }
 
     #[test]
