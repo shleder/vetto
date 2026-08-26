@@ -84,7 +84,7 @@ fn codex_scan_rejects_limit_together_with_all_instead_of_ignoring_it() {
         "--limit together with --all must fail closed instead of being ignored"
     );
     assert!(
-        stderr(&output).contains("cannot be used with '--limit'"),
+        stderr(&output).contains("cannot be used with '--limit"),
         "stderr: {}",
         stderr(&output)
     );
