@@ -165,7 +165,10 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     // Session roots are resolved lazily-honestly: an absent sessions tree
     // must not preempt coarse index budgets (e.g. SQLite fanout), yet no
     // index row may be accepted without a real root to verify against.
-    let roots = session_roots(&root).unwrap_or_default();
+    // Real IO failures (e.g. EACCES) are surfaced instead of being flattened
+    // into an empty list that would misreport the cause.
+    let roots =
+        session_roots(&root).context("limited rescue scan could not verify Codex session roots")?;
     let mut candidates = CandidateAccumulator::new(limit, limit.min(context.max_files));
     let mut sources = Vec::new();
 
@@ -726,6 +729,10 @@ mod tests {
         let temp = TempRoot::new("sqlite-fanout");
         let root = temp.codex_home();
         fs::create_dir_all(&root).expect("Codex root");
+        // Limited scans now require verifiable session roots before index
+        // rows are accepted; give the fixture one so the fanout budget is
+        // what actually fails.
+        fs::create_dir_all(root.join("sessions")).expect("sessions directory");
         fs::write(root.join("a.sqlite"), b"").expect("first database candidate");
         fs::write(root.join("b.sqlite"), b"").expect("second database candidate");
         let mut context = RescueContext::new(root);
