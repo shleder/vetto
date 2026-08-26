@@ -729,6 +729,10 @@ mod tests {
         let temp = TempRoot::new("sqlite-fanout");
         let root = temp.codex_home();
         fs::create_dir_all(&root).expect("Codex root");
+        // Limited scans now require verifiable session roots before index
+        // rows are accepted; give the fixture one so the fanout budget is
+        // what actually fails.
+        fs::create_dir_all(root.join("sessions")).expect("sessions directory");
         fs::write(root.join("a.sqlite"), b"").expect("first database candidate");
         fs::write(root.join("b.sqlite"), b"").expect("second database candidate");
         let mut context = RescueContext::new(root);
