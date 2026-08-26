@@ -455,7 +455,13 @@ impl CodexAdapter {
     /// request fails closed as ambiguous.
     pub(crate) fn resolve_exact(root: &Path, selector: &str) -> Result<SessionRef> {
         let context = RescueContext::new(root.to_path_buf());
+        // Backslash is a path separator only on Windows; on Unix it is a legal
+        // filename byte and must reach the filesystem untouched, or keys from
+        // `scan` collide with genuinely nested rollouts.
+        #[cfg(windows)]
         let selector = selector.replace('\\', "/");
+        #[cfg(not(windows))]
+        let selector = selector.to_string();
         if selector.is_empty() || selector.contains('\0') {
             bail!("session selector must be a non-empty exact Codex key");
         }
@@ -569,7 +575,10 @@ impl CodexAdapter {
         let relative = path
             .strip_prefix(&canonical_root)
             .with_context(|| format!("session {} is outside rescue root", path.display()))?;
-        Ok(relative.to_string_lossy().replace('\\', "/"))
+        #[cfg(windows)]
+        return Ok(relative.to_string_lossy().replace('\\', "/"));
+        #[cfg(not(windows))]
+        return Ok(relative.to_string_lossy().into_owned());
     }
 
     fn sha256(bytes: &[u8]) -> String {

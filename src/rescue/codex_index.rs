@@ -57,12 +57,13 @@ struct CandidateAccumulator {
 }
 
 impl CandidateAccumulator {
-    fn new(limit: usize) -> Self {
+    fn new(limit: usize, capacity_hint: usize) -> Self {
         Self {
             limit,
             seen_raw: HashSet::new(),
             seen_paths: HashSet::new(),
-            sessions: Vec::with_capacity(limit),
+            // The CLI --limit is unbounded; never preallocate from it directly.
+            sessions: Vec::with_capacity(capacity_hint),
             indexed_rows_seen: 0,
             candidate_count: 0,
             total_bytes: 0,
@@ -165,7 +166,7 @@ pub fn discover(context: &RescueContext, limit: usize) -> Result<IndexDiscovery>
     // must not preempt coarse index budgets (e.g. SQLite fanout), yet no
     // index row may be accepted without a real root to verify against.
     let roots = session_roots(&root).unwrap_or_default();
-    let mut candidates = CandidateAccumulator::new(limit);
+    let mut candidates = CandidateAccumulator::new(limit, limit.min(context.max_files));
     let mut sources = Vec::new();
 
     if read_session_index(&root, context, max_index_rows, |raw| {
