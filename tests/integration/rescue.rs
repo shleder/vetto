@@ -73,7 +73,7 @@ fn claude_scan_skips_symlinked_transcripts_instead_of_following_them() {
     let root = project.path().join("claude-state");
     let target = root.join("projects/demo/real.jsonl");
     write_file(&target, "{\"type\":\"user\"}\n");
-    std::os::unix::fs::symlink(&target, &root.join("projects/demo/session.jsonl"))
+    std::os::unix::fs::symlink(&target, root.join("projects/demo/session.jsonl"))
         .expect("create transcript symlink");
 
     let scan = run_rescue_with_adapter("claude", &root, &["scan"]);
