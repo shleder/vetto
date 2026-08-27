@@ -3,7 +3,7 @@
   "displayName": "vetto",
   "description": "Run coding agents through the vetto sandbox and inspect session events.",
   "version": "0.0.1",
-  "publisher": "shleddy",
+  "publisher": "shleder",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.93.0"
