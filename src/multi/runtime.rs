@@ -5,6 +5,9 @@
 //! child process or unsandboxed fallback. All backend detection and policy
 //! loading happens before any process is spawned; a spawn failure tears down
 //! already-created handles and returns an error to the caller.
+//!
+//! Phase 4 (Step 23 & 24): Virtual port allocation, debug port guardrails,
+//! sub-reaper configuration, and cross-agent isolation tracking.
 
 #[cfg(unix)]
 use std::path::Path;
@@ -19,7 +22,10 @@ use crate::config::NetMode;
 #[cfg(unix)]
 use crate::events::Event;
 use crate::events::EventBus;
-use crate::multi::{AgentSpec, Manifest, MultiAggregator, MultiEventStream};
+use crate::multi::isolation::IsolationBarrier;
+use crate::multi::{
+    AgentSpec, DebugPortConfig, Manifest, MultiAggregator, MultiEventStream, VirtualPortPool,
+};
 #[cfg(unix)]
 use crate::policy;
 use crate::report::stats::StatsCollector;
@@ -63,6 +69,7 @@ pub struct MultiSession {
     pub handle: Arc<Mutex<SandboxHandle>>,
     pub finished: Arc<AtomicBool>,
     pub started: Instant,
+    pub allocated_ports: Vec<u16>,
 }
 
 #[cfg(unix)]
@@ -77,6 +84,7 @@ struct PendingSession {
     stderr_r: OwnedFd,
     broker_ctrl_fd: Option<OwnedFd>,
     notif_listener: Option<OwnedFd>,
+    allocated_ports: Vec<u16>,
 }
 
 #[cfg(unix)]
@@ -122,6 +130,8 @@ pub struct MultiRuntime {
     pub sessions: Vec<MultiSession>,
     pub stream: MultiEventStream,
     pub aggregator: MultiAggregator,
+    pub port_pool: VirtualPortPool,
+    pub isolation_barrier: IsolationBarrier,
     pub report_dir: Option<PathBuf>,
 }
 
@@ -134,8 +144,15 @@ impl MultiRuntime {
     pub fn launch(manifest: Manifest, project: PathBuf, home: PathBuf) -> Result<Self> {
         manifest.validate()?;
 
+        // Configure supervisor process as sub-reaper so orphaned child processes
+        // inside agent PID namespaces are adopted and reaped by Vetto.
+        let _ = crate::multi::isolation::set_subreaper();
+
+        let port_pool = VirtualPortPool::default();
+        let isolation_barrier = IsolationBarrier::new();
+
         let mut prepared = Vec::with_capacity(manifest.agents.len());
-        for spec in &manifest.agents {
+        for (idx, spec) in manifest.agents.iter().enumerate() {
             let net = crate::config::parse_net_mode(&spec.net)
                 .with_context(|| format!("agent '{}' network mode", spec.name))?;
             let backend = Backend::detect(net.clone(), spec.observe_seccomp)
@@ -147,9 +164,7 @@ impl MultiRuntime {
             let mut command = spec.command.clone();
             command[0] = resolve_in_path(&command[0])
                 .with_context(|| format!("resolve command for agent '{}'", spec.name))?;
-            // Do not silently permit a policy to exclude the executable. The
-            // sandbox may still reject it, but we surface the reason before
-            // spawn and never retry unsandboxed.
+            // Do not silently permit a policy to exclude the executable.
             if !policy.in_read_scope(Path::new(&command[0])) {
                 tracing::warn!(
                     agent = %spec.name,
@@ -157,6 +172,11 @@ impl MultiRuntime {
                     "agent executable is outside policy read scope; sandbox exec may be denied"
                 );
             }
+
+            let allocated_ports = port_pool
+                .allocate_ports(&spec.name, 4)
+                .unwrap_or_else(|_| vec![port_pool.allocate_relay_port(idx)]);
+
             prepared.push(Prepared {
                 spec: spec.clone(),
                 net,
@@ -164,12 +184,11 @@ impl MultiRuntime {
                 policy,
                 command,
                 tier,
+                allocated_ports,
             });
         }
 
-        // No consumer threads are created until every child has been forked.
-        // This preserves the single-threaded fork contract of the sandbox
-        // backends even when a manifest contains many agents.
+        // Single-threaded fork phase.
         let mut pending = Vec::with_capacity(prepared.len());
         for prepared in prepared {
             match spawn_one(prepared, &project) {
@@ -189,7 +208,8 @@ impl MultiRuntime {
         crate::multi::spawn_aggregator(&stream, aggregator.clone());
         let mut sessions = Vec::with_capacity(pending.len());
         for pending in pending {
-            sessions.push(activate_pending(pending, &project, &stream));
+            let session = activate_pending(pending, &project, &stream, &isolation_barrier);
+            sessions.push(session);
         }
 
         Ok(Self {
@@ -198,6 +218,8 @@ impl MultiRuntime {
             sessions,
             stream,
             aggregator,
+            port_pool,
+            isolation_barrier,
         })
     }
 
@@ -225,11 +247,6 @@ impl MultiRuntime {
         self.aggregator.report_json()
     }
 
-    /// Persist one JSON report per agent and one combined report. Each agent's
-    /// directory is resolved independently from the manifest, while the
-    /// shared storage allocates collision-resistant names without replacing
-    /// an existing artifact. A failed write is reported with the exact owner
-    /// instead of silently merging reports.
     pub fn write_reports(&self) -> Result<Vec<PathBuf>> {
         let mut written = Vec::new();
         let rows = self.aggregator.snapshot();
@@ -286,6 +303,7 @@ struct Prepared {
     policy: policy::Policy,
     command: Vec<String>,
     tier: policy::Tier,
+    allocated_ports: Vec<u16>,
 }
 
 #[cfg(unix)]
@@ -297,6 +315,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         policy,
         command,
         tier,
+        allocated_ports,
     } = prepared;
     let backend = backend.ok_or_else(|| anyhow::anyhow!("sandbox backend was consumed"))?;
     let (stdout_r, stdout_w) = pipe2()?;
@@ -319,8 +338,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         relay_port: _relay_port,
         notif_listener,
     } = spawned;
-    // The child now owns the write ends. Keeping a parent copy would defeat
-    // EOF delivery to the readers.
+
     drop(stdout_w);
     drop(stderr_w);
 
@@ -335,6 +353,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         stderr_r,
         broker_ctrl_fd,
         notif_listener,
+        allocated_ports,
     })
 }
 
@@ -343,6 +362,7 @@ fn activate_pending(
     pending: PendingSession,
     project: &Path,
     stream: &MultiEventStream,
+    isolation_barrier: &IsolationBarrier,
 ) -> MultiSession {
     #[cfg(not(target_os = "linux"))]
     let _ = project;
@@ -357,11 +377,22 @@ fn activate_pending(
         stderr_r,
         broker_ctrl_fd,
         notif_listener,
+        allocated_ports,
     } = pending;
     let stats = StatsCollector::spawn(&bus);
     let root_pid = handle.root_pid;
-    // Subscribe the aggregate bridge before publishing SessionStarted, so
-    // the per-agent and combined reports agree on lifecycle counts.
+
+    // Register agent in the isolation barrier
+    let is_full = tier == policy::Tier::Full;
+    isolation_barrier.register_agent(
+        &spec.name,
+        root_pid,
+        is_full,
+        is_full,
+        policy.limits.address_space_bytes,
+    );
+
+    // Subscribe the aggregate bridge before publishing SessionStarted
     stream.bridge_agent(spec.name.clone(), &bus);
     bus.publish(Event::SessionStarted {
         ts: crate::events::types::now(),
@@ -385,9 +416,19 @@ fn activate_pending(
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new())
                 }
             };
+            let debug_config = spec
+                .debug_ports
+                .clone()
+                .unwrap_or_default();
+            let debug_guard = crate::sandbox::linux::debug_guard::DebugPortGuard::new(debug_config);
+            let broker_config = crate::sandbox::linux::net_relay::BrokerConfig {
+                policy: broker_policy,
+                debug_guard: Some(debug_guard),
+                mode: crate::sandbox::linux::net_relay::RelayMode::NetNs,
+            };
             crate::sandbox::linux::net_relay::spawn_broker(
                 fd.into_raw_fd(),
-                broker_policy,
+                broker_config,
                 bus.clone(),
             );
         }
@@ -415,6 +456,9 @@ fn activate_pending(
     let wait_handle = Arc::clone(&handle);
     let wait_finished = Arc::clone(&finished);
     let wait_bus = bus.clone();
+    let agent_name = spec.name.clone();
+    let barrier_clone = isolation_barrier.clone();
+
     std::thread::Builder::new()
         .name(format!("vetto-multi-wait-{}", spec.name))
         .spawn(move || {
@@ -427,6 +471,7 @@ fn activate_pending(
                 exit_code: code,
                 duration_secs: 0,
             });
+            barrier_clone.unregister_agent(&agent_name);
             wait_finished.store(true, Ordering::SeqCst);
         })
         .expect("spawn multi wait thread");
@@ -439,6 +484,7 @@ fn activate_pending(
         handle,
         finished,
         started: Instant::now(),
+        allocated_ports,
     }
 }
 
@@ -603,6 +649,7 @@ mod tests {
                 net: "off".into(),
                 observe_seccomp: false,
                 report_dir: Some(link.clone()),
+                debug_ports: None,
             }],
             report_dir: Some(root.join("combined")),
         };
@@ -611,6 +658,8 @@ mod tests {
             sessions: Vec::new(),
             stream: MultiEventStream::new(),
             aggregator: MultiAggregator::new(["one".to_string()]),
+            port_pool: VirtualPortPool::default(),
+            isolation_barrier: IsolationBarrier::new(),
             report_dir: Some(root.join("combined")),
         };
 

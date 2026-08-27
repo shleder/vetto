@@ -316,7 +316,10 @@ fn redact_high_entropy_runs(s: &str) -> String {
                 i += 1;
             }
             let candidate = &bytes[start..i];
-            if candidate.len() >= 20 && shannon_entropy(candidate) > 4.5 {
+            if candidate.len() >= 20
+                && !is_whitelisted_hash_or_pattern(candidate)
+                && shannon_entropy(candidate) > 4.5
+            {
                 out.push_str("[REDACTED_HIGH_ENTROPY]");
             } else {
                 out.push_str(&s[start..i]);
@@ -328,6 +331,41 @@ fn redact_high_entropy_runs(s: &str) -> String {
         i += step;
     }
     out
+}
+
+fn is_whitelisted_hash_or_pattern(token: &[u8]) -> bool {
+    let is_pure_hex = token.iter().all(|&b| b.is_ascii_hexdigit());
+    if is_pure_hex && matches!(token.len(), 32 | 40 | 64 | 128) {
+        return true;
+    }
+    if token.len() == 36 && is_uuid_format(token) {
+        return true;
+    }
+    let is_pure_digits = token.iter().all(|&b| b.is_ascii_digit());
+    if is_pure_digits {
+        return true;
+    }
+    let is_pure_lowercase = token.iter().all(|&b| b.is_ascii_lowercase());
+    if is_pure_lowercase && shannon_entropy(token) < 4.6 {
+        return true;
+    }
+    false
+}
+
+fn is_uuid_format(token: &[u8]) -> bool {
+    if token.len() != 36 {
+        return false;
+    }
+    for (i, &b) in token.iter().enumerate() {
+        if matches!(i, 8 | 13 | 18 | 23) {
+            if b != b'-' {
+                return false;
+            }
+        } else if !b.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_entropy_char(byte: u8) -> bool {

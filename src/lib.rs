@@ -22,5 +22,6 @@ pub mod pty;
 pub mod report;
 pub mod rescue;
 pub mod sandbox;
+pub mod shim;
 #[cfg(unix)]
 pub mod tui;

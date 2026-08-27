@@ -1,10 +1,14 @@
-mod adapter;
-mod claude;
-mod codex;
-mod codex_index;
-mod codex_inventory;
-mod safe_fs;
+pub mod adapter;
+pub mod claude;
+pub mod codex;
+pub mod codex_index;
+pub mod codex_inventory;
+pub mod cursor;
+pub mod lock;
+pub mod rollback;
+pub mod safe_fs;
 pub mod types;
+pub mod wal;
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +21,7 @@ use crate::report;
 use adapter::RescueAdapter;
 use claude::ClaudeAdapter;
 use codex::CodexAdapter;
+use cursor::CursorAdapter;
 use types::{Availability, RescueContext, SessionRef};
 
 const DEFAULT_INDEX_SCAN_LIMIT: usize = 50;
@@ -25,8 +30,9 @@ fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
     match id {
         "codex" => Ok(Box::new(CodexAdapter)),
         "claude" => Ok(Box::new(ClaudeAdapter)),
+        "cursor" => Ok(Box::new(CursorAdapter)),
         other => bail!(
-            "unsupported rescue adapter {other:?} in {}; available: codex, claude",
+            "unsupported rescue adapter {other:?} in {}; available: codex, claude, cursor",
             env!("CARGO_PKG_VERSION")
         ),
     }
@@ -41,17 +47,36 @@ fn default_root(adapter: &str, explicit: Option<&Path>) -> Result<PathBuf> {
         };
         return Ok(candidate);
     }
-    if adapter != "codex" {
-        bail!("adapter {adapter:?} requires an explicit --root");
+    match adapter {
+        "codex" => {
+            if let Some(path) = std::env::var_os("CODEX_HOME") {
+                return Ok(PathBuf::from(path));
+            }
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from)
+                .context("neither CODEX_HOME, HOME nor USERPROFILE is set; pass --root")?;
+            Ok(home.join(".codex"))
+        }
+        "claude" => {
+            if let Some(path) = std::env::var_os("CLAUDE_HOME") {
+                return Ok(PathBuf::from(path));
+            }
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from)
+                .context("neither CLAUDE_HOME, HOME nor USERPROFILE is set; pass --root")?;
+            Ok(home.join(".claude"))
+        }
+        "cursor" => {
+            if let Some(dir) = CursorAdapter::default_user_dir() {
+                Ok(dir)
+            } else {
+                bail!("could not determine default Cursor user directory; pass --root");
+            }
+        }
+        other => bail!("adapter {other:?} requires an explicit --root"),
     }
-    if let Some(path) = std::env::var_os("CODEX_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .context("neither CODEX_HOME, HOME nor USERPROFILE is set; pass --root")?;
-    Ok(home.join(".codex"))
 }
 
 fn select_session(
@@ -255,5 +280,62 @@ pub fn run_cli(
                 Ok(())
             }
         }
+        RescueCommand::Repair { session, backup_dir } => {
+            let session = select_session(adapter.as_ref(), &context, session)?;
+            let default_backup = context.root.join(".vetto_backups");
+            let backup_dir = backup_dir.as_deref().unwrap_or(&default_backup);
+            let receipt = adapter.repair(&context, &session, backup_dir)?;
+            if json {
+                print_json(&receipt)
+            } else {
+                println!("repair completed for session: {}", report::clean(&receipt.session_key));
+                println!("original sha256: {}", receipt.original_sha256);
+                println!("repaired sha256: {}", receipt.repaired_sha256);
+                println!("backup archive: {}", receipt.backup_archive_path.display());
+                println!("actions applied:");
+                for action in &receipt.actions_applied {
+                    println!("  - {}", report::clean(action));
+                }
+                Ok(())
+            }
+        }
+        RescueCommand::Rollback { receipt, target } => {
+            let rollback_receipt = rollback::rollback_repair(receipt, target.as_deref())?;
+            if json {
+                print_json(&rollback_receipt)
+            } else {
+                println!("rollback completed successfully");
+                println!("session: {}", report::clean(&rollback_receipt.session_key));
+                println!("target path: {}", report::clean(&rollback_receipt.target_path));
+                println!("restored sha256: {}", rollback_receipt.restored_sha256);
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adapters_supported_list() {
+        assert!(adapter_by_id("codex").is_ok());
+        assert!(adapter_by_id("claude").is_ok());
+        assert!(adapter_by_id("cursor").is_ok());
+        assert!(adapter_by_id("invalid").is_err());
+    }
+
+    #[test]
+    fn default_root_resolution() {
+        let explicit = Path::new("/custom/root");
+        assert_eq!(
+            default_root("claude", Some(explicit)).unwrap(),
+            PathBuf::from("/custom/root")
+        );
+        assert_eq!(
+            default_root("cursor", Some(explicit)).unwrap(),
+            PathBuf::from("/custom/root")
+        );
     }
 }

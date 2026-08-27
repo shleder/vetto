@@ -1,23 +1,29 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
 use anyhow::{bail, Context, Result};
+use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
 use crate::report;
 
 use super::adapter::RescueAdapter;
 use super::codex_inventory;
+use super::lock::SessionLockGuard;
 use super::safe_fs;
 use super::types::{
-    AdapterStatus, Availability, RescueContext, SessionHealth, SessionRef, SessionView,
-    SnapshotReceipt,
+    AdapterStatus, Availability, RepairReceipt, RescueContext, SessionHealth, SessionRef,
+    SessionView, SnapshotReceipt,
 };
+
+static CODEX_NONCE: AtomicU64 = AtomicU64::new(0);
 
 pub struct CodexAdapter;
 
@@ -700,6 +706,226 @@ impl CodexAdapter {
         }
         Ok(())
     }
+
+    /// Monotonic ordinal re-sequencer for Codex rollout JSONL files:
+    /// - Resolves ORDINAL_REGRESSION and deduplicates DUPLICATE_ORDINAL_BOUNDARY.
+    /// - Re-sequences ordinals monotonically starting from 0.
+    pub fn resequence_rollout(bytes: &[u8]) -> (Vec<u8>, Vec<String>, bool) {
+        let mut actions = Vec::new();
+        let mut output = Vec::new();
+        let mut current_ordinal: u64 = 0;
+        let mut last_seen_raw_line: Option<Vec<u8>> = None;
+        let mut modified = false;
+
+        for raw_line in bytes.split(|b| *b == b'\n') {
+            let mut line = raw_line;
+            if line.ends_with(b"\r") {
+                line = &line[..line.len() - 1];
+            }
+            if line.is_empty() {
+                continue;
+            }
+
+            // Deduplicate exact consecutive duplicates
+            if let Some(ref last) = last_seen_raw_line {
+                if last.as_slice() == line {
+                    if !actions.iter().any(|a| a == "deduplicated_ordinal_boundary_records") {
+                        actions.push("deduplicated_ordinal_boundary_records".to_string());
+                    }
+                    modified = true;
+                    continue;
+                }
+            }
+            last_seen_raw_line = Some(line.to_vec());
+
+            if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(line) {
+                if let Some(obj) = val.as_object_mut() {
+                    // Check top-level or nested ordinal
+                    if let Some(ord_val) = obj.get("ordinal").and_then(|v| v.as_u64()) {
+                        if ord_val != current_ordinal {
+                            obj.insert("ordinal".to_string(), serde_json::json!(current_ordinal));
+                            modified = true;
+                            if !actions.iter().any(|a| a == "resequenced_monotonic_ordinals") {
+                                actions.push("resequenced_monotonic_ordinals".to_string());
+                            }
+                        }
+                    } else if let Some(payload) = obj.get_mut("payload").and_then(|p| p.as_object_mut()) {
+                        if let Some(ord_val) = payload.get("ordinal").and_then(|v| v.as_u64()) {
+                            if ord_val != current_ordinal {
+                                payload.insert("ordinal".to_string(), serde_json::json!(current_ordinal));
+                                modified = true;
+                                if !actions.iter().any(|a| a == "resequenced_monotonic_ordinals") {
+                                    actions.push("resequenced_monotonic_ordinals".to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                current_ordinal = current_ordinal.saturating_add(1);
+                if let Ok(serialized) = serde_json::to_string(&val) {
+                    output.extend_from_slice(serialized.as_bytes());
+                    output.push(b'\n');
+                }
+            } else {
+                output.extend_from_slice(line);
+                output.push(b'\n');
+            }
+        }
+
+        (output, actions, modified)
+    }
+
+    /// Parse rollout metadata and synchronize with SQLite `state_5.sqlite` / `state.sqlite` index:
+    /// - Backfills missing entries in `threads` table (id, title, first_user_message, created_at_ms, updated_at_ms, rollout_path).
+    /// - Resets wedged offset in `thread_history_projection_state`.
+    /// - Updates path mapping if diverged.
+    pub fn backfill_index(
+        context: &RescueContext,
+        session_path: &Path,
+        bytes: &[u8],
+    ) -> Result<Vec<String>> {
+        let mut actions = Vec::new();
+        let canonical_root = Self::validate_root(context)?;
+
+        let sqlite_names = ["state_5.sqlite", "state.sqlite", "state.db"];
+        let mut target_db = None;
+        for name in sqlite_names {
+            let candidate = canonical_root.join(name);
+            if candidate.exists() && candidate.is_file() {
+                target_db = Some(candidate);
+                break;
+            }
+        }
+
+        let Some(db_path) = target_db else {
+            return Ok(actions);
+        };
+
+        let mut session_id = None;
+        let mut title = None;
+        let mut first_user_msg = None;
+        let mut created_at_ms = None;
+        let mut updated_at_ms = None;
+        let mut record_count: u64 = 0;
+
+        for line in bytes.split(|b| *b == b'\n') {
+            let mut l = line;
+            if l.ends_with(b"\r") {
+                l = &l[..l.len() - 1];
+            }
+            if l.is_empty() {
+                continue;
+            }
+            record_count = record_count.saturating_add(1);
+
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(l) {
+                let kind = val.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+                if kind == "session_meta" {
+                    if let Some(payload) = val.get("payload") {
+                        if let Some(id) = payload.get("id").and_then(|v| v.as_str()) {
+                            session_id = Some(id.to_string());
+                        }
+                        if let Some(t) = payload.get("title").and_then(|v| v.as_str()) {
+                            title = Some(t.to_string());
+                        }
+                        if let Some(c) = payload.get("created_at_ms").and_then(|v| v.as_u64()) {
+                            created_at_ms = Some(c as i64);
+                        }
+                    }
+                } else if kind == "response_item" || kind == "event_msg" {
+                    if first_user_msg.is_none() {
+                        if let Some(payload) = val.get("payload") {
+                            if payload.get("type").and_then(|v| v.as_str()) == Some("message")
+                                && payload.get("role").and_then(|v| v.as_str()) == Some("user")
+                            {
+                                if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
+                                    first_user_msg = Some(content.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let session_id = session_id
+            .or_else(|| {
+                session_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "recovered_codex_session".to_string());
+
+        let relative_path = Self::normalized_relative(context, session_path)?;
+
+        let conn = Connection::open(&db_path)
+            .with_context(|| format!("open SQLite database {} for backfill", db_path.display()))?;
+
+        // Check if `threads` table exists
+        let has_threads: bool = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='threads'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if has_threads {
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT rollout_path FROM threads WHERE id = ?",
+                    [&session_id],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            if existing.is_none() {
+                conn.execute(
+                    "INSERT OR REPLACE INTO threads (id, title, first_user_message, created_at_ms, updated_at_ms, rollout_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        session_id,
+                        title.unwrap_or_else(|| "Untitled Session".to_string()),
+                        first_user_msg.unwrap_or_default(),
+                        created_at_ms.unwrap_or(0),
+                        updated_at_ms.unwrap_or(0),
+                        relative_path,
+                    ],
+                ).context("insert into threads table")?;
+                actions.push("backfilled_threads_index_row".to_string());
+            } else if existing.as_deref() != Some(&relative_path) {
+                conn.execute(
+                    "UPDATE threads SET rollout_path = ?1 WHERE id = ?2",
+                    rusqlite::params![relative_path, session_id],
+                ).context("update threads rollout_path")?;
+                actions.push("repaired_thread_rollout_path_mapping".to_string());
+            }
+        }
+
+        // Check if `thread_history_projection_state` table exists
+        let has_projection: bool = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='thread_history_projection_state'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if has_projection {
+            let byte_len = bytes.len() as i64;
+            let ordinal = record_count as i64;
+            conn.execute(
+                "INSERT OR REPLACE INTO thread_history_projection_state
+                 (session_id, next_rollout_byte_offset, next_rollout_ordinal, boundary_ordinal)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![session_id, byte_len, ordinal, ordinal],
+            ).context("update thread_history_projection_state")?;
+            actions.push("reset_wedged_projection_state".to_string());
+        }
+
+        Ok(actions)
+    }
 }
 
 impl RescueAdapter for CodexAdapter {
@@ -879,6 +1105,88 @@ impl RescueAdapter for CodexAdapter {
             bytes: written.len() as u64,
             sha256: written_hash,
             source_preserved: true,
+        })
+    }
+
+    fn repair(
+        &self,
+        context: &RescueContext,
+        session: &SessionRef,
+        backup_dir: &Path,
+    ) -> Result<RepairReceipt> {
+        let lock_path = context.root.join(".vetto_repair.lock");
+        let _guard = SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
+            .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
+
+        let canonical_target = Self::validate_session_path(context, &session.source_path)?;
+        let original_bytes = Self::read_stable(context, &canonical_target)?;
+        let original_sha256 = Self::sha256(&original_bytes);
+
+        let (repaired_bytes, mut actions, _modified) = Self::resequence_rollout(&original_bytes);
+
+        let timestamp_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let nonce = CODEX_NONCE.fetch_add(1, Ordering::Relaxed);
+
+        // Backup archive
+        let backup_archive_dir = backup_dir.join(format!("codex-{timestamp_unix_secs}-{nonce}"));
+        fs::create_dir_all(&backup_archive_dir)
+            .with_context(|| format!("create backup dir {}", backup_archive_dir.display()))?;
+        let backup_file = backup_archive_dir.join(
+            canonical_target
+                .file_name()
+                .context("target file has no filename")?,
+        );
+        fs::write(&backup_file, &original_bytes)
+            .with_context(|| format!("write backup file {}", backup_file.display()))?;
+
+        // Two-phase atomic commit
+        let parent_dir = canonical_target
+            .parent()
+            .context("canonical target has no parent")?;
+        let tmp_name = format!(
+            ".{}.vetto_tmp.{}.{}",
+            canonical_target.file_name().unwrap().to_string_lossy(),
+            std::process::id(),
+            nonce
+        );
+        let tmp_path = parent_dir.join(tmp_name);
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+            .with_context(|| format!("create tmp repair file {}", tmp_path.display()))?;
+        file.write_all(&repaired_bytes)
+            .with_context(|| format!("write tmp repair file {}", tmp_path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync tmp repair file {}", tmp_path.display()))?;
+        drop(file);
+
+        fs::rename(&tmp_path, &canonical_target)
+            .with_context(|| format!("atomic rename {} -> {}", tmp_path.display(), canonical_target.display()))?;
+
+        #[cfg(unix)]
+        if let Ok(dir_file) = File::open(parent_dir) {
+            let _ = dir_file.sync_all();
+        }
+
+        // Backfill SQLite index & reset wedged projection
+        let index_actions = Self::backfill_index(context, &canonical_target, &repaired_bytes)?;
+        actions.extend(index_actions);
+
+        let repaired_sha256 = Self::sha256(&repaired_bytes);
+
+        Ok(RepairReceipt {
+            adapter: self.id().to_string(),
+            session_key: session.key.clone(),
+            original_sha256,
+            repaired_sha256,
+            backup_archive_path: backup_file,
+            actions_applied: actions,
+            timestamp_unix_secs,
         })
     }
 }
@@ -1248,5 +1556,93 @@ mod tests {
         assert!(duplicate_call
             .findings
             .contains(&"UNFINISHED_TOOL_CALL".to_string()));
+    }
+
+    #[test]
+    fn resequence_resolves_regression_and_duplicates() {
+        let body = concat!(
+            r#"{"ordinal":5,"type":"session_meta","payload":{"id":"s1","title":"Test"}}"#, "\n",
+            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+        );
+        let (resequenced, actions, modified) = CodexAdapter::resequence_rollout(body.as_bytes());
+        assert!(modified);
+        assert!(actions.iter().any(|a| a.contains("deduplicated_ordinal_boundary")));
+        assert!(actions.iter().any(|a| a.contains("resequenced_monotonic_ordinals")));
+
+        let res_str = String::from_utf8(resequenced).unwrap();
+        let lines: Vec<&str> = res_str.trim().split('\n').collect();
+        assert_eq!(lines.len(), 3); // 1 duplicate removed
+
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first["ordinal"], 0);
+        let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second["ordinal"], 1);
+        let third: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(third["ordinal"], 2);
+    }
+
+    #[test]
+    fn backfill_index_and_transactional_repair() {
+        let temp = TempRoot::new("codex-repair-test");
+        let root = temp.codex_home();
+        fs::create_dir_all(&root).unwrap();
+        let backup_dir = temp.0.join("backups");
+
+        // Create SQLite database with threads and projection tables
+        let db_path = root.join("state_5.sqlite");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    first_user_message TEXT,
+                    created_at_ms INTEGER,
+                    updated_at_ms INTEGER,
+                    rollout_path TEXT
+                 );
+                 CREATE TABLE thread_history_projection_state (
+                    session_id TEXT PRIMARY KEY,
+                    next_rollout_byte_offset INTEGER,
+                    next_rollout_ordinal INTEGER,
+                    boundary_ordinal INTEGER
+                 );",
+            ).unwrap();
+        }
+
+        let body = concat!(
+            r#"{"ordinal":10,"type":"session_meta","payload":{"id":"sess-123","title":"Repaired Session"}}"#, "\n",
+            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+        );
+        let session_file = session(&root, "rollout-sess-123.jsonl", body.as_bytes());
+
+        let context = RescueContext::new(root);
+        let sessions = CodexAdapter.discover_sessions(&context).unwrap();
+        assert_eq!(sessions.len(), 1);
+
+        let receipt = CodexAdapter.repair(&context, &sessions[0], &backup_dir).expect("codex repair");
+        assert_eq!(receipt.adapter, "codex");
+        assert!(receipt.actions_applied.iter().any(|a| a.contains("backfilled_threads_index")));
+        assert!(receipt.actions_applied.iter().any(|a| a.contains("reset_wedged_projection")));
+        assert!(receipt.backup_archive_path.exists());
+
+        // Verify SQLite threads was backfilled
+        let conn = Connection::open(&db_path).unwrap();
+        let title: String = conn.query_row("SELECT title FROM threads WHERE id = 'sess-123'", [], |r| r.get(0)).unwrap();
+        assert_eq!(title, "Repaired Session");
+
+        // Verify projection state was initialized
+        let next_ord: i64 = conn.query_row("SELECT next_rollout_ordinal FROM thread_history_projection_state WHERE session_id = 'sess-123'", [], |r| r.get(0)).unwrap();
+        assert_eq!(next_ord, 2);
+
+        // Verify rollout file on disk was resequenced
+        let on_disk = fs::read_to_string(&session_file).unwrap();
+        let lines: Vec<&str> = on_disk.trim().split('\n').collect();
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first["ordinal"], 0);
+        let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second["ordinal"], 1);
     }
 }

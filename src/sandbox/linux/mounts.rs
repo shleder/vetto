@@ -5,6 +5,9 @@
 //! resolved secret path behind a bind-mount of /dev/null (files) or an empty
 //! tmpfs (directories) — done inside our own mount namespace so the host is
 //! untouched.
+//!
+//! Phase 4 (Step 22): Per-agent mount & `/dev/shm` / `/tmp` isolation, and
+//! cross-agent state tree masking (`~/.claude/sessions/`, `~/.codex/`, `~/.config/Cursor/`).
 
 use std::ffi::CString;
 use std::path::Path;
@@ -23,6 +26,8 @@ const MS_NOEXEC: libc::c_ulong = 0x8;
 /// sink, while the tmpfs mount remains useful for ordinary runtime code.
 pub const DEV_SHM_SIZE_BYTES: u64 = 64 * 1024 * 1024;
 pub const DEV_SHM_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
+pub const TMP_SIZE_BYTES: u64 = 64 * 1024 * 1024;
+pub const TMP_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
 pub const PROC_HIDE_PID_OPTIONS: &str = "hidepid=2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +67,7 @@ pub fn make_root_private() -> VettoResult<()> {
 }
 
 /// Replace `/dev/shm` inside the private mount namespace with a bounded,
-/// isolated tmpfs. The target must already exist; failures are returned to
-/// the FULL-tier setup path rather than silently exposing the host mount.
+/// isolated tmpfs (64 MB, mode 1777, nosuid, nodev, noexec).
 pub fn isolate_dev_shm() -> VettoResult<()> {
     let target = Path::new("/dev/shm");
     let metadata = std::fs::symlink_metadata(target)
@@ -89,6 +93,74 @@ pub fn isolate_dev_shm() -> VettoResult<()> {
             std::io::Error::last_os_error()
         )));
     }
+    Ok(())
+}
+
+/// Mount a private, bounded `tmpfs` over `/tmp` (64 MB, mode 1777, nosuid, nodev).
+pub fn isolate_tmp() -> VettoResult<()> {
+    let target = Path::new("/tmp");
+    if !target.exists() || !target.is_dir() {
+        return Ok(());
+    }
+    let dst = cstr(target)?;
+    let options = cstr(Path::new(TMP_MOUNT_OPTIONS))?;
+    // SAFETY: valid NUL-terminated mount arguments; flags are scalar.
+    if unsafe {
+        libc::mount(
+            std::ptr::null(),
+            dst.as_ptr(),
+            b"tmpfs\0".as_ptr() as *const libc::c_char,
+            MS_NOSUID | MS_NODEV,
+            options.as_ptr().cast(),
+        )
+    } != 0
+    {
+        return Err(VettoError::Mount(format!(
+            "isolated /tmp tmpfs: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Restrict access to other agents' session directories (`~/.claude/sessions/`,
+/// `~/.codex/`, `~/.config/Cursor/`) by mounting empty read-only tmpfs instances
+/// or `/dev/null` over them.
+pub fn isolate_agent_state_dirs(home: &Path, current_agent: &str) -> VettoResult<()> {
+    let sensitive_subpaths = [
+        ".claude/sessions",
+        ".codex",
+        ".config/Cursor",
+        ".cursor",
+        ".config/Code",
+        ".local/share/code-server",
+    ];
+
+    for subpath in sensitive_subpaths {
+        // If current agent is specifically targeting one ecosystem (e.g. claude),
+        // we might leave that one to policy allowlist, but sibling state trees
+        // are masked by default.
+        let path = home.join(subpath);
+        if path.exists() {
+            let is_dir = path.is_dir();
+            let _ = mask_path(&path, is_dir);
+        }
+    }
+
+    // Mask sibling agent report directories in `.vetto-reports/`
+    let reports_dir = Path::new(".vetto-reports");
+    if reports_dir.exists() && reports_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(reports_dir) {
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if name != current_agent && entry.path().is_dir() {
+                        let _ = empty_tmpfs(&entry.path());
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -229,6 +301,13 @@ mod tests {
         assert!(DEV_SHM_MOUNT_OPTIONS.contains("size=67108864"));
         assert!(DEV_SHM_MOUNT_OPTIONS.contains("mode=1777"));
         assert_ne!(MS_NOSUID | MS_NODEV | MS_NOEXEC, 0);
+    }
+
+    #[test]
+    fn tmp_plan_is_bounded() {
+        assert_eq!(TMP_SIZE_BYTES, 64 * 1024 * 1024);
+        assert!(TMP_MOUNT_OPTIONS.contains("size=67108864"));
+        assert!(TMP_MOUNT_OPTIONS.contains("mode=1777"));
     }
 
     #[test]

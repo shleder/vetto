@@ -1,3 +1,4 @@
 /target
 .vetto/
+.agents/
 vetto-report-*.{html,md,json,sarif}

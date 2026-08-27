@@ -112,3 +112,41 @@ fn profiles_lists_builtins() {
         assert!(text.contains(name), "missing profile {name}: {text}");
     }
 }
+
+#[test]
+fn test_subtractive_and_lockdown() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("subtractive");
+    write_file(&proj.path().join("allowed.txt"), "hello\n");
+    write_file(&proj.path().join("secret.key"), "secret-key-data\n");
+    write_file(
+        &proj.path().join("vetto-subtractive.toml"),
+        r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["$PROJECT", "/usr", "/bin", "/lib", "/dev/null"]
+deny_read = ["$PROJECT/secret.key"]
+deny_write = ["$PROJECT/.git"]
+
+[environment]
+pass_through = ["SAFE_TEST_VAR"]
+deny = ["SECRET_*"]
+"#,
+    );
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--policy",
+            "vetto-subtractive.toml",
+            "--dry-run",
+            "--",
+            "/bin/true",
+        ],
+    );
+    let text = stdout(&out);
+    assert!(text.contains("deny path"), "deny count in output: {text}");
+}
+

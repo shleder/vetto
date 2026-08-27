@@ -20,6 +20,8 @@ pub enum VettoError {
     Pty(String),
     #[error("policy error: {0}")]
     Policy(String),
+    #[error("policy lockdown violation: {0}")]
+    PolicyLockdownViolation(String),
     #[error("{0} is not supported by this vetto 0.x build (see SECURITY.md roadmap)")]
     UnsupportedPlatform(&'static str),
 }

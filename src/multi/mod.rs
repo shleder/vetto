@@ -8,6 +8,9 @@
 //!
 //! The actual process launcher lives in [`runtime`]. It accepts only the
 //! validated argv produced here and always goes through `sandbox::Backend`.
+//!
+//! Phase 4 (Step 23 & 24): Virtual port pool, debug port configuration,
+//! and cross-agent memory/signal isolation.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,10 +23,100 @@ use tokio::sync::broadcast;
 
 use crate::events::{Event, EventBus, FileAccess};
 
+pub mod isolation;
 pub mod runtime;
 
 const MAX_AGENTS: usize = 32;
 const MAX_ARG_BYTES: usize = 64 * 1024;
+
+/// Local loopback debug port configuration per agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugPortConfig {
+    #[serde(default = "default_true")]
+    pub isolate_devtools: bool,
+    #[serde(default = "default_true")]
+    pub isolate_node_inspect: bool,
+    #[serde(default = "default_true")]
+    pub isolate_debugpy: bool,
+    #[serde(default)]
+    pub allowed_ports: Vec<u16>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for DebugPortConfig {
+    fn default() -> Self {
+        Self {
+            isolate_devtools: true,
+            isolate_node_inspect: true,
+            isolate_debugpy: true,
+            allowed_ports: Vec::new(),
+        }
+    }
+}
+
+/// Dynamic virtual port pool allocator for multi-agent network isolation.
+#[derive(Debug, Clone)]
+pub struct VirtualPortPool {
+    base_port: u16,
+    range_size: u16,
+    allocated: Arc<Mutex<BTreeMap<String, Vec<u16>>>>,
+}
+
+impl VirtualPortPool {
+    pub fn new(base_port: u16, range_size: u16) -> Self {
+        Self {
+            base_port,
+            range_size,
+            allocated: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn default_pool() -> Self {
+        Self::new(47200, 16)
+    }
+
+    pub fn allocate_ports(&self, agent_name: &str, count: u16) -> Result<Vec<u16>> {
+        let mut allocated = self
+            .allocated
+            .lock()
+            .map_err(|_| anyhow::anyhow!("virtual port pool lock poisoned"))?;
+        let index = allocated.len() as u16;
+        let start = self
+            .base_port
+            .checked_add(index.saturating_mul(self.range_size))
+            .ok_or_else(|| anyhow::anyhow!("virtual port pool exhausted"))?;
+        let mut ports = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            ports.push(start + i);
+        }
+        allocated.insert(agent_name.to_string(), ports.clone());
+        Ok(ports)
+    }
+
+    pub fn allocate_relay_port(&self, agent_idx: usize) -> u16 {
+        crate::sandbox::linux::net_relay::RELAY_PORT_BASE + agent_idx as u16
+    }
+
+    pub fn get_ports(&self, agent_name: &str) -> Option<Vec<u16>> {
+        self.allocated.lock().ok()?.get(agent_name).cloned()
+    }
+
+    pub fn release(&self, agent_name: &str) {
+        if let Ok(mut allocated) = self.allocated.lock() {
+            allocated.remove(agent_name);
+        }
+    }
+}
+
+impl Default for VirtualPortPool {
+    fn default() -> Self {
+        Self::default_pool()
+    }
+}
 
 /// CLI entry point for `vetto multi`. It returns the worst non-zero exit code
 /// after the split-pane dashboard closes; the top-level `main` decides how to
@@ -121,6 +214,8 @@ pub struct AgentSpec {
     pub observe_seccomp: bool,
     #[serde(default)]
     pub report_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub debug_ports: Option<DebugPortConfig>,
 }
 
 fn default_profile() -> String {
@@ -221,11 +316,6 @@ pub fn load_manifest(path: &Path) -> Result<Manifest> {
 
 /// Parse the explicit repeated-command form:
 /// `--agent name=/absolute/or/PATH`.
-///
-/// The form intentionally accepts only the executable token. Arguments can
-/// be supplied in a manifest, which avoids inventing a second shell/quoting
-/// language in the CLI. The executable is still resolved and sandboxed by the
-/// runtime before it is launched.
 pub fn parse_repeated_agents(entries: &[String]) -> Result<Vec<AgentSpec>> {
     if entries.is_empty() {
         bail!("no --agent entries; use --manifest or --agent NAME=PROGRAM");
@@ -245,6 +335,7 @@ pub fn parse_repeated_agents(entries: &[String]) -> Result<Vec<AgentSpec>> {
             net: default_net(),
             observe_seccomp: false,
             report_dir: None,
+            debug_ports: None,
         };
         spec.validate()
             .with_context(|| format!("invalid --agent entry #{idx}"))?;
@@ -259,9 +350,7 @@ pub fn parse_repeated_agents(entries: &[String]) -> Result<Vec<AgentSpec>> {
     Ok(manifest.agents)
 }
 
-/// Keep a compatibility parser for the old separator-based syntax, but fail
-/// closed whenever a separator could be either an argv item or a group
-/// boundary. Callers should use a TOML manifest for commands with arguments.
+/// Compatibility parser for legacy syntax.
 pub fn parse_legacy_commands(tokens: &[String]) -> Result<Vec<AgentSpec>> {
     if tokens.is_empty() {
         bail!("no multi-agent command provided; use --manifest");
@@ -279,6 +368,7 @@ pub fn parse_legacy_commands(tokens: &[String]) -> Result<Vec<AgentSpec>> {
         net: default_net(),
         observe_seccomp: false,
         report_dir: None,
+        debug_ports: None,
     };
     spec.validate()?;
     Ok(vec![spec])
@@ -297,9 +387,7 @@ fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// An event tagged with its originating agent. Per-agent `EventBus` values
-/// remain available to the individual report/UI pane; this stream is only
-/// the explicit aggregation channel.
+/// An event tagged with its originating agent.
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentEvent {
     pub agent: String,
@@ -328,8 +416,6 @@ impl MultiEventStream {
         });
     }
 
-    /// Bridge one independent per-agent bus into the aggregate stream. The
-    /// bridge owns only its receiver; the original bus remains independent.
     pub fn bridge_agent(&self, name: String, bus: &EventBus) {
         let mut rx = bus.subscribe();
         let stream = self.clone();
@@ -542,9 +628,6 @@ impl MultiAggregator {
     }
 }
 
-/// Subscribe an aggregator to the tagged event stream. This is intentionally
-/// a separate worker from each agent's StatsCollector, so one slow/closed
-/// stream cannot merge or corrupt another agent's report.
 pub fn spawn_aggregator(stream: &MultiEventStream, aggregator: MultiAggregator) {
     let mut rx = stream.subscribe();
     std::thread::Builder::new()
@@ -559,9 +642,6 @@ pub fn spawn_aggregator(stream: &MultiEventStream, aggregator: MultiAggregator) 
         .expect("spawn multi stats collector");
 }
 
-/// A small view model consumed by the split-pane full TUI. It intentionally
-/// carries no process handles; termination is sent through the runtime's
-/// controller, preserving the one-handle-per-agent boundary.
 #[derive(Debug, Clone)]
 pub struct AgentPane {
     pub name: String,
@@ -641,5 +721,17 @@ mod tests {
         assert_eq!(two.network_blocked, 1);
         assert_eq!(two.blocked_attempts, 0);
         assert_eq!(agg.combined().blocked_attempts, 1);
+    }
+
+    #[test]
+    fn virtual_port_pool_allocates_non_overlapping_ranges() {
+        let pool = VirtualPortPool::new(48000, 10);
+        let p1 = pool.allocate_ports("agent-1", 5).expect("allocate agent-1");
+        let p2 = pool.allocate_ports("agent-2", 5).expect("allocate agent-2");
+
+        assert_eq!(p1, vec![48000, 48001, 48002, 48003, 48004]);
+        assert_eq!(p2, vec![48010, 48011, 48012, 48013, 48014]);
+        assert_eq!(pool.allocate_relay_port(0), 47129);
+        assert_eq!(pool.allocate_relay_port(1), 47130);
     }
 }

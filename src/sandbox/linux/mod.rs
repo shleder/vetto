@@ -27,6 +27,8 @@
 //!   97/98  relay: loopback bring-up / bind failed
 
 pub mod audit_reader;
+pub mod debug_guard;
+pub mod ebpf_redirect;
 pub mod landlock;
 pub mod limits;
 pub mod mounts;
@@ -963,6 +965,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     }
     if let Err(e) = mounts::isolate_dev_shm() {
         child_fail(err_w, 115, &format!("isolate /dev/shm: {e}"));
+    }
+    if let Err(e) = mounts::isolate_tmp() {
+        child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
     }
     if let Err(e) = namespaces::unshare(namespaces::CLONE_NEWIPC) {
         child_fail(err_w, 115, &format!("unshare ipc: {e}"));

@@ -10,7 +10,8 @@ pub type RawHandle = *mut c_void;
 type Handle = RawHandle;
 type Dword = u32;
 
-const DISABLE_MAX_PRIVILEGE: Dword = 0x1;
+const DISABLE_MAX_PRIVILEGE: Dword = 0x0000_0001;
+const LUA_TOKEN: Dword = 0x0000_0004;
 const TOKEN_ASSIGN_PRIMARY: Dword = 0x0001;
 const TOKEN_DUPLICATE: Dword = 0x0002;
 const TOKEN_QUERY: Dword = 0x0008;
@@ -49,7 +50,7 @@ extern "system" {
 }
 
 /// Create a restricted primary token from a token handle owned by the caller.
-/// No privilege is enabled and no token is opened implicitly.
+/// Applies `DISABLE_MAX_PRIVILEGE | LUA_TOKEN` to drop privileges and administrative SIDs.
 ///
 /// # Safety
 ///
@@ -65,7 +66,7 @@ pub unsafe fn create_primary(source: RawHandle) -> Result<OwnedHandle> {
     let mut restricted: Handle = null_mut();
     let ok = CreateRestrictedToken(
         source,
-        DISABLE_MAX_PRIVILEGE,
+        DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
         0,
         std::ptr::null(),
         0,
@@ -102,5 +103,6 @@ pub fn raw(handle: &OwnedHandle) -> RawHandle {
 }
 
 pub const fn contract() -> &'static str {
-    "restricted primary token; no privilege enablement or elevation"
+    "restricted primary token with DISABLE_MAX_PRIVILEGE | LUA_TOKEN"
 }
+

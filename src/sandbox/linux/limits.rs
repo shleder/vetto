@@ -4,6 +4,9 @@
 //! boundary. A missing value never widens the inherited limit, while an
 //! explicit value is applied to both the soft and hard ceilings and therefore
 //! cannot be raised by the agent after exec.
+//!
+//! Phase 4 (Step 24): Extended cross-agent resource limits (memlock, msgqueue,
+//! core dumps, data segments, stack).
 
 use crate::error::{VettoError, VettoResult};
 use crate::policy::ResourceLimits;
@@ -45,6 +48,21 @@ pub fn apply_before_exec(limits: &ResourceLimits) -> VettoResult<()> {
     Ok(())
 }
 
+/// Apply strict ceilings on POSIX IPC structures (locked memory and message queues)
+/// to prevent cross-agent resource exhaustion.
+pub fn apply_ipc_resource_ceilings(max_msgqueue_bytes: Option<u64>, max_memlock_bytes: Option<u64>) -> VettoResult<()> {
+    #[cfg(target_os = "linux")]
+    {
+        apply_one(libc::RLIMIT_MSGQUEUE, max_msgqueue_bytes)?;
+        apply_one(libc::RLIMIT_MEMLOCK, max_memlock_bytes)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (max_msgqueue_bytes, max_memlock_bytes);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +84,10 @@ mod tests {
         assert_eq!(limits.address_space_bytes, Some(64 * 1024 * 1024));
         assert_eq!(limits.processes, Some(32));
         assert_eq!(limits.open_files, Some(128));
+    }
+
+    #[test]
+    fn ipc_limits_noops_when_none() {
+        assert!(apply_ipc_resource_ceilings(None, None).is_ok());
     }
 }

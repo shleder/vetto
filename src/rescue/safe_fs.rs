@@ -27,6 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{bail, Context, Result};
 use rusqlite::{Connection, OpenFlags};
 
+use super::wal::SqliteWalManager;
+
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
@@ -396,27 +398,9 @@ pub(crate) fn open_sqlite_read_only_bounded(
         bail!("{label} exceeds the inspection budget");
     }
 
-    // SQLite rollback journals and WAL/SHM files carry state which is not
-    // represented by the main database bytes. Copying only the main file in
-    // those modes could produce a plausible but false inventory. Treat any
-    // observable sidecar as an unproven snapshot and fail closed.
-    let sidecars_before = sqlite_sidecar_state(verified.path(), label)?;
-    if sidecars_before {
-        bail!("{label} has active SQLite WAL, SHM, or journal state");
-    }
-
-    let bytes = read_stable_bounded_from_opened(&mut verified, limit, label)?;
-    let sidecars_after = sqlite_sidecar_state(verified.path(), label)?;
-    if sidecars_after || sidecars_before != sidecars_after {
-        bail!("{label} changed SQLite journal state while being inspected");
-    }
+    let snapshot = create_private_sqlite_snapshot_with_recovery(&mut verified, limit, label)?;
     verified.ensure_unchanged(label)?;
 
-    let snapshot = create_private_sqlite_snapshot(&bytes, label)?;
-    if sqlite_sidecar_state(verified.path(), label)? {
-        bail!("{label} changed SQLite journal state while being inspected");
-    }
-    verified.ensure_unchanged(label)?;
     let connection = Connection::open_with_flags(
         &snapshot.path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -463,12 +447,6 @@ fn read_stable_bounded_from_opened(
 }
 
 /// Return whether any SQLite sidecar exists next to path.
-///
-/// A sidecar is not treated as a harmless stale file: without a coordinated
-/// SQLite backup API we cannot prove whether it contains committed state,
-/// rollback state, or a writer's in-flight transaction. Symlink/reparse
-/// sidecars are errors rather than existence claims, so they cannot become a
-/// metadata oracle outside the rescue root.
 fn sqlite_sidecar_state(path: &Path, label: &str) -> Result<bool> {
     let mut present = false;
     for suffix in SQLITE_SIDECARS {
@@ -490,6 +468,116 @@ fn sqlite_sidecar_state(path: &Path, label: &str) -> Result<bool> {
     Ok(present)
 }
 
+fn create_private_sqlite_snapshot_with_recovery(
+    verified: &mut VerifiedFile,
+    limit: u64,
+    label: &str,
+) -> Result<PrivateSqliteSnapshot> {
+    let base = fs::canonicalize(std::env::temp_dir())
+        .with_context(|| format!("resolve private {label} snapshot directory"))?;
+    let base_metadata = fs::symlink_metadata(&base)
+        .with_context(|| format!("inspect private {label} snapshot directory"))?;
+    validate_directory_metadata(&base_metadata, "private snapshot directory")?;
+    let process = std::process::id();
+    let nonce = NEXT_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed);
+
+    for attempt in 0..SNAPSHOT_DIRECTORY_ATTEMPTS {
+        let directory = base.join(format!("vetto-sqlite-snapshot-{process}-{nonce}-{attempt}"));
+        match create_private_directory(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("create private {label} snapshot"));
+            }
+        }
+        let db_path = directory.join("database.sqlite");
+        let result = (|| {
+            // Read main db bytes from opened verified handle
+            verified.file_mut().seek(SeekFrom::Start(0))?;
+            let mut db_bytes = Vec::new();
+            verified
+                .file_mut()
+                .take(limit.saturating_add(1))
+                .read_to_end(&mut db_bytes)?;
+            if db_bytes.len() as u64 > limit {
+                bail!("{label} exceeds the inspection budget");
+            }
+            verified.ensure_unchanged(label)?;
+
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            #[cfg(windows)]
+            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            let mut file = options
+                .open(&db_path)
+                .with_context(|| format!("create private {label} snapshot file"))?;
+            file.write_all(&db_bytes)
+                .with_context(|| format!("write private {label} snapshot"))?;
+            file.sync_all()
+                .with_context(|| format!("flush private {label} snapshot"))?;
+            drop(file);
+
+            // Stage sidecars if present
+            let src_base = verified.path().display().to_string();
+            let mut has_sidecars = false;
+            for suffix in SQLITE_SIDECARS {
+                let src_sidecar = PathBuf::from(format!("{}{}", src_base, suffix));
+                let dst_sidecar = directory.join(format!("database.sqlite{}", suffix));
+                match fs::symlink_metadata(&src_sidecar) {
+                    Ok(meta) => {
+                        validate_regular_metadata(&meta, label)?;
+                        let mut sc_file = OpenOptions::new();
+                        sc_file.read(true);
+                        #[cfg(unix)]
+                        sc_file.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+                        #[cfg(windows)]
+                        sc_file.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+                        let mut sc_handle = sc_file.open(&src_sidecar)?;
+                        let mut sc_bytes = Vec::new();
+                        sc_handle.read_to_end(&mut sc_bytes)?;
+                        fs::write(&dst_sidecar, sc_bytes)?;
+                        has_sidecars = true;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error).with_context(|| format!("inspect {label} SQLite sidecar")),
+                }
+            }
+
+            verified.ensure_unchanged(label)?;
+
+            if has_sidecars {
+                // Open in read-write mode inside our private sandbox directory to checkpoint and recover WAL
+                let mut conn = Connection::open(&db_path)?;
+                SqliteWalManager::checkpoint_and_recover(&mut conn)?;
+                drop(conn);
+
+                // Remove temporary sidecar files in the staging directory
+                for suffix in SQLITE_SIDECARS {
+                    let dst_sidecar = directory.join(format!("database.sqlite{}", suffix));
+                    let _ = fs::remove_file(&dst_sidecar);
+                }
+            }
+
+            make_snapshot_read_only(&db_path)
+                .with_context(|| format!("protect private {label} snapshot"))?;
+            Ok::<(), anyhow::Error>(())
+        })();
+
+        match result {
+            Ok(()) => return Ok(PrivateSqliteSnapshot { directory, path: db_path }),
+            Err(error) => {
+                let _ = fs::remove_file(&db_path);
+                let _ = fs::remove_dir_all(&directory);
+                return Err(error);
+            }
+        }
+    }
+    bail!("could not allocate a private {label} snapshot directory")
+}
+
+#[allow(dead_code)]
 fn create_private_sqlite_snapshot(bytes: &[u8], label: &str) -> Result<PrivateSqliteSnapshot> {
     let base = fs::canonicalize(std::env::temp_dir())
         .with_context(|| format!("resolve private {label} snapshot directory"))?;
@@ -904,22 +992,26 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_rejects_uncertain_wal_state() {
+    fn sqlite_recovers_wal_state() {
         let temp = TempRoot::new("sqlite-wal");
         let root = &temp.0;
         let path = root.join("state.sqlite");
         let source = Connection::open(&path).expect("fixture database");
         source
-            .execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
-            .expect("fixture schema");
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 CREATE TABLE threads (id TEXT PRIMARY KEY);
+                 INSERT INTO threads VALUES ('wal_entry');",
+            )
+            .expect("fixture schema and row");
         drop(source);
-        let wal = PathBuf::from(format!("{}-wal", path.display()));
-        fs::write(&wal, b"unproven wal bytes").expect("wal marker");
-        let error = match open_sqlite_read_only(root, &path, "SQLite database") {
-            Ok(_) => panic!("WAL must be treated as unknown"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("WAL"), "{error:#}");
+
+        let connection = open_sqlite_read_only(root, &path, "SQLite database")
+            .expect("open sqlite with wal recovery");
+        let value: String = connection
+            .query_row("SELECT id FROM threads", [], |row| row.get(0))
+            .expect("query recovered db");
+        assert_eq!(value, "wal_entry");
     }
 
     #[cfg(unix)]

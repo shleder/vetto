@@ -52,6 +52,8 @@ pub fn run(
     let mut painted_generation = u64::MAX;
     let mut replay: Vec<u8> = Vec::new();
 
+    let mut redactor = pty::AnsiRedactor::new();
+
     let exit_code = loop {
         if let Some(code) = handle.try_wait() {
             break code;
@@ -80,12 +82,13 @@ pub fn run(
             last_paint = Instant::now() - REPAINT_INTERVAL;
         }
 
-        // Agent output pass-through: pty master -> our stdout, verbatim.
+        // Agent output pass-through: pty master -> our stdout, with live ANSI redactor.
         let mut buf = [0u8; 8192];
         let n = pty::read_ready(master, &mut buf);
         if n > 0 {
+            let redacted = redactor.redact_chunk(&buf[..n]);
             let mut out = io::stdout();
-            let _ = out.write_all(&buf[..n]);
+            let _ = out.write_all(&redacted);
             let _ = out.flush();
         }
 
@@ -117,6 +120,7 @@ fn run_overlay(
         return;
     };
 
+    let mut overlay_redactor = pty::AnsiRedactor::new();
     let mut offset_from_end: usize = 0;
     let mut paused = false;
     loop {
@@ -127,7 +131,8 @@ fn run_overlay(
         let mut buf = [0u8; 8192];
         let n = pty::read_ready(master, &mut buf);
         if n > 0 && replay.len() < REPLAY_CAP {
-            replay.extend_from_slice(&buf[..n]);
+            let redacted = overlay_redactor.redact_chunk(&buf[..n]);
+            replay.extend_from_slice(&redacted);
         }
 
         let total = app_state.events.len();

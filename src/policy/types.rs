@@ -2,6 +2,7 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 
 /// Linux capability tier the policy was loaded for (affects masking strategy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,29 +23,77 @@ impl Tier {
     }
 }
 
-#[derive(Debug, Clone)]
+/// The 7-level policy hierarchy source classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum PolicySourceKind {
+    /// 1. System/Org Global Policy (`/etc/vetto/policy.toml` or `%ProgramData%\vetto\policy.toml`)
+    SystemGlobal,
+    /// 2. User Global Policy (`~/.config/vetto/policy.toml`)
+    UserGlobal,
+    /// 3. Built-in Profile (`default`, `strict`, `audit`, `permissive`)
+    BuiltinProfile,
+    /// 4. Agent Preset (`codex`, `claude`, `cursor`, `aider`, `cline`, `opencode`, `copilot`, `custom`)
+    AgentPreset,
+    /// 5. Repository Policy (`.vetto/policy.toml` or `vetto.toml`)
+    Repository,
+    /// 5b. Repository Policy Fragment (`.vetto/policy.d/*.toml`)
+    RepositoryFragment,
+    /// 6. Local Override Policy (`.vetto.override.toml` or `.vetto/local.toml`)
+    LocalOverride,
+    /// 7a. Explicit CLI Flag (`--policy <file>`)
+    CliExplicit,
+    /// 7b. Runtime CLI Overrides (`--allow-write`, `--deny-read`, etc.)
+    CliOverride,
+}
+
+impl PolicySourceKind {
+    pub fn precedence(&self) -> u8 {
+        match self {
+            Self::SystemGlobal => 1,
+            Self::UserGlobal => 2,
+            Self::BuiltinProfile => 3,
+            Self::AgentPreset => 4,
+            Self::Repository | Self::RepositoryFragment => 5,
+            Self::LocalOverride => 6,
+            Self::CliExplicit | Self::CliOverride => 7,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::SystemGlobal => "system-global",
+            Self::UserGlobal => "user-global",
+            Self::BuiltinProfile => "builtin-profile",
+            Self::AgentPreset => "agent-preset",
+            Self::Repository => "repository",
+            Self::RepositoryFragment => "repository-fragment",
+            Self::LocalOverride => "local-override",
+            Self::CliExplicit => "cli-explicit",
+            Self::CliOverride => "cli-override",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DenyEntry {
     pub path: PathBuf,
     pub is_dir: bool,
 }
 
 /// User-facing metadata carried by a loaded policy.
-///
-/// The loader resolves inheritance before constructing `Policy`; `extends`
-/// therefore records the built-in parents that were actually applied rather
-/// than an untrusted path or arbitrary policy-language expression.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyMetadata {
     pub name: String,
     pub description: String,
     pub extends: Vec<String>,
+    #[serde(default)]
+    pub source_kind: Option<PolicySourceKind>,
+    #[serde(default)]
+    pub immutable: bool,
 }
 
 /// Optional per-agent resource ceilings applied immediately before `execve`.
-/// `None` means inherit the parent's existing limit; values are additive in
-/// the policy loader but the effective value is always the strictest (lowest)
-/// limit supplied by a layer.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceLimits {
     pub cpu_seconds: Option<u64>,
     pub address_space_bytes: Option<u64>,
@@ -69,21 +118,27 @@ fn strictest(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-/// Environment variables explicitly allowed into the agent process.
-///
-/// Entries are exact names, except that a trailing `*` matches a name prefix
-/// (for example, `LC_*`). This is an allowlist: an absent or unknown variable
-/// is dropped before `execve`, and built-in defaults do not include credential
-/// variables such as `GH_TOKEN`, `OPENAI_API_KEY`, `AWS_*`, or
-/// `ANTHROPIC_API_KEY`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Environment variables explicitly allowed into the agent process, with optional subtractive deny list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentPolicy {
     pub pass_through: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 impl EnvironmentPolicy {
     pub fn allows(&self, key: &OsStr) -> bool {
         let key = key.to_string_lossy();
+        // Deny takes precedence
+        let is_denied = self.deny.iter().any(|pattern| {
+            pattern
+                .strip_suffix('*')
+                .map_or_else(|| pattern == key.as_ref(), |prefix| key.starts_with(prefix))
+        });
+        if is_denied {
+            return false;
+        }
+
         self.pass_through.iter().any(|pattern| {
             pattern
                 .strip_suffix('*')
@@ -92,29 +147,13 @@ impl EnvironmentPolicy {
     }
 }
 
-#[cfg(test)]
-mod environment_tests {
-    use super::EnvironmentPolicy;
-    use std::ffi::OsStr;
-
-    #[test]
-    fn allowlist_is_exact_and_secrets_are_default_deny() {
-        let policy = EnvironmentPolicy {
-            pass_through: vec!["PATH".into(), "LC_*".into(), "SAFE_EXACT".into()],
-        };
-        assert!(policy.allows(OsStr::new("PATH")));
-        assert!(policy.allows(OsStr::new("LC_ALL")));
-        assert!(policy.allows(OsStr::new("SAFE_EXACT")));
-        assert!(!policy.allows(OsStr::new("SAFE_EXACT_EXTRA")));
-        for secret in [
-            "GH_TOKEN",
-            "OPENAI_API_KEY",
-            "AWS_SECRET_ACCESS_KEY",
-            "ANTHROPIC_API_KEY",
-        ] {
-            assert!(!policy.allows(OsStr::new(secret)), "leaked {secret}");
-        }
-    }
+/// Subtractive rules explicitly denying read, write, network, or env access.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubtractiveRules {
+    pub deny_write: Vec<PathBuf>,
+    pub deny_read: Vec<PathBuf>,
+    pub deny_env: Vec<String>,
+    pub deny_network: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,10 +167,16 @@ pub struct Policy {
     pub allow_write: Vec<PathBuf>,
     /// Concrete read-only roots.
     pub allow_read: Vec<PathBuf>,
+    /// Subtractive write deny rules.
+    pub deny_write: Vec<PathBuf>,
+    /// Subtractive read deny rules.
+    pub deny_read: Vec<PathBuf>,
     /// Resolved display_only_deny paths that exist on this machine.
     pub deny_resolved: Vec<DenyEntry>,
     /// Environment allowlist applied immediately before agent execve.
     pub environment: EnvironmentPolicy,
+    /// Whether this policy is in immutable enterprise lockdown mode.
+    pub is_immutable: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
     pub warnings: Vec<String>,
 }
@@ -149,12 +194,45 @@ impl Policy {
 
     /// Is `path` inside any write root? (lexical prefix check, best-effort)
     pub fn in_write_scope(&self, path: &Path) -> bool {
+        if self.deny_write.iter().any(|denied| path.starts_with(denied)) {
+            return false;
+        }
         self.allow_write.iter().any(|root| path.starts_with(root))
     }
 
     /// Is `path` covered by an allow rule at all?
     pub fn in_read_scope(&self, path: &Path) -> bool {
+        if self.deny_read.iter().any(|denied| path.starts_with(denied)) {
+            return false;
+        }
         let mut allowed = self.allow_read.iter().chain(self.allow_write.iter());
         allowed.any(|root| path.starts_with(root))
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::EnvironmentPolicy;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn allowlist_is_exact_and_secrets_are_default_deny() {
+        let policy = EnvironmentPolicy {
+            pass_through: vec!["PATH".into(), "LC_*".into(), "SAFE_EXACT".into()],
+            deny: vec!["LC_SECRET*".into()],
+        };
+        assert!(policy.allows(OsStr::new("PATH")));
+        assert!(policy.allows(OsStr::new("LC_ALL")));
+        assert!(!policy.allows(OsStr::new("LC_SECRET_VAL")));
+        assert!(policy.allows(OsStr::new("SAFE_EXACT")));
+        assert!(!policy.allows(OsStr::new("SAFE_EXACT_EXTRA")));
+        for secret in [
+            "GH_TOKEN",
+            "OPENAI_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "ANTHROPIC_API_KEY",
+        ] {
+            assert!(!policy.allows(OsStr::new(secret)), "leaked {secret}");
+        }
     }
 }

@@ -3,6 +3,8 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
+use crate::shim::registry::ShimRegistry;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectAnalysis {
     pub project_name: String,
@@ -10,6 +12,7 @@ pub struct ProjectAnalysis {
     pub detected_agents: Vec<&'static str>,
     pub recommended_allow_read: Vec<String>,
     pub recommended_network_domains: Vec<String>,
+    pub detected_shims: Vec<String>,
 }
 
 pub fn analyze_project(root: &Path) -> ProjectAnalysis {
@@ -21,6 +24,9 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| "project".to_string());
     analysis.project_name = name;
+
+    // Detect binary shims for project
+    analysis.detected_shims = ShimRegistry::detect_for_project(root);
 
     // Rust
     if root.join("Cargo.toml").exists() {
@@ -233,11 +239,17 @@ pub fn run_init(root: &Path, force: bool) -> Result<()> {
     );
     println!("  detected stack  : {eco}");
     println!("  detected agents : {agents}");
+    if !analysis.detected_shims.is_empty() {
+        println!("  detected shims  : {}", analysis.detected_shims.join(", "));
+    }
     println!("  policy created  : {}", policy_path.display());
     println!();
     println!("Next steps:");
     println!("  # Run your AI coding agent inside the sandbox:");
     println!("  vetto -- <agent_command>");
+    println!();
+    println!("  # Or install transparent shims for automatic sandboxing:");
+    println!("  vetto hook install --scope global --git");
     println!();
     println!("  # Or run with strict network allowlist for package managers:");
     println!("  vetto --net=strict:{net_hint} -- <agent_command>");
@@ -289,6 +301,8 @@ mod tests {
         assert!(analysis
             .recommended_network_domains
             .contains(&"registry.npmjs.org:443".to_string()));
+        assert!(analysis.detected_shims.contains(&"cargo".to_string()));
+        assert!(analysis.detected_shims.contains(&"node".to_string()));
 
         let toml = generate_policy_toml(&analysis);
         assert!(toml.contains("Rust, Node.js (TypeScript)"));

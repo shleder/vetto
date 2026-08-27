@@ -22,11 +22,17 @@ use clap::Parser;
 use vetto::config::NetMode;
 use vetto::config::{RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
-use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox};
+use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox, shim};
 #[cfg(unix)]
 use vetto::{pty, tui};
 
 fn main() -> Result<()> {
+    // Fast path: if invoked via a toolchain shim name (e.g. `node`, `git`), dispatch immediately
+    if let Some(binary) = shim::detect_argv0_shim() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        return shim::run_cli(Some(binary), args);
+    }
+
     let args = cli::Cli::parse();
     logger::init(args.verbose);
 
@@ -52,6 +58,8 @@ fn main() -> Result<()> {
         Some(cli::Command::Doctor { probe, check_agent }) => doctor(*probe, check_agent.as_deref()),
         Some(cli::Command::Init { force }) => init(*force),
         Some(cli::Command::Profiles) => profiles(),
+        Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
+        Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
         Some(cli::Command::Multi {
             manifest,
             agents,

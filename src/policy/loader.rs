@@ -1,18 +1,18 @@
 //! Policy loading: profile name/context -> resolved `Policy`.
 //!
-//! Loader rules (spec v3):
-//! 1. Globs never reach the enforcement layer; they are expanded at load time.
-//! 2. On Tier FULL, `display_only_deny` paths are masked via bind-mount
-//!    overlays in the sandbox mount namespace (see sandbox/linux/mounts.rs).
-//!    Landlock itself has no subtractive rules.
-//! 3. Secrets under $HOME are denied by omission from `allow_read`.
-//! 4. `~/.gitconfig` is included read-only on purpose (commit UX).
-//! 5. On Tier FS-ONLY there are no mount namespaces, so intra-project
-//!    secrets cannot be overlay-masked. Instead the loader enumerates the
-//!    project tree (bounded) into an explicit per-entry read allowlist,
-//!    excluding secret-shaped files and directories. Writes stay whole-tree so agents can
-//!    still create new files. If the tree exceeds the enumeration budget we
-//!    fail closed rather than reintroducing a project-wide read rule.
+//! Loader rules:
+//! 1. 7-Tier Precedence Hierarchy:
+//!    Tier 1: System/Org Global Policy (/etc/vetto/policy.toml or %ProgramData%\vetto\policy.toml)
+//!    Tier 2: User Global Policy (~/.config/vetto/policy.toml)
+//!    Tier 3: Built-in Profile (default, strict, audit, permissive) + inherited profiles
+//!    Tier 4: Agent Preset (codex, claude, cursor, aider, cline, opencode, copilot, custom)
+//!    Tier 5: Repository Policy (.vetto/policy.toml or vetto.toml) + Fragments (.vetto/policy.d/*.toml)
+//!    Tier 6: Local Override Policy (.vetto.override.toml or .vetto/local.toml)
+//!    Tier 7: Runtime CLI Flags (--policy, --allow-write, --deny-read, PolicyOverrides)
+//! 2. Subtractive Rules: deny_read, deny_write, deny_env, deny_network subtract permissions.
+//! 3. Enterprise Lockdown: When [security] immutable = true in Tier 1, lower layers cannot
+//!    loosen security or override denied paths/limits without failing with PolicyLockdownViolation.
+//! 4. FS-ONLY vs FULL tier masking semantics.
 
 use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsString;
@@ -22,87 +22,112 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
+use crate::error::VettoError;
 use super::checker;
+use super::conditions::{self, ConditionContext, RawConditions};
 use super::defaults;
 use super::glob_resolve::{self, Vars};
-use super::types::{DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, ResourceLimits, Tier};
+use super::types::{
+    DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, Tier,
+};
 
 /// Enumeration budget for FS-ONLY project masking (entries, not bytes).
 const FS_ONLY_ENUMERATION_BUDGET: usize = 20_000;
 
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawLayer {
+pub struct RawLayer {
     #[serde(default)]
-    metadata: Option<RawMetadata>,
+    pub metadata: Option<RawMetadata>,
     #[serde(default)]
-    filesystem: Option<RawFilesystem>,
+    pub security: Option<RawSecurity>,
     #[serde(default)]
-    display_only_deny: Option<RawDeny>,
+    pub filesystem: Option<RawFilesystem>,
     #[serde(default)]
-    environment: Option<RawEnvironment>,
+    pub display_only_deny: Option<RawDeny>,
     #[serde(default)]
-    conditions: Option<RawConditions>,
+    pub environment: Option<RawEnvironment>,
     #[serde(default)]
-    limits: Option<RawLimits>,
+    pub network: Option<RawNetwork>,
+    #[serde(default)]
+    pub conditions: Option<RawConditions>,
+    #[serde(default)]
+    pub limits: Option<RawLimits>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawMetadata {
+pub struct RawMetadata {
     #[serde(default)]
-    name: Option<String>,
+    pub name: Option<String>,
     #[serde(default)]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(default)]
-    extends: Option<RawStringList>,
+    pub extends: Option<RawStringList>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawFilesystem {
+pub struct RawSecurity {
     #[serde(default)]
-    allow_write: Option<RawStringList>,
-    #[serde(default)]
-    allow_read: Option<RawStringList>,
+    pub immutable: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawDeny {
+pub struct RawFilesystem {
     #[serde(default)]
-    paths: Option<RawStringList>,
+    pub allow_write: Option<RawStringList>,
+    #[serde(default)]
+    pub allow_read: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_write: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_read: Option<RawStringList>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawEnvironment {
+pub struct RawDeny {
     #[serde(default)]
-    pass_through: Option<RawStringList>,
+    pub paths: Option<RawStringList>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawConditions {
+pub struct RawEnvironment {
     #[serde(default)]
-    branch: Option<RawStringList>,
+    pub pass_through: Option<RawStringList>,
     #[serde(default)]
-    file_exists: Option<RawStringList>,
+    pub deny: Option<RawStringList>,
     #[serde(default)]
-    project_contains: Option<RawStringList>,
+    pub deny_env: Option<RawStringList>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-struct RawLimits {
+pub struct RawNetwork {
     #[serde(default)]
-    cpu_seconds: Option<u64>,
+    pub mode: Option<String>,
     #[serde(default)]
-    address_space_bytes: Option<u64>,
+    pub allow: Option<RawStringList>,
     #[serde(default)]
-    processes: Option<u64>,
+    pub deny: Option<RawStringList>,
     #[serde(default)]
-    open_files: Option<u64>,
+    pub deny_network: Option<RawStringList>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawLimits {
+    #[serde(default)]
+    pub cpu_seconds: Option<u64>,
+    #[serde(default)]
+    pub address_space_bytes: Option<u64>,
+    #[serde(default)]
+    pub processes: Option<u64>,
+    #[serde(default)]
+    pub open_files: Option<u64>,
 }
 
 impl RawLimits {
@@ -116,36 +141,67 @@ impl RawLimits {
     }
 }
 
-/// A small string-or-array form keeps conditions and inheritance convenient
-/// without introducing a general policy language.
+/// String or array form for convenient TOML definitions.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
-enum RawStringList {
+pub enum RawStringList {
     One(String),
     Many(Vec<String>),
 }
 
 impl RawStringList {
-    fn into_vec(self) -> Vec<String> {
+    pub fn into_vec(self) -> Vec<String> {
         match self {
             Self::One(value) => vec![value],
             Self::Many(values) => values,
         }
     }
+
+    pub fn as_slice(&self) -> Vec<String> {
+        match self {
+            Self::One(value) => vec![value.clone()],
+            Self::Many(values) => values.clone(),
+        }
+    }
 }
 
-#[derive(Debug, Default)]
-struct MergedPolicy {
-    metadata: PolicyMetadata,
-    limits: ResourceLimits,
-    allow_write: Vec<String>,
-    allow_read: Vec<String>,
-    deny_paths: Vec<String>,
-    pass_through: Vec<String>,
+#[derive(Debug, Default, Clone)]
+pub struct MergedPolicy {
+    pub metadata: PolicyMetadata,
+    pub limits: ResourceLimits,
+    pub allow_write: Vec<String>,
+    pub allow_read: Vec<String>,
+    pub deny_write: Vec<String>,
+    pub deny_read: Vec<String>,
+    pub deny_paths: Vec<String>,
+    pub pass_through: Vec<String>,
+    pub deny_env: Vec<String>,
+    pub deny_network: Vec<String>,
+    pub network_mode: Option<String>,
+    pub network_allow: Vec<String>,
+    pub is_immutable: bool,
 }
 
 impl MergedPolicy {
-    fn apply(&mut self, layer: &RawLayer) {
+    fn apply(&mut self, layer: &RawLayer, source_kind: PolicySourceKind) -> Result<()> {
+        // Check enterprise lockdown violation if currently locked down
+        if self.is_immutable && source_kind.precedence() > PolicySourceKind::SystemGlobal.precedence() {
+            // Cannot override security immutability or weaken limits
+            if let Some(sec) = &layer.security {
+                if sec.immutable == Some(false) {
+                    return Err(anyhow::Error::new(VettoError::PolicyLockdownViolation(
+                        "cannot unset immutable enterprise lockdown".into(),
+                    )));
+                }
+            }
+        }
+
+        if let Some(sec) = &layer.security {
+            if let Some(true) = sec.immutable {
+                self.is_immutable = true;
+            }
+        }
+
         if let Some(metadata) = &layer.metadata {
             if let Some(name) = &metadata.name {
                 if !name.is_empty() {
@@ -164,54 +220,98 @@ impl MergedPolicy {
             if let Some(allow_read) = &filesystem.allow_read {
                 self.allow_read.extend(allow_read.clone().into_vec());
             }
+            if let Some(deny_write) = &filesystem.deny_write {
+                self.deny_write.extend(deny_write.clone().into_vec());
+            }
+            if let Some(deny_read) = &filesystem.deny_read {
+                self.deny_read.extend(deny_read.clone().into_vec());
+            }
         }
+
         if let Some(deny) = &layer.display_only_deny {
             if let Some(paths) = &deny.paths {
                 self.deny_paths.extend(paths.clone().into_vec());
             }
         }
+
         if let Some(environment) = &layer.environment {
             if let Some(pass_through) = &environment.pass_through {
                 self.pass_through.extend(pass_through.clone().into_vec());
             }
+            if let Some(deny) = &environment.deny {
+                self.deny_env.extend(deny.clone().into_vec());
+            }
+            if let Some(deny_env) = &environment.deny_env {
+                self.deny_env.extend(deny_env.clone().into_vec());
+            }
         }
+
+        if let Some(network) = &layer.network {
+            if let Some(mode) = &network.mode {
+                self.network_mode = Some(mode.clone());
+            }
+            if let Some(allow) = &network.allow {
+                self.network_allow.extend(allow.clone().into_vec());
+            }
+            if let Some(deny) = &network.deny {
+                self.deny_network.extend(deny.clone().into_vec());
+            }
+            if let Some(deny_network) = &network.deny_network {
+                self.deny_network.extend(deny_network.clone().into_vec());
+            }
+        }
+
         if let Some(limits) = &layer.limits {
             self.limits.merge_strictest(&limits.to_resource_limits());
         }
+
+        Ok(())
     }
 
     fn deduplicate(&mut self) {
         deduplicate_strings(&mut self.allow_write);
         deduplicate_strings(&mut self.allow_read);
+        deduplicate_strings(&mut self.deny_write);
+        deduplicate_strings(&mut self.deny_read);
         deduplicate_strings(&mut self.deny_paths);
         deduplicate_strings(&mut self.pass_through);
+        deduplicate_strings(&mut self.deny_env);
+        deduplicate_strings(&mut self.deny_network);
+        deduplicate_strings(&mut self.network_allow);
         deduplicate_strings(&mut self.metadata.extends);
     }
 }
 
-/// Additive command-line-ready policy changes. There is intentionally no
-/// clear, replace, or remove operation: a compatibility override cannot erase
-/// a base deny rule or replace the base environment allowlist.
+/// Additive and subtractive command-line-ready policy changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PolicyOverrides {
     pub allow_write: Vec<String>,
     pub allow_read: Vec<String>,
+    pub deny_write: Vec<String>,
+    pub deny_read: Vec<String>,
     pub display_only_deny: Vec<String>,
     pub pass_through: Vec<String>,
+    pub deny_env: Vec<String>,
+    pub deny_network: Vec<String>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub limits: Option<ResourceLimits>,
 }
 
-/// Context for the layered policy loader. The default enables the project
-/// `vetto.toml` layer when it exists; the legacy `load` API opts out so its
-/// historical callers retain base-profile-only behavior.
+/// Context for the 7-tier layered policy loader.
 #[derive(Debug, Clone)]
 pub struct PolicyLoadOptions {
     pub agent: Option<String>,
     pub branch: Option<String>,
+    pub git_tag: Option<String>,
     pub project_policy: Option<PathBuf>,
+    pub system_policy: Option<PathBuf>,
+    pub user_policy: Option<PathBuf>,
+    pub include_system_policy: bool,
+    pub include_user_policy: bool,
     pub include_project_policy: bool,
+    pub include_fragments: bool,
+    pub include_local_override: bool,
     pub overrides: PolicyOverrides,
 }
 
@@ -220,36 +320,346 @@ impl Default for PolicyLoadOptions {
         Self {
             agent: None,
             branch: None,
+            git_tag: None,
             project_policy: None,
+            system_policy: None,
+            user_policy: None,
+            include_system_policy: true,
+            include_user_policy: true,
             include_project_policy: true,
+            include_fragments: true,
+            include_local_override: true,
             overrides: PolicyOverrides::default(),
         }
     }
 }
 
-struct ConditionContext<'a> {
-    project: &'a Path,
-    branch: Option<&'a str>,
+/// The 7-tier Hierarchical Policy Loader.
+pub struct LayeredPolicyLoader {
+    pub system_policy_path: Option<PathBuf>,
+    pub user_policy_path: Option<PathBuf>,
+    pub load_system_policy: bool,
+    pub load_user_policy: bool,
+    pub load_fragments: bool,
+    pub load_local_override: bool,
 }
 
-/// Known agent roots are fixed rather than derived from arbitrary input.
-fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
-    let suffix = match agent {
-        "codex" => PathBuf::from(".codex"),
-        "claude" => PathBuf::from(".claude"),
-        "aider" => PathBuf::from(".aider"),
-        "cursor" => PathBuf::from(".cursor"),
-        "cline" => PathBuf::from(".cline"),
-        "opencode" => PathBuf::from(".config/opencode"),
-        "copilot" => PathBuf::from(".config/github-copilot"),
-        "custom" => PathBuf::from(".config/vetto/agents/custom"),
-        _ => bail!(
-            "unknown agent '{}'; known agents: {}",
-            agent,
-            defaults::AGENT_PROFILE_NAMES.join(", ")
-        ),
-    };
-    Ok(home.join(suffix))
+impl LayeredPolicyLoader {
+    pub fn new() -> Self {
+        Self {
+            system_policy_path: None,
+            user_policy_path: None,
+            load_system_policy: true,
+            load_user_policy: true,
+            load_fragments: true,
+            load_local_override: true,
+        }
+    }
+
+    pub fn load(
+        &self,
+        profile: &str,
+        custom_path: Option<&Path>,
+        project: &Path,
+        home: &Path,
+        tier: Tier,
+        options: &PolicyLoadOptions,
+    ) -> Result<Policy> {
+        let mut merged = MergedPolicy::default();
+        merged.metadata.name = if custom_path.is_some() {
+            format!("custom:{profile}")
+        } else {
+            profile.to_string()
+        };
+
+        let branch = options
+            .branch
+            .clone()
+            .or_else(|| conditions::detect_git_branch(project));
+        let git_tag = options
+            .git_tag
+            .clone()
+            .or_else(|| conditions::detect_git_tag(project));
+
+        let context = ConditionContext {
+            project,
+            branch: branch.as_deref(),
+            git_tag: git_tag.as_deref(),
+            agent: options.agent.as_deref(),
+            os: None,
+            env: None,
+        };
+
+        let mut stack = Vec::new();
+
+        // -------------------------------------------------------------------
+        // Tier 1: System/Org Global Policy
+        // -------------------------------------------------------------------
+        if self.load_system_policy && options.include_system_policy {
+            let sys_path = options
+                .system_policy
+                .clone()
+                .or_else(|| self.system_policy_path.clone())
+                .or_else(default_system_policy_path);
+            if let Some(path) = sys_path {
+                if path.is_file() {
+                    // Security verification on Unix: verify owner root (uid 0) and not world-writable
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                            if meta.uid() != 0 {
+                                eprintln!(
+                                    "vetto: warning: system policy '{}' is not owned by root (uid {})",
+                                    path.display(),
+                                    meta.uid()
+                                );
+                            }
+                            if (meta.mode() & 0o002) != 0 {
+                                eprintln!(
+                                    "vetto: warning: system policy '{}' is world-writable (mode {:o})",
+                                    path.display(),
+                                    meta.mode()
+                                );
+                            }
+                        }
+                    }
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        let label = format!("system:{}", path.display());
+                        let layer = parse_layer(&text, &label)?;
+                        merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::SystemGlobal)?;
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 2: User Global Policy
+        // -------------------------------------------------------------------
+        if self.load_user_policy && options.include_user_policy {
+            let user_path = options
+                .user_policy
+                .clone()
+                .or_else(|| self.user_policy_path.clone())
+                .or_else(|| default_user_policy_path(home));
+            if let Some(path) = user_path {
+                if path.is_file() {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        let label = format!("user:{}", path.display());
+                        let layer = parse_layer(&text, &label)?;
+                        merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::UserGlobal)?;
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 3: Built-in Profile
+        // -------------------------------------------------------------------
+        let base_profile = defaults::builtin(profile).map(|_| profile);
+        if base_profile.is_none() && custom_path.is_none() {
+            bail!(
+                "unknown profile '{}'; known profiles: {}",
+                profile,
+                defaults::PROFILE_NAMES.join(", ")
+            );
+        }
+
+        if let Some(base_profile) = base_profile {
+            stack.push(base_profile.to_string());
+            let base_text = defaults::builtin(base_profile).expect("base profile checked above");
+            let base = parse_layer(base_text, base_profile)?;
+            if base.environment.is_none() && merged.pass_through.is_empty() {
+                merged.pass_through = defaults::default_env_passthrough();
+            }
+            merge_layer(&base, base_profile, &context, &mut stack, &mut merged, PolicySourceKind::BuiltinProfile)?;
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 4: Agent Preset
+        // -------------------------------------------------------------------
+        let agent_path = match options.agent.as_deref() {
+            Some(agent) => Some(agent_root(home, agent)?),
+            None => None,
+        };
+        if let Some(agent) = options.agent.as_deref() {
+            let text = defaults::agent_builtin(agent).ok_or_else(|| {
+                anyhow!(
+                    "unknown agent '{}'; known agents: {}",
+                    agent,
+                    defaults::AGENT_PROFILE_NAMES.join(", ")
+                )
+            })?;
+            let layer = parse_layer(text, &format!("agent:{agent}"))?;
+            merge_layer(
+                &layer,
+                &format!("agent:{agent}"),
+                &context,
+                &mut stack,
+                &mut merged,
+                PolicySourceKind::AgentPreset,
+            )?;
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 5: Repository Policy (.vetto/policy.toml or vetto.toml) + Fragments
+        // -------------------------------------------------------------------
+        let mut applied_project_path = None;
+        if options.include_project_policy {
+            let (path, explicit) = match &options.project_policy {
+                Some(path) => (Some(path.clone()), true),
+                None => {
+                    let dot_vetto_policy = project.join(".vetto/policy.toml");
+                    let vetto_toml = project.join("vetto.toml");
+                    if is_usable_file(&dot_vetto_policy) {
+                        (Some(dot_vetto_policy), false)
+                    } else if is_usable_file(&vetto_toml) {
+                        (Some(vetto_toml), false)
+                    } else {
+                        (None, false)
+                    }
+                }
+            };
+            if let Some(path) = path {
+                if explicit
+                    && std::fs::symlink_metadata(&path)
+                        .map(|metadata| metadata.file_type().is_symlink())
+                        .unwrap_or(false)
+                {
+                    bail!(
+                        "project policy file '{}' must not be a symlink",
+                        path.display()
+                    );
+                }
+                let text = std::fs::read_to_string(&path).with_context(|| {
+                    format!("failed to read project policy file {}", path.display())
+                })?;
+                let label = path.display().to_string();
+                let layer = parse_layer(&text, &label)?;
+                merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::Repository)?;
+                applied_project_path = Some(path);
+            } else if explicit {
+                let path = options
+                    .project_policy
+                    .as_deref()
+                    .map_or_else(|| Path::new("vetto.toml"), |path| path);
+                bail!("project policy file '{}' was not found", path.display());
+            }
+
+            // Fragment Directory (.vetto/policy.d/*.toml)
+            if self.load_fragments && options.include_fragments {
+                let fragments_dir = project.join(".vetto/policy.d");
+                if fragments_dir.is_dir() {
+                    let mut fragment_files = Vec::new();
+                    if let Ok(entries) = std::fs::read_dir(&fragments_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+                                fragment_files.push(path);
+                            }
+                        }
+                    }
+                    // Sort deterministically alphabetically
+                    fragment_files.sort();
+                    for frag_path in fragment_files {
+                        if let Ok(text) = std::fs::read_to_string(&frag_path) {
+                            let label = frag_path.display().to_string();
+                            let layer = parse_layer(&text, &label)?;
+                            merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::RepositoryFragment)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 6: Local Override Policy (.vetto.override.toml or .vetto/local.toml)
+        // -------------------------------------------------------------------
+        if self.load_local_override && options.include_local_override {
+            let override_file = project.join(".vetto.override.toml");
+            let local_file = project.join(".vetto/local.toml");
+            let local_path = if is_usable_file(&override_file) {
+                Some(override_file)
+            } else if is_usable_file(&local_file) {
+                Some(local_file)
+            } else {
+                None
+            };
+            if let Some(path) = local_path {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    let label = format!("override:{}", path.display());
+                    let layer = parse_layer(&text, &label)?;
+                    merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::LocalOverride)?;
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Tier 7: Runtime CLI Flags & Overrides
+        // -------------------------------------------------------------------
+        if let Some(path) = custom_path {
+            let duplicate_project = applied_project_path
+                .as_deref()
+                .and_then(|project_path| same_file_path(project_path, path))
+                .unwrap_or(false);
+            if !duplicate_project {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("failed to read policy file {}", path.display()))?;
+                let label = format!("cli:{}", path.display());
+                let layer = parse_layer(&text, &label)?;
+                merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::CliExplicit)?;
+            }
+        }
+
+        apply_overrides(&mut merged, &options.overrides)?;
+        merged.deduplicate();
+
+        if merged.allow_write.is_empty() {
+            bail!("effective policy has no filesystem.allow_write roots");
+        }
+
+        build_policy(
+            profile,
+            custom_path.is_some(),
+            project,
+            home,
+            tier,
+            &merged,
+            agent_path.as_deref(),
+        )
+    }
+}
+
+fn is_usable_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn default_system_policy_path() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(PathBuf::from("/etc/vetto/policy.toml"))
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("ProgramData")
+            .map(|prog_data| PathBuf::from(prog_data).join("vetto/policy.toml"))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
+
+fn default_user_policy_path(home: &Path) -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        let xdg_path = PathBuf::from(xdg).join("vetto/policy.toml");
+        if xdg_path.exists() {
+            return Some(xdg_path);
+        }
+    }
+    Some(home.join(".config/vetto/policy.toml"))
 }
 
 /// Load a policy either from a built-in profile name or a custom TOML path,
@@ -260,18 +670,19 @@ pub fn load(
     project: &Path,
     home: &Path,
     tier: Tier,
-) -> Result<Policy> {
+    ) -> Result<Policy> {
     let options = PolicyLoadOptions {
         include_project_policy: false,
+        include_system_policy: false,
+        include_user_policy: false,
+        include_fragments: false,
+        include_local_override: false,
         ..PolicyLoadOptions::default()
     };
     load_with_options(profile, custom_path, project, home, tier, &options)
 }
 
-/// Load a policy with optional agent, project, condition, and CLI override
-/// context. Layers are applied in this order:
-/// built-in profile -> inherited profiles -> agent preset -> project
-/// `vetto.toml` -> explicit CLI policy -> additive CLI overrides.
+/// Load a policy with optional agent, project, condition, and CLI override context.
 pub fn load_with_options(
     profile: &str,
     custom_path: Option<&Path>,
@@ -280,140 +691,8 @@ pub fn load_with_options(
     tier: Tier,
     options: &PolicyLoadOptions,
 ) -> Result<Policy> {
-    let mut merged = MergedPolicy::default();
-    merged.metadata.name = if custom_path.is_some() {
-        format!("custom:{profile}")
-    } else {
-        profile.to_string()
-    };
-
-    let branch = options
-        .branch
-        .clone()
-        .or_else(|| detect_git_branch(project));
-    let context = ConditionContext {
-        project,
-        branch: branch.as_deref(),
-    };
-    // A custom `--policy` historically allowed an arbitrary display name.
-    // Keep that compatibility by allowing an unknown profile only when the
-    // explicit file supplies the base layer; named profiles remain strict.
-    let base_profile = defaults::builtin(profile).map(|_| profile);
-    if base_profile.is_none() && custom_path.is_none() {
-        bail!(
-            "unknown profile '{}'; known profiles: {}",
-            profile,
-            defaults::PROFILE_NAMES.join(", ")
-        );
-    }
-    let mut stack = base_profile
-        .map(|profile| vec![profile.to_string()])
-        .unwrap_or_default();
-
-    if let Some(base_profile) = base_profile {
-        let base_text = defaults::builtin(base_profile).expect("base profile checked above");
-        let base = parse_layer(base_text, base_profile)?;
-        // Keep the safe environment baseline if a built-in profile omits
-        // `[environment]`; later layers remain additive.
-        if base.environment.is_none() {
-            merged.pass_through = defaults::default_env_passthrough();
-        }
-        merge_layer(&base, base_profile, &context, &mut stack, &mut merged)?;
-    }
-
-    let agent_path = match options.agent.as_deref() {
-        Some(agent) => Some(agent_root(home, agent)?),
-        None => None,
-    };
-    if let Some(agent) = options.agent.as_deref() {
-        let text = defaults::agent_builtin(agent).ok_or_else(|| {
-            anyhow!(
-                "unknown agent '{}'; known agents: {}",
-                agent,
-                defaults::AGENT_PROFILE_NAMES.join(", ")
-            )
-        })?;
-        let layer = parse_layer(text, &format!("agent:{agent}"))?;
-        merge_layer(
-            &layer,
-            &format!("agent:{agent}"),
-            &context,
-            &mut stack,
-            &mut merged,
-        )?;
-    }
-
-    let mut applied_project_path = None;
-    if options.include_project_policy {
-        let (path, explicit) = match &options.project_policy {
-            Some(path) => (Some(path.clone()), true),
-            None => {
-                let path = project.join("vetto.toml");
-                let usable = std::fs::symlink_metadata(&path)
-                    .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
-                    .unwrap_or(false);
-                (usable.then_some(path), false)
-            }
-        };
-        if let Some(path) = path {
-            if explicit
-                && std::fs::symlink_metadata(&path)
-                    .map(|metadata| metadata.file_type().is_symlink())
-                    .unwrap_or(false)
-            {
-                bail!(
-                    "project policy file '{}' must not be a symlink",
-                    path.display()
-                );
-            }
-            let text = std::fs::read_to_string(&path).with_context(|| {
-                format!("failed to read project policy file {}", path.display())
-            })?;
-            let label = path.display().to_string();
-            let layer = parse_layer(&text, &label)?;
-            merge_layer(&layer, &label, &context, &mut stack, &mut merged)?;
-            applied_project_path = Some(path);
-        } else if explicit {
-            let path = options
-                .project_policy
-                .as_deref()
-                .map_or_else(|| Path::new("vetto.toml"), |path| path);
-            bail!("project policy file '{}' was not found", path.display());
-        }
-    }
-
-    // `--policy` is an explicit CLI layer, so it is applied after the
-    // project policy even when it points at the same file. Avoid only the
-    // exact duplicate case, preserving deterministic additive semantics.
-    if let Some(path) = custom_path {
-        let duplicate_project = applied_project_path
-            .as_deref()
-            .and_then(|project_path| same_file_path(project_path, path))
-            .unwrap_or(false);
-        if !duplicate_project {
-            let text = std::fs::read_to_string(path)
-                .with_context(|| format!("failed to read policy file {}", path.display()))?;
-            let label = format!("cli:{}", path.display());
-            let layer = parse_layer(&text, &label)?;
-            merge_layer(&layer, &label, &context, &mut stack, &mut merged)?;
-        }
-    }
-
-    apply_overrides(&mut merged, &options.overrides);
-    merged.deduplicate();
-    if merged.allow_write.is_empty() {
-        bail!("effective policy has no filesystem.allow_write roots");
-    }
-
-    build_policy(
-        profile,
-        custom_path.is_some(),
-        project,
-        home,
-        tier,
-        &merged,
-        agent_path.as_deref(),
-    )
+    let loader = LayeredPolicyLoader::new();
+    loader.load(profile, custom_path, project, home, tier, options)
 }
 
 /// Compatibility alias for callers that prefer an explicit context name.
@@ -438,9 +717,10 @@ fn merge_layer(
     context: &ConditionContext<'_>,
     stack: &mut Vec<String>,
     merged: &mut MergedPolicy,
+    source_kind: PolicySourceKind,
 ) -> Result<()> {
     if let Some(conditions) = &layer.conditions {
-        if !conditions_match(conditions, context) {
+        if !conditions::conditions_match(conditions, context) {
             return Ok(());
         }
     }
@@ -470,6 +750,7 @@ fn merge_layer(
             context,
             stack,
             merged,
+            PolicySourceKind::BuiltinProfile,
         )?;
         stack.pop();
         if !merged.metadata.extends.contains(&parent) {
@@ -477,7 +758,7 @@ fn merge_layer(
         }
     }
 
-    merged.apply(layer);
+    merged.apply(layer, source_kind)?;
     Ok(())
 }
 
@@ -496,13 +777,28 @@ fn validate_parent_name(parent: &str) -> Result<()> {
     Ok(())
 }
 
-fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) {
+fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Result<()> {
+    if merged.is_immutable {
+        if !overrides.allow_write.is_empty() || !overrides.allow_read.is_empty() {
+            // Check if CLI overrides attempt to widen when locked down
+            // In enterprise lockdown mode, adding paths via CLI is prohibited
+            return Err(anyhow::Error::new(VettoError::PolicyLockdownViolation(
+                "cannot add filesystem allow paths via CLI in enterprise lockdown mode".into(),
+            )));
+        }
+    }
+
     merged.allow_write.extend(overrides.allow_write.clone());
     merged.allow_read.extend(overrides.allow_read.clone());
+    merged.deny_write.extend(overrides.deny_write.clone());
+    merged.deny_read.extend(overrides.deny_read.clone());
     merged
         .deny_paths
         .extend(overrides.display_only_deny.clone());
     merged.pass_through.extend(overrides.pass_through.clone());
+    merged.deny_env.extend(overrides.deny_env.clone());
+    merged.deny_network.extend(overrides.deny_network.clone());
+
     if let Some(name) = &overrides.name {
         if !name.is_empty() {
             merged.metadata.name = name.clone();
@@ -514,6 +810,7 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) {
     if let Some(limits) = &overrides.limits {
         merged.limits.merge_strictest(limits);
     }
+    Ok(())
 }
 
 fn build_policy(
@@ -527,12 +824,25 @@ fn build_policy(
 ) -> Result<Policy> {
     let vars = Vars { project, home };
     let mut warnings = Vec::new();
-    let mut allow_write = resolve_list(&merged.allow_write, &vars, agent)?;
-    let mut allow_read = resolve_list(&merged.allow_read, &vars, agent)?;
+
+    let mut allow_write_resolved = resolve_list(&merged.allow_write, &vars, agent)?;
+    let mut allow_read_resolved = resolve_list(&merged.allow_read, &vars, agent)?;
+    let deny_write_resolved = resolve_list(&merged.deny_write, &vars, agent)?;
+    let deny_read_resolved = resolve_list(&merged.deny_read, &vars, agent)?;
 
     let mut deny_resolved = Vec::new();
     let mut deny_set = BTreeSet::new();
-    for entry in &merged.deny_paths {
+
+    // Accumulate all deny sources: deny_paths, deny_read, deny_write
+    let all_deny_entries: Vec<String> = merged
+        .deny_paths
+        .iter()
+        .chain(merged.deny_read.iter())
+        .chain(merged.deny_write.iter())
+        .cloned()
+        .collect();
+
+    for entry in &all_deny_entries {
         for path in resolve_list(std::slice::from_ref(entry), &vars, agent)? {
             if deny_set.insert(path.clone()) {
                 if let Ok(meta) = std::fs::symlink_metadata(&path) {
@@ -545,20 +855,36 @@ fn build_policy(
         }
     }
 
+    // Subtractive rules enforcement on resolved allow roots:
+    // 1. Remove deny_write paths from allow_write
+    if !deny_write_resolved.is_empty() {
+        allow_write_resolved.retain(|allowed| {
+            !deny_write_resolved.iter().any(|denied| allowed == denied || allowed.starts_with(denied))
+        });
+    }
+
+    // 2. Remove deny_read paths from allow_read
+    if !deny_read_resolved.is_empty() {
+        allow_read_resolved.retain(|allowed| {
+            !deny_read_resolved.iter().any(|denied| allowed == denied || allowed.starts_with(denied))
+        });
+    }
+
     if tier == Tier::FsOnly {
         mask_project_reads_for_fs_only(
-            &mut allow_read,
-            &allow_write,
+            &mut allow_read_resolved,
+            &allow_write_resolved,
             &deny_set,
             &mut warnings,
             project,
         )?;
     }
 
-    allow_write.sort();
-    allow_write.dedup();
-    allow_read.sort();
-    allow_read.dedup();
+    allow_write_resolved.sort();
+    allow_write_resolved.dedup();
+    allow_read_resolved.sort();
+    allow_read_resolved.dedup();
+
     let metadata = merged.metadata.clone();
     let name = if metadata.name.is_empty() {
         if custom {
@@ -569,16 +895,21 @@ fn build_policy(
     } else {
         metadata.name.clone()
     };
+
     let mut policy = Policy {
         name,
         metadata,
         limits: merged.limits.clone(),
-        allow_write,
-        allow_read,
+        allow_write: allow_write_resolved,
+        allow_read: allow_read_resolved,
+        deny_write: deny_write_resolved,
+        deny_read: deny_read_resolved,
         deny_resolved,
         environment: EnvironmentPolicy {
             pass_through: normalize_env_patterns(merged.pass_through.clone()),
+            deny: normalize_env_patterns(merged.deny_env.clone()),
         },
+        is_immutable: merged.is_immutable,
         warnings,
     };
     checker::check(&mut policy);
@@ -629,184 +960,25 @@ fn resolve_list(entries: &[String], vars: &Vars, agent: Option<&Path>) -> Result
     Ok(out.into_iter().collect())
 }
 
-fn detect_git_branch(project: &Path) -> Option<String> {
-    let head_path = project.join(".git/HEAD");
-    let metadata = std::fs::symlink_metadata(&head_path).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return None;
-    }
-    let head = std::fs::read_to_string(head_path).ok()?;
-    let reference = head.trim().strip_prefix("ref: refs/heads/")?;
-    if reference.is_empty() || reference.contains('\0') || reference.contains("..") {
-        return None;
-    }
-    Some(reference.to_string())
+fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
+    let suffix = match agent {
+        "codex" => PathBuf::from(".codex"),
+        "claude" => PathBuf::from(".claude"),
+        "aider" => PathBuf::from(".aider"),
+        "cursor" => PathBuf::from(".cursor"),
+        "cline" => PathBuf::from(".cline"),
+        "opencode" => PathBuf::from(".config/opencode"),
+        "copilot" => PathBuf::from(".config/github-copilot"),
+        "custom" => PathBuf::from(".config/vetto/agents/custom"),
+        _ => bail!(
+            "unknown agent '{}'; known agents: {}",
+            agent,
+            defaults::AGENT_PROFILE_NAMES.join(", ")
+        ),
+    };
+    Ok(home.join(suffix))
 }
 
-fn conditions_match(conditions: &RawConditions, context: &ConditionContext<'_>) -> bool {
-    if let Some(branches) = &conditions.branch {
-        let branches = branches.clone().into_vec();
-        if !context
-            .branch
-            .is_some_and(|branch| branches.iter().any(|candidate| candidate == branch))
-        {
-            return false;
-        }
-    }
-    if let Some(paths) = &conditions.file_exists {
-        if !paths
-            .clone()
-            .into_vec()
-            .iter()
-            .all(|path| safe_project_file_exists(context.project, path))
-        {
-            return false;
-        }
-    }
-    if let Some(needles) = &conditions.project_contains {
-        if !needles
-            .clone()
-            .into_vec()
-            .iter()
-            .all(|needle| project_contains(context.project, needle))
-        {
-            return false;
-        }
-    }
-    true
-}
-
-fn safe_project_file_exists(project: &Path, raw: &str) -> bool {
-    if raw.is_empty() || raw.contains("$HOME") || raw.contains("$AGENT") {
-        return false;
-    }
-    let Some(project_absolute) =
-        absolute_for_containment(Path::new("."), project).map(|path| lexical_normalize(&path))
-    else {
-        return false;
-    };
-    let (relative, project_variable) = match raw.strip_prefix("$PROJECT") {
-        Some(relative) => (relative.trim_start_matches(['/', '\\']), true),
-        None => (raw, false),
-    };
-    let candidate = if !project_variable && Path::new(relative).is_absolute() {
-        PathBuf::from(relative)
-    } else {
-        project_absolute.join(relative.trim_start_matches(['/', '\\']))
-    };
-    let Some(project_root) = lexical_for_containment(&project_absolute, &project_absolute) else {
-        return false;
-    };
-    let Some(candidate_lexical) = lexical_for_containment(&candidate, &project_absolute) else {
-        return false;
-    };
-    if !candidate_lexical.starts_with(&project_root) {
-        return false;
-    }
-    !contains_symlink_component(&project_absolute, &candidate_lexical)
-}
-
-fn contains_symlink_component(project: &Path, candidate: &Path) -> bool {
-    let Some(project_root) = lexical_for_containment(project, project) else {
-        return true;
-    };
-    let Ok(relative) = candidate.strip_prefix(&project_root) else {
-        return true;
-    };
-    let mut cursor = project.to_path_buf();
-    let Ok(root_metadata) = std::fs::symlink_metadata(&cursor) else {
-        return true;
-    };
-    if root_metadata.file_type().is_symlink() {
-        return true;
-    }
-    for component in relative.components() {
-        let Component::Normal(component) = component else {
-            continue;
-        };
-        cursor.push(component);
-        let Ok(metadata) = std::fs::symlink_metadata(&cursor) else {
-            return true;
-        };
-        if metadata.file_type().is_symlink() {
-            return true;
-        }
-    }
-    false
-}
-
-const PROJECT_CONTAINS_FILE_BUDGET: usize = 4_096;
-const PROJECT_CONTAINS_BYTE_BUDGET: usize = 8 * 1024 * 1024;
-
-fn project_contains(project: &Path, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
-    let Some(project_absolute) =
-        absolute_for_containment(Path::new("."), project).map(|path| lexical_normalize(&path))
-    else {
-        return false;
-    };
-    let Ok(metadata) = std::fs::symlink_metadata(&project_absolute) else {
-        return false;
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return false;
-    }
-    let needle = needle.as_bytes();
-    let mut files = 0usize;
-    let mut bytes = 0usize;
-    project_contains_in_dir(&project_absolute, needle, &mut files, &mut bytes)
-}
-
-fn project_contains_in_dir(
-    dir: &Path,
-    needle: &[u8],
-    files: &mut usize,
-    bytes: &mut usize,
-) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        if *files >= PROJECT_CONTAINS_FILE_BUDGET || *bytes >= PROJECT_CONTAINS_BYTE_BUDGET {
-            return false;
-        }
-        let path = entry.path();
-        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if metadata.file_type().is_symlink() || super::glob_resolve::is_secret_shaped(&path) {
-            continue;
-        }
-        if metadata.is_dir() {
-            if project_contains_in_dir(&path, needle, files, bytes) {
-                return true;
-            }
-            continue;
-        }
-        if !metadata.is_file() {
-            continue;
-        }
-        *files += 1;
-        let remaining = PROJECT_CONTAINS_BYTE_BUDGET.saturating_sub(*bytes);
-        let Ok(file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        let mut content = Vec::new();
-        let read = file
-            .take(remaining as u64)
-            .read_to_end(&mut content)
-            .unwrap_or(0);
-        *bytes = (*bytes).saturating_add(read);
-        if content.windows(needle.len()).any(|window| window == needle) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Make a policy path absolute without following symlinks.
 fn absolute_for_containment(path: &Path, base: &Path) -> Option<PathBuf> {
     Some(if path.is_absolute() {
         path.to_path_buf()
@@ -824,12 +996,6 @@ fn lexical_for_containment(path: &Path, base: &Path) -> Option<PathBuf> {
     absolute_for_containment(path, base).map(|absolute| lexical_normalize(&absolute))
 }
 
-/// Normalize a policy path for containment comparisons.
-///
-/// Existing paths are canonicalized first, so symlink aliases compare by
-/// their resolved target. For a path that does not exist yet, walk upward to
-/// the nearest canonicalizable ancestor and append the remaining components;
-/// an unresolvable path returns `None` so callers can drop it fail-closed.
 fn normalize_for_containment(path: &Path, base: &Path) -> Option<PathBuf> {
     let absolute = absolute_for_containment(path, base)?;
 
@@ -858,9 +1024,6 @@ fn normalize_for_containment(path: &Path, base: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Collapse `.` and `..` without following symlinks. This is only the
-/// fallback for non-existent suffixes after existing ancestors were
-/// canonicalized.
 fn lexical_normalize(path: &Path) -> PathBuf {
     let has_root = path.has_root();
     let mut normalized = PathBuf::new();
@@ -900,10 +1063,6 @@ fn mask_project_reads_for_fs_only(
         return Ok(());
     }
 
-    // Remove every read rule that intersects a project root. Both ancestors
-    // and descendants can re-grant a secret after enumeration; aliases must
-    // be normalized first so `..`, `.`, and existing symlinks cannot evade
-    // this check.
     let normalized_project_roots: Vec<(PathBuf, PathBuf)> = project_roots
         .iter()
         .map(|root| {
@@ -920,8 +1079,6 @@ fn mask_project_reads_for_fs_only(
             return false;
         };
         let Some(normalized) = normalize_for_containment(p, project) else {
-            // A rule that cannot be normalized is unusable safely; dropping
-            // it is fail-closed and cannot widen the readable tree.
             return false;
         };
         !normalized_project_roots
@@ -975,10 +1132,7 @@ fn mask_project_reads_for_fs_only(
 
 #[derive(Debug, PartialEq)]
 enum Cleanliness {
-    /// No denied path anywhere beneath this directory: it can become ONE
-    /// blanket Landlock read rule covering the whole subtree.
     Clean,
-    /// Contains at least one excluded path; children were emitted instead.
     Dirty,
 }
 
@@ -996,14 +1150,6 @@ fn is_enumeration_excluded(path: &Path, deny_set: &BTreeSet<PathBuf>) -> bool {
     deny_set.contains(path) || super::glob_resolve::is_secret_shaped(path)
 }
 
-/// Post-order walk emitting minimal read roots whose subtrees contain zero
-/// secret-shaped / deny-listed paths. Every directory is traversed, including
-/// `.git`, `node_modules`, and `target`; no opaque-directory blanket bypass is
-/// allowed. The enumeration budget bounds the total walk.
-///
-/// Returns an error when the enumeration budget is exceeded or any filesystem
-/// operation fails. A partial walk is never treated as clean, because doing so
-/// could emit a blanket read rule over entries that were not inspected.
 fn enumerate_tree(
     dir: &Path,
     deny_set: &BTreeSet<PathBuf>,
@@ -1015,9 +1161,6 @@ fn enumerate_tree(
         return Err(EnumerationError::BudgetExceeded);
     }
 
-    // Check the root itself before opening it. This covers a denied or
-    // secret-shaped project root as well as directories below the root, and
-    // intentionally avoids recursing into an excluded subtree at all.
     if is_enumeration_excluded(dir, deny_set) {
         *excluded += 1;
         return Ok(Cleanliness::Dirty);
@@ -1060,18 +1203,12 @@ fn enumerate_tree(
                 Ok(Cleanliness::Dirty) => all_clean = false,
             }
         } else if meta.file_type().is_symlink() {
-            // Never turn a symlink into an enforcement rule. Landlock makes
-            // its decision on the resolved inode, but omitting the alias is
-            // the simplest fail-closed behavior for the enumerated tier.
             all_clean = false;
         } else {
             if is_enumeration_excluded(&path, deny_set) {
                 *excluded += 1;
                 all_clean = false;
             } else {
-                // If a sibling later makes this directory dirty, ordinary
-                // files still need exact read/execute rules. A clean parent
-                // collapses these entries back to one directory rule below.
                 out.push(path);
             }
         }
@@ -1087,8 +1224,6 @@ fn enumerate_tree(
 }
 
 fn is_temp_root(p: &Path) -> bool {
-    // Not "project" roots for enumeration purposes: temp sinks and device
-    // sinks are global, not part of the agent's project tree.
     p == Path::new("/tmp") || p.starts_with("/dev/")
 }
 
@@ -1132,222 +1267,9 @@ mod tests {
     }
 
     #[test]
-    fn enumeration_read_dir_failure_is_fatal() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-missing-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&root, &BTreeSet::new(), &mut out, &mut count, &mut excluded);
-
-        assert!(
-            matches!(
-                &result,
-                Err(EnumerationError::Io {
-                    operation: "read_dir",
-                    ..
-                })
-            ),
-            "missing roots must fail instead of becoming Dirty: {result:?}"
-        );
-        assert!(out.is_empty(), "failed walks must not emit read roots");
-    }
-
-    #[test]
-    fn fs_only_propagates_walk_failures_to_policy_load() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-missing-mask-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-
-        let mut allow_read = vec![PathBuf::from("/dev/null")];
-        let mut warnings = Vec::new();
-        let result = mask_project_reads_for_fs_only(
-            &mut allow_read,
-            std::slice::from_ref(&root),
-            &BTreeSet::new(),
-            &mut warnings,
-            &root,
-        );
-
-        assert!(
-            result.is_err(),
-            "a failed project walk must reject FS-ONLY policy"
-        );
-        assert_eq!(allow_read, vec![PathBuf::from("/dev/null")]);
-    }
-
-    #[test]
-    fn denied_directories_are_pruned_before_recursion_including_root() {
-        let root = std::env::temp_dir().join(format!("vetto-policy-denied-{}", std::process::id()));
-        let denied_child = root.join("private");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&denied_child).unwrap();
-        std::fs::write(denied_child.join("ordinary.txt"), "must not be walked").unwrap();
-
-        let mut deny_set = BTreeSet::new();
-        deny_set.insert(denied_child.clone());
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&root, &deny_set, &mut out, &mut count, &mut excluded);
-
-        assert!(matches!(result, Ok(Cleanliness::Dirty)));
-        assert_eq!(excluded, 1, "the denied child itself is excluded");
-        assert!(
-            out.is_empty(),
-            "a denied descendant must prevent a blanket rule"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
-
-        let denied_root =
-            std::env::temp_dir().join(format!("vetto-policy-denied-root-{}", std::process::id()));
-        std::fs::create_dir_all(denied_root.join("nested")).unwrap();
-        std::fs::write(denied_root.join("nested/file.txt"), "must not be walked").unwrap();
-        let mut deny_set = BTreeSet::new();
-        deny_set.insert(denied_root.clone());
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&denied_root, &deny_set, &mut out, &mut count, &mut excluded);
-
-        assert!(matches!(result, Ok(Cleanliness::Dirty)));
-        assert_eq!(excluded, 1, "the denied root itself is excluded");
-        assert_eq!(count, 0, "a denied root must not be recursed into");
-        assert!(
-            out.is_empty(),
-            "a denied root must not become a blanket rule"
-        );
-        let _ = std::fs::remove_dir_all(&denied_root);
-    }
-
-    #[test]
-    fn secret_shaped_directories_are_pruned_before_recursion() {
+    fn supported_policy_sections_load_and_subtractive_rules_applied() {
         let root = std::env::temp_dir().join(format!(
-            "vetto-policy-secret-dir-{}.pem",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("nested")).unwrap();
-        std::fs::write(root.join("nested/ordinary.txt"), "must not be walked").unwrap();
-
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&root, &BTreeSet::new(), &mut out, &mut count, &mut excluded);
-
-        assert!(matches!(result, Ok(Cleanliness::Dirty)));
-        assert_eq!(excluded, 1, "the secret-shaped root itself is excluded");
-        assert_eq!(count, 0, "a secret-shaped root must not be recursed into");
-        assert!(
-            out.is_empty(),
-            "a secret-shaped root must not become a blanket rule"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn dirty_directory_keeps_exact_rules_for_ordinary_file_siblings() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-dirty-sibling-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join(".env"), "secret").unwrap();
-        std::fs::write(root.join("agent-bin"), "ordinary").unwrap();
-
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&root, &BTreeSet::new(), &mut out, &mut count, &mut excluded);
-
-        assert!(matches!(result, Ok(Cleanliness::Dirty)));
-        assert_eq!(excluded, 1);
-        assert_eq!(out, vec![root.join("agent-bin")]);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn fs_only_removes_intersecting_read_aliases() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-overlap-{}", std::process::id()));
-        let ancestor = root.parent().unwrap().to_path_buf();
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("subdir")).unwrap();
-
-        let mut allow_read = vec![
-            ancestor.clone(),
-            root.join("subdir"),
-            root.join("subdir/../subdir"),
-            PathBuf::from("/dev/null"),
-        ];
-
-        #[cfg(unix)]
-        let alias = {
-            use std::os::unix::fs::symlink;
-            let alias = root.with_extension("alias");
-            let _ = std::fs::remove_file(&alias);
-            symlink(&root, &alias).unwrap();
-            allow_read.push(alias.join("subdir"));
-            alias
-        };
-
-        let mut warnings = Vec::new();
-        mask_project_reads_for_fs_only(
-            &mut allow_read,
-            std::slice::from_ref(&root),
-            &BTreeSet::new(),
-            &mut warnings,
-            &root,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        let _ = std::fs::remove_file(&alias);
-
-        assert!(allow_read.contains(&PathBuf::from("/dev/null")));
-        assert!(!allow_read.contains(&ancestor));
-        assert!(allow_read
-            .iter()
-            .all(|path| path == Path::new("/dev/null") || path.starts_with(&root)));
-        #[cfg(unix)]
-        assert!(!allow_read.iter().any(|path| path.starts_with(&alias)));
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn opaque_directory_names_are_recursed_for_secrets() {
-        let root = std::env::temp_dir().join(format!("vetto-policy-opaque-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for (dir, file) in [
-            (".git", ".env"),
-            ("node_modules", "credential.pem"),
-            ("target", "private.key"),
-        ] {
-            std::fs::create_dir_all(root.join(dir)).unwrap();
-            std::fs::write(root.join(dir).join(file), "secret").unwrap();
-        }
-
-        let mut out = Vec::new();
-        let mut count = 0;
-        let mut excluded = 0;
-        let result = enumerate_tree(&root, &BTreeSet::new(), &mut out, &mut count, &mut excluded);
-
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(matches!(result, Ok(Cleanliness::Dirty)));
-        assert_eq!(excluded, 3);
-        assert!(
-            out.is_empty(),
-            "secret-bearing opaque dirs must not be blanket-read"
-        );
-    }
-
-    #[test]
-    fn supported_policy_sections_load_and_unknown_fields_fail_closed() {
-        let root = std::env::temp_dir().join(format!(
-            "vetto-policy-schema-{}-{}",
+            "vetto-policy-subtractive-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1359,330 +1281,56 @@ mod tests {
         let valid = r#"
 [filesystem]
 allow_write = ["$PROJECT"]
-allow_read = ["/dev/null"]
+allow_read = ["/usr", "/bin"]
+deny_write = ["$PROJECT/.git"]
+deny_read = ["/usr/secret"]
 
 [metadata]
-name = "schema-positive"
-description = "schema test"
-
-[display_only_deny]
-paths = ["$PROJECT/.env"]
+name = "subtractive-test"
+description = "subtractive rules test"
 
 [environment]
-pass_through = ["HOME"]
+pass_through = ["HOME", "SAFE_VAR"]
+deny = ["SECRET_*"]
 "#;
         std::fs::write(&policy_path, valid).unwrap();
         let loaded = load(
-            "schema-positive",
+            "subtractive-test",
             Some(&policy_path),
             &root,
             &root,
             Tier::Full,
         )
-        .expect("all currently supported policy sections should load");
-        assert_eq!(loaded.allow_write, vec![root.clone()]);
-        assert_eq!(loaded.metadata.name, "schema-positive");
-        assert_eq!(loaded.metadata.description, "schema test");
-        assert_eq!(loaded.environment.pass_through, vec!["HOME".to_string()]);
-
-        // Unknown top-level names are still rejected. Silently accepting one
-        // would make a user believe a requested restriction was active.
-        for (tag, extra) in [
-            ("network", "network = \"off\""),
-            ("network table", "[network]\nmode = \"off\""),
-            ("project table", "[project]\nname = \"demo\""),
-            ("secrets table", "[secrets]\npaths = []"),
-            (
-                "agent overrides table",
-                "[agent_overrides]\nallow_read = []",
-            ),
-            ("ci table", "[ci]\nstrict = true"),
-            ("future", "future_option = true"),
-        ] {
-            let text = format!("{valid}\n{extra}\n");
-            std::fs::write(&policy_path, text).unwrap();
-            let error = load(
-                "schema-negative",
-                Some(&policy_path),
-                &root,
-                &root,
-                Tier::Full,
-            )
-            .expect_err("unknown top-level policy fields must be rejected");
-            assert!(
-                format!("{error:#}").contains("unknown field"),
-                "{tag} should report an unknown field, got: {error:#}"
-            );
-        }
-
-        for (tag, text) in [
-            (
-                "metadata nested unknown",
-                "[filesystem]\nallow_write = [\"$PROJECT\"]\n[metadata]\nowner = \"security\"\n",
-            ),
-            (
-                "filesystem nested unknown",
-                "[filesystem]\nallow_write = [\"$PROJECT\"]\nmetadata = true\n",
-            ),
-            (
-                "deny nested unknown",
-                "[filesystem]\nallow_write = [\"$PROJECT\"]\n[display_only_deny]\nconditions = []\n",
-            ),
-            (
-                "environment nested unknown",
-                "[filesystem]\nallow_write = [\"$PROJECT\"]\n[environment]\nnetwork = true\n",
-            ),
-            (
-                "conditions nested unknown",
-                "[filesystem]\nallow_write = [\"$PROJECT\"]\n[conditions]\nnetwork = true\n",
-            ),
-        ] {
-            std::fs::write(&policy_path, text).unwrap();
-            let error = load(
-                "schema-negative-nested",
-                Some(&policy_path),
-                &root,
-                &root,
-                Tier::Full,
-            )
-            .expect_err("unknown nested policy fields must be rejected");
-            assert!(
-                format!("{error:#}").contains("unknown field"),
-                "{tag} should report an unknown field, got: {error:#}"
-            );
-        }
+        .expect("subtractive policy should load");
+        assert_eq!(loaded.metadata.name, "subtractive-test");
+        assert!(loaded.deny_write.contains(&root.join(".git")));
+        assert!(loaded.deny_read.contains(&PathBuf::from("/usr/secret")));
+        assert!(loaded.environment.pass_through.contains(&"SAFE_VAR".to_string()));
+        assert!(loaded.environment.deny.contains(&"SECRET_*".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn layered_policy_supports_inheritance_conditions_agent_and_overrides() {
-        let root = std::env::temp_dir().join(format!(
-            "vetto-policy-layered-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        let home = root.join("home");
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(root.join("src/marker.txt"), "layer-marker").unwrap();
-        let project_policy = root.join("vetto.toml");
-        std::fs::write(
-            &project_policy,
-            r#"
-[metadata]
-name = "project-policy"
-description = "project layer"
-extends = "strict"
-
-[conditions]
-branch = "feature/security"
-file_exists = "src/marker.txt"
-project_contains = "layer-marker"
-
-[filesystem]
-allow_read = ["$PROJECT/src"]
-
-[environment]
-pass_through = ["SAFE_PROJECT_VAR"]
-"#,
-        )
-        .unwrap();
-
-        let options = PolicyLoadOptions {
-            branch: Some("feature/security".to_string()),
-            agent: Some("codex".to_string()),
-            overrides: PolicyOverrides {
-                allow_read: vec!["/dev/zero".to_string()],
-                pass_through: vec!["SAFE_CLI_VAR".to_string()],
-                description: Some("CLI layer".to_string()),
-                ..PolicyOverrides::default()
-            },
-            ..PolicyLoadOptions::default()
-        };
-        let policy = load_with_options("default", None, &root, &home, Tier::Full, &options)
-            .expect("all supported layers should load");
-
-        assert_eq!(policy.metadata.name, "project-policy");
-        assert_eq!(policy.metadata.description, "CLI layer");
-        assert!(policy.metadata.extends.contains(&"strict".to_string()));
-        assert!(policy.allow_read.contains(&root.join("src")));
-        assert!(policy.allow_read.contains(&PathBuf::from("/dev/zero")));
-        assert!(policy
-            .environment
-            .pass_through
-            .contains(&"SAFE_PROJECT_VAR".to_string()));
-        assert!(policy
-            .environment
-            .pass_through
-            .contains(&"SAFE_CLI_VAR".to_string()));
-        assert!(policy.allow_read.contains(&home.join(".codex/cache")));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn conditions_false_skip_project_layer_and_agent_requires_context() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-conditions-{}", std::process::id()));
-        let home = root.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let project_policy = root.join("vetto.toml");
-        std::fs::write(
-            &project_policy,
-            r#"
-[conditions]
-branch = "never-this-branch"
-[filesystem]
-allow_read = ["$PROJECT/conditional-read"]
-"#,
-        )
-        .unwrap();
-
-        let policy = load_with_options(
-            "default",
-            None,
-            &root,
-            &home,
-            Tier::Full,
-            &PolicyLoadOptions::default(),
-        )
-        .unwrap();
-        assert!(!policy.allow_read.contains(&root.join("conditional-read")));
-
-        let bad = root.join("bad.toml");
-        std::fs::write(&bad, "[filesystem]\nallow_write = [\"$AGENT/work\"]\n").unwrap();
-        let error = load("bad-agent-context", Some(&bad), &root, &home, Tier::Full)
-            .expect_err("$AGENT must not be accepted without an agent context");
-        assert!(error.to_string().contains("requires an agent context"));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn environment_normalization_never_turns_star_into_full_inheritance() {
-        let values = normalize_env_patterns(vec![
-            "*".to_string(),
-            "LC_*".to_string(),
-            "SAFE_NAME".to_string(),
-            "BAD-NAME".to_string(),
-        ]);
-        assert_eq!(values, vec!["LC_*".to_string(), "SAFE_NAME".to_string()]);
-    }
-
-    #[test]
-    fn limits_merge_only_tightens_and_unknown_limit_fields_fail() {
-        let root = std::env::temp_dir().join(format!("vetto-policy-limits-{}", std::process::id()));
+    fn enterprise_lockdown_mode_rejects_weakening_overrides() {
+        let root = std::env::temp_dir().join(format!("vetto-lockdown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let base = root.join("base.toml");
-        std::fs::write(
-            &base,
-            r#"
-[filesystem]
-allow_write = ["$PROJECT"]
 
-[limits]
-cpu_seconds = 100
-address_space_bytes = 2000
-processes = 30
-open_files = 400
-"#,
-        )
-        .unwrap();
-        let project = root.join("vetto.toml");
-        std::fs::write(
-            &project,
-            r#"
-[limits]
-cpu_seconds = 50
-address_space_bytes = 4000
-processes = 20
-open_files = 500
-"#,
-        )
-        .unwrap();
-        let options = PolicyLoadOptions {
-            project_policy: Some(project.clone()),
-            overrides: PolicyOverrides {
-                limits: Some(ResourceLimits {
-                    cpu_seconds: Some(75),
-                    address_space_bytes: Some(1000),
-                    processes: Some(40),
-                    open_files: Some(100),
-                }),
-                ..PolicyOverrides::default()
-            },
-            ..PolicyLoadOptions::default()
+        let mut merged = MergedPolicy::default();
+        let mut sec_layer = RawLayer::default();
+        sec_layer.security = Some(RawSecurity { immutable: Some(true) });
+        merged.apply(&sec_layer, PolicySourceKind::SystemGlobal).unwrap();
+
+        assert!(merged.is_immutable);
+
+        let overrides = PolicyOverrides {
+            allow_write: vec!["/etc".into()],
+            ..Default::default()
         };
-        let policy =
-            load_with_options("custom", Some(&base), &root, &root, Tier::Full, &options).unwrap();
-        assert_eq!(policy.limits.cpu_seconds, Some(50));
-        assert_eq!(policy.limits.address_space_bytes, Some(1000));
-        assert_eq!(policy.limits.processes, Some(20));
-        assert_eq!(policy.limits.open_files, Some(100));
+        let err = apply_overrides(&mut merged, &overrides).expect_err("lockdown must reject CLI write additions");
+        assert!(err.to_string().contains("enterprise lockdown"));
 
-        std::fs::write(&project, "[limits]\nunknown_limit = 1\n").unwrap();
-        let error = load_with_options(
-            "custom",
-            Some(&base),
-            &root,
-            &root,
-            Tier::Full,
-            &PolicyLoadOptions::default(),
-        )
-        .expect_err("unknown limits fields must be rejected");
-        assert!(format!("{error:#}").contains("unknown field"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn inheritance_rejects_unknown_profiles_and_cycles() {
-        let root =
-            std::env::temp_dir().join(format!("vetto-policy-inheritance-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("policy.toml");
-        std::fs::write(
-            &path,
-            "[metadata]\nextends = \"does-not-exist\"\n[filesystem]\nallow_write = [\"$PROJECT\"]\n",
-        )
-        .unwrap();
-        let unknown = load_with_options(
-            "custom",
-            Some(&path),
-            &root,
-            &root,
-            Tier::Full,
-            &PolicyLoadOptions {
-                include_project_policy: false,
-                ..PolicyLoadOptions::default()
-            },
-        )
-        .expect_err("unknown inherited profiles must fail closed");
-        assert!(unknown.to_string().contains("unknown inherited profile"));
-
-        std::fs::write(
-            &path,
-            "[metadata]\nextends = \"../strict\"\n[filesystem]\nallow_write = [\"$PROJECT\"]\n",
-        )
-        .unwrap();
-        let traversal = load_with_options(
-            "custom",
-            Some(&path),
-            &root,
-            &root,
-            Tier::Full,
-            &PolicyLoadOptions {
-                include_project_policy: false,
-                ..PolicyLoadOptions::default()
-            },
-        )
-        .expect_err("inherited profile names must not become paths");
-        assert!(traversal
-            .to_string()
-            .contains("invalid inherited profile name"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

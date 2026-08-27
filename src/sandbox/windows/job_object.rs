@@ -1,8 +1,7 @@
 //! Small, independent Job Object wrapper.
 //!
-//! The sandbox launcher has an equivalent internal path.  This public module
-//! is useful to platform tests and future backends that need the same
-//! kill-on-close invariant without duplicating the ABI definitions.
+//! Enforces `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and strictly prevents
+//! child processes from breaking away from the containment boundary.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -17,6 +16,7 @@ type Dword = u32;
 
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Dword = 9;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Dword = 0x0000_2000;
+const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: Dword = 0x0000_0400;
 const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
 
 #[repr(C)]
@@ -89,7 +89,10 @@ impl JobObject {
             bail!("CreateJobObjectW failed with {}", unsafe { GetLastError() });
         }
         let mut limits = ExtendedLimitInformation::default();
-        limits.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // Set kill-on-close and die on unhandled exception; explicitly do NOT allow breakaway.
+        limits.basic_limit_information.limit_flags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+
         let ok = unsafe {
             SetInformationJobObject(
                 raw,
@@ -136,5 +139,6 @@ impl JobObject {
 /// Kept as a named contract so callers do not accidentally downgrade this
 /// wrapper to a kill-on-request-only implementation.
 pub const fn kill_contract() -> &'static str {
-    "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"
+    "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | NO_BREAKAWAY"
 }
+

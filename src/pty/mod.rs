@@ -1,11 +1,18 @@
-//! PTY plumbing for statusline pass-through.
+//! PTY plumbing for statusline pass-through and live ANSI/streaming redaction.
 //!
 //! vetto allocates the agent's PTY at `(rows-1, cols)` so the agent renders
 //! above the one reserved status row; the master end stays in vetto for
-//! byte pumping and resizing.
+//! byte pumping, live secret redaction, and resizing.
 
+pub mod ansi;
+pub mod entropy;
+pub mod redact;
 pub mod resizer;
 pub mod sigwinch;
+
+pub use ansi::AnsiRedactor;
+pub use entropy::{calculate_entropy, is_entropy_masked, mask_high_entropy_tokens};
+pub use redact::{RedactionStyle, StreamingRedactor};
 
 #[cfg(target_os = "macos")]
 use std::ffi::CStr;
@@ -152,14 +159,26 @@ pub fn read_ready(fd: RawFd, buf: &mut [u8]) -> usize {
 
 /// Copy one currently-ready chunk from a PTY/file descriptor to an output
 /// descriptor without interpreting or modifying any bytes.
-///
-/// The input is expected to be nonblocking, as it is in statusline mode. A
-/// zero return means that no bytes were ready or the read failed; output
-/// errors are handled by the same best-effort contract as [`write_all_fd`].
 pub fn passthrough_once(input_fd: RawFd, output_fd: RawFd, buf: &mut [u8]) -> usize {
     let n = read_ready(input_fd, buf);
     if n > 0 {
         write_all_fd(output_fd, &buf[..n]);
+    }
+    n
+}
+
+/// Copy one currently-ready chunk from a PTY descriptor to an output descriptor,
+/// passing through live streaming ANSI secret redaction.
+pub fn passthrough_redacted(
+    input_fd: RawFd,
+    output_fd: RawFd,
+    buf: &mut [u8],
+    redactor: &mut AnsiRedactor,
+) -> usize {
+    let n = read_ready(input_fd, buf);
+    if n > 0 {
+        let redacted = redactor.redact_chunk(&buf[..n]);
+        write_all_fd(output_fd, &redacted);
     }
     n
 }

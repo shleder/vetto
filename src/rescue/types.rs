@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MAX_FILES: usize = 10_000;
 pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
@@ -28,14 +28,14 @@ impl RescueContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Availability {
     Available,
     Unavailable,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterStatus {
     pub adapter: String,
     pub availability: Availability,
@@ -43,7 +43,7 @@ pub struct AdapterStatus {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRef {
     pub adapter: String,
     pub key: String,
@@ -51,10 +51,10 @@ pub struct SessionRef {
     pub bytes: u64,
     pub modified_unix_secs: Option<u64>,
     #[serde(skip)]
-    pub(crate) source_path: PathBuf,
+    pub source_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionHealth {
     Healthy,
@@ -63,7 +63,7 @@ pub enum SessionHealth {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionView {
     pub adapter: String,
     pub key: String,
@@ -82,7 +82,7 @@ pub struct SessionView {
     pub notices: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotReceipt {
     pub adapter: String,
     pub source_key: String,
@@ -90,4 +90,26 @@ pub struct SnapshotReceipt {
     pub bytes: u64,
     pub sha256: String,
     pub source_preserved: bool,
+}
+
+/// Cryptographically verifiable receipt produced upon successful state repair.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepairReceipt {
+    pub adapter: String,
+    pub session_key: String,
+    pub original_sha256: String,
+    pub repaired_sha256: String,
+    pub backup_archive_path: PathBuf,
+    pub actions_applied: Vec<String>,
+    pub timestamp_unix_secs: u64,
+}
+
+/// Receipt generated upon successful atomic rollback of a previous state repair.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackReceipt {
+    pub adapter: String,
+    pub session_key: String,
+    pub target_path: String,
+    pub restored_sha256: String,
+    pub timestamp_unix_secs: u64,
 }

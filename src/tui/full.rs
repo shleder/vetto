@@ -156,12 +156,14 @@ fn spawn_pipe_reader(fd: OwnedFd, buf: SharedBuf) {
         .spawn(move || {
             let mut file: std::fs::File = fd.into();
             let mut chunk = [0u8; 8192];
+            let mut redactor = crate::pty::AnsiRedactor::new();
             loop {
                 match std::io::Read::read(&mut file, &mut chunk) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
+                        let redacted = redactor.redact_chunk(&chunk[..n]);
                         if let Ok(mut b) = buf.lock() {
-                            b.extend_from_slice(&chunk[..n]);
+                            b.extend_from_slice(&redacted);
                             if b.len() > OUTPUT_CAP {
                                 let excess = b.len() - OUTPUT_CAP;
                                 b.drain(..excess);

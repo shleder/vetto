@@ -9,9 +9,9 @@
 //! fresh data fd back to the relay via SCM_RIGHTS. Bytes are pumped both
 //! ways until EOF.
 //!
-//! The child NEVER resolves DNS (`/etc/resolv.conf` is blackholed) and has
-//! no route except loopback + inherited unix fds, so anything non-proxy-aware
-//! fails closed. No TLS decryption, no CA injection, no SNI parsing — ever.
+//! Dual-mode support (Phase 4, Step 20):
+//! Mode A (eBPF): Transparent socket redirection via cgroup_sock_addr.
+//! Mode B (NetNS): User-space SOCKS5/HTTP CONNECT proxy with loopback debug isolation.
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
@@ -20,15 +20,20 @@ use std::sync::Mutex;
 
 use crate::config::NetRule;
 use crate::events::{bus::EventBus, Event};
+use crate::sandbox::linux::debug_guard::{DebugPortConfig, DebugPortGuard, DebugPortVerdict};
 
 pub const RELAY_PORT_BASE: u16 = 47129;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayMode {
+    NetNs,
+    Ebpf,
+}
 
 // ---------------------------------------------------------------------------
 // Host side: the broker.
 // ---------------------------------------------------------------------------
 
-/// Spawn the broker thread owning `broker_fd` (its end of the control
-/// socketpair whose other end lives inside the sandbox).
 #[derive(Debug, Clone)]
 pub enum BrokerPolicy {
     Allowlist(Vec<String>),
@@ -41,13 +46,36 @@ impl From<Vec<String>> for BrokerPolicy {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BrokerConfig {
+    pub policy: BrokerPolicy,
+    pub debug_guard: Option<DebugPortGuard>,
+    pub mode: RelayMode,
+}
+
+impl From<BrokerPolicy> for BrokerConfig {
+    fn from(policy: BrokerPolicy) -> Self {
+        Self {
+            policy,
+            debug_guard: Some(DebugPortGuard::new(DebugPortConfig::default())),
+            mode: RelayMode::NetNs,
+        }
+    }
+}
+
+impl From<Vec<String>> for BrokerConfig {
+    fn from(domains: Vec<String>) -> Self {
+        Self::from(BrokerPolicy::Allowlist(domains))
+    }
+}
+
 /// Spawn the broker thread owning `broker_fd` (its end of the control
 /// socketpair whose other end lives inside the sandbox).
-pub fn spawn_broker<P>(broker_fd: RawFd, policy: P, bus: EventBus)
+pub fn spawn_broker<P>(broker_fd: RawFd, config: P, bus: EventBus)
 where
-    P: Into<BrokerPolicy>,
+    P: Into<BrokerConfig>,
 {
-    let policy = policy.into();
+    let config = config.into();
     std::thread::Builder::new()
         .name("vetto-broker".into())
         .spawn(move || {
@@ -56,7 +84,7 @@ where
             let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
             // relay gone => loop (and thread) ends
             while let Some(req) = read_framed_request(&mut ctrl) {
-                if !request_allowed(&req.host, req.port, &policy) {
+                if !request_allowed(&req.host, req.port, req.token.as_deref(), &config) {
                     bus.publish(Event::NetRequest {
                         ts: crate::events::types::now(),
                         host: req.host.clone(),
@@ -103,10 +131,12 @@ where
         .expect("spawn vetto-broker thread");
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct RelayReq {
     host: String,
     port: u16,
+    #[serde(default)]
+    token: Option<String>,
 }
 
 fn read_framed_request(ctrl: &mut std::os::unix::net::UnixStream) -> Option<RelayReq> {
@@ -141,8 +171,22 @@ fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     })
 }
 
-fn request_allowed(host: &str, port: u16, policy: &BrokerPolicy) -> bool {
-    match policy {
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
+}
+
+fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerConfig) -> bool {
+    // Check loopback debug port guard
+    if is_loopback_host(host) {
+        if let Some(ref guard) = config.debug_guard {
+            if guard.check_access(port, token) != DebugPortVerdict::Allowed {
+                return false;
+            }
+        }
+    }
+
+    match &config.policy {
         BrokerPolicy::Allowlist(domains) => domain_allowed(host, domains),
         BrokerPolicy::Strict(rules) => strict_allowed(host, port, rules),
     }
@@ -486,16 +530,16 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
     }
 
     let target = if first[0] == 5 {
-        socks5_handshake(&mut client, first[0])
+        socks5_handshake(&mut client, first[0]).map(|(h, p)| (h, p, None))
     } else {
         http_connect_head(&mut client, first[0])
     };
 
-    let Some((host, port)) = target else { return };
+    let Some((host, port, token)) = target else { return };
 
     let outcome = {
         let _guard = SETUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        send_request_frame(ctrl_fd, &host, port).and_then(|_| read_status_and_fd(ctrl_fd))
+        send_request_frame(ctrl_fd, &host, port, token.as_deref()).and_then(|_| read_status_and_fd(ctrl_fd))
     };
 
     match outcome {
@@ -524,10 +568,11 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
     }
 }
 
-type Target = Option<(String, u16)>;
+type HttpTarget = Option<(String, u16, Option<String>)>;
+type SocksTarget = Option<(String, u16)>;
 
 /// Parse an HTTP CONNECT request head (first byte already consumed).
-fn http_connect_head(stream: &mut TcpStream, first: u8) -> Target {
+fn http_connect_head(stream: &mut TcpStream, first: u8) -> HttpTarget {
     let mut buf = Vec::with_capacity(512);
     buf.push(first);
     const MAX_HEAD: usize = 16 * 1024;
@@ -540,7 +585,8 @@ fn http_connect_head(stream: &mut TcpStream, first: u8) -> Target {
         buf.push(b[0]);
     }
     let head = String::from_utf8_lossy(&buf);
-    let request_line = head.lines().next()?;
+    let mut lines = head.lines();
+    let request_line = lines.next()?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next()?.to_ascii_uppercase();
     if method != "CONNECT" {
@@ -551,11 +597,22 @@ fn http_connect_head(stream: &mut TcpStream, first: u8) -> Target {
     let authority = parts.next()?;
     let (host, port_str) = authority.rsplit_once(':')?;
     let port: u16 = port_str.parse().ok()?;
-    Some((host.to_ascii_lowercase(), port))
+
+    let mut token = None;
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case(crate::sandbox::linux::debug_guard::DEBUG_AUTH_HEADER) {
+                token = Some(v.trim().to_string());
+                break;
+            }
+        }
+    }
+
+    Some((host.to_ascii_lowercase(), port, token))
 }
 
 /// Minimal socks5h server-side handshake (no-auth only, CONNECT only).
-fn socks5_handshake(stream: &mut TcpStream, first: u8) -> Target {
+fn socks5_handshake(stream: &mut TcpStream, first: u8) -> SocksTarget {
     let mut nmethods = [0u8; 1];
     stream.read_exact(&mut nmethods).ok()?;
     if nmethods[0] == 0 || nmethods[0] > 32 {
@@ -604,8 +661,13 @@ fn socks5_handshake(stream: &mut TcpStream, first: u8) -> Target {
     Some((host.to_ascii_lowercase(), port))
 }
 
-fn send_request_frame(ctrl_fd: RawFd, host: &str, port: u16) -> Result<(), bool> {
-    let body = serde_json::json!({ "host": host, "port": port }).to_string();
+fn send_request_frame(ctrl_fd: RawFd, host: &str, port: u16, token: Option<&str>) -> Result<(), bool> {
+    let req = RelayReq {
+        host: host.to_string(),
+        port,
+        token: token.map(|t| t.to_string()),
+    };
+    let body = serde_json::to_string(&req).map_err(|_| false)?;
     let bytes = body.as_bytes();
     if bytes.len() > 4096 {
         return Err(false);
@@ -1056,5 +1118,29 @@ mod tests {
         assert!(command.contains("ProxyCommand="));
         assert!(command.contains("ssh-proxy %h %p"));
         assert!(command.contains("'\\''") || command.contains("'/tmp/vetto agent'"));
+    }
+
+    #[test]
+    fn loopback_debug_guard_integration() {
+        let guard = DebugPortGuard::new(DebugPortConfig::default());
+        let config = BrokerConfig {
+            policy: BrokerPolicy::Allowlist(vec!["127.0.0.1".into()]),
+            debug_guard: Some(guard.clone()),
+            mode: RelayMode::NetNs,
+        };
+
+        // Blocked without token
+        assert!(!request_allowed("127.0.0.1", 9222, None, &config));
+        assert!(!request_allowed("127.0.0.1", 9229, None, &config));
+        assert!(!request_allowed("127.0.0.1", 5678, None, &config));
+
+        // Allowed with valid token
+        let token = guard.session_token();
+        assert!(request_allowed("127.0.0.1", 9222, Some(token), &config));
+        assert!(request_allowed("127.0.0.1", 9229, Some(token), &config));
+        assert!(request_allowed("127.0.0.1", 5678, Some(token), &config));
+
+        // Allowed on other non-debug port
+        assert!(request_allowed("127.0.0.1", 8080, None, &config));
     }
 }

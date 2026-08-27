@@ -1,3 +1,9 @@
+pub mod git_hook;
+pub mod hook;
+pub mod shell_env;
+
+pub use hook::{HookCommand, HookScope, ShellType};
+
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
@@ -14,6 +20,8 @@ Examples:
   vetto --multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
   vetto multi --manifest vetto-agents.toml
   vetto multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
+  vetto hook install --scope global --git
+  vetto hook status
   vetto doctor
   vetto doctor --probe
   vetto rescue --json scan --limit 25
@@ -150,6 +158,21 @@ pub enum Command {
     },
     /// List built-in policy profiles
     Profiles,
+    /// Manage transparent developer shims, shell hooks, and Git hook wrappers
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+    /// Fast native shim dispatcher for intercepted toolchain binaries
+    Shim {
+        /// Target binary name (if not inferred from argv[0])
+        #[arg(value_name = "BINARY")]
+        binary: Option<String>,
+
+        /// Arguments passed to the target binary
+        #[arg(last = true, value_name = "ARGS")]
+        args: Vec<String>,
+    },
     /// Run named agents concurrently, each in an independent sandbox.
     Multi {
         /// TOML manifest containing one or more [[agents]] argv definitions.
@@ -244,6 +267,23 @@ pub enum RescueCommand {
         #[arg(long, value_name = "PATH")]
         output: PathBuf,
     },
+    /// Perform transactional state repair on a session with backup receipt.
+    Repair {
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Directory in which pre-repair backups are stored (defaults to ~/.vetto/rescue_backups).
+        #[arg(long, value_name = "PATH")]
+        backup_dir: Option<PathBuf>,
+    },
+    /// Rollback a previous state repair using a repair receipt.
+    Rollback {
+        /// Path to the repair receipt JSON file.
+        #[arg(long, value_name = "RECEIPT_PATH")]
+        receipt: PathBuf,
+        /// Explicit target path override (if target was moved or renamed).
+        #[arg(long, value_name = "TARGET_PATH")]
+        target: Option<PathBuf>,
+    },
 }
 
 /// Render completions to stdout without starting a sandbox session.
@@ -271,6 +311,47 @@ mod tests {
             clap_complete::generate(shell, &mut command, "vetto", &mut output);
             assert!(!output.is_empty(), "empty completion for {shell:?}");
         }
+    }
+
+    #[test]
+    fn hook_subcommand_parses_install_and_status() {
+        let install_cli = Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
+            .expect("hook install parsing");
+        assert!(matches!(
+            install_cli.command,
+            Some(Command::Hook {
+                command: HookCommand::Install {
+                    scope: HookScope::Local,
+                    git: true,
+                    ..
+                }
+            })
+        ));
+
+        let status_cli = Cli::try_parse_from(["vetto", "hook", "status", "--json"])
+            .expect("hook status parsing");
+        assert!(matches!(
+            status_cli.command,
+            Some(Command::Hook {
+                command: HookCommand::Status {
+                    scope: HookScope::Global,
+                    json: true,
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn shim_subcommand_parses_binary_and_args() {
+        let cli = Cli::try_parse_from(["vetto", "shim", "node", "--", "index.js", "--port", "3000"])
+            .expect("shim parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Shim {
+                ref binary,
+                ref args,
+            }) if binary.as_deref() == Some("node") && args == &vec!["index.js", "--port", "3000"]
+        ));
     }
 
     #[test]

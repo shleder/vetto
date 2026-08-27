@@ -155,6 +155,7 @@ const NR_OPENAT: i32 = libc::SYS_openat as i32;
 const NR_OPENAT2: i32 = libc::SYS_openat2 as i32;
 const NR_EXECVEAT: i32 = libc::SYS_execveat as i32;
 const NR_CONNECT: i32 = libc::SYS_connect as i32;
+const NR_BIND: i32 = libc::SYS_bind as i32;
 #[cfg(not(target_arch = "aarch64"))]
 const NR_UNLINK: i32 = libc::SYS_unlink as i32;
 const NR_UNLINKAT: i32 = libc::SYS_unlinkat as i32;
@@ -180,6 +181,7 @@ const OBSERVED_SYSCALLS: &[i32] = &[
     NR_EXECVE,
     NR_EXECVEAT,
     NR_CONNECT,
+    NR_BIND,
     #[cfg(not(target_arch = "aarch64"))]
     NR_UNLINK,
     NR_UNLINKAT,
@@ -224,8 +226,8 @@ pub fn build_tap_program() -> Vec<SockFilter> {
 }
 
 /// Classification used by the notification observer. `Unclassified` covers
-/// notifications without a path argument (for example `connect`) and keeps
-/// the distinction explicit instead of treating missing evidence as denied.
+/// notifications without a path argument and keeps the distinction explicit
+/// instead of treating missing evidence as denied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationClass {
     Allowed,
@@ -245,6 +247,10 @@ pub fn classify_notification_path(
     let Some(path) = path else {
         return NotificationClass::Unclassified;
     };
+    // Abstract UNIX socket path (indicated by @ prefix)
+    if path.starts_with('@') {
+        return NotificationClass::Blocked;
+    }
     let absolute = absolutize(path, sandbox_cwd);
     // Overlay-carved secrets can sit below a broad writable root such as
     // `/tmp` or `$PROJECT`. They must be classified before the additive allow
@@ -483,6 +489,7 @@ fn path_arg_index(nr: i32) -> Option<usize> {
         #[cfg(target_arch = "aarch64")]
         NR_EXECVE => Some(0),
         NR_OPENAT | NR_OPENAT2 | NR_EXECVEAT => Some(1),
+        NR_CONNECT | NR_BIND => Some(1),
         #[cfg(not(target_arch = "aarch64"))]
         NR_UNLINK | NR_RENAME | NR_CHMOD => Some(0),
         NR_UNLINKAT | NR_RENAMEAT | NR_RENAMEAT2 | NR_FCHMODAT => Some(1),
@@ -534,6 +541,10 @@ fn is_supported_system_path(path: &Path) -> bool {
         p if p == Path::new("/etc/hostname")
             || p == Path::new("/etc/issue")
             || p == Path::new("/etc/os-release")
+            || p == Path::new("/proc/kcore")
+            || p == Path::new("/proc/kallsyms")
+            || p == Path::new("/proc/sys/kernel/core_pattern")
+            || p == Path::new("/proc/version_signature")
     )
 }
 
@@ -687,6 +698,33 @@ fn extract_path(fd: libc::c_int, notif: &SeccompNotif) -> Option<String> {
     let mut file = file;
     file.seek(SeekFrom::Start(ptr)).ok()?;
 
+    // Handle connect and bind: args[1] points to struct sockaddr
+    if notif.data.nr == NR_CONNECT || notif.data.nr == NR_BIND {
+        let mut sa_buf = [0u8; 128];
+        let n = file.read(&mut sa_buf).ok()?;
+        if n >= 2 {
+            let family = u16::from_ne_bytes([sa_buf[0], sa_buf[1]]);
+            if family == libc::AF_UNIX as u16 {
+                let path_bytes = &sa_buf[2..n.min(110)];
+                if !path_bytes.is_empty() {
+                    if path_bytes[0] == 0 {
+                        let name_bytes = &path_bytes[1..];
+                        let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                        if end > 0 {
+                            return Some(format!("@{}", String::from_utf8_lossy(&name_bytes[..end])));
+                        }
+                    } else {
+                        let end = path_bytes.iter().position(|&b| b == 0).unwrap_or(path_bytes.len());
+                        if end > 0 {
+                            return Some(String::from_utf8_lossy(&path_bytes[..end]).to_string());
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
     let mut buf = [0u8; 4096];
     let mut n = file.read(&mut buf).ok()?;
     n = n.min(buf.len());
@@ -724,6 +762,7 @@ mod tests {
         assert_eq!(NR_OPENAT2, libc::SYS_openat2 as i32);
         assert_eq!(NR_EXECVEAT, libc::SYS_execveat as i32);
         assert_eq!(NR_CONNECT, libc::SYS_connect as i32);
+        assert_eq!(NR_BIND, libc::SYS_bind as i32);
         #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(NR_UNLINK, libc::SYS_unlink as i32);
         assert_eq!(NR_UNLINKAT, libc::SYS_unlinkat as i32);
@@ -810,7 +849,8 @@ mod tests {
         #[cfg(not(target_arch = "aarch64"))]
         assert_eq!(path_arg_index(NR_CHMOD), Some(0));
         assert_eq!(path_arg_index(NR_FCHMODAT), Some(1));
-        assert_eq!(path_arg_index(NR_CONNECT), None);
+        assert_eq!(path_arg_index(NR_CONNECT), Some(1));
+        assert_eq!(path_arg_index(NR_BIND), Some(1));
         assert_eq!(path_arg_index(NR_CLONE3), None);
     }
 
@@ -837,6 +877,12 @@ mod tests {
         let file = std::fs::File::open("/dev/null").expect("/dev/null");
         let source = unsafe { OwnedFd::from_raw_fd(file.into_raw_fd()) };
         assert!(ExactSystemFileSubstitution::new("/tmp/project-secret", source).is_err());
+
+        let file = std::fs::File::open("/dev/null").expect("/dev/null");
+        let source = unsafe { OwnedFd::from_raw_fd(file.into_raw_fd()) };
+        let accepted_kcore = ExactSystemFileSubstitution::new("/proc/kcore", source)
+            .expect("/proc/kcore is supported");
+        assert_eq!(accepted_kcore.target(), Path::new("/proc/kcore"));
     }
 
     fn eval(program: &[SockFilter], arch: u32, syscall: i32) -> u32 {

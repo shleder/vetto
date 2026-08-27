@@ -1,6 +1,9 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
+use std::path::Path;
 
-use super::types::{AdapterStatus, RescueContext, SessionRef, SessionView, SnapshotReceipt};
+use super::types::{
+    AdapterStatus, RepairReceipt, RescueContext, SessionRef, SessionView, SnapshotReceipt,
+};
 
 pub trait RescueAdapter: Send + Sync {
     fn id(&self) -> &'static str;
@@ -15,6 +18,16 @@ pub trait RescueAdapter: Send + Sync {
         &self,
         context: &RescueContext,
         session: &SessionRef,
-        destination: &std::path::Path,
+        destination: &Path,
     ) -> Result<SnapshotReceipt>;
+
+    fn repair(
+        &self,
+        context: &RescueContext,
+        session: &SessionRef,
+        backup_dir: &Path,
+    ) -> Result<RepairReceipt> {
+        let _ = (context, session, backup_dir);
+        bail!("repair is not supported by adapter {}", self.id());
+    }
 }
