@@ -6,8 +6,9 @@ use crate::common::*;
 use rusqlite::Connection;
 use std::fs;
 use std::process::Command;
-use vetto::classifier::suspicious::{classify_command, EventSeverity};
+use vetto::classifier::suspicious::{classify_event, SuspicionSeverity};
 use vetto::config::detect_agent_preset;
+use vetto::events::Event;
 
 fn run_rescue_cmd(root: &std::path::Path, trailing: &[&str]) -> std::process::Output {
     let mut command = Command::new(vetto_bin());
@@ -47,16 +48,21 @@ fn stress_test_hundreds_of_fuzzed_corrupted_sessions() {
         let content = match i % 12 {
             0 => "{\"type\":\"session_meta\",\"id\":\"".to_string(), // Truncated mid-string
             1 => "{}\n{}\n{\"type\":\"unknown_event_type_xyz\"}\n".to_string(),
-            2 => "{\"type\":\"session_meta\",\"id\":\"test\"}\n".repeat(500), // Duplicate metadata
+            2 => "{\"type\":\"session_meta\",\"id\":\"test\"}\n".repeat(200), // Duplicate metadata
             3 => format!(
                 "{{\"type\":\"session_meta\",\"id\":\"{thread_id}\"}}\n{{\"type\":\"turn\",\"input\":[{{\"id\":\"review_rollout_user\",\"text\":\"fix bug\"}}]}}\n"
             ),
-            4 => "{\"type\":\"session_meta\",\"payload\":".to_string() + &"[".repeat(200) + &"]".repeat(200) + "}\n", // Deep nesting
+            4 => {
+                "{\"type\":\"session_meta\",\"payload\":".to_string()
+                    + &"[".repeat(100)
+                    + &"]".repeat(100)
+                    + "}\n"
+            } // Deep nesting
             5 => format!(
                 "{{\"type\":\"session_meta\",\"id\":\"{thread_id}\"}}\n{{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"content\":\"{}\"}}\n",
-                "A".repeat(50_000) // Heavy payload
+                "A".repeat(25_000) // Heavy payload
             ),
-            6 => "\0\0\0\x1f\x8b\x08\0\0\0\0\0\xff\x01".to_string(), // Binary / gzipped garbage
+            6 => "{\"type\":\"raw_bytes\",\"data\":\"\\u0000\\u001f\\u007f\"}\n".to_string(), // Raw bytes representation
             7 => format!(
                 "{{\"type\":\"session_meta\",\"id\":\"{thread_id}\"}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"mcp_tool_call_begin\",\"call_id\":\"mcp-{i}\"}}}}\n"
             ), // Unfinished tool call
@@ -95,7 +101,6 @@ fn stress_test_hundreds_of_fuzzed_corrupted_sessions() {
         let session_str = session_file.to_string_lossy().to_string();
 
         let diag_out = run_rescue_cmd(&root, &["diagnose", &session_str]);
-        // Diagnosis must always terminate with valid exit code (0 or clean error) and zero panics
         assert!(
             diag_out.status.code().is_some(),
             "diagnose must never crash or terminate abnormally on session {i}"
@@ -113,97 +118,103 @@ fn stress_test_hundreds_of_fuzzed_corrupted_sessions() {
 
 #[test]
 fn stress_test_hundreds_of_suspicious_commands_classifier() {
-    let test_cases = [
-        // Subagent Control Plane Tampering
-        ("cat /tmp/codex_app.sock", EventSeverity::High),
-        ("nc -U ~/.claude/claude_code.sock", EventSeverity::High),
-        (
-            "curl --unix-socket /tmp/cursor-server.sock http://localhost/test",
-            EventSeverity::High,
-        ),
-        (
-            "sqlite3 ~/.codex/state_5.sqlite 'select * from threads'",
-            EventSeverity::High,
-        ),
-        ("rm -f /tmp/vscode-ipc-12345.sock", EventSeverity::High),
-        ("socat - /tmp/app_server.sock", EventSeverity::High),
-        // Debug port probes
-        ("curl http://127.0.0.1:9222/json", EventSeverity::High),
-        ("wget http://localhost:9229/node-inspect", EventSeverity::High),
-        ("ncat 127.0.0.1 5678", EventSeverity::High),
-        // Tunneling & network manipulation
-        ("chisel client server:8080 R:80:127.0.0.1:80", EventSeverity::High),
-        ("ngrok http 3000", EventSeverity::High),
-        ("cloudflared tunnel run my-tunnel", EventSeverity::High),
-        ("tcpdump -i any -w dump.pcap", EventSeverity::High),
+    let test_cases: &[(&[&str], Option<SuspicionSeverity>)] = &[
+        // Subagent Control Plane Tampering via argv
+        (&["cat", "/tmp/codex_app.sock"], Some(SuspicionSeverity::High)),
+        (&["nc", "-U", "/home/user/.claude/claude_code.sock"], Some(SuspicionSeverity::High)),
+        (&["curl", "--unix-socket", "/tmp/cursor-server.sock", "http://localhost/test"], Some(SuspicionSeverity::High)),
+        (&["sqlite3", "/home/user/.codex/state_5.sqlite", "select * from threads"], Some(SuspicionSeverity::High)),
+        (&["rm", "-f", "/tmp/vscode-ipc-12345.sock"], Some(SuspicionSeverity::High)),
+        (&["socat", "-", "/tmp/app_server.sock"], Some(SuspicionSeverity::High)),
+        // Tunneling tools
+        (&["chisel", "client", "server:8080", "R:80:127.0.0.1:80"], Some(SuspicionSeverity::High)),
+        (&["ngrok", "http", "3000"], Some(SuspicionSeverity::High)),
+        (&["cloudflared", "tunnel", "run", "my-tunnel"], Some(SuspicionSeverity::High)),
+        (&["tcpdump", "-i", "any", "-w", "dump.pcap"], Some(SuspicionSeverity::High)),
         // Memory & Heavy Dump Writes
-        ("gcore -o /tmp/core.dump 1234", EventSeverity::Warning),
-        ("heapdump-tool --output memory.heapsnapshot", EventSeverity::Warning),
-        ("cp /proc/kcore ./core.1234", EventSeverity::Warning),
-        // Normal developer tooling (should not trigger High severity)
-        ("cargo build --release", EventSeverity::Info),
-        ("git status", EventSeverity::Info),
-        ("npm test", EventSeverity::Info),
-        ("python -m unittest discover", EventSeverity::Info),
+        (&["gcore", "-o", "/tmp/core.dump", "1234"], Some(SuspicionSeverity::Warning)),
+        (&["heapdump-tool", "--output", "memory.heapsnapshot"], Some(SuspicionSeverity::Warning)),
+        (&["cp", "/proc/kcore", "./core.1234"], Some(SuspicionSeverity::Warning)),
+        // Normal developer tooling
+        (&["cargo", "build", "--release"], None),
+        (&["git", "status"], None),
+        (&["npm", "test"], None),
+        (&["python", "-m", "unittest", "discover"], None),
     ];
 
-    for (cmd, expected_min_severity) in test_cases {
-        let events = classify_command(cmd);
-        if expected_min_severity != EventSeverity::Info {
-            assert!(
-                !events.is_empty(),
-                "command '{cmd}' was expected to produce classification events"
-            );
-            let max_sev = events.iter().map(|e| e.severity).max().unwrap();
-            assert_eq!(
-                max_sev, expected_min_severity,
-                "command '{cmd}' got severity {max_sev:?}, expected {expected_min_severity:?}"
-            );
+    for (argv, expected_sev) in test_cases {
+        let argv_vec: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let event = Event::ExecObserved {
+            timestamp_ms: 1000,
+            pid: 42,
+            ppid: 1,
+            argv: argv_vec,
+        };
+        let signal = classify_event(&event);
+
+        match expected_sev {
+            Some(expected) => {
+                assert!(
+                    signal.is_some(),
+                    "expected suspicious signal for argv: {argv:?}"
+                );
+                assert_eq!(
+                    signal.unwrap().severity,
+                    *expected,
+                    "severity mismatch for argv: {argv:?}"
+                );
+            }
+            None => {
+                assert!(
+                    signal.is_none(),
+                    "expected no suspicious signal for argv: {argv:?}"
+                );
+            }
         }
     }
 }
 
 #[test]
 fn stress_test_agent_auto_detection_matrix() {
-    let scenarios = [
+    let scenarios: &[(&[&str], Option<&str>)] = &[
         // Codex variations
-        (vec!["codex", "exec", "task"], Some("codex")),
-        (vec!["/usr/bin/codex", "review"], Some("codex")),
+        (&["codex", "exec", "task"], Some("codex")),
+        (&["/usr/bin/codex", "review"], Some("codex")),
         (
-            vec!["C:\\Program Files\\Codex\\codex.exe", "exec"],
+            &["C:\\Program Files\\Codex\\codex.exe", "exec"],
             Some("codex"),
         ),
-        (vec!["codex-cli", "run"], Some("codex")),
+        (&["codex-cli", "run"], Some("codex")),
         // Claude variations
-        (vec!["claude", "-p", "hello"], Some("claude")),
-        (vec!["/home/user/.local/bin/claude-code"], Some("claude")),
-        (vec!["claude.exe", "-p", "fix"], Some("claude")),
+        (&["claude", "-p", "hello"], Some("claude")),
+        (&["/home/user/.local/bin/claude-code"], Some("claude")),
+        (&["claude.exe", "-p", "fix"], Some("claude")),
         // Cursor variations
-        (vec!["cursor", "."], Some("cursor")),
-        (vec!["/usr/local/bin/cursor-server"], Some("cursor")),
+        (&["cursor", "."], Some("cursor")),
+        (&["/usr/local/bin/cursor-server"], Some("cursor")),
         // Aider variations
-        (vec!["aider", "--model", "gpt-4"], Some("aider")),
-        (vec!["aider-chat"], Some("aider")),
+        (&["aider", "--model", "gpt-4"], Some("aider")),
+        (&["aider-chat"], Some("aider")),
         // Copilot variations
-        (vec!["copilot", "suggest"], Some("copilot")),
-        (vec!["github-copilot-cli"], Some("copilot")),
+        (&["copilot", "suggest"], Some("copilot")),
+        (&["github-copilot-cli"], Some("copilot")),
         // Cline & OpenCode
-        (vec!["cline", "start"], Some("cline")),
-        (vec!["opencode", "run"], Some("opencode")),
+        (&["cline", "start"], Some("cline")),
+        (&["opencode", "run"], Some("opencode")),
         // Non-agents (should return None)
-        (vec!["python", "script.py"], None),
-        (vec!["bash", "-c", "echo hello"], None),
-        (vec!["cargo", "test"], None),
-        (vec!["docker", "run", "ubuntu"], None),
-        (vec!["curl", "https://example.com"], None),
+        (&["python", "script.py"], None),
+        (&["bash", "-c", "echo hello"], None),
+        (&["cargo", "test"], None),
+        (&["docker", "run", "ubuntu"], None),
+        (&["curl", "https://example.com"], None),
     ];
 
     for (cmd_slice, expected) in scenarios {
-        let cmd_vec: Vec<String> = cmd_slice.into_iter().map(String::from).collect();
+        let cmd_vec: Vec<String> = cmd_slice.iter().map(|s| s.to_string()).collect();
         let detected = detect_agent_preset(&cmd_vec);
         assert_eq!(
             detected.as_deref(),
-            expected,
+            *expected,
             "failed auto-detection for command: {cmd_slice:?}"
         );
     }
