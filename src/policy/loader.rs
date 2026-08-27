@@ -16,7 +16,6 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsString;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};

@@ -149,4 +149,3 @@ deny = ["SECRET_*"]
     let text = stdout(&out);
     assert!(text.contains("deny path"), "deny count in output: {text}");
 }
-

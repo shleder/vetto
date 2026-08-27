@@ -115,7 +115,7 @@ pub fn conditions_match(conditions: &RawConditions, context: &ConditionContext<'
     // 3. Environment Variable Set predicate (`env_set`)
     if let Some(env_vars) = &conditions.env_set {
         for var in env_vars.as_slice() {
-            if !is_env_set(var, context.env) {
+            if !is_env_set(var.as_str(), context.env) {
                 return false;
             }
         }

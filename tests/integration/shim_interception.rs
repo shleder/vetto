@@ -9,7 +9,10 @@ fn test_hook_install_and_status_and_uninstall() {
     let proj_dir = project.path();
 
     // 1. Run vetto hook install --scope local
-    let out = run_vetto_in(proj_dir, &["hook", "install", "--scope", "local", "--force"]);
+    let out = run_vetto_in(
+        proj_dir,
+        &["hook", "install", "--scope", "local", "--force"],
+    );
     assert!(out.status.success(), "hook install failed: {}", stderr(&out));
     let stdout_str = stdout(&out);
     assert!(stdout_str.contains("vetto hook install: successfully configured environment"));
@@ -17,8 +20,15 @@ fn test_hook_install_and_status_and_uninstall() {
     assert!(proj_dir.join(".vetto").join("shims").join("sh").exists());
 
     // 2. Run vetto hook status --scope local --json
-    let out_status = run_vetto_in(proj_dir, &["hook", "status", "--scope", "local", "--json"]);
-    assert!(out_status.status.success(), "hook status failed: {}", stderr(&out_status));
+    let out_status = run_vetto_in(
+        proj_dir,
+        &["hook", "status", "--scope", "local", "--json"],
+    );
+    assert!(
+        out_status.status.success(),
+        "hook status failed: {}",
+        stderr(&out_status)
+    );
     let json_str = stdout(&out_status);
     let val: serde_json::Value = serde_json::from_str(&json_str).expect("parse status json");
     assert_eq!(val["scope"], "local");
@@ -26,7 +36,11 @@ fn test_hook_install_and_status_and_uninstall() {
 
     // 3. Run vetto hook uninstall --scope local
     let out_un = run_vetto_in(proj_dir, &["hook", "uninstall", "--scope", "local"]);
-    assert!(out_un.status.success(), "hook uninstall failed: {}", stderr(&out_un));
+    assert!(
+        out_un.status.success(),
+        "hook uninstall failed: {}",
+        stderr(&out_un)
+    );
     assert!(stdout(&out_un).contains("vetto hook uninstall: successfully cleaned environment"));
 }
 

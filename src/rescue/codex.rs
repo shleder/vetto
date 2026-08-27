@@ -831,6 +831,9 @@ impl CodexAdapter {
                         if let Some(c) = payload.get("created_at_ms").and_then(|v| v.as_u64()) {
                             created_at_ms = Some(c as i64);
                         }
+                        if let Some(u) = payload.get("updated_at_ms").and_then(|v| v.as_u64()) {
+                            updated_at_ms = Some(u as i64);
+                        }
                     }
                 } else if kind == "response_item" || kind == "event_msg" {
                     if first_user_msg.is_none() {

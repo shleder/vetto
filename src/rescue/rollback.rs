@@ -121,7 +121,7 @@ pub fn rollback_repair(receipt_path: &Path, target_override: Option<&Path>) -> R
     };
 
     // If backup is a SQLite database with sidecars in the backup folder, restore sidecars too
-    if let Some(backup_parent) = backup_path.parent() {
+    if let Some(_backup_parent) = backup_path.parent() {
         let backup_base = backup_path.to_string_lossy();
         for ext in ["-wal", "-shm", "-journal"] {
             let src_sc = PathBuf::from(format!("{}{}", backup_base, ext));

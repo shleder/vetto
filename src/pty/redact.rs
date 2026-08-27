@@ -94,7 +94,8 @@ impl AhoCorasick {
 
         // BFS for failure links
         let mut queue = VecDeque::new();
-        for &(_, next_idx) in &self.nodes[0].next {
+        let root_next: Vec<(u8, usize)> = self.nodes[0].next.clone();
+        for &(_, next_idx) in &root_next {
             self.nodes[next_idx].fail = 0;
             queue.push_back(next_idx);
         }

@@ -376,11 +376,12 @@ fn create_auth_client(bus: EventBus, policy: Arc<Policy>) -> anyhow::Result<()> 
     let handler_policy = Arc::clone(&policy);
     let handler_bus = bus.clone();
 
-    let handler: RcBlock<dyn Fn(EsClient, *const es_message_t)> =
-        RcBlock::new(move |client: EsClient, message: *const es_message_t| {
-            if message.is_null() {
+    let handler: RcBlock<dyn Fn(EsClient, *const c_void)> =
+        RcBlock::new(move |client: EsClient, raw_message: *const c_void| {
+            if raw_message.is_null() {
                 return;
             }
+            let message = raw_message.cast::<es_message_t>();
             let msg = unsafe { &*message };
             if msg.action_type == ES_ACTION_TYPE_AUTH {
                 let (auth_result, target_path) = evaluate_auth_event(msg, &handler_policy);
@@ -412,7 +413,7 @@ fn create_auth_client(bus: EventBus, policy: Arc<Policy>) -> anyhow::Result<()> 
     let result = unsafe { new_client(&mut client, handler_ptr.cast()) };
     if result != ES_NEW_CLIENT_SUCCESS || client.is_null() {
         unsafe {
-            let _ = RcBlock::<dyn Fn(EsClient, *const es_message_t)>::from_raw(handler_ptr);
+            let _ = RcBlock::<dyn Fn(EsClient, *const c_void)>::from_raw(handler_ptr);
         }
         return Err(anyhow::anyhow!("es_new_client returned {result}"));
     }
@@ -427,7 +428,7 @@ fn create_auth_client(bus: EventBus, policy: Arc<Policy>) -> anyhow::Result<()> 
     if result != ES_RETURN_SUCCESS {
         unsafe { delete_client(client) };
         unsafe {
-            let _ = RcBlock::<dyn Fn(EsClient, *const es_message_t)>::from_raw(handler_ptr);
+            let _ = RcBlock::<dyn Fn(EsClient, *const c_void)>::from_raw(handler_ptr);
         }
         return Err(anyhow::anyhow!("es_subscribe returned {result}"));
     }

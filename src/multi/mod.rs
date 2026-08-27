@@ -98,7 +98,14 @@ impl VirtualPortPool {
     }
 
     pub fn allocate_relay_port(&self, agent_idx: usize) -> u16 {
-        crate::sandbox::linux::net_relay::RELAY_PORT_BASE + agent_idx as u16
+        #[cfg(target_os = "linux")]
+        {
+            crate::sandbox::linux::net_relay::RELAY_PORT_BASE + agent_idx as u16
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            47129 + agent_idx as u16
+        }
     }
 
     pub fn get_ports(&self, agent_name: &str) -> Option<Vec<u16>> {

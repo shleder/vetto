@@ -181,6 +181,24 @@ pub struct Policy {
     pub warnings: Vec<String>,
 }
 
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            metadata: PolicyMetadata::default(),
+            limits: ResourceLimits::default(),
+            allow_write: Vec::new(),
+            allow_read: Vec::new(),
+            deny_write: Vec::new(),
+            deny_read: Vec::new(),
+            deny_resolved: Vec::new(),
+            environment: EnvironmentPolicy::default(),
+            is_immutable: false,
+            warnings: Vec::new(),
+        }
+    }
+}
+
 impl Policy {
     pub fn summary(&self) -> String {
         format!(
