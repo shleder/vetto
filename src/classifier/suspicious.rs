@@ -99,6 +99,38 @@ fn classify_path(path: &str) -> Option<SuspiciousSignal> {
             reason: "access to process or kernel memory surfaces was observed",
         });
     }
+
+    let is_socket = basename.ends_with(".sock") || basename.ends_with(".socket") || basename.ends_with(".ipc");
+    let is_agent_ipc = is_socket
+        && (basename.contains("codex")
+            || basename.contains("claude")
+            || basename.contains("cursor")
+            || basename.contains("vscode")
+            || basename.contains("agent"));
+    let is_session_db = (basename.starts_with("state_") && basename.ends_with(".sqlite"))
+        || (components.iter().any(|c| *c == ".codex" || *c == ".claude") && basename.ends_with(".sqlite"));
+    if is_agent_ipc || is_session_db {
+        return Some(SuspiciousSignal {
+            category: "subagent_control_plane_tampering",
+            severity: SuspicionSeverity::High,
+            subject: path.to_string(),
+            reason: "access to agent control plane IPC socket or session state database was observed",
+        });
+    }
+
+    let is_dump = basename.starts_with("core.")
+        || ["hprof", "heapsnapshot", "dump"]
+            .iter()
+            .any(|ext| basename.rsplit_once('.').map(|(_, value)| value) == Some(*ext));
+    if is_dump {
+        return Some(SuspiciousSignal {
+            category: "heavy_payload_dump_observed",
+            severity: SuspicionSeverity::Warning,
+            subject: path.to_string(),
+            reason: "creation or reading of large unconstrained dump files was observed",
+        });
+    }
+
     None
 }
 
@@ -120,10 +152,30 @@ fn classify_exec(argv: &[String]) -> Option<SuspiciousSignal> {
             reason: "a process or namespace manipulation tool was executed",
         });
     }
+    if matches!(
+        name.as_str(),
+        "socat" | "nc" | "ncat" | "netcat" | "chisel" | "ngrok" | "cloudflared" | "tcpdump"
+    ) {
+        return Some(SuspiciousSignal {
+            category: "tunneling_or_interception_tool",
+            severity: SuspicionSeverity::High,
+            subject: program.clone(),
+            reason: "a network tunneling, interception or raw socket tool was executed",
+        });
+    }
     None
 }
 
 fn classify_network(host: &str, port: u16) -> Option<SuspiciousSignal> {
+    if port == 9222 || port == 9229 || port == 5678 {
+        return Some(SuspiciousSignal {
+            category: "subagent_debug_port_probe",
+            severity: SuspicionSeverity::High,
+            subject: format!("{host}:{port}"),
+            reason: "a browser devtools or debugger runtime port was requested",
+        });
+    }
+
     let host_without_brackets = host
         .trim()
         .trim_start_matches('[')
@@ -215,12 +267,27 @@ mod tests {
             "process_memory_access"
         );
 
+        let ipc = Event::FileObserved {
+            ts: now(),
+            pid: 3,
+            comm: "agent".into(),
+            path: "/tmp/codex_app.sock".into(),
+            access: FileAccess::Read,
+        };
+        assert_eq!(
+            classify_event(&ipc).unwrap().category,
+            "subagent_control_plane_tampering"
+        );
+
         for path in [
             "/home/user/.ssh",
             "/home/user/.config/gcloud",
             r"C:\Users\user\.AWS\credentials",
             "/proc/123/fd",
             "/dev/mem/device",
+            "/tmp/vscode-ipc-123.sock",
+            "/home/user/.codex/state_5.sqlite",
+            "/home/user/app.heapsnapshot",
         ] {
             assert!(classify_path(path).is_some(), "missed {path}");
         }
@@ -251,6 +318,17 @@ mod tests {
             allowed: true,
         };
         assert!(classify_event(&public).is_none());
+
+        let debug_port = Event::NetRequest {
+            ts: now(),
+            host: "127.0.0.1".into(),
+            port: 9222,
+            allowed: false,
+        };
+        assert_eq!(
+            classify_event(&debug_port).unwrap().category,
+            "subagent_debug_port_probe"
+        );
     }
 
     #[test]
@@ -261,5 +339,15 @@ mod tests {
             argv: vec!["/bin/sh".into(), "-c".into(), "build".into()],
         };
         assert!(classify_event(&event).is_none());
+
+        let tunnel = Event::ExecObserved {
+            ts: now(),
+            pid: 2,
+            argv: vec!["/usr/bin/socat".into()],
+        };
+        assert_eq!(
+            classify_event(&tunnel).unwrap().category,
+            "tunneling_or_interception_tool"
+        );
     }
 }

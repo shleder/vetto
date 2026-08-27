@@ -6,4 +6,9 @@ description = "Safe read-only compatibility roots for Claude Code."
 allow_read = ["$AGENT/cache", "$AGENT/logs"]
 
 [display_only_deny]
-paths = ["$AGENT/.credentials.json", "$AGENT/settings.json"]
+paths = [
+    "$AGENT/.credentials.json",
+    "$AGENT/settings.json",
+    "$AGENT/*.sock",
+    "$AGENT/*.ipc",
+]

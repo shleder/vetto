@@ -6,4 +6,10 @@ description = "Safe read-only compatibility roots for the Codex CLI."
 allow_read = ["$AGENT/cache", "$AGENT/logs"]
 
 [display_only_deny]
-paths = ["$AGENT/auth.json", "$AGENT/config.toml"]
+paths = [
+    "$AGENT/auth.json",
+    "$AGENT/config.toml",
+    "$AGENT/app_server.sock",
+    "$AGENT/*.sock",
+    "$AGENT/state_*.sqlite",
+]
