@@ -100,7 +100,8 @@ fn classify_path(path: &str) -> Option<SuspiciousSignal> {
         });
     }
 
-    let is_socket = basename.ends_with(".sock") || basename.ends_with(".socket") || basename.ends_with(".ipc");
+    let is_socket =
+        basename.ends_with(".sock") || basename.ends_with(".socket") || basename.ends_with(".ipc");
     let is_agent_ipc = is_socket
         && (basename.contains("codex")
             || basename.contains("claude")
@@ -108,13 +109,15 @@ fn classify_path(path: &str) -> Option<SuspiciousSignal> {
             || basename.contains("vscode")
             || basename.contains("agent"));
     let is_session_db = (basename.starts_with("state_") && basename.ends_with(".sqlite"))
-        || (components.iter().any(|c| *c == ".codex" || *c == ".claude") && basename.ends_with(".sqlite"));
+        || (components.iter().any(|c| *c == ".codex" || *c == ".claude")
+            && basename.ends_with(".sqlite"));
     if is_agent_ipc || is_session_db {
         return Some(SuspiciousSignal {
             category: "subagent_control_plane_tampering",
             severity: SuspicionSeverity::High,
             subject: path.to_string(),
-            reason: "access to agent control plane IPC socket or session state database was observed",
+            reason:
+                "access to agent control plane IPC socket or session state database was observed",
         });
     }
 
