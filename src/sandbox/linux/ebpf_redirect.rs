@@ -599,7 +599,13 @@ impl EbpfRedirectManager {
                 prog_flags: 0,
             },
         };
-        let prog_v4_raw = unsafe { sys_bpf(BPF_PROG_LOAD, &prog_v4_attr, std::mem::size_of::<BpfAttr>() as u32) };
+        let prog_v4_raw = unsafe {
+            sys_bpf(
+                BPF_PROG_LOAD,
+                &prog_v4_attr,
+                std::mem::size_of::<BpfAttr>() as u32,
+            )
+        };
         let prog_v4_fd = if prog_v4_raw >= 0 {
             Some(unsafe { OwnedFd::from_raw_fd(prog_v4_raw as i32) })
         } else {
@@ -621,7 +627,13 @@ impl EbpfRedirectManager {
                 prog_flags: 0,
             },
         };
-        let prog_v6_raw = unsafe { sys_bpf(BPF_PROG_LOAD, &prog_v6_attr, std::mem::size_of::<BpfAttr>() as u32) };
+        let prog_v6_raw = unsafe {
+            sys_bpf(
+                BPF_PROG_LOAD,
+                &prog_v6_attr,
+                std::mem::size_of::<BpfAttr>() as u32,
+            )
+        };
         let prog_v6_fd = if prog_v6_raw >= 0 {
             Some(unsafe { OwnedFd::from_raw_fd(prog_v6_raw as i32) })
         } else {
@@ -638,7 +650,13 @@ impl EbpfRedirectManager {
                     attach_flags: BPF_F_ALLOW_MULTI,
                 },
             };
-            let r = unsafe { sys_bpf(BPF_PROG_ATTACH, &attach_attr, std::mem::size_of::<BpfAttr>() as u32) };
+            let r = unsafe {
+                sys_bpf(
+                    BPF_PROG_ATTACH,
+                    &attach_attr,
+                    std::mem::size_of::<BpfAttr>() as u32,
+                )
+            };
             if r < 0 {
                 return Err(VettoError::Sandbox(format!(
                     "attach eBPF v4 redirect: {}",
@@ -656,7 +674,13 @@ impl EbpfRedirectManager {
                     attach_flags: BPF_F_ALLOW_MULTI,
                 },
             };
-            let _ = unsafe { sys_bpf(BPF_PROG_ATTACH, &attach_attr, std::mem::size_of::<BpfAttr>() as u32) };
+            let _ = unsafe {
+                sys_bpf(
+                    BPF_PROG_ATTACH,
+                    &attach_attr,
+                    std::mem::size_of::<BpfAttr>() as u32,
+                )
+            };
         }
 
         Ok(Self {
@@ -679,7 +703,13 @@ impl EbpfRedirectManager {
                 flags: 0,
             },
         };
-        let r = unsafe { sys_bpf(BPF_MAP_LOOKUP_ELEM, &attr, std::mem::size_of::<BpfAttr>() as u32) };
+        let r = unsafe {
+            sys_bpf(
+                BPF_MAP_LOOKUP_ELEM,
+                &attr,
+                std::mem::size_of::<BpfAttr>() as u32,
+            )
+        };
         if r == 0 {
             Some(value)
         } else {
@@ -703,7 +733,13 @@ impl Drop for EbpfRedirectManager {
                     attach_flags: 0,
                 },
             };
-            unsafe { sys_bpf(BPF_PROG_DETACH, &detach_attr, std::mem::size_of::<BpfAttr>() as u32) };
+            unsafe {
+                sys_bpf(
+                    BPF_PROG_DETACH,
+                    &detach_attr,
+                    std::mem::size_of::<BpfAttr>() as u32,
+                )
+            };
         }
         if let Some(ref p6) = self.prog_v6_fd {
             let detach_attr = BpfAttr {
@@ -714,7 +750,13 @@ impl Drop for EbpfRedirectManager {
                     attach_flags: 0,
                 },
             };
-            unsafe { sys_bpf(BPF_PROG_DETACH, &detach_attr, std::mem::size_of::<BpfAttr>() as u32) };
+            unsafe {
+                sys_bpf(
+                    BPF_PROG_DETACH,
+                    &detach_attr,
+                    std::mem::size_of::<BpfAttr>() as u32,
+                )
+            };
         }
     }
 }
