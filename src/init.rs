@@ -249,11 +249,25 @@ pub fn run_init(root: &Path, force: bool) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vetto-init-test-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn detects_rust_node_and_claude_project() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path();
+        let dir = temp_test_dir("rust-node");
+        let path = dir.as_path();
 
         fs::write(path.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
         fs::write(path.join("package.json"), "{}").unwrap();
@@ -280,12 +294,14 @@ mod tests {
         assert!(toml.contains("Rust, Node.js (TypeScript)"));
         assert!(toml.contains("$HOME/.cargo/registry"));
         assert!(toml.contains("$PROJECT/.env"));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn run_init_creates_file_and_respects_force_flag() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path();
+        let dir = temp_test_dir("init-force");
+        let path = dir.as_path();
 
         assert!(run_init(path, false).is_ok());
         assert!(path.join("vetto.toml").exists());
@@ -295,5 +311,7 @@ mod tests {
 
         // Run with force should succeed
         assert!(run_init(path, true).is_ok());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
