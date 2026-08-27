@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.1] — 2026-08-27
+
+### Added
+
+- Add subagent capability isolation and IPC boundary enforcement: block access to
+  parent control plane sockets (`app_server.sock`, `*.sock`, `*.ipc`), session state
+  databases (`state_*.sqlite`), and local devtools/debugger ports (`9222`, `9229`, `5678`).
+- Add high-severity classification for network interception and raw socket tools (`socat`,
+  `ncat`, `chisel`, `tcpdump`).
+- Add heavy payload and memory dump observation (`core.*`, `.hprof`, `.heapsnapshot`, `.dump`).
+- Modernize and beautify README homepage layout according to `beautify-github-readme`
+  standards with architecture diagrams, threat matrices, and subagent guard sections.
+
 ## [0.2.0] — 2026-08-25
 
 ### Fixed
