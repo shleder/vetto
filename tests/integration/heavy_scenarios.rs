@@ -9,7 +9,7 @@ use std::fs;
 use std::process::Command;
 use vetto::classifier::suspicious::{classify_event, SuspicionSeverity};
 use vetto::config::detect_agent_preset;
-use vetto::events::Event;
+use vetto::events::{Event, FileAccess};
 
 fn run_rescue_cmd(root: &std::path::Path, trailing: &[&str]) -> std::process::Output {
     let mut command = Command::new(vetto_bin());
@@ -119,39 +119,16 @@ fn stress_test_hundreds_of_fuzzed_corrupted_sessions() {
 
 #[test]
 fn stress_test_hundreds_of_suspicious_commands_classifier() {
-    let test_cases: &[(&[&str], Option<SuspicionSeverity>)] = &[
-        // Subagent Control Plane Tampering via argv
-        (&["cat", "/tmp/codex_app.sock"], Some(SuspicionSeverity::High)),
-        (
-            &["nc", "-U", "/home/user/.claude/claude_code.sock"],
-            Some(SuspicionSeverity::High),
-        ),
-        (
-            &[
-                "curl",
-                "--unix-socket",
-                "/tmp/cursor-server.sock",
-                "http://localhost/test",
-            ],
-            Some(SuspicionSeverity::High),
-        ),
-        (
-            &[
-                "sqlite3",
-                "/home/user/.codex/state_5.sqlite",
-                "select * from threads",
-            ],
-            Some(SuspicionSeverity::High),
-        ),
-        (
-            &["rm", "-f", "/tmp/vscode-ipc-12345.sock"],
-            Some(SuspicionSeverity::High),
-        ),
+    // 1. Executed commands testing
+    let exec_cases: &[(&[&str], Option<SuspicionSeverity>)] = &[
         (
             &["socat", "-", "/tmp/app_server.sock"],
             Some(SuspicionSeverity::High),
         ),
-        // Tunneling tools
+        (
+            &["nc", "-l", "8080"],
+            Some(SuspicionSeverity::High),
+        ),
         (
             &["chisel", "client", "server:8080", "R:80:127.0.0.1:80"],
             Some(SuspicionSeverity::High),
@@ -165,27 +142,15 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
             &["tcpdump", "-i", "any", "-w", "dump.pcap"],
             Some(SuspicionSeverity::High),
         ),
-        // Memory & Heavy Dump Writes
-        (
-            &["gcore", "-o", "/tmp/core.dump", "1234"],
-            Some(SuspicionSeverity::Warning),
-        ),
-        (
-            &["heapdump-tool", "--output", "memory.heapsnapshot"],
-            Some(SuspicionSeverity::Warning),
-        ),
-        (
-            &["cp", "/proc/kcore", "./core.1234"],
-            Some(SuspicionSeverity::Warning),
-        ),
-        // Normal developer tooling
+        (&["sudo", "su"], Some(SuspicionSeverity::Advisory)),
+        (&["gdb", "-p", "1234"], Some(SuspicionSeverity::Advisory)),
         (&["cargo", "build", "--release"], None),
         (&["git", "status"], None),
         (&["npm", "test"], None),
         (&["python", "-m", "unittest", "discover"], None),
     ];
 
-    for (argv, expected_sev) in test_cases {
+    for (argv, expected_sev) in exec_cases {
         let argv_vec: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let event = Event::ExecObserved {
             ts: Utc::now(),
@@ -210,6 +175,107 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
                 assert!(
                     signal.is_none(),
                     "expected no suspicious signal for argv: {argv:?}"
+                );
+            }
+        }
+    }
+
+    // 2. File and Socket access testing
+    let file_cases: &[(&str, Option<SuspicionSeverity>)] = &[
+        ("/tmp/codex_app.sock", Some(SuspicionSeverity::High)),
+        (
+            "/home/user/.claude/claude_code.sock",
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            "/tmp/cursor-server.sock",
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            "/home/user/.codex/state_5.sqlite",
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            "/tmp/vscode-ipc-12345.sock",
+            Some(SuspicionSeverity::High),
+        ),
+        ("/tmp/core.dump", Some(SuspicionSeverity::Warning)),
+        (
+            "memory.heapsnapshot",
+            Some(SuspicionSeverity::Warning),
+        ),
+        ("/home/user/.ssh/id_rsa", Some(SuspicionSeverity::High)),
+        ("/home/user/.aws/credentials", Some(SuspicionSeverity::High)),
+        ("src/main.rs", None),
+        ("package.json", None),
+        ("Cargo.toml", None),
+    ];
+
+    for (path, expected_sev) in file_cases {
+        let event = Event::FileObserved {
+            ts: Utc::now(),
+            pid: 42,
+            path: path.to_string(),
+            access: FileAccess::Read,
+        };
+        let signal = classify_event(&event);
+
+        match expected_sev {
+            Some(expected) => {
+                assert!(
+                    signal.is_some(),
+                    "expected suspicious signal for path: {path}"
+                );
+                assert_eq!(
+                    signal.unwrap().severity,
+                    *expected,
+                    "severity mismatch for path: {path}"
+                );
+            }
+            None => {
+                assert!(
+                    signal.is_none(),
+                    "expected no suspicious signal for path: {path}"
+                );
+            }
+        }
+    }
+
+    // 3. Network debug port probes testing
+    let net_cases: &[((&str, u16), Option<SuspicionSeverity>)] = &[
+        (("127.0.0.1", 9222), Some(SuspicionSeverity::High)),
+        (("localhost", 9229), Some(SuspicionSeverity::High)),
+        (("127.0.0.1", 5678), Some(SuspicionSeverity::High)),
+        (("api.github.com", 443), None),
+        (("registry.npmjs.org", 443), None),
+    ];
+
+    for ((host, port), expected_sev) in net_cases {
+        let event = Event::NetRequest {
+            ts: Utc::now(),
+            pid: 42,
+            host: host.to_string(),
+            port: *port,
+            verdict: "allow".to_string(),
+        };
+        let signal = classify_event(&event);
+
+        match expected_sev {
+            Some(expected) => {
+                assert!(
+                    signal.is_some(),
+                    "expected suspicious signal for net: {host}:{port}"
+                );
+                assert_eq!(
+                    signal.unwrap().severity,
+                    *expected,
+                    "severity mismatch for net: {host}:{port}"
+                );
+            }
+            None => {
+                assert!(
+                    signal.is_none(),
+                    "expected no suspicious signal for net: {host}:{port}"
                 );
             }
         }

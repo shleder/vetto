@@ -8,6 +8,7 @@ mod common;
 mod cli_reporting;
 #[cfg(target_os = "linux")]
 mod env_stripping;
+mod heavy_scenarios;
 #[cfg(target_os = "linux")]
 mod linux_landlock;
 #[cfg(target_os = "linux")]
@@ -28,4 +29,3 @@ mod policy_loading;
 mod policy_overlays;
 mod rescue;
 mod secret_masking;
-mod heavy_scenarios;

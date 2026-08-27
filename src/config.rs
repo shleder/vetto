@@ -249,7 +249,8 @@ fn parse_tui_mode(s: &str) -> Result<TuiMode> {
 /// Auto-detect known agent preset from command invocation if not explicitly specified.
 pub fn detect_agent_preset(command: &[String]) -> Option<String> {
     let first = command.first()?;
-    let path = std::path::Path::new(first);
+    let normalized = first.replace('\\', "/");
+    let path = std::path::Path::new(&normalized);
     let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
 
     match stem.as_str() {
