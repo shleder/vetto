@@ -184,18 +184,12 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
             "/home/user/.claude/claude_code.sock",
             Some(SuspicionSeverity::High),
         ),
-        (
-            "/tmp/cursor-server.sock",
-            Some(SuspicionSeverity::High),
-        ),
+        ("/tmp/cursor-server.sock", Some(SuspicionSeverity::High)),
         (
             "/home/user/.codex/state_5.sqlite",
             Some(SuspicionSeverity::High),
         ),
-        (
-            "/tmp/vscode-ipc-12345.sock",
-            Some(SuspicionSeverity::High),
-        ),
+        ("/tmp/vscode-ipc-12345.sock", Some(SuspicionSeverity::High)),
         ("/tmp/core.dump", Some(SuspicionSeverity::Warning)),
         ("memory.heapsnapshot", Some(SuspicionSeverity::Warning)),
         ("/home/user/.ssh/id_rsa", Some(SuspicionSeverity::High)),
