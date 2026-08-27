@@ -601,7 +601,9 @@ fn http_connect_head(stream: &mut TcpStream, first: u8) -> HttpTarget {
     let mut token = None;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
-            if k.trim().eq_ignore_ascii_case(crate::sandbox::linux::debug_guard::DEBUG_AUTH_HEADER) {
+            if k.trim()
+                .eq_ignore_ascii_case(crate::sandbox::linux::debug_guard::DEBUG_AUTH_HEADER)
+            {
                 token = Some(v.trim().to_string());
                 break;
             }
@@ -661,7 +663,12 @@ fn socks5_handshake(stream: &mut TcpStream, first: u8) -> SocksTarget {
     Some((host.to_ascii_lowercase(), port))
 }
 
-fn send_request_frame(ctrl_fd: RawFd, host: &str, port: u16, token: Option<&str>) -> Result<(), bool> {
+fn send_request_frame(
+    ctrl_fd: RawFd,
+    host: &str,
+    port: u16,
+    token: Option<&str>,
+) -> Result<(), bool> {
     let req = RelayReq {
         host: host.to_string(),
         port,

@@ -3,6 +3,8 @@
 //! actually supporting a tier (see common::detected_tier) — skipping on
 //! unsupported environments is part of the spec, not a failure.
 
+#![allow(clippy::all)]
+
 mod common;
 
 mod cli_reporting;

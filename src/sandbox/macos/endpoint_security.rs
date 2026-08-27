@@ -223,7 +223,8 @@ pub fn capabilities() -> EndpointSecurityCapabilities {
     let entitlement_present = feature_enabled && endpoint_security_entitlement_present();
     let privileged = feature_enabled && unsafe { libc::geteuid() == 0 };
     let reason = if !feature_enabled {
-        "feature endpoint-security is disabled; Seatbelt remains the enforcement boundary".to_string()
+        "feature endpoint-security is disabled; Seatbelt remains the enforcement boundary"
+            .to_string()
     } else if framework.is_none() {
         "EndpointSecurity.framework is unavailable on this host".to_string()
     } else if !(new_client && subscribe && respond_auth && delete_client) {
@@ -398,7 +399,12 @@ fn create_auth_client(bus: EventBus, policy: Arc<Policy>) -> anyhow::Result<()> 
                 }
                 // Respond immediately before kernel timeout
                 unsafe {
-                    respond_auth(client, message, auth_result, auth_result == ES_AUTH_RESULT_ALLOW);
+                    respond_auth(
+                        client,
+                        message,
+                        auth_result,
+                        auth_result == ES_AUTH_RESULT_ALLOW,
+                    );
                 }
             } else {
                 handler_bus.publish(Event::Notice {

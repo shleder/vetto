@@ -4,6 +4,8 @@
 //! report helpers.  They keep the public shape and the best-effort redaction
 //! promise covered without adding a JSON-Schema runtime dependency.
 
+#![allow(clippy::all)]
+
 use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;

@@ -709,14 +709,25 @@ fn extract_path(fd: libc::c_int, notif: &SeccompNotif) -> Option<String> {
                 if !path_bytes.is_empty() {
                     if path_bytes[0] == 0 {
                         let name_bytes = &path_bytes[1..];
-                        let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                        let end = name_bytes
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(name_bytes.len());
                         if end > 0 {
-                            return Some(format!("@{}", String::from_utf8_lossy(&name_bytes[..end])));
+                            return Some(format!(
+                                "@{}",
+                                String::from_utf8_lossy(&name_bytes[..end])
+                            ));
                         }
                     } else {
-                        let end = path_bytes.iter().position(|&b| b == 0).unwrap_or(path_bytes.len());
+                        let end = path_bytes
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(path_bytes.len());
                         if end > 0 {
-                            return Some(String::from_utf8_lossy(&path_bytes[..end]).to_string());
+                            return Some(
+                                String::from_utf8_lossy(&path_bytes[..end]).to_string(),
+                            );
                         }
                     }
                 }
