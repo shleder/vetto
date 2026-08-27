@@ -101,7 +101,7 @@ impl RunConfig {
             None
         } else {
             match cli.agents.as_slice() {
-                [] => None,
+                [] => detect_agent_preset(&cli.command),
                 [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
                     Some(agent.clone())
                 }
@@ -246,6 +246,24 @@ fn parse_tui_mode(s: &str) -> Result<TuiMode> {
     }
 }
 
+/// Auto-detect known agent preset from command invocation if not explicitly specified.
+pub fn detect_agent_preset(command: &[String]) -> Option<String> {
+    let first = command.first()?;
+    let path = std::path::Path::new(first);
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+
+    match stem.as_str() {
+        "codex" | "codex-cli" => Some("codex".to_string()),
+        "claude" | "claude-code" => Some("claude".to_string()),
+        "cursor" | "cursor-server" => Some("cursor".to_string()),
+        "aider" | "aider-chat" => Some("aider".to_string()),
+        "cline" => Some("cline".to_string()),
+        "copilot" | "github-copilot-cli" => Some("copilot".to_string()),
+        "opencode" => Some("opencode".to_string()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +335,28 @@ mod tests {
         let cli = Cli::try_parse_from(["vetto", "--agent", "lint=/bin/true", "--", "/bin/true"])
             .expect("parse before mode validation");
         assert!(RunConfig::from_cli(&cli).is_err());
+    }
+
+    #[test]
+    fn auto_detects_known_agents_from_command_without_agent_flag() {
+        let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec", "task"])
+            .expect("parse command");
+        let cfg = RunConfig::from_cli(&cli).expect("config");
+        assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
+
+        let cli = Cli::try_parse_from(["vetto", "--", "/usr/local/bin/claude-code", "-p", "hi"])
+            .expect("parse command");
+        let cfg = RunConfig::from_cli(&cli).expect("config");
+        assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
+
+        let cli = Cli::try_parse_from(["vetto", "--", "cursor-server", "--version"])
+            .expect("parse command");
+        let cfg = RunConfig::from_cli(&cli).expect("config");
+        assert_eq!(cfg.agent_preset.as_deref(), Some("cursor"));
+
+        let cli = Cli::try_parse_from(["vetto", "--", "python", "script.py"])
+            .expect("parse non-agent command");
+        let cfg = RunConfig::from_cli(&cli).expect("config");
+        assert_eq!(cfg.agent_preset, None);
     }
 }
