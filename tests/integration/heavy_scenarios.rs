@@ -125,10 +125,7 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
             &["socat", "-", "/tmp/app_server.sock"],
             Some(SuspicionSeverity::High),
         ),
-        (
-            &["nc", "-l", "8080"],
-            Some(SuspicionSeverity::High),
-        ),
+        (&["nc", "-l", "8080"], Some(SuspicionSeverity::High)),
         (
             &["chisel", "client", "server:8080", "R:80:127.0.0.1:80"],
             Some(SuspicionSeverity::High),
@@ -200,10 +197,7 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
             Some(SuspicionSeverity::High),
         ),
         ("/tmp/core.dump", Some(SuspicionSeverity::Warning)),
-        (
-            "memory.heapsnapshot",
-            Some(SuspicionSeverity::Warning),
-        ),
+        ("memory.heapsnapshot", Some(SuspicionSeverity::Warning)),
         ("/home/user/.ssh/id_rsa", Some(SuspicionSeverity::High)),
         ("/home/user/.aws/credentials", Some(SuspicionSeverity::High)),
         ("src/main.rs", None),
@@ -215,6 +209,7 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
         let event = Event::FileObserved {
             ts: Utc::now(),
             pid: 42,
+            comm: "test".to_string(),
             path: path.to_string(),
             access: FileAccess::Read,
         };
@@ -253,10 +248,9 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
     for ((host, port), expected_sev) in net_cases {
         let event = Event::NetRequest {
             ts: Utc::now(),
-            pid: 42,
             host: host.to_string(),
             port: *port,
-            verdict: "allow".to_string(),
+            allowed: true,
         };
         let signal = classify_event(&event);
 
