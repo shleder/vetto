@@ -50,7 +50,7 @@ fn main() -> Result<()> {
 
     match &args.command {
         Some(cli::Command::Doctor { probe, check_agent }) => doctor(*probe, check_agent.as_deref()),
-        Some(cli::Command::Init) => init(),
+        Some(cli::Command::Init { force }) => init(*force),
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Multi {
             manifest,
@@ -890,15 +890,8 @@ fn yn(b: bool) -> &'static str {
 // init / profiles
 // ---------------------------------------------------------------------------
 
-fn init() -> Result<()> {
-    let path = Path::new("vetto.toml");
-    if path.exists() {
-        bail!("vetto.toml already exists here");
-    }
-    std::fs::write(path, policy::defaults::DEFAULT_TOML).with_context(|| "write vetto.toml")?;
-    println!("wrote starter policy to vetto.toml (edit allow_write/allow_read, then:)");
-    println!("  vetto --policy vetto.toml -- <agent command>");
-    Ok(())
+fn init(force: bool) -> Result<()> {
+    vetto::init::run_init(Path::new("."), force)
 }
 
 fn profiles() -> Result<()> {

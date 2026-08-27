@@ -13,6 +13,7 @@ pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod events;
+pub mod init;
 pub mod logger;
 pub mod multi;
 pub mod policy;

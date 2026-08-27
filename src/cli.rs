@@ -142,8 +142,12 @@ pub enum Command {
         #[arg(long = "check-agent", value_name = "NAME")]
         check_agent: Option<String>,
     },
-    /// Write a starter vetto.toml policy into the current directory
-    Init,
+    /// Analyze project ecosystem and generate a tailored vetto.toml policy
+    Init {
+        /// Overwrite existing vetto.toml if present
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
     /// List built-in policy profiles
     Profiles,
     /// Run named agents concurrently, each in an independent sandbox.

@@ -1,0 +1,299 @@
+//! Project ecosystem detection and tailored policy generation for `vetto init`.
+
+use anyhow::{bail, Context, Result};
+use std::path::Path;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectAnalysis {
+    pub project_name: String,
+    pub detected_ecosystems: Vec<&'static str>,
+    pub detected_agents: Vec<&'static str>,
+    pub recommended_allow_read: Vec<String>,
+    pub recommended_network_domains: Vec<String>,
+}
+
+pub fn analyze_project(root: &Path) -> ProjectAnalysis {
+    let mut analysis = ProjectAnalysis::default();
+
+    let name = root
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "project".to_string());
+    analysis.project_name = name;
+
+    // Rust
+    if root.join("Cargo.toml").exists() {
+        analysis.detected_ecosystems.push("Rust");
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.cargo/registry".to_string());
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.cargo/git".to_string());
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.rustup".to_string());
+        analysis
+            .recommended_network_domains
+            .push("crates.io:443".to_string());
+        analysis
+            .recommended_network_domains
+            .push("static.crates.io:443".to_string());
+    }
+
+    // Node.js / TypeScript
+    let is_node = root.join("package.json").exists()
+        || root.join("pnpm-lock.yaml").exists()
+        || root.join("yarn.lock").exists()
+        || root.join("bun.lockb").exists();
+    if is_node {
+        if root.join("tsconfig.json").exists() {
+            analysis.detected_ecosystems.push("Node.js (TypeScript)");
+        } else {
+            analysis.detected_ecosystems.push("Node.js");
+        }
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.npm".to_string());
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.local/share/pnpm/store".to_string());
+        analysis
+            .recommended_network_domains
+            .push("registry.npmjs.org:443".to_string());
+    }
+
+    // Python
+    let is_python = root.join("pyproject.toml").exists()
+        || root.join("requirements.txt").exists()
+        || root.join("Pipfile").exists()
+        || root.join("poetry.lock").exists()
+        || root.join("setup.py").exists();
+    if is_python {
+        analysis.detected_ecosystems.push("Python");
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.cache/pip".to_string());
+        analysis
+            .recommended_allow_read
+            .push("$HOME/.cache/uv".to_string());
+        analysis
+            .recommended_network_domains
+            .push("pypi.org:443".to_string());
+        analysis
+            .recommended_network_domains
+            .push("files.pythonhosted.org:443".to_string());
+    }
+
+    // Go
+    if root.join("go.mod").exists() {
+        analysis.detected_ecosystems.push("Go");
+        analysis
+            .recommended_allow_read
+            .push("$HOME/go/pkg/mod".to_string());
+        analysis
+            .recommended_network_domains
+            .push("proxy.golang.org:443".to_string());
+        analysis
+            .recommended_network_domains
+            .push("sum.golang.org:443".to_string());
+    }
+
+    // AI Agents in Repo
+    if root.join(".cursor").exists() || root.join(".cursorrules").exists() {
+        analysis.detected_agents.push("Cursor");
+    }
+    if root.join(".claude").exists() || root.join("CLAUDE.md").exists() {
+        analysis.detected_agents.push("Claude Code");
+    }
+    if root.join("codex.toml").exists() || root.join(".codex").exists() {
+        analysis.detected_agents.push("OpenAI Codex");
+    }
+    if root.join(".aider.conf.yml").exists() || root.join(".aider.tags.cache.v3").exists() {
+        analysis.detected_agents.push("Aider");
+    }
+
+    // Always recommend GitHub domain if git is present
+    if root.join(".git").exists() {
+        analysis
+            .recommended_network_domains
+            .push("github.com:443".to_string());
+        analysis
+            .recommended_network_domains
+            .push("api.github.com:443".to_string());
+    }
+
+    analysis.recommended_allow_read.sort();
+    analysis.recommended_allow_read.dedup();
+    analysis.recommended_network_domains.sort();
+    analysis.recommended_network_domains.dedup();
+
+    analysis
+}
+
+pub fn generate_policy_toml(analysis: &ProjectAnalysis) -> String {
+    let eco_str = if analysis.detected_ecosystems.is_empty() {
+        "Generic".to_string()
+    } else {
+        analysis.detected_ecosystems.join(", ")
+    };
+
+    let agents_str = if analysis.detected_agents.is_empty() {
+        "Auto-detected".to_string()
+    } else {
+        analysis.detected_agents.join(", ")
+    };
+
+    let mut out = format!(
+        r#"# vetto.toml - Project Security Policy
+# Generated by `vetto init` for {eco_str} ({agents_str})
+#
+# Documentation: https://github.com/shleder/vetto
+
+[metadata]
+name = "{}"
+description = "Vetto security policy tailored for {}"
+extends = ["default"]
+
+[filesystem]
+# Project directory and scratch space are writable.
+allow_write = [
+  "$PROJECT",
+  "/tmp",
+  "/dev/null",
+]
+
+# System toolchain caches and package registries allowed for reading:
+allow_read = [
+"#,
+        analysis.project_name, eco_str
+    );
+
+    if analysis.recommended_allow_read.is_empty() {
+        out.push_str("  \"$PROJECT\",\n");
+    } else {
+        for path in &analysis.recommended_allow_read {
+            out.push_str(&format!("  \"{path}\",\n"));
+        }
+    }
+
+    out.push_str(
+        r#"]
+
+[display_only_deny]
+# Sensitive credential-shaped files masked and blocked inside the sandbox:
+paths = [
+  "$PROJECT/.env",
+  "$PROJECT/.env.*",
+  "$PROJECT/*.pem",
+  "$PROJECT/*.key",
+  "$PROJECT/*.pfx",
+  "$PROJECT/*.kdbx",
+]
+"#,
+    );
+
+    out
+}
+
+pub fn run_init(root: &Path, force: bool) -> Result<()> {
+    let policy_path = root.join("vetto.toml");
+    if policy_path.exists() && !force {
+        bail!("vetto.toml already exists in this directory (use --force to overwrite)");
+    }
+
+    let analysis = analyze_project(root);
+    let toml_content = generate_policy_toml(&analysis);
+
+    std::fs::write(&policy_path, toml_content)
+        .with_context(|| format!("failed to write {}", policy_path.display()))?;
+
+    let eco = if analysis.detected_ecosystems.is_empty() {
+        "Standard".to_string()
+    } else {
+        analysis.detected_ecosystems.join(", ")
+    };
+
+    let agents = if analysis.detected_agents.is_empty() {
+        "None (will use auto-detection)".to_string()
+    } else {
+        analysis.detected_agents.join(", ")
+    };
+
+    let net_hint = if analysis.recommended_network_domains.is_empty() {
+        "github.com:443".to_string()
+    } else {
+        analysis.recommended_network_domains.join(",")
+    };
+
+    println!(
+        "vetto: initialized security policy for project '{}'",
+        analysis.project_name
+    );
+    println!("  detected stack  : {eco}");
+    println!("  detected agents : {agents}");
+    println!("  policy created  : {}", policy_path.display());
+    println!();
+    println!("Next steps:");
+    println!("  # Run your AI coding agent inside the sandbox:");
+    println!("  vetto -- <agent_command>");
+    println!();
+    println!("  # Or run with strict network allowlist for package managers:");
+    println!("  vetto --net=strict:{net_hint} -- <agent_command>");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn detects_rust_node_and_claude_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+
+        fs::write(path.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(path.join("package.json"), "{}").unwrap();
+        fs::write(path.join("tsconfig.json"), "{}").unwrap();
+        fs::write(path.join("CLAUDE.md"), "# Claude instructions").unwrap();
+
+        let analysis = analyze_project(path);
+        assert!(analysis.detected_ecosystems.contains(&"Rust"));
+        assert!(analysis
+            .detected_ecosystems
+            .contains(&"Node.js (TypeScript)"));
+        assert!(analysis.detected_agents.contains(&"Claude Code"));
+        assert!(analysis
+            .recommended_allow_read
+            .contains(&"$HOME/.cargo/registry".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"crates.io:443".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"registry.npmjs.org:443".to_string()));
+
+        let toml = generate_policy_toml(&analysis);
+        assert!(toml.contains("Rust, Node.js (TypeScript)"));
+        assert!(toml.contains("$HOME/.cargo/registry"));
+        assert!(toml.contains("$PROJECT/.env"));
+    }
+
+    #[test]
+    fn run_init_creates_file_and_respects_force_flag() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+
+        assert!(run_init(path, false).is_ok());
+        assert!(path.join("vetto.toml").exists());
+
+        // Second run without force should fail
+        assert!(run_init(path, false).is_err());
+
+        // Run with force should succeed
+        assert!(run_init(path, true).is_ok());
+    }
+}
