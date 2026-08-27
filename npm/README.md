@@ -3,7 +3,7 @@
 Install globally with npm:
 
 ```bash
-npm install --global @shleddy/vetto
+npm install --global @shledery/vetto
 vetto doctor
 ```
 

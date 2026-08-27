@@ -5,7 +5,7 @@ machine. It is intentionally npm-only: testers do not need Rust, a checkout of
 the repository, or a build from `main`.
 
 The supported npm package name is the scoped package
-`@shleddy/vetto`. The unscoped `vetto` name is not the installation path.
+`@shledery/vetto`. The unscoped `vetto` name is not the installation path.
 
 ## Install one published build
 
@@ -14,7 +14,7 @@ the first command. Do not paste an npm token into an issue and do not install
 from a Git URL.
 
 ```console
-npm install --global @shleddy/vetto
+npm install --global @shledery/vetto
 vetto --version
 vetto doctor
 ```

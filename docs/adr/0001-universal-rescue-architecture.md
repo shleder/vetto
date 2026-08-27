@@ -76,7 +76,7 @@ The historical Codex Rescue tree is imported under `components/rescue-legacy`
 with its MIT license and commit ancestry preserved. New Rust rescue code is
 Apache-2.0. The original public repository remains available as compatibility
 history and points users to Vetto; active development and npm installation use
-`shleder/vetto` and `@shleddy/vetto`.
+`shleder/vetto` and `@shledery/vetto`.
 
 ## Alpha acceptance gates
 

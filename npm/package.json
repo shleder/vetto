@@ -1,9 +1,9 @@
 {
-  "name": "@shleddy/vetto",
+  "name": "@shledery/vetto",
   "version": "0.2.1",
   "description": "Cross-platform vetto sandbox and security layer for AI coding agents",
   "license": "Apache-2.0",
-  "author": "shleddy",
+  "author": "shledery",
   "keywords": [
     "ai",
     "sandbox",
