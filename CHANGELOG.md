@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.2] — 2026-08-27
+
+### Added
+
+- Add zero-config AI Agent CLI Auto-Detection: `vetto -- <command>` automatically
+  identifies known AI coding agents (Codex, Claude Code, Cursor, Aider, Copilot, Cline,
+  OpenCode) from the command name and applies their matching sandbox profile and socket
+  boundaries without needing `--agent <name>`.
+- Add smart project policy initialization (`vetto init`): auto-detects build systems
+  (Rust, Node.js/TypeScript, Python, Go) and agent configs (`.cursor/`, `.claude/`,
+  `codex.toml`, `.aider.conf.yml`) to generate a customized, ready-to-run `vetto.toml`
+  with cache read allowances and secret masking.
+- Add comprehensive heavy-load and fuzzing test suite (`tests/integration/heavy_scenarios.rs`)
+  exercising 120+ corrupted/truncated session states, 150+ suspicious command classifications,
+  and cross-platform agent invocation matrices.
+
 ## [0.2.1] — 2026-08-27
 
 ### Added
