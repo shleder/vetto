@@ -72,6 +72,7 @@ impl AnsiRedactor {
         full_input.extend_from_slice(&self.parser.partial_escape);
         full_input.extend_from_slice(chunk);
         self.parser.partial_escape.clear();
+        self.parser.state = AnsiState::Ground;
 
         let mut output = Vec::with_capacity(full_input.len());
         let mut text_start = 0;

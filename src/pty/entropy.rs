@@ -46,7 +46,7 @@ pub fn is_entropy_masked(token: &[u8]) -> bool {
 /// Check if a byte is part of a potential entropy token run.
 #[inline]
 pub fn is_entropy_token_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'+' | b'/' | b'=')
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'+' | b'/')
 }
 
 /// Whitelist filters to suppress false positives on commit SHAs, UUIDs, and base64 hashes.

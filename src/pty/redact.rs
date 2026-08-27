@@ -233,7 +233,9 @@ impl StreamingRedactor {
         let mut result = Vec::with_capacity(buffer.len());
         let mut cursor = 0;
 
-        // Sort and deduplicate overlapping spans
+        // Sort and deduplicate overlapping spans (prefer longest prefix / largest start)
+        redacted_spans.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)));
+        redacted_spans.dedup_by(|a, b| a.1 == b.1);
         redacted_spans.sort_by_key(|&(s, _, _)| s);
 
         for (start, end, _) in redacted_spans {

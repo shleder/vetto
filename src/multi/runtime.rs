@@ -418,7 +418,13 @@ fn activate_pending(
             };
             let debug_config = spec
                 .debug_ports
-                .clone()
+                .as_ref()
+                .map(|p| crate::sandbox::linux::debug_guard::DebugPortConfig {
+                    isolate_devtools: p.isolate_devtools,
+                    isolate_node_inspect: p.isolate_node_inspect,
+                    isolate_debugpy: p.isolate_debugpy,
+                    allowed_ports: p.allowed_ports.clone(),
+                })
                 .unwrap_or_default();
             let debug_guard = crate::sandbox::linux::debug_guard::DebugPortGuard::new(debug_config);
             let broker_config = crate::sandbox::linux::net_relay::BrokerConfig {

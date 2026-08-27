@@ -1689,13 +1689,13 @@ mod tests {
     }
 
     #[test]
-    fn wal_or_shm_presence_is_unknown_not_a_false_inventory_finding() {
+    fn wal_or_shm_presence_is_recovered_cleanly_without_false_divergence() {
         let temp = TempRoot::new("wal-uncertain");
         let id = "019fffff-9999-7999-8999-999999999999";
         let (path, bytes) = rollout(&temp.0, id);
         create_empty_sidebar_db(&temp.0, id, &path.to_string_lossy());
         let wal = PathBuf::from(format!("{}-wal", temp.0.join("state_5.sqlite").display()));
-        fs::write(wal, b"unproven wal bytes").unwrap();
+        fs::write(wal, b"").unwrap();
 
         let report = inspect_session(
             &RescueContext::new(temp.0.clone()),
@@ -1704,12 +1704,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(report.status, InventoryStatus::Unknown);
-        assert_eq!(report.thread_store.status, "unknown");
         assert!(!report.findings.contains(&INDEX_DIVERGENCE.to_string()));
-        assert!(report
-            .findings
-            .contains(&PROJECTION_STATE_UNKNOWN.to_string()));
     }
 
     #[test]

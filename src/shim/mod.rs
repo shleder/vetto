@@ -220,7 +220,9 @@ mod tests {
     #[test]
     fn detects_shim_directory_patterns() {
         assert!(is_shim_directory(Path::new("/home/user/.vetto/shims")));
-        assert!(is_shim_directory(Path::new("C:\\Users\\user\\.vetto\\shims")));
+        assert!(is_shim_directory(Path::new(
+            "C:\\Users\\user\\.vetto\\shims"
+        )));
         assert!(is_shim_directory(Path::new("/repo/.vetto/shims")));
         assert!(!is_shim_directory(Path::new("/usr/bin")));
         assert!(!is_shim_directory(Path::new("/home/user/.cargo/bin")));

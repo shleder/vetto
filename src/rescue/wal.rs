@@ -138,6 +138,7 @@ mod tests {
             .unwrap();
         }
 
+        fs::write(dir.join("test.sqlite-wal"), b"wal_data").unwrap();
         assert!(SqliteWalManager::has_active_wal(&db_path));
 
         // Open and checkpoint

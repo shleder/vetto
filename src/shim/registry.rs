@@ -116,9 +116,7 @@ impl ShimRegistry {
 
     /// Generates the content for a POSIX shell shim script on Unix systems.
     pub fn generate_unix_shim_script(binary_name: &str, vetto_bin_hint: Option<&Path>) -> String {
-        let vetto_bin = vetto_bin_hint
-            .and_then(|p| p.to_str())
-            .unwrap_or("vetto");
+        let vetto_bin = vetto_bin_hint.and_then(|p| p.to_str()).unwrap_or("vetto");
 
         format!(
             r#"#!/bin/sh
@@ -165,9 +163,7 @@ fi
 
     /// Generates the content for a Windows CMD shim batch file (.cmd).
     pub fn generate_windows_cmd_shim(binary_name: &str, vetto_bin_hint: Option<&Path>) -> String {
-        let vetto_bin = vetto_bin_hint
-            .and_then(|p| p.to_str())
-            .unwrap_or("vetto");
+        let vetto_bin = vetto_bin_hint.and_then(|p| p.to_str()).unwrap_or("vetto");
 
         format!(
             r#"@echo off
@@ -253,10 +249,7 @@ endlocal
     }
 
     /// Removes shims from the target directory. If `binaries` is empty/None, removes all known shims.
-    pub fn remove_shims(
-        target_dir: &Path,
-        binaries: Option<&[String]>,
-    ) -> Result<Vec<PathBuf>> {
+    pub fn remove_shims(target_dir: &Path, binaries: Option<&[String]>) -> Result<Vec<PathBuf>> {
         if !target_dir.exists() {
             return Ok(Vec::new());
         }
