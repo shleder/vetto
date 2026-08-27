@@ -322,8 +322,7 @@ impl DaclOverrideGuard {
         };
 
         let mut new_dacl: *mut c_void = null_mut();
-        let ret =
-            unsafe { SetEntriesInAclW(1, &explicit, original_dacl, &mut new_dacl) };
+        let ret = unsafe { SetEntriesInAclW(1, &explicit, original_dacl, &mut new_dacl) };
 
         if ret != 0 || new_dacl.is_null() {
             unsafe { LocalFree(original_sd) };

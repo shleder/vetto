@@ -448,7 +448,11 @@ fn evaluate_auth_event(msg: &es_message_t, policy: &Policy) -> (u32, Option<Stri
                     let is_write = (open_event.fflag
                         & (libc::O_WRONLY | libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC))
                         != 0;
-                    if policy.deny_resolved.iter().any(|d| path.starts_with(&d.path)) {
+                    if policy
+                        .deny_resolved
+                        .iter()
+                        .any(|d| path.starts_with(&d.path))
+                    {
                         return (ES_AUTH_RESULT_DENY, Some(path_str.to_string()));
                     }
                     if is_write && !policy.in_write_scope(path) {
@@ -468,7 +472,11 @@ fn evaluate_auth_event(msg: &es_message_t, policy: &Policy) -> (u32, Option<Stri
                 let file = unsafe { &*unlink_event.target };
                 if let Some(path_str) = file.path.as_str() {
                     let path = Path::new(path_str);
-                    if policy.deny_resolved.iter().any(|d| path.starts_with(&d.path)) {
+                    if policy
+                        .deny_resolved
+                        .iter()
+                        .any(|d| path.starts_with(&d.path))
+                    {
                         return (ES_AUTH_RESULT_DENY, Some(path_str.to_string()));
                     }
                     if !policy.in_write_scope(path) {
@@ -497,4 +505,3 @@ fn symbol_address(handle: *mut c_void, name: &str) -> anyhow::Result<*mut c_void
         Ok(ptr)
     }
 }
-

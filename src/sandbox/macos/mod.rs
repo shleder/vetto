@@ -320,4 +320,3 @@ mod tests {
         let _ = MacosSandbox::seatbelt_available();
     }
 }
-

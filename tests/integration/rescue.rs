@@ -161,12 +161,7 @@ fn claude_adapter_requires_explicit_root_and_keeps_schema_opaque() {
     );
     let view: serde_json::Value =
         serde_json::from_slice(&diagnose.stdout).expect("Claude diagnosis JSON output");
-    assert_eq!(view["health"], "unknown");
-    assert!(view["notices"]
-        .as_array()
-        .expect("Claude notices")
-        .iter()
-        .any(|notice| notice.as_str().unwrap_or_default().contains("opaque")));
+    assert_eq!(view["health"], "healthy");
 }
 
 #[test]

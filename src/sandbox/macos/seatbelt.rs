@@ -57,7 +57,9 @@ pub fn generate_sbpl_template_and_params(
         let key = format!("ALLOW_WRITE_DIR_{i}");
         let val = p.display().to_string();
         sb.push_str(&format!("(allow file-read* (subpath (param \"{key}\")))\n"));
-        sb.push_str(&format!("(allow file-write* (subpath (param \"{key}\")))\n"));
+        sb.push_str(&format!(
+            "(allow file-write* (subpath (param \"{key}\")))\n"
+        ));
         params.push((key, val));
     }
 
@@ -173,9 +175,8 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
         param_ptrs.push(std::ptr::null());
 
         let mut errorbuf: *mut libc::c_char = std::ptr::null_mut();
-        let ret = unsafe {
-            sandbox_init(profile_c.as_ptr(), 0, param_ptrs.as_ptr(), &mut errorbuf)
-        };
+        let ret =
+            unsafe { sandbox_init(profile_c.as_ptr(), 0, param_ptrs.as_ptr(), &mut errorbuf) };
 
         if ret != 0 {
             let err_msg = if !errorbuf.is_null() {
