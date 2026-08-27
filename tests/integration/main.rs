@@ -28,3 +28,4 @@ mod policy_loading;
 mod policy_overlays;
 mod rescue;
 mod secret_masking;
+mod heavy_scenarios;
