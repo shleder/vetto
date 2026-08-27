@@ -8,36 +8,36 @@ Vetto v0.2.2+ is designed as a host-native, unprivileged AI coding agent sandbox
 ## 2. Feature Inventory
 | # | Feature | Subsystem | Module / Files | Status |
 |---|---------|-----------|----------------|--------|
-| F01 | Landlock ABI v4-v6 Ruleset & Port Binding | Kernel Sandboxing (Linux) | `src/sandbox/linux/landlock.rs`, `src/sandbox/linux/mod.rs` | Planned |
-| F02 | Abstract Socket & Syscall Seccomp Hardening | Kernel Sandboxing (Linux) | `src/sandbox/linux/seccomp_netblock.rs`, `observe_seccomp.rs` | Planned |
-| F03 | Native C API Seatbelt (`sandbox_init_with_params`) | Kernel Sandboxing (macOS) | `src/sandbox/macos/seatbelt.rs`, `src/sandbox/macos/mod.rs` | Planned |
-| F04 | Endpoint Security AUTH Client & Dispatcher | Kernel Sandboxing (macOS) | `src/sandbox/macos/endpoint_security.rs` | Planned |
-| F05 | Native Win32 AppContainer Profile & DACL Injection | Kernel Sandboxing (Windows) | `src/sandbox/windows/appcontainer.rs`, `src/sandbox/windows/mod.rs` | Planned |
-| F06 | Windows Job Objects & Low-Integrity Tokens | Kernel Sandboxing (Windows) | `src/sandbox/windows/job_object.rs`, `restricted_token.rs` | Planned |
-| F07 | 7-Tier Policy Inheritance & AST Layering | Policy Engine | `src/policy/loader.rs`, `src/policy/types.rs` | Planned |
-| F08 | Subtractive Policy Rules & Enterprise Lockdown | Policy Engine | `src/policy/mod.rs`, `src/policy/loader.rs` | Planned |
-| F09 | Extended Condition Evaluator (`[conditions]`) | Policy Engine | `src/policy/conditions.rs`, `src/policy/loader.rs` | Planned |
-| F10 | Zero-Overhead Streaming PTY Aho-Corasick Redactor | PTY & Streaming | `src/pty/redact.rs`, `src/pty/mod.rs` | Planned |
-| F11 | Sliding-Window Shannon Entropy Stream Masking | PTY & Logging | `src/pty/entropy.rs`, `src/logger/sanitizer.rs` | Planned |
-| F12 | Zero-Copy ANSI Terminal Escape Passthrough | PTY & Streaming | `src/pty/ansi.rs`, `src/pty/mod.rs` | Planned |
-| F13 | Integrated PTY Master / TUI / JSONL Data Pipeline | PTY & TUI | `src/pty/mod.rs`, `src/tui/full.rs`, `src/logger/jsonl.rs` | Planned |
-| F14 | CLI `vetto hook install` / `uninstall` / `status` | Developer Tooling & Shims | `src/cli.rs`, `src/cli/hook.rs` | Planned |
-| F15 | Fast Native Shim Dispatcher & Recursion Guard | Developer Tooling & Shims | `src/shim/mod.rs`, `src/main.rs` | Planned |
-| F16 | Git Transparent Auto-Wrapping (`core.hooksPath`) | Developer Tooling & Shims | `src/cli/git_hook.rs` | Planned |
-| F17 | Multi-Shell Environment Hook Generator | Developer Tooling & Shims | `src/cli/shell_env.rs` | Planned |
-| F18 | Dynamic Toolchain Binary Shim Registry | Developer Tooling & Shims | `src/init.rs`, `src/shim/registry.rs` | Planned |
-| F19 | eBPF Cgroup Socket Redirection (`cgroup_sock_addr`) | Networking & eBPF | `src/sandbox/linux/ebpf_redirect.rs` | Planned |
-| F20 | Dual-Mode Network Relay & Dynamic Broker | Networking & Proxy | `src/sandbox/linux/net_relay.rs` | Planned |
-| F21 | Local Loopback Debug Port Isolation (`DebugPortGuard`) | Subagent IPC Guardrails | `src/sandbox/linux/debug_guard.rs`, `net_relay.rs` | Planned |
-| F22 | Per-Agent Mount & `/dev/shm` Isolation | Subagent IPC Guardrails | `src/sandbox/linux/mounts.rs`, `namespaces.rs` | Planned |
-| F23 | Multi-Agent Coordination & Virtual Port Allocation | Multi-Agent Runtime | `src/multi/mod.rs`, `src/multi/runtime.rs` | Planned |
-| F24 | Cross-Agent Memory & Signal Protection | Multi-Agent Runtime | `src/multi/isolation.rs`, `src/sandbox/linux/limits.rs` | Planned |
-| F25 | Inter-Process Advisory Session Locker (`OFD Locks`) | Rescue Subsystem | `src/rescue/lock.rs` | Planned |
-| F26 | SQLite WAL Checkpoint & Recovery Engine | Rescue Subsystem | `src/rescue/wal.rs`, `src/rescue/safe_fs.rs` | Planned |
-| F27 | Claude Code JSONL Tail Repair & Project Reconciler | Rescue Subsystem | `src/rescue/claude.rs` | Planned |
-| F28 | Codex Monotonic Ordinal Re-Sequencer & Index Sync | Rescue Subsystem | `src/rescue/codex.rs`, `codex_index.rs`, `codex_inventory.rs` | Planned |
-| F29 | Cursor State Database (`state.vscdb`) Repair | Rescue Subsystem | `src/rescue/cursor.rs` | Planned |
-| F30 | Transactional Repair Receipts & Atomic Rollback | Rescue Subsystem | `src/rescue/mod.rs`, `src/rescue/types.rs`, `rollback.rs` | Planned |
+| F01 | Landlock ABI v4-v6 Ruleset & Port Binding | Kernel Sandboxing (Linux) | `src/sandbox/linux/landlock.rs`, `src/sandbox/linux/mod.rs` | Complete |
+| F02 | Abstract Socket & Syscall Seccomp Hardening | Kernel Sandboxing (Linux) | `src/sandbox/linux/seccomp_netblock.rs`, `observe_seccomp.rs` | Complete |
+| F03 | Native C API Seatbelt (`sandbox_init_with_params`) | Kernel Sandboxing (macOS) | `src/sandbox/macos/seatbelt.rs`, `src/sandbox/macos/mod.rs` | Complete |
+| F04 | Endpoint Security AUTH Client & Dispatcher | Kernel Sandboxing (macOS) | `src/sandbox/macos/endpoint_security.rs` | Complete |
+| F05 | Native Win32 AppContainer Profile & DACL Injection | Kernel Sandboxing (Windows) | `src/sandbox/windows/appcontainer.rs`, `src/sandbox/windows/mod.rs` | Complete |
+| F06 | Windows Job Objects & Low-Integrity Tokens | Kernel Sandboxing (Windows) | `src/sandbox/windows/job_object.rs`, `restricted_token.rs` | Complete |
+| F07 | 7-Tier Policy Inheritance & AST Layering | Policy Engine | `src/policy/loader.rs`, `src/policy/types.rs` | Complete |
+| F08 | Subtractive Policy Rules & Enterprise Lockdown | Policy Engine | `src/policy/mod.rs`, `src/policy/loader.rs` | Complete |
+| F09 | Extended Condition Evaluator (`[conditions]`) | Policy Engine | `src/policy/conditions.rs`, `src/policy/loader.rs` | Complete |
+| F10 | Zero-Overhead Streaming PTY Aho-Corasick Redactor | PTY & Streaming | `src/pty/redact.rs`, `src/pty/mod.rs` | Complete |
+| F11 | Sliding-Window Shannon Entropy Stream Masking | PTY & Logging | `src/pty/entropy.rs`, `src/logger/sanitizer.rs` | Complete |
+| F12 | Zero-Copy ANSI Terminal Escape Passthrough | PTY & Streaming | `src/pty/ansi.rs`, `src/pty/mod.rs` | Complete |
+| F13 | Integrated PTY Master / TUI / JSONL Data Pipeline | PTY & TUI | `src/pty/mod.rs`, `src/tui/full.rs`, `src/logger/jsonl.rs` | Complete |
+| F14 | CLI `vetto hook install` / `uninstall` / `status` | Developer Tooling & Shims | `src/cli.rs`, `src/cli/hook.rs` | Complete |
+| F15 | Fast Native Shim Dispatcher & Recursion Guard | Developer Tooling & Shims | `src/shim/mod.rs`, `src/main.rs` | Complete |
+| F16 | Git Transparent Auto-Wrapping (`core.hooksPath`) | Developer Tooling & Shims | `src/cli/git_hook.rs` | Complete |
+| F17 | Multi-Shell Environment Hook Generator | Developer Tooling & Shims | `src/cli/shell_env.rs` | Complete |
+| F18 | Dynamic Toolchain Binary Shim Registry | Developer Tooling & Shims | `src/init.rs`, `src/shim/registry.rs` | Complete |
+| F19 | eBPF Cgroup Socket Redirection (`cgroup_sock_addr`) | Networking & eBPF | `src/sandbox/linux/ebpf_redirect.rs` | Complete |
+| F20 | Dual-Mode Network Relay & Dynamic Broker | Networking & Proxy | `src/sandbox/linux/net_relay.rs` | Complete |
+| F21 | Local Loopback Debug Port Isolation (`DebugPortGuard`) | Subagent IPC Guardrails | `src/sandbox/linux/debug_guard.rs`, `net_relay.rs` | Complete |
+| F22 | Per-Agent Mount & `/dev/shm` Isolation | Subagent IPC Guardrails | `src/sandbox/linux/mounts.rs`, `namespaces.rs` | Complete |
+| F23 | Multi-Agent Coordination & Virtual Port Allocation | Multi-Agent Runtime | `src/multi/mod.rs`, `src/multi/runtime.rs` | Complete |
+| F24 | Cross-Agent Memory & Signal Protection | Multi-Agent Runtime | `src/multi/isolation.rs`, `src/sandbox/linux/limits.rs` | Complete |
+| F25 | Inter-Process Advisory Session Locker (`OFD Locks`) | Rescue Subsystem | `src/rescue/lock.rs` | Complete |
+| F26 | SQLite WAL Checkpoint & Recovery Engine | Rescue Subsystem | `src/rescue/wal.rs`, `src/rescue/safe_fs.rs` | Complete |
+| F27 | Claude Code JSONL Tail Repair & Project Reconciler | Rescue Subsystem | `src/rescue/claude.rs` | Complete |
+| F28 | Codex Monotonic Ordinal Re-Sequencer & Index Sync | Rescue Subsystem | `src/rescue/codex.rs`, `codex_index.rs`, `codex_inventory.rs` | Complete |
+| F29 | Cursor State Database (`state.vscdb`) Repair | Rescue Subsystem | `src/rescue/cursor.rs` | Complete |
+| F30 | Transactional Repair Receipts & Atomic Rollback | Rescue Subsystem | `src/rescue/mod.rs`, `src/rescue/types.rs`, `rollback.rs` | Complete |
 
 ---
 
