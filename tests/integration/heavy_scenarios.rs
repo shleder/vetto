@@ -3,6 +3,7 @@
 //! and agent auto-detection).
 
 use crate::common::*;
+use chrono::Utc;
 use rusqlite::Connection;
 use std::fs;
 use std::process::Command;
@@ -121,20 +122,62 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
     let test_cases: &[(&[&str], Option<SuspicionSeverity>)] = &[
         // Subagent Control Plane Tampering via argv
         (&["cat", "/tmp/codex_app.sock"], Some(SuspicionSeverity::High)),
-        (&["nc", "-U", "/home/user/.claude/claude_code.sock"], Some(SuspicionSeverity::High)),
-        (&["curl", "--unix-socket", "/tmp/cursor-server.sock", "http://localhost/test"], Some(SuspicionSeverity::High)),
-        (&["sqlite3", "/home/user/.codex/state_5.sqlite", "select * from threads"], Some(SuspicionSeverity::High)),
-        (&["rm", "-f", "/tmp/vscode-ipc-12345.sock"], Some(SuspicionSeverity::High)),
-        (&["socat", "-", "/tmp/app_server.sock"], Some(SuspicionSeverity::High)),
+        (
+            &["nc", "-U", "/home/user/.claude/claude_code.sock"],
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            &[
+                "curl",
+                "--unix-socket",
+                "/tmp/cursor-server.sock",
+                "http://localhost/test",
+            ],
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            &[
+                "sqlite3",
+                "/home/user/.codex/state_5.sqlite",
+                "select * from threads",
+            ],
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            &["rm", "-f", "/tmp/vscode-ipc-12345.sock"],
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            &["socat", "-", "/tmp/app_server.sock"],
+            Some(SuspicionSeverity::High),
+        ),
         // Tunneling tools
-        (&["chisel", "client", "server:8080", "R:80:127.0.0.1:80"], Some(SuspicionSeverity::High)),
+        (
+            &["chisel", "client", "server:8080", "R:80:127.0.0.1:80"],
+            Some(SuspicionSeverity::High),
+        ),
         (&["ngrok", "http", "3000"], Some(SuspicionSeverity::High)),
-        (&["cloudflared", "tunnel", "run", "my-tunnel"], Some(SuspicionSeverity::High)),
-        (&["tcpdump", "-i", "any", "-w", "dump.pcap"], Some(SuspicionSeverity::High)),
+        (
+            &["cloudflared", "tunnel", "run", "my-tunnel"],
+            Some(SuspicionSeverity::High),
+        ),
+        (
+            &["tcpdump", "-i", "any", "-w", "dump.pcap"],
+            Some(SuspicionSeverity::High),
+        ),
         // Memory & Heavy Dump Writes
-        (&["gcore", "-o", "/tmp/core.dump", "1234"], Some(SuspicionSeverity::Warning)),
-        (&["heapdump-tool", "--output", "memory.heapsnapshot"], Some(SuspicionSeverity::Warning)),
-        (&["cp", "/proc/kcore", "./core.1234"], Some(SuspicionSeverity::Warning)),
+        (
+            &["gcore", "-o", "/tmp/core.dump", "1234"],
+            Some(SuspicionSeverity::Warning),
+        ),
+        (
+            &["heapdump-tool", "--output", "memory.heapsnapshot"],
+            Some(SuspicionSeverity::Warning),
+        ),
+        (
+            &["cp", "/proc/kcore", "./core.1234"],
+            Some(SuspicionSeverity::Warning),
+        ),
         // Normal developer tooling
         (&["cargo", "build", "--release"], None),
         (&["git", "status"], None),
@@ -145,9 +188,8 @@ fn stress_test_hundreds_of_suspicious_commands_classifier() {
     for (argv, expected_sev) in test_cases {
         let argv_vec: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let event = Event::ExecObserved {
-            timestamp_ms: 1000,
+            ts: Utc::now(),
             pid: 42,
-            ppid: 1,
             argv: argv_vec,
         };
         let signal = classify_event(&event);
