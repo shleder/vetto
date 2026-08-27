@@ -441,7 +441,12 @@ impl EbpfRedirectManager {
         insns.push(BpfInsn::mov64_reg(BPF_REG_6, BPF_REG_1));
 
         // Load ctx->user_ip4 (offset 4) into r7
-        insns.push(BpfInsn::ldx_mem(BPF_W, BPF_REG_7, BPF_REG_6, SOCK_ADDR_OFF_USER_IP4));
+        insns.push(BpfInsn::ldx_mem(
+            BPF_W,
+            BPF_REG_7,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP4,
+        ));
 
         // If user_ip4 == 127.0.0.1 (0x0100007f in network byte order), skip redirection -> jump to allow
         let loopback_v4_net: i32 = u32::from_ne_bytes([127, 0, 0, 1]) as i32;
@@ -458,11 +463,21 @@ impl EbpfRedirectManager {
         insns.push(BpfInsn::stx_mem(BPF_W, BPF_REG_10, BPF_REG_7, -32));
 
         // Load original port ctx->user_port (offset 24) into r8
-        insns.push(BpfInsn::ldx_mem(BPF_W, BPF_REG_8, BPF_REG_6, SOCK_ADDR_OFF_USER_PORT));
+        insns.push(BpfInsn::ldx_mem(
+            BPF_W,
+            BPF_REG_8,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_PORT,
+        ));
         // Store original port at fp - 16
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET family at fp - 14
-        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET as i32));
+        insns.push(BpfInsn::st_imm(
+            BPF_H,
+            BPF_REG_10,
+            -14,
+            libc::AF_INET as i32,
+        ));
 
         // Get socket cookie: bpf_get_socket_cookie(ctx) -> r0
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));
@@ -492,10 +507,20 @@ impl EbpfRedirectManager {
         insns.push(BpfInsn::call(BPF_FUNC_MAP_UPDATE_ELEM));
 
         // Rewrite ctx->user_ip4 to 127.0.0.1
-        insns.push(BpfInsn::st_imm(BPF_W, BPF_REG_6, SOCK_ADDR_OFF_USER_IP4, loopback_v4_net));
+        insns.push(BpfInsn::st_imm(
+            BPF_W,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP4,
+            loopback_v4_net,
+        ));
 
         // Rewrite ctx->user_port to htons(relay_port)
-        insns.push(BpfInsn::st_imm(BPF_W, BPF_REG_6, SOCK_ADDR_OFF_USER_PORT, relay_port.to_be() as i32));
+        insns.push(BpfInsn::st_imm(
+            BPF_W,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_PORT,
+            relay_port.to_be() as i32,
+        ));
 
         // Allow (return 1)
         insns.push(BpfInsn::mov64_imm(BPF_REG_0, 1));
@@ -518,16 +543,36 @@ impl EbpfRedirectManager {
         insns.push(BpfInsn::st_imm(BPF_DW, BPF_REG_10, -8, 0));
 
         // Copy 16 bytes of user_ip6 from ctx (offset 8) to fp - 32
-        insns.push(BpfInsn::ldx_mem(BPF_DW, BPF_REG_7, BPF_REG_6, SOCK_ADDR_OFF_USER_IP6));
+        insns.push(BpfInsn::ldx_mem(
+            BPF_DW,
+            BPF_REG_7,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP6,
+        ));
         insns.push(BpfInsn::stx_mem(BPF_DW, BPF_REG_10, BPF_REG_7, -32));
-        insns.push(BpfInsn::ldx_mem(BPF_DW, BPF_REG_7, BPF_REG_6, SOCK_ADDR_OFF_USER_IP6 + 8));
+        insns.push(BpfInsn::ldx_mem(
+            BPF_DW,
+            BPF_REG_7,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP6 + 8,
+        ));
         insns.push(BpfInsn::stx_mem(BPF_DW, BPF_REG_10, BPF_REG_7, -24));
 
         // Load original port ctx->user_port (offset 24)
-        insns.push(BpfInsn::ldx_mem(BPF_W, BPF_REG_8, BPF_REG_6, SOCK_ADDR_OFF_USER_PORT));
+        insns.push(BpfInsn::ldx_mem(
+            BPF_W,
+            BPF_REG_8,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_PORT,
+        ));
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET6 family
-        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET6 as i32));
+        insns.push(BpfInsn::st_imm(
+            BPF_H,
+            BPF_REG_10,
+            -14,
+            libc::AF_INET6 as i32,
+        ));
 
         // Get socket cookie
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));
@@ -547,13 +592,33 @@ impl EbpfRedirectManager {
         insns.push(BpfInsn::call(BPF_FUNC_MAP_UPDATE_ELEM));
 
         // Rewrite IPv6 dst to ::1
-        insns.push(BpfInsn::st_imm(BPF_DW, BPF_REG_6, SOCK_ADDR_OFF_USER_IP6, 0));
-        insns.push(BpfInsn::st_imm(BPF_W, BPF_REG_6, SOCK_ADDR_OFF_USER_IP6 + 8, 0));
+        insns.push(BpfInsn::st_imm(
+            BPF_DW,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP6,
+            0,
+        ));
+        insns.push(BpfInsn::st_imm(
+            BPF_W,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP6 + 8,
+            0,
+        ));
         let loopback_v6_last: i32 = u32::from_ne_bytes([0, 0, 0, 1]) as i32;
-        insns.push(BpfInsn::st_imm(BPF_W, BPF_REG_6, SOCK_ADDR_OFF_USER_IP6 + 12, loopback_v6_last));
+        insns.push(BpfInsn::st_imm(
+            BPF_W,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_IP6 + 12,
+            loopback_v6_last,
+        ));
 
         // Rewrite port to relay_port
-        insns.push(BpfInsn::st_imm(BPF_W, BPF_REG_6, SOCK_ADDR_OFF_USER_PORT, relay_port.to_be() as i32));
+        insns.push(BpfInsn::st_imm(
+            BPF_W,
+            BPF_REG_6,
+            SOCK_ADDR_OFF_USER_PORT,
+            relay_port.to_be() as i32,
+        ));
 
         // Return 1 (allow)
         insns.push(BpfInsn::mov64_imm(BPF_REG_0, 1));
@@ -574,7 +639,13 @@ impl EbpfRedirectManager {
                 map_flags: 0,
             },
         };
-        let map_fd_raw = unsafe { sys_bpf(BPF_MAP_CREATE, &map_attr, std::mem::size_of::<BpfAttr>() as u32) };
+        let map_fd_raw = unsafe {
+            sys_bpf(
+                BPF_MAP_CREATE,
+                &map_attr,
+                std::mem::size_of::<BpfAttr>() as u32,
+            )
+        };
         if map_fd_raw < 0 {
             return Err(VettoError::Sandbox(format!(
                 "create eBPF LRU map: {}",
