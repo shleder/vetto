@@ -124,12 +124,15 @@ paths = [
 
 ## Quickstart
 
-Install via shell script or npm, then wrap any agent command with `vetto --`:
+Install via Homebrew, shell script, or npm, then wrap any agent command with `vetto --`:
 
 ### 1. Installation
 
 ```bash
-# Standalone shell installer (Linux & macOS)
+# macOS & Linux via Homebrew
+brew install shleder/tap/vetto
+
+# Or standalone shell installer (Linux & macOS)
 curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/scripts/install.sh | sh
 
 # Or global install via npm (includes prebuilt binaries for Linux, macOS, Windows)
