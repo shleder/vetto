@@ -400,7 +400,10 @@ impl AttributeList {
             InitializeProcThreadAttributeList(buffer.as_mut_ptr().cast(), 1, 0, &mut size)
         };
         if ok == 0 {
-            bail!("InitializeProcThreadAttributeList failed with {}", unsafe { GetLastError() });
+            bail!(
+                "InitializeProcThreadAttributeList failed with {}",
+                unsafe { GetLastError() }
+            );
         }
 
         let update_ok = unsafe {
@@ -417,7 +420,9 @@ impl AttributeList {
 
         if update_ok == 0 {
             unsafe { DeleteProcThreadAttributeList(buffer.as_mut_ptr().cast()) };
-            bail!("UpdateProcThreadAttribute failed with {}", unsafe { GetLastError() });
+            bail!("UpdateProcThreadAttribute failed with {}", unsafe {
+                GetLastError()
+            });
         }
 
         Ok(Self { buffer })

@@ -26,10 +26,7 @@ fn test_git_hook_install_and_status_and_uninstall() {
     );
 
     // 2. Status inspection
-    let out_status = run_vetto_in(
-        proj_dir,
-        &["hook", "status", "--scope", "local", "--json"],
-    );
+    let out_status = run_vetto_in(proj_dir, &["hook", "status", "--scope", "local", "--json"]);
     assert!(
         out_status.status.success(),
         "hook status failed: {}",

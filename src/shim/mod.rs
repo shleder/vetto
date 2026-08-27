@@ -19,8 +19,12 @@ pub const ENV_VETTO_SHIM_ACTIVE: &str = "VETTO_SHIM_ACTIVE";
 
 /// Check if the current process is already running in a sandboxed or shim-active context.
 pub fn is_sandboxed() -> bool {
-    env::var(ENV_VETTO_SANDBOXED).map(|v| v == "1").unwrap_or(false)
-        || env::var(ENV_VETTO_SHIM_ACTIVE).map(|v| v == "1").unwrap_or(false)
+    env::var(ENV_VETTO_SANDBOXED)
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        || env::var(ENV_VETTO_SHIM_ACTIVE)
+            .map(|v| v == "1")
+            .unwrap_or(false)
 }
 
 /// Detects if `vetto` was invoked as a shim via `argv[0]` (e.g., symlinked or renamed).
@@ -141,7 +145,10 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         {
             use std::os::unix::process::CommandExt;
             let err = Command::new(&real_binary).args(args).exec();
-            bail!("failed to exec real binary {}: {err}", real_binary.display());
+            bail!(
+                "failed to exec real binary {}: {err}",
+                real_binary.display()
+            );
         }
 
         #[cfg(not(unix))]

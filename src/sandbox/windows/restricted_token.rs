@@ -105,4 +105,3 @@ pub fn raw(handle: &OwnedHandle) -> RawHandle {
 pub const fn contract() -> &'static str {
     "restricted primary token with DISABLE_MAX_PRIVILEGE | LUA_TOKEN"
 }
-

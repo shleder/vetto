@@ -13,17 +13,18 @@ fn test_hook_install_and_status_and_uninstall() {
         proj_dir,
         &["hook", "install", "--scope", "local", "--force"],
     );
-    assert!(out.status.success(), "hook install failed: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "hook install failed: {}",
+        stderr(&out)
+    );
     let stdout_str = stdout(&out);
     assert!(stdout_str.contains("vetto hook install: successfully configured environment"));
     assert!(proj_dir.join(".vetto").join("shims").exists());
     assert!(proj_dir.join(".vetto").join("shims").join("sh").exists());
 
     // 2. Run vetto hook status --scope local --json
-    let out_status = run_vetto_in(
-        proj_dir,
-        &["hook", "status", "--scope", "local", "--json"],
-    );
+    let out_status = run_vetto_in(proj_dir, &["hook", "status", "--scope", "local", "--json"]);
     assert!(
         out_status.status.success(),
         "hook status failed: {}",

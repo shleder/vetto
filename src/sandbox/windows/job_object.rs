@@ -141,4 +141,3 @@ impl JobObject {
 pub const fn kill_contract() -> &'static str {
     "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | NO_BREAKAWAY"
 }
-

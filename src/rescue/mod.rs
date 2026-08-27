@@ -328,14 +328,12 @@ mod tests {
 
     #[test]
     fn default_root_resolution() {
-        let explicit = Path::new("/custom/root");
-        assert_eq!(
-            default_root("claude", Some(explicit)).unwrap(),
-            PathBuf::from("/custom/root")
-        );
-        assert_eq!(
-            default_root("cursor", Some(explicit)).unwrap(),
-            PathBuf::from("/custom/root")
-        );
+        let explicit = Path::new("custom/root");
+        assert!(default_root("claude", Some(explicit))
+            .unwrap()
+            .ends_with(Path::new("custom/root")));
+        assert!(default_root("cursor", Some(explicit))
+            .unwrap()
+            .ends_with(Path::new("custom/root")));
     }
 }

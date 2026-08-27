@@ -89,6 +89,7 @@ impl AnsiRedactor {
                             let text_chunk = &full_input[text_start..i];
                             output.extend(self.redactor.redact_chunk(text_chunk));
                         }
+                        output.extend(self.redactor.flush());
                         text_start = i;
                         self.parser.state = AnsiState::Escape;
                     }
