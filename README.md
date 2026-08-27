@@ -124,15 +124,18 @@ paths = [
 
 ## Quickstart
 
-Install globally via npm and wrap any agent command with `vetto --`:
+Install via shell script or npm, then wrap any agent command with `vetto --`:
 
 ### 1. Installation
 
 ```bash
-# Global install (includes prebuilt native binaries for Linux, macOS, Windows)
+# Standalone shell installer (Linux & macOS)
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/scripts/install.sh | sh
+
+# Or global install via npm (includes prebuilt binaries for Linux, macOS, Windows)
 npm install --global @shledery/vetto
 
-# Verify host capabilities
+# Verify host kernel capabilities
 vetto doctor
 ```
 
