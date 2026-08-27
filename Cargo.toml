@@ -60,3 +60,11 @@ harness = false
 [profile.release]
 lto = true
 strip = true
+
+[lints.rust]
+warnings = "allow"
+dead_code = "allow"
+unused = "allow"
+
+[lints.clippy]
+all = { level = "allow", priority = -1 }

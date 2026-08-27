@@ -725,9 +725,7 @@ fn extract_path(fd: libc::c_int, notif: &SeccompNotif) -> Option<String> {
                             .position(|&b| b == 0)
                             .unwrap_or(path_bytes.len());
                         if end > 0 {
-                            return Some(
-                                String::from_utf8_lossy(&path_bytes[..end]).to_string(),
-                            );
+                            return Some(String::from_utf8_lossy(&path_bytes[..end]).to_string());
                         }
                     }
                 }

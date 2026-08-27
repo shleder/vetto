@@ -535,11 +535,14 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
         http_connect_head(&mut client, first[0])
     };
 
-    let Some((host, port, token)) = target else { return };
+    let Some((host, port, token)) = target else {
+        return;
+    };
 
     let outcome = {
         let _guard = SETUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        send_request_frame(ctrl_fd, &host, port, token.as_deref()).and_then(|_| read_status_and_fd(ctrl_fd))
+        send_request_frame(ctrl_fd, &host, port, token.as_deref())
+            .and_then(|_| read_status_and_fd(ctrl_fd))
     };
 
     match outcome {

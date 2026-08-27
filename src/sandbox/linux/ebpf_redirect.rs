@@ -735,7 +735,12 @@ pub mod tests {
         assert_eq!(dst.port, 443);
         assert_eq!(dst.to_socket_addr(), Some(SocketAddr::V4(v4_addr)));
 
-        let v6_addr = SocketAddrV6::new(Ipv6Addr::new(0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25c8, 0x1946), 8443, 0, 0);
+        let v6_addr = SocketAddrV6::new(
+            Ipv6Addr::new(0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25c8, 0x1946),
+            8443,
+            0,
+            0,
+        );
         let dst_v6 = SocketDst::from_v6(*v6_addr.ip(), v6_addr.port());
         assert_eq!(dst_v6.family, libc::AF_INET6 as u16);
         assert_eq!(dst_v6.port, 8443);

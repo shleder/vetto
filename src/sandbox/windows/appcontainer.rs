@@ -471,4 +471,3 @@ mod tests {
         assert!(caps.delete_appcontainer_profile);
     }
 }
-

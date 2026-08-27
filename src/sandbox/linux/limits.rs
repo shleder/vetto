@@ -50,7 +50,10 @@ pub fn apply_before_exec(limits: &ResourceLimits) -> VettoResult<()> {
 
 /// Apply strict ceilings on POSIX IPC structures (locked memory and message queues)
 /// to prevent cross-agent resource exhaustion.
-pub fn apply_ipc_resource_ceilings(max_msgqueue_bytes: Option<u64>, max_memlock_bytes: Option<u64>) -> VettoResult<()> {
+pub fn apply_ipc_resource_ceilings(
+    max_msgqueue_bytes: Option<u64>,
+    max_memlock_bytes: Option<u64>,
+) -> VettoResult<()> {
     #[cfg(target_os = "linux")]
     {
         apply_one(libc::RLIMIT_MSGQUEUE, max_msgqueue_bytes)?;
