@@ -101,7 +101,7 @@ impl RunConfig {
             None
         } else {
             match cli.agents.as_slice() {
-                [] => detect_agent_preset(&cli.command),
+                [] => detect_agent_preset(&cli.agent),
                 [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
                     Some(agent.clone())
                 }
