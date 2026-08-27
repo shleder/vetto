@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn auto_detects_known_agents_from_command_without_agent_flag() {
-        let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec", "task"])
-            .expect("parse command");
+        let cli =
+            Cli::try_parse_from(["vetto", "--", "codex", "exec", "task"]).expect("parse command");
         let cfg = RunConfig::from_cli(&cli).expect("config");
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
 
