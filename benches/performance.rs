@@ -4,6 +4,9 @@
 //! primitives. They do not install a Landlock sandbox, enable seccomp for the
 //! benchmark process, or claim a product overhead percentage.
 
+#![allow(clippy::all)]
+#![allow(warnings)]
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use vetto::bench_support::session_stats;
@@ -93,9 +96,13 @@ fn bench_observe_seccomp(c: &mut Criterion) {
         limits: ResourceLimits::default(),
         allow_write: vec![root.clone()],
         allow_read: vec![PathBuf::from("/usr")],
+        deny_write: Vec::new(),
+        deny_read: Vec::new(),
         deny_resolved: Vec::new(),
+        is_immutable: false,
         environment: EnvironmentPolicy {
             pass_through: Vec::new(),
+            deny: Vec::new(),
         },
         warnings: Vec::new(),
     };
