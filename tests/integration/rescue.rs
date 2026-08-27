@@ -146,7 +146,7 @@ fn claude_adapter_requires_explicit_root_and_keeps_schema_opaque() {
     assert!(scan.status.success(), "scan stderr: {}", stderr(&scan));
     let scan_json: serde_json::Value =
         serde_json::from_slice(&scan.stdout).expect("Claude scan JSON output");
-    assert_eq!(scan_json["status"]["support_level"], "rescue-only");
+    assert_eq!(scan_json["status"]["support_level"], "full-repair");
     assert_eq!(scan_json["sessions"].as_array().map(Vec::len), Some(1));
     assert!(!stdout(&scan).contains("credentials.jsonl"));
 

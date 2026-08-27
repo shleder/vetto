@@ -58,8 +58,8 @@ pub struct SecurityCapabilities {
 pub struct TrusteeW {
     pub p_multiple_trustee: *mut c_void,
     pub multiple_trustee_operation: Dword,
-    pub trustee_form: Dword, // TRUSTEE_IS_SID = 0
-    pub trustee_type: Dword, // TRUSTEE_IS_USER = 1 or TRUSTEE_IS_WELL_KNOWN_GROUP = 5
+    pub trustee_form: Dword,  // TRUSTEE_IS_SID = 0
+    pub trustee_type: Dword,  // TRUSTEE_IS_USER = 1 or TRUSTEE_IS_WELL_KNOWN_GROUP = 5
     pub ptstr_name: *mut u16, // SID pointer when TRUSTEE_IS_SID
 }
 
@@ -178,7 +178,9 @@ impl OwnedSid {
         let mut str_ptr: *mut u16 = null_mut();
         let ok = unsafe { ConvertSidToStringSidW(self.raw, &mut str_ptr) };
         if ok == 0 || str_ptr.is_null() {
-            bail!("ConvertSidToStringSidW failed with {}", unsafe { GetLastError() });
+            bail!("ConvertSidToStringSidW failed with {}", unsafe {
+                GetLastError()
+            });
         }
         let mut len = 0;
         while unsafe { *str_ptr.add(len) } != 0 {
@@ -320,14 +322,8 @@ impl DaclOverrideGuard {
         };
 
         let mut new_dacl: *mut c_void = null_mut();
-        let ret = unsafe {
-            SetEntriesInAclW(
-                1,
-                &explicit,
-                original_dacl,
-                &mut new_dacl,
-            )
-        };
+        let ret =
+            unsafe { SetEntriesInAclW(1, &explicit, original_dacl, &mut new_dacl) };
 
         if ret != 0 || new_dacl.is_null() {
             unsafe { LocalFree(original_sd) };
@@ -400,10 +396,9 @@ impl AttributeList {
             InitializeProcThreadAttributeList(buffer.as_mut_ptr().cast(), 1, 0, &mut size)
         };
         if ok == 0 {
-            bail!(
-                "InitializeProcThreadAttributeList failed with {}",
-                unsafe { GetLastError() }
-            );
+            bail!("InitializeProcThreadAttributeList failed with {}", unsafe {
+                GetLastError()
+            });
         }
 
         let update_ok = unsafe {

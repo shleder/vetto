@@ -7,6 +7,11 @@ fn test_git_hook_install_and_status_and_uninstall() {
     let project = TempProject::new("git-hooks-lifecycle");
     let proj_dir = project.path();
 
+    let _ = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(proj_dir)
+        .output();
+
     // 1. Install local git hooks
     let out = run_vetto_in(
         proj_dir,

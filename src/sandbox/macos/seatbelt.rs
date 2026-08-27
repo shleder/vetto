@@ -174,12 +174,7 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
 
         let mut errorbuf: *mut libc::c_char = std::ptr::null_mut();
         let ret = unsafe {
-            sandbox_init(
-                profile_c.as_ptr(),
-                0,
-                param_ptrs.as_ptr(),
-                &mut errorbuf,
-            )
+            sandbox_init(profile_c.as_ptr(), 0, param_ptrs.as_ptr(), &mut errorbuf)
         };
 
         if ret != 0 {
@@ -223,12 +218,17 @@ mod tests {
         assert!(template.contains("(deny network*)"));
 
         assert_eq!(params.len(), 2);
-        assert_eq!(params[0], ("ALLOW_READ_DIR_0".to_string(), "/test/read".to_string()));
-        assert_eq!(params[1], ("ALLOW_WRITE_DIR_0".to_string(), "/test/write".to_string()));
+        assert_eq!(
+            params[0],
+            ("ALLOW_READ_DIR_0".to_string(), "/test/read".to_string())
+        );
+        assert_eq!(
+            params[1],
+            ("ALLOW_WRITE_DIR_0".to_string(), "/test/write".to_string())
+        );
 
         let inlined = generate(&policy, &NetMode::Off);
         assert!(inlined.contains("\"/test/read\""));
         assert!(inlined.contains("\"/test/write\""));
     }
 }
-
