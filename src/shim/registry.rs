@@ -32,17 +32,6 @@ pub struct ShimInfo {
 pub struct ShimRegistry;
 
 impl ShimRegistry {
-    /// Checks if the given binary is an intercepted container runtime (docker or podman).
-    pub fn is_container_runtime(binary_name: &str) -> bool {
-        binary_name == "docker" || binary_name == "podman"
-    }
-
-    /// Creates a Docker/Podman shim executor configured for the specified working directory.
-    pub fn create_docker_executor(working_dir: PathBuf) -> crate::shim::docker::DockerShimExecutor {
-        let cache_dir = std::env::temp_dir().join("vetto-oci-cache");
-        crate::shim::docker::DockerShimExecutor::new(cache_dir, working_dir)
-    }
-
     /// Returns the default list of intercepted binaries.
     pub fn default_binaries() -> Vec<&'static str> {
         DEFAULT_BINARIES.to_vec()
