@@ -119,7 +119,7 @@ paths = [
 <a id="quickstart"></a>
 
 <p align="center">
-  <img src="./assets/readme/section-run.svg" width="100%" alt="Quickstart: Install and wrap your agent">
+  <img src="./assets/readme/demo.svg" width="100%" alt="Vetto live terminal: Landlock kernel isolation and real-time PTY secret redaction">
 </p>
 
 ## Quickstart

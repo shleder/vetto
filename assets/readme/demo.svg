@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 480" width="100%" height="100%">
+  <defs>
+    <style>
+      .term-bg { fill: #0d1117; stroke: #30363d; stroke-width: 1.5; rx: 12px; }
+      .header-bar { fill: #161b22; }
+      .btn-red { fill: #ff5f56; }
+      .btn-yellow { fill: #ffbd2e; }
+      .btn-green { fill: #27c93f; }
+      .title { fill: #8b949e; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; font-weight: 600; }
+      
+      .code-text { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13.5px; }
+      .prompt { fill: #58a6ff; font-weight: 700; }
+      .cmd { fill: #f0f6fc; font-weight: 600; }
+      .info { fill: #7ee787; font-weight: 600; }
+      .agent { fill: #d2a8ff; font-weight: 600; }
+      .block { fill: #ff7b72; font-weight: 700; }
+      .redact { fill: #e3b341; font-weight: 700; }
+      .dim { fill: #8b949e; }
+      .success { fill: #3fb950; font-weight: 700; }
+      .tag-bg-block { fill: rgba(248, 81, 73, 0.15); stroke: rgba(248, 81, 73, 0.4); rx: 4px; }
+      .tag-bg-redact { fill: rgba(210, 153, 34, 0.15); stroke: rgba(210, 153, 34, 0.4); rx: 4px; }
+      .tag-bg-ok { fill: rgba(46, 160, 67, 0.15); stroke: rgba(46, 160, 67, 0.4); rx: 4px; }
+      .divider { stroke: #21262d; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <!-- Terminal Window Background -->
+  <rect x="10" y="10" width="900" height="460" class="term-bg" />
+  
+  <!-- Terminal Window Header -->
+  <path d="M 10 22 C 10 15.37 15.37 10 22 10 L 898 10 C 904.63 10 910 15.37 910 22 L 910 48 L 10 48 Z" class="header-bar" />
+  <circle cx="34" cy="29" r="6" class="btn-red" />
+  <circle cx="54" cy="29" r="6" class="btn-yellow" />
+  <circle cx="74" cy="29" r="6" class="btn-green" />
+  <text x="460" y="33" text-anchor="middle" class="title">vetto sandbox — active process isolation (Landlock ABI v5 + PTY Redactor)</text>
+
+  <!-- Terminal Output Lines with explicit vertical Y coordinates -->
+  <g class="code-text">
+    <!-- Line 1: User Invocaton -->
+    <text x="35" y="85">
+      <tspan class="prompt">$ </tspan><tspan class="cmd">vetto --profile strict -- codex exec &quot;inspect credentials &amp; deploy&quot;</tspan>
+    </text>
+
+    <!-- Line 2: Sandbox Initialized -->
+    <text x="35" y="120">
+      <tspan class="info">[vetto] </tspan><tspan class="dim">OS sandbox applied: Landlock ABI v5, Seccomp-BPF, UserNS </tspan><tspan class="info">(0.8ms)</tspan>
+    </text>
+
+    <!-- Line 3: Agent Probe File -->
+    <text x="35" y="160">
+      <tspan class="agent">[agent] </tspan><tspan class="dim">Reading credentials: </tspan><tspan class="cmd">cat ~/.ssh/id_rsa ~/.aws/credentials</tspan>
+    </text>
+
+    <!-- Line 4: VFS Interception -->
+    <rect x="35" y="176" width="92" height="22" class="tag-bg-block" />
+    <text x="43" y="192" class="block">[BLOCKED]</text>
+    <text x="138" y="192">
+      <tspan class="dim">VFS Mask: </tspan><tspan class="cmd">~/.ssh/id_rsa</tspan><tspan class="dim"> mapped to </tspan><tspan class="info">/dev/null</tspan><tspan class="dim"> (0 bytes returned)</tspan>
+    </text>
+
+    <!-- Line 5: Agent Probe Metadata -->
+    <text x="35" y="232">
+      <tspan class="agent">[agent] </tspan><tspan class="dim">Probing AWS metadata: </tspan><tspan class="cmd">curl -s http://169.254.169.254/latest/meta-data/</tspan>
+    </text>
+
+    <!-- Line 6: Network Interception -->
+    <rect x="35" y="248" width="92" height="22" class="tag-bg-block" />
+    <text x="43" y="264" class="block">[BLOCKED]</text>
+    <text x="138" y="264">
+      <tspan class="dim">Net Deny: </tspan><tspan class="cmd">169.254.169.254:80</tspan><tspan class="block"> [EPERM: Network unreachable]</tspan>
+    </text>
+
+    <!-- Line 7: Agent Output Stream -->
+    <text x="35" y="304">
+      <tspan class="agent">[agent] </tspan><tspan class="dim">Dumping tokens: </tspan><tspan class="cmd">OPENAI_API_KEY=sk-proj-9A8f7B2... ghp_9381kLz...</tspan>
+    </text>
+
+    <!-- Line 8: PTY Stream Redaction -->
+    <rect x="35" y="320" width="112" height="22" class="tag-bg-redact" />
+    <text x="43" y="336" class="redact">[PTY REDACT]</text>
+    <text x="158" y="336">
+      <tspan class="dim">Entropy filter scrubbed 2 secret tokens -&gt; </tspan><tspan class="redact">[REDACTED]</tspan>
+    </text>
+
+    <!-- Divider -->
+    <line x1="35" y1="365" x2="875" y2="365" class="divider" />
+
+    <!-- Line 9: Operator Summary Result -->
+    <rect x="35" y="382" width="70" height="22" class="tag-bg-ok" />
+    <text x="43" y="398" class="success">PASSED</text>
+    <text x="116" y="398">
+      <tspan class="success">✓ Operator boundary held: </tspan><tspan class="dim">0 leaks, 0 disk bloat, 0 unconfined child processes.</tspan>
+    </text>
+
+    <!-- Line 10: Quick Command -->
+    <text x="35" y="435">
+      <tspan class="prompt">$ </tspan><tspan class="info">npx @shledery/vetto doctor</tspan><tspan class="dim">  # run anywhere in 1 second</tspan>
+    </text>
+  </g>
+</svg>

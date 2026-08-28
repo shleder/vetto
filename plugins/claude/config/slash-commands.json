@@ -1,0 +1,19 @@
+{
+  "commands": [
+    {
+      "name": "vetto-status",
+      "description": "Inspect active Vetto kernel sandbox capabilities and policy rules",
+      "command": "vetto doctor"
+    },
+    {
+      "name": "vetto-rescue",
+      "description": "Scan and recover damaged Claude Code project JSONL transcripts and SQLite indexes",
+      "command": "vetto rescue --adapter claude --json scan"
+    },
+    {
+      "name": "vetto-hook",
+      "description": "Install or verify transparent shell and Git native isolation shims",
+      "command": "vetto hook status"
+    }
+  ]
+}
