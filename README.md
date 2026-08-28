@@ -62,17 +62,18 @@ trusted boundary you bet your machine on.
 
 **What is currently weaker than the rest — known and not hidden:**
 
-- **CI lint gates are soft.** Crate-level lints allow all warnings
-  (`Cargo.toml`), so the `clippy -D warnings` CI step cannot fail on crate
-  code, and `cargo fmt --check` is non-blocking.
-- **Windows sandbox enforcement has no integration-test coverage.** Its tests
-  only assert that `doctor` prints capability text. The backend fails closed,
-  and it is labelled experimental for a reason.
+- **CI lint gates no longer rubber-stamp the code** (fmt blocks, clippy denies
+  warnings, llvm-cov publishes coverage), but the coverage **threshold is not
+  set yet** — the number gets pinned only after a real baseline exists.
+- **Windows sandbox enforcement has thin test coverage.** Enforcement tests
+  exist but every non-Windows machine only ever runs their inert placeholders.
+  The backend fails closed, and it is labelled experimental for a reason.
 - **Two large subsystems are dead code**: a Linux eBPF redirect path (~900
   lines) and a macOS Endpoint Security deny-capable engine. Neither is wired
   into a session; the README of no version should be read as claiming they are.
-- `docs/tutorials/` are outlines, not finished tutorials. There is no coverage
-  measurement in CI, and no performance-overhead figures anywhere.
+- `docs/tutorials/` are outlines, not finished tutorials. There are no
+  performance-overhead figures yet (the e2e spawn benchmark lands with the
+  first CI perf run).
 
 **What a kernel sandbox is not:** it is not a VM or a container runtime. A
 sufficiently severe kernel exploit escapes namespaces and Landlock. vetto
@@ -121,6 +122,30 @@ observation only.
 byte by byte from inside it, that every resolved `display_only_deny` path is
 actually unreachable.
 
+## Verify the boundary without an agent
+
+`vetto verify` runs the same kind of checks as `doctor --probe` plus two more:
+a loopback-connect attempt against a host listener (a sandbox that can reach
+your host services fails loudly) and a write attempt outside every write root.
+It prints a verdict table (or `--json`) and exits non-zero on any leak.
+
+`--verify` on a normal session runs this battery against the *resolved* policy
+first and refuses to start the agent on any leak:
+
+```bash
+vetto verify            # standalone battery, no agent runs
+vetto --verify -- claude -p "fix the failing test"
+```
+
+`vetto policy explain` prints the effective merged policy — tier, network
+mode, roots, masked secrets, limits, environment — and `vetto policy lint`
+flags dangerous configurations such as a write root covering `$HOME`:
+
+```bash
+vetto policy explain --json
+vetto policy lint --strict
+```
+
 ## Run an agent
 
 ```bash
@@ -147,6 +172,9 @@ Useful flags (`vetto --help` is the authority):
 | `--report <fmts>` | Post-session reports: `html,md,json,sarif` |
 | `--jsonl <path>` | Append every session event as JSON lines |
 | `--fail-on-block [n]` | Exit non-zero after `n` observed blocked attempts (default 1) |
+| `--timeout <dur>` | Kill the session at the deadline, exit 124 (e.g. `90s`, `30m`; enforced with `--tui=none`) |
+| `--limits <spec>` | Resource ceilings: `cpu=,as=,procs=,nofile=,fsize=` (strictest-wins with policy) |
+| `--verify` | Run the boundary battery before spawning the agent; refuse to start on any leak |
 | `--dry-run` | Print the resolved policy and tier plan; enforce nothing |
 | `--ci` | Non-interactive: implies `--tui=none` and a JSON summary on stdout |
 | `--observe-seccomp` | Attach a best-effort blocked-attempt tap (Linux, observation only) |
@@ -308,9 +336,9 @@ These are properties of the current implementation, not planned work:
   denials. A forked kqueue watchdog kills the agent when vetto itself is
   `SIGKILL`ed; it is best-effort and reports its own failure if it cannot arm.
 - Windows fails before process creation when the experimental sandbox API is
-  unavailable, and refuses the launch entirely when the policy has deny paths
-  (the SandboxSpec contract has no verified deny field). There is no weaker
-  fallback tier.
+  unavailable, and refuses the launch when a secret path overlaps a granted
+  read root (the SandboxSpec contract cannot subtract a subpath). There is no
+  weaker fallback tier.
 - The multi-agent runtime is Unix-only; Windows rejects a multi-agent launch.
 - No performance overhead figure is guaranteed. See
   [docs/performance.md](docs/performance.md) for the benchmark method; the

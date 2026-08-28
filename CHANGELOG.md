@@ -3,6 +3,45 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- Boundary verification battery: `vetto verify` runs secret-path, network and
+  write-outside checks inside a throwaway sandbox without running any agent,
+  and `--verify` runs the same battery against the resolved policy before the
+  agent starts, refusing to launch on any leak (fail-closed).
+- `--timeout <DURATION>` kills the sandboxed session at the deadline and exits
+  124 (mirroring GNU timeout). Enforced with `--tui=none`; other TUI modes
+  warn and ignore it. A `session_timeout` event lands in JSONL and reports.
+- `--limits cpu=,as=,procs=,nofile=,fsize=` resource ceilings merged
+  strictest-wins with policy limits; enforced via rlimits on Linux, the Job
+  Object on Windows and setrlimit in the child on macOS.
+- `vetto policy explain` prints the effective merged policy (tier, network,
+  roots, masked secrets, limits, environment); `vetto policy lint` flags
+  dangerous configurations (home-wide write/read roots, no-op denies, missing
+  limits).
+- fs-only sessions with `display_only_deny` paths now state the honest costs
+  up front on stderr and as a session notice: secrets are allowlist-carved
+  (entry names may stay visible) and files created directly at a write root
+  cannot be read back in the same session.
+- macOS parent-death watchdog: a forked kqueue helper SIGKILLs the agent when
+  vetto itself is SIGKILLed, closing the orphan gap. Best-effort with an
+  explicit warning when it cannot arm.
+
+### Changed
+
+- CI is honest now: `cargo fmt --check` is blocking, clippy denies warnings
+  for crate code (the crate-wide allow-all is gone; unwired capability
+  surfaces keep a scoped dead_code exemption), llvm-cov publishes an lcov
+  artifact, and cargo-deny checks advisories and licenses.
+- Windows policies with `display_only_deny` no longer refuse to launch
+  outright: the launch proceeds when no secret path overlaps a granted root
+  (the spec is default-deny) and fails with an actionable message only on a
+  real overlap.
+- macOS rejects `--net=strict` explicitly instead of silently running it as
+  `off`.
+
 ## [0.2.4] — 2026-08-28
 
 ### Added
