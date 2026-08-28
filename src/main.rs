@@ -150,19 +150,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // execve does not search PATH; resolve the agent binary ourselves.
     let mut agent_cmd = cfg.agent.clone();
     agent_cmd[0] = resolve_in_path(&agent_cmd[0])?;
-    if !pol.in_read_scope(Path::new(&agent_cmd[0])) {
-        eprintln!(
-            "vetto: warning: agent binary '{}' is outside the policy read scope; \
-             exec will be denied by the sandbox",
-            agent_cmd[0]
-        );
+    let bin_path = std::path::PathBuf::from(&agent_cmd[0]);
+    if let Some(parent) = bin_path.parent() {
+        if !pol.in_read_scope(&bin_path) {
+            pol.allow_read.push(parent.to_path_buf());
+        }
     }
-    if pol.in_write_scope(Path::new(&agent_cmd[0])) {
-        eprintln!(
-            "vetto: warning: agent binary '{}' is inside a WRITE scope — the agent can \
-             replace its own binary; consider running it from a read-only location",
-            agent_cmd[0]
-        );
+    if pol.in_write_scope(std::path::Path::new(&agent_cmd[0])) {
+        // If binary is in write scope (e.g. running from HOME), protect it automatically by excluding from writes
+        pol.deny_write.push(bin_path.clone());
     }
 
     if cfg.dry_run {

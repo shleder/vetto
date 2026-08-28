@@ -13,6 +13,7 @@ allow_read = [
   "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc/ld.so.cache", "/etc/ssl", "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts", "/etc/nsswitch.conf",
+  "$HOME/.local/bin", "$HOME/.cargo/bin", "$HOME/.local/share",
   "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",
   "$HOME/.rustup",
   "$HOME/.npm/_cacache",

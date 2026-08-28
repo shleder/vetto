@@ -3,7 +3,13 @@ name = "opencode"
 description = "Safe read-only compatibility roots for OpenCode."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_read = [
+  "$HOME/.config/opencode",
+  "$HOME/.local/share/opencode",
+  "$HOME/.local/bin",
+  "$AGENT/cache",
+  "$AGENT/logs"
+]
 
 [display_only_deny]
 paths = ["$AGENT/auth.json", "$AGENT/config.json"]

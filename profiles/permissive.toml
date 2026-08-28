@@ -9,6 +9,7 @@ allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",
   "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc",
+  "$HOME/.local/bin", "$HOME/.cargo/bin", "$HOME/.local/share",
   "$HOME/.cargo/registry", "$HOME/.cargo/git", "$HOME/.cargo/config.toml",
   "$HOME/.rustup",
   "$HOME/.npm/_cacache",

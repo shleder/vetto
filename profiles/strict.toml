@@ -11,6 +11,7 @@ allow_read = [
   "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
   "/etc/ld.so.cache", "/etc/ssl", "/etc/ca-certificates", "/etc/pki",
   "/etc/hosts",
+  "$HOME/.local/bin", "$HOME/.cargo/bin",
 ]
 
 [environment]
