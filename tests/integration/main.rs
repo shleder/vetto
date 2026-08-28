@@ -15,6 +15,8 @@ mod heavy_scenarios;
 #[cfg(target_os = "linux")]
 mod linux_landlock;
 #[cfg(target_os = "linux")]
+mod linux_limits_cli;
+#[cfg(target_os = "linux")]
 mod linux_netmodes;
 #[cfg(target_os = "linux")]
 mod linux_orphans;
@@ -25,11 +27,17 @@ mod linux_subagents;
 #[cfg(target_os = "linux")]
 mod linux_tiers;
 #[cfg(target_os = "linux")]
+mod linux_timeout;
+#[cfg(target_os = "linux")]
+mod linux_verify;
+#[cfg(target_os = "linux")]
 mod linux_visibility;
 mod macos_seatbelt;
 mod multi_agent;
 mod policy_loading;
 mod policy_overlays;
+mod policy_tools;
 mod rescue;
 mod secret_masking;
 mod shim_interception;
+mod windows_enforcement;

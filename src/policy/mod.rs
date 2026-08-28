@@ -1,4 +1,7 @@
 pub mod checker;
+pub mod explain;
+pub mod lint;
+pub mod limits_spec;
 pub mod conditions;
 pub mod defaults;
 pub mod glob_resolve;

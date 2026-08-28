@@ -127,6 +127,8 @@ pub struct RawLimits {
     pub processes: Option<u64>,
     #[serde(default)]
     pub open_files: Option<u64>,
+    #[serde(default)]
+    pub file_size_bytes: Option<u64>,
 }
 
 impl RawLimits {
@@ -136,6 +138,7 @@ impl RawLimits {
             address_space_bytes: self.address_space_bytes,
             processes: self.processes,
             open_files: self.open_files,
+            file_size_bytes: self.file_size_bytes,
         }
     }
 }
@@ -908,6 +911,7 @@ fn build_policy(
             pass_through: normalize_env_patterns(merged.pass_through.clone()),
             deny: normalize_env_patterns(merged.deny_env.clone()),
         },
+        deny_network: !merged.deny_network.is_empty(),
         is_immutable: merged.is_immutable,
         warnings,
     };

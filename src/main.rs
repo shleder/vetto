@@ -82,6 +82,31 @@ fn main() -> Result<()> {
             json,
             command,
         }) => rescue::run_cli(adapter, root.as_deref(), *json, command),
+        Some(cli::Command::Verify { json }) => {
+            let net = vetto::config::parse_net_mode(&args.net)?;
+            vetto::verify::run_cli(
+                *json,
+                &args.profile,
+                args.policy.as_deref().map(PathBuf::from).as_deref(),
+                &net,
+            )
+        }
+        Some(cli::Command::Policy { command }) => match command {
+            cli::PolicyCommand::Explain { json } => {
+                let net = vetto::config::parse_net_mode(&args.net)?;
+                vetto::policy::explain::run_cli(
+                    *json,
+                    &args.profile,
+                    args.policy.as_deref().map(PathBuf::from).as_deref(),
+                    &net,
+                )
+            }
+            cli::PolicyCommand::Lint { strict } => vetto::policy::lint::run_cli(
+                *strict,
+                &args.profile,
+                args.policy.as_deref().map(PathBuf::from).as_deref(),
+            ),
+        },
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]
@@ -149,6 +174,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 .to_string(),
         );
     }
+    if let Some(spec) = &cfg.limits_spec {
+        policy::limits_spec::apply_cli(&mut pol, spec)?;
+    }
     use std::io::Write;
     for w in &pol.warnings {
         eprint!("vetto: policy warning: {w}\r\n");
@@ -185,6 +213,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if cfg.git_ssh {
         bail!("--git-ssh is available on Linux only");
     }
+
+    // Optional pre-spawn boundary verification. A leak here is a policy or
+    // kernel problem, not an agent problem: fail before the agent starts.
+    let verify_outcome = if cfg.verify_preflight {
+        let report = vetto::verify::preflight(&pol, &cfg.net)?;
+        eprintln!("vetto: verify: {}", report.summary());
+        if report.leaks() > 0 {
+            bail!("--verify: boundary verification failed; refusing to start the agent (fail-closed)");
+        }
+        Some(report)
+    } else {
+        None
+    };
 
     let env_extra: HashMap<String, String> = {
         #[cfg(target_os = "linux")]
@@ -391,37 +432,58 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     install_sigint_forwarder(root_pid, tier);
 
+    if cfg.session_timeout.is_some() && cfg.tui != TuiMode::None {
+        bus.publish(Event::Notice {
+            ts: events::types::now(),
+            message: "--timeout is enforced only with --tui=none; this TUI mode \
+                      owns its own wait loop and ignores it"
+                .to_string(),
+        });
+    }
+
     // ---- Phase 3: run the UI / wait ---------------------------------------
     #[cfg(unix)]
-    let exit_code = match cfg.tui {
+    let (exit_code, timed_out) = match cfg.tui {
         TuiMode::Statusline => {
             let master = pty_master.expect("statusline wires a pty");
-            tui::statusline::run(
-                &bus,
-                &master,
-                handle,
-                tier_label(tier),
-                &cfg.net.label(),
-                &pol.name,
+            (
+                tui::statusline::run(
+                    &bus,
+                    &master,
+                    handle,
+                    tier_label(tier),
+                    &cfg.net.label(),
+                    &pol.name,
+                ),
+                false,
             )
         }
         TuiMode::Full => {
             let out = stdout_r.expect("full mode wires stdout pipe");
             let err = stderr_r.expect("full mode wires stderr pipe");
-            tui::full::run(
-                &bus,
-                out,
-                err,
-                handle,
-                tier_label(tier),
-                &cfg.net.label(),
-                &pol.name,
+            (
+                tui::full::run(
+                    &bus,
+                    out,
+                    err,
+                    handle,
+                    tier_label(tier),
+                    &cfg.net.label(),
+                    &pol.name,
+                ),
+                false,
             )
         }
-        TuiMode::None => handle.wait(),
+        TuiMode::None => match cfg.session_timeout {
+            Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+            None => (handle.wait(), false),
+        },
     };
     #[cfg(windows)]
-    let exit_code = handle.wait();
+    let (exit_code, timed_out) = match cfg.session_timeout {
+        Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+        None => (handle.wait(), false),
+    };
 
     let duration_secs = started.elapsed().as_secs();
     bus.publish(Event::SessionEnded {
@@ -455,6 +517,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     } else {
         exit_code
     };
+    if timed_out {
+        // Mirror GNU timeout(1): 124 means "we killed it at the deadline".
+        code = 124;
+    }
     if let Some(threshold) = cfg.fail_on_block {
         if blocked_total >= threshold {
             eprintln!(
@@ -481,18 +547,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                     "blocked_file_attempts": blocked_file_total,
                     "network_denied": blocked_network_total,
                     "events_total": snap.events_total,
+                    "verify": verify_outcome
+                        .map(|report| report.status().to_string())
+                        .unwrap_or_else(|| "off".to_string()),
+                    "timed_out": timed_out,
                     "sanitizer": "BEST-EFFORT",
                 }
             })
         );
     } else {
         eprintln!(
-            "vetto: agent exited {} after {}s (blocked={}, events={}, tier={})",
+            "vetto: agent exited {} after {}s (blocked={}, events={}, tier={}{})",
             exit_code,
             duration_secs,
             blocked_total,
             snap.events_total,
             tier_label(tier),
+            if timed_out { ", TIMEOUT" } else { "" },
         );
     }
 
@@ -504,6 +575,47 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
         Some(policy::Tier::Full) => policy::Tier::Full.label(),
         Some(policy::Tier::FsOnly) => policy::Tier::FsOnly.label(),
         None => "macos-seatbelt",
+    }
+}
+
+/// Wait for the sandboxed session with a hard deadline. Returns the child
+/// exit code plus a flag telling whether vetto tore the sandbox down at the
+/// deadline (exit code 124 mirrors GNU timeout(1)). Teardown goes through
+/// `SandboxHandle::terminate`, so every platform reuses its own kill strategy.
+fn wait_with_timeout(
+    handle: &mut sandbox::SandboxHandle,
+    bus: &EventBus,
+    limit: std::time::Duration,
+) -> (i32, bool) {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if let Some(code) = handle.try_wait() {
+            return (code, false);
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!(
+                "vetto: session timeout ({}) reached; terminating the sandbox",
+                format_duration(limit)
+            );
+            bus.publish(Event::SessionTimeout {
+                ts: events::types::now(),
+            });
+            handle.terminate();
+            let code = handle.wait();
+            return (code, true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn format_duration(limit: std::time::Duration) -> String {
+    let secs = limit.as_secs();
+    if secs % 3600 == 0 && secs >= 3600 {
+        format!("{}h", secs / 3600)
+    } else if secs % 60 == 0 && secs >= 60 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
     }
 }
 
