@@ -60,13 +60,16 @@ fn relay_net_modes_are_rejected_loudly_before_spawn() {
 fn agent_is_killed_when_vetto_is_sigkilled() {
     let mut vetto = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
         .args(["--tui=none", "--", "sleep", "30"])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn vetto");
     let vetto_pid = vetto.id() as i32;
 
-    // Wait for the agent (a direct child of vetto) to appear.
+    // Wait for the agent (a direct child of vetto) to appear. On any early
+    // vetto exit, panic with vetto's stderr: a bare "it exited" hides whether
+    // the spawn chain, the watchdog, or the test setup is at fault.
     let agent_pid = loop {
         let out = std::process::Command::new("/usr/bin/pgrep")
             .args(["-P", &vetto_pid.to_string()])
@@ -77,8 +80,20 @@ fn agent_is_killed_when_vetto_is_sigkilled() {
                 break pid;
             }
         }
-        if vetto.try_wait().map(|s| s.is_some()).unwrap_or(true) {
-            panic!("vetto exited before the agent spawned");
+        match vetto.try_wait() {
+            Ok(Some(status)) => {
+                let mut diag = String::new();
+                if let Some(mut err) = vetto.stderr.take() {
+                    use std::io::Read;
+                    let _ = err.read_to_string(&mut diag);
+                }
+                panic!("vetto exited before the agent spawned: {status}; stderr: {diag}");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                panic!("try_wait errored while waiting for the agent: {error}");
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     };

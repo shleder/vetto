@@ -19,7 +19,7 @@ fn limits_reach_the_agent_ulimit() {
             "--",
             "sh",
             "-c",
-            "echo N=$(ulimit -n); echo F=$(ulimit -f)",
+            "echo N=$(ulimit -n); dd if=/dev/zero bs=2048 count=1 of=./too-big 2>/dev/null; true",
         ],
     );
     assert!(
@@ -32,8 +32,16 @@ fn limits_reach_the_agent_ulimit() {
         so.contains("N=64"),
         "RLIMIT_NOFILE not applied; stdout: {so}"
     );
-    // ulimit -f reports in 1 KiB blocks: fsize=1024 bytes -> F=1.
-    assert!(so.contains("F=1"), "RLIMIT_FSIZE not applied; stdout: {so}");
+    // RLIMIT_FSIZE=1024 must cap the 2048-byte write: SIGXFSZ kills dd at
+    // (at most) the limit, so more than 1024 bytes can never land. This is
+    // shell-independent, unlike ulimit -f (dash prints 512-byte units).
+    let written = std::fs::metadata(proj.path().join("too-big"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    assert!(
+        written <= 1024,
+        "RLIMIT_FSIZE not applied: {written} bytes written past a 1024-byte limit"
+    );
 }
 
 #[test]
