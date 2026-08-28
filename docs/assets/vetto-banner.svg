@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220" role="img" aria-label="VETTO">
+  <rect width="800" height="220" rx="18" fill="#0d1117"/>
+  <rect x="2" y="2" width="796" height="216" rx="16" fill="none" stroke="#30363d" stroke-width="4"/>
+  <text x="400" y="122" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="800" letter-spacing="22" fill="#ffffff">VETTO</text>
+  <text x="400" y="170" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" letter-spacing="3" fill="#8b949e">FAIL-CLOSED SANDBOX FOR AI CODING AGENTS</text>
+</svg>
