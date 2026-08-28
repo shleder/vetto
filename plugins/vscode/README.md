@@ -11,7 +11,7 @@ Commands:
   configured profile/network/TUI settings.
 - **vetto: Doctor** — show the effective platform tier and capabilities.
 - **vetto: Install Shell & Git Hooks** — install transparent native shims (`vetto hook install`) to isolate subagents automatically.
-- **vetto: Rescue Agent Session** — discover, diagnose, and checkpoint damaged session trees across Claude Code, Codex, and Cursor.
+- **vetto: Rescue Agent Session** — pick an adapter (Claude Code, Codex, Cursor) and scan its sessions with `vetto rescue --json scan`.
 - **vetto: Refresh Events** — reload the latest 500 JSONL events in the vetto
   activity-bar view.
 - **vetto: Open Last Report** — open the newest HTML report.

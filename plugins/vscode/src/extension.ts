@@ -143,9 +143,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("vetto.rescue", async () => {
       const adapter = await vscode.window.showQuickPick(
         [
-          { label: "claude", description: "Scan and recover Claude Code project transcripts" },
-          { label: "codex", description: "Diagnose and checkpoint Codex SQLite state trees" },
-          { label: "cursor", description: "Inspect and repair Cursor session databases" },
+          { label: "claude", description: "Scan Claude Code project transcripts" },
+          { label: "codex", description: "Scan Codex session state trees" },
+          { label: "cursor", description: "Scan Cursor session databases" },
         ],
         { title: "Select AI Agent Rescue Adapter" },
       );

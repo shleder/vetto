@@ -1,81 +1,51 @@
-<p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled OS boundary around local AI coding agents">
-</p>
+# vetto
 
-<p align="center">
-  <strong>Your AI agent runs with your tokens, your files, and your network.</strong><br>
-  vetto enforces an operator-controlled OS security boundary around it — before the process exists.<br>
-  <em>If the kernel boundary cannot be established, nothing launches.</em>
-</p>
+`vetto` puts a local AI coding agent inside an OS-level sandbox before the agent
+process starts. It is a single Rust binary: no daemon, no background service, no
+root helper, no cloud dependency, no telemetry.
 
-<p align="center">
-  <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&color=2ea44f&label=npm" alt="npm version"></a>
-  <a href="#platforms"><img src="https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-blue" alt="platforms"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
-  <a href="SECURITY.md"><img src="https://img.shields.io/badge/telemetry-zero-success" alt="Zero telemetry"></a>
-</p>
+[![CI](https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm)](https://www.npmjs.com/package/@shledery/vetto)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-<p align="center">
-  <a href="#quickstart">Quickstart</a> •
-  <a href="#why-vetto">Why Vetto</a> •
-  <a href="#subagent-isolation">Subagent Guard</a> •
-  <a href="#controls">Controls</a> •
-  <a href="#platforms">Platform Matrix</a> •
-  <a href="#rescue">Session Rescue</a> •
-  <a href="#anti-features">Guarantees</a> •
-  <a href="SECURITY.md">Security</a>
-</p>
+The one behavioural rule worth knowing: **if the requested boundary cannot be
+established on the current host, `vetto` exits instead of starting the agent.**
+There is no fallback to an unconfined process.
 
----
+## Status
 
-<a id="why-vetto"></a>
+- Latest installable release: **0.2.3** (npm `latest`, GitHub release assets).
+- `Cargo.toml` in `main` is `0.2.4`; that release is still a draft with no
+  published artifacts, so packaging recipes target `0.2.3`.
+- Linux is the most complete backend. macOS is functional but narrower.
+  Windows is experimental. See [Platform support](#platform-support).
 
-## Why Vetto
+## Install
 
-Every local AI coding agent you launch (**Codex**, **Claude Code**, **Cursor**, **Aider**, **Copilot**) inherits your complete ambient privilege: private SSH keys, cloud credentials, tokens in environment variables, read/write access to your entire filesystem, and an open outbound network route.
-
-Agent-native sandboxes provide helpful defense-in-depth, but their policies, platform support, and permission boundaries differ. **Vetto provides a unified, deterministic, kernel-enforced perimeter around the agent.**
-
-```text
-┌───────────────────────────────────────────────────────────────────────┐
-│ OPERATOR PERIMETER (VETTO)                                            │
-│                                                                       │
-│  • Landlock / Seatbelt (read-only project + secret masking)           │
-│  • Isolated PID & Network Namespaces (default-deny net)               │
-│  • Seccomp System Call Filter (blocks ptrace, io_uring, socket abuse) │
-│                                                                       │
-│     ┌───────────────────────────────────────────────────────────┐     │
-│     │ AGENT RUNTIME (Codex / Claude Code / Cursor / Aider)      │     │
-│     │                                                           │     │
-│     │   Subagent Worker ──x [BLOCKED: Parent IPC & Control]     │     │
-│     │   Tool Output     ──x [BLOCKED: Unconstrained Dumps]      │     │
-│     │                                                           │     │
-│     └───────────────────────────────────────────────────────────┘     │
-└───────────────────────────────────────────────────────────────────────┘
+```bash
+npm install --global @shledery/vetto
+vetto doctor
 ```
 
-| Security Vector | Without Vetto | With Vetto |
-| :--- | :--- | :--- |
-| **Credential Access** | Agent reads `~/.ssh`, `~/.aws`, `.env`, `.git-credentials` | **Masked & Denied**: Files mapped to `/dev/null`, directories empty |
-| **Network Exfiltration** | Unrestricted outbound HTTP/SOCKS/raw TCP connections | **Default-Off**: Pinned domain allowlist relay (Linux FULL) |
-| **Subagent Privilege Leaks** | Child tasks inherit control sockets and mutate other threads | **Isolated**: IPC sockets (`*.sock`, `*.ipc`) and state DBs blocked |
-| **Tool Output Poisoning** | Heavy base64 images and memory dumps crash CLI/TUI | **Sanitized**: Memory dumps and oversized payloads classified |
-| **Failure Mode** | Silent fallback to unconfined execution | **Fail-Closed**: If kernel sandbox cannot apply, process never launches |
+Without installing:
 
-> [!IMPORTANT]
-> **No boundary, no process.** If the requested security policy cannot be established on the current host, Vetto aborts before spawning the agent. It never falls back to an unconfined process.
+```bash
+npx @shledery/vetto doctor
+```
 
----
+Other recipes live in [`packaging/`](packaging) (Homebrew, Chocolatey, Scoop,
+AUR, RPM) and [`debian/`](debian). They are source/artifact templates, not
+published channels.
 
-### Real Capability Probing (`vetto doctor`)
+## Check the host before trusting anything
 
-Vetto inspects actual host kernel capabilities at runtime instead of assuming environment support:
+`vetto doctor` probes the running kernel instead of assuming support:
 
 ```console
 $ vetto doctor
-vetto v0.2.4 doctor
-landlock:                available (ABI 4/5)
+vetto v0.2.3 doctor
+kernel:                  6.8.0-generic
+landlock:                available (ABI 5)
 unprivileged userns:     yes
 full namespace stack:    yes
 seccomp filters:         yes
@@ -84,202 +54,209 @@ audit feed readable:     no
 chosen tier:             full
 ```
 
-<p align="center">
-  <img src="./assets/readme/boundary.svg" width="100%" alt="Vetto lifecycle and boundary validation flow">
-</p>
+Values are host-specific. `chosen tier` is `full`, `fs-only`, or
+`NONE — fail-closed: <reason>` when no boundary can be built. `audit feed
+readable: no` is common and does not weaken enforcement — the audit feed is
+observation only.
 
----
+`vetto doctor --probe` additionally verifies from inside a throwaway sandbox
+that every resolved `display_only_deny` path is actually unreachable.
 
-<a id="subagent-isolation"></a>
+## Run an agent
 
-## Subagent Capability Isolation & Socket Guard
+```bash
+# Known agent names are detected from the command and matched to a preset
+vetto -- codex exec "refactor auth module"
+vetto -- claude -p "fix the failing test"
+vetto -- aider
 
-Autonomous agents often spawn child subagents to perform background research, tool execution, or code review. In complex multi-agent graphs, subagents can inadvertently access parent IPC sockets, control plane APIs, or mutate unrelated user sessions.
+# Or select the preset explicitly
+vetto --agent codex -- codex exec "refactor auth module"
 
-Vetto isolates the entire process subtree:
+# Any command works; it does not have to be a known agent
+vetto --profile strict -- python agent.py
+```
+
+Useful flags (`vetto --help` is the authority):
+
+| Flag | Effect |
+| :--- | :--- |
+| `--profile <name>` | Built-in profile: `default`, `strict`, `permissive`, `audit` |
+| `--policy <path>` | Extra TOML layer applied after profile and project policy |
+| `--net <mode>` | `off` (default), `allowlist:<domains>`, `strict:<host:port>` |
+| `--tui <mode>` | `statusline` (default), `full`, `none` |
+| `--report <fmts>` | Post-session reports: `html,md,json,sarif` |
+| `--jsonl <path>` | Append every session event as JSON lines |
+| `--fail-on-block [n]` | Exit non-zero after `n` observed blocked attempts (default 1) |
+| `--dry-run` | Print the resolved policy and tier plan; enforce nothing |
+| `--ci` | Non-interactive: implies `--tui=none` and a JSON summary on stdout |
+| `--observe-seccomp` | Attach a best-effort blocked-attempt tap (Linux, observation only) |
+
+## Network
+
+`--net=off` is the default. Relay modes need the Linux `full` tier:
+
+```bash
+vetto --net=off -- npm test
+vetto --net=allowlist:registry.npmjs.org -- npm install
+vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
+```
+
+Platform truth:
+
+- Linux `full`: network namespace, plus a loopback CONNECT/SOCKS relay and a
+  host-side broker that resolves and pins one validated address per rule.
+- Linux `fs-only`: relay modes are rejected. `off` is enforced by a
+  socket-family seccomp filter.
+- macOS: `off` only; `--net=allowlist` is rejected.
+- Windows: `off` only.
+- `--git-ssh` is Linux-only.
+
+There is no TLS interception and no custom CA anywhere in the codebase. The
+broker moves opaque bytes and never parses TLS, SNI or SSH.
+
+## Policy
+
+Layers are merged in a fixed order, and every TOML struct rejects unknown
+fields:
+
+```text
+built-in profile → inherited built-ins → agent preset → project vetto.toml → CLI overrides
+```
+
+Built-ins live in [`profiles/`](profiles); per-agent presets in
+[`profiles/agents/`](profiles/agents) (`codex`, `claude`, `cursor`, `aider`,
+`cline`, `copilot`, `opencode`, `custom`).
+
+Because Landlock is a pure allowlist and cannot subtract a path from an allowed
+tree, secrets are handled by a separate subtractive list. A preset looks like
+this ([`profiles/agents/codex.toml`](profiles/agents/codex.toml), verbatim):
 
 ```toml
-# Built-in agent presets automatically mask parent control surfaces:
+[metadata]
+name = "codex"
+description = "Safe read-only compatibility roots for the Codex CLI."
+
+[filesystem]
+allow_read = ["$AGENT/cache", "$AGENT/logs"]
+
 [display_only_deny]
 paths = [
     "$AGENT/auth.json",
+    "$AGENT/config.toml",
     "$AGENT/app_server.sock",
     "$AGENT/*.sock",
-    "$AGENT/*.ipc",
     "$AGENT/state_*.sqlite",
 ]
 ```
 
-- **IPC Boundary Enforcement**: Subagents cannot connect to parent app servers or Unix domain sockets (`codex_app.sock`, `claude_code.sock`, `vscode-ipc-*.sock`).
-- **Debugger & DevTools Port Protection**: Network attempts targeting browser debugging ports (`9222`, `9229`, `5678`) are intercepted.
-- **Interception Tool Shield**: Spawning raw network manipulation tools (`socat`, `ncat`, `chisel`, `tcpdump`) triggers immediate high-severity security alerts.
+On the Linux `full` tier these paths are masked with a bind-mounted `/dev/null`
+or an empty tmpfs. On `fs-only` they are omitted from the generated read
+allowlist instead. Globs are expanded to concrete paths before enforcement;
+patterns never reach the kernel.
 
----
+`vetto init` inspects the project (Rust, Node, Python, Go, and agent config
+directories) and writes a starting `vetto.toml`. `vetto profiles` lists the
+built-ins.
 
-<a id="quickstart"></a>
+## Reports
 
-<p align="center">
-  <img src="./assets/readme/section-run.svg" width="100%" alt="Quickstart: Install and wrap your agent">
-</p>
-
-## Quickstart
-
-Install globally with npm (includes prebuilt native binaries for Linux, macOS, Windows):
+Events go to an in-process bus and, optionally, to disk: JSONL plus
+self-contained HTML, Markdown, JSON and SARIF. Reports are written outside the
+sandbox boundary, through no-follow directory descriptors on Unix, and pass
+through a best-effort secret sanitizer.
 
 ```bash
-npm install --global @shledery/vetto
-vetto doctor
+vetto --report html,sarif --jsonl session.jsonl -- make test
+vetto report compare session-a.json session-b.json
 ```
 
-Or run instantly without installation:
+The sanitizer is best-effort. Treat reports as potentially sensitive.
+
+## Session rescue
+
+A recovery path for interrupted or corrupted agent sessions. Adapters: `codex`,
+`claude`, `cursor`, `opencode`, `antigravity`.
 
 ```bash
-npx @shledery/vetto doctor
+vetto rescue --json scan --limit 25
+vetto rescue --adapter claude diagnose <session>
+vetto rescue --adapter cursor snapshot <session> --output ./recovered.jsonl
 ```
 
-### 2. Wrap Your Agent
+`scan`, `diagnose`, `snapshot` and `fork` do not modify agent state. Snapshots
+and forks are created exclusively, outside the original state root, and verified
+with SHA-256.
+
+`repair` is the one mutating command: it performs a transactional repair, writes
+a pre-repair backup (`~/.vetto/rescue_backups` by default) and a receipt, and
+`vetto rescue rollback --receipt <path>` reverses it.
+
+`--root` overrides the state root; otherwise each adapter resolves its own:
+
+| Adapter | Default state root |
+| :--- | :--- |
+| `codex` | `CODEX_HOME`, else `$HOME/.codex` |
+| `claude` | `CLAUDE_HOME`, else `$HOME/.claude` |
+| `cursor` | platform Cursor user directory |
+| `opencode` | `OPENCODE_HOME`, else `$HOME/.local/share/opencode` |
+| `antigravity` | `ANTIGRAVITY_HOME`, else `$HOME/.gemini/antigravity` |
+
+## Shell and Git hooks
 
 ```bash
-# OpenAI Codex
-vetto --agent codex --profile default -- codex exec "refactor database query"
-
-# Claude Code
-vetto --agent claude --profile strict -- claude -p "fix failing test"
-
-# Cursor / Aider / OpenCode / Custom script
-vetto -- aider
-vetto -- opencode
-vetto -- python my_agent.py
-```
-
-### 3. TUI & Display Modes
-
-- **Statusline (Default)**: Preserves the agent's interactive PTY while dedicating a 1-row status bar for real-time sandbox telemetry.
-- **Full Dashboard (`--tui=full`)**: Dedicated fullscreen terminal dashboard with real-time file access graph, blocked attempts, and network metrics.
-- **Headless / CI (`--tui=none` / `--ci`)**: Formatted for CI/CD pipelines, outputting structured logs and SARIF reports.
-
----
-
-<a id="controls"></a>
-
-## What the Boundary Controls
-
-| Surface | Linux (FULL) | macOS (Seatbelt) | Windows (AppContainer) |
-| :--- | :--- | :--- | :--- |
-| **Filesystem Read** | Additive allowlist via Landlock ABI 1-4 | Seatbelt profile allowlist | Capability-gated directory permissions |
-| **Secret Masking** | File-bind `/dev/null` + tmpfs overlays | Blocked via Seatbelt rules | Path exclusion validation |
-| **Process Hardening** | Seccomp: blocks `ptrace`, `bpf`, `io_uring` | Sandbox containment | Low-integrity token + Job Object |
-| **Network Perimeter** | Default-off / Verified domain allowlist relay | Default-off spawn path | Network-off token restriction |
-| **Environment Clean** | Rebuilt from minimal allowlist | Rebuilt from minimal allowlist | Rebuilt from minimal allowlist |
-| **Audit Logging** | SQLite audit log + SARIF export | SQLite audit log + SARIF export | SQLite audit log + SARIF export |
-
-### Network Relay Modes (Linux FULL)
-
-```bash
-# Complete network isolation (Default)
-vetto --net=off -- agent_command
-
-# Proxy-aware domain allowlist
-vetto --net=allowlist:api.github.com,registry.npmjs.org -- agent_command
-
-# Strict host and port binding
-vetto --net=strict:registry.npmjs.org:443 -- agent_command
-
-# Pinned Git over SSH relay
-vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
-```
-
----
-
-<a id="platforms"></a>
-
-<p align="center">
-  <img src="./assets/readme/section-platforms.svg" width="100%" alt="Platform Matrix">
-</p>
-
-## Platform Matrix
-
-| Platform | Tier | Backend Primitives | Status |
-| :--- | :--- | :--- | :--- |
-| **Linux x86_64 / ARM64** | **FULL** | Landlock + User/Mount/PID/Net/IPC namespaces + Seccomp-BPF | **Tier 1 (Complete)** |
-| **Linux (Restricted)** | **FS-ONLY** | Landlock + Seccomp (for hosts lacking unprivileged namespaces) | **Tier 1 (Filesystem-only)** |
-| **macOS Apple Silicon / Intel** | **Seatbelt** | Dynamic Seatbelt profile (`sandbox-exec`) + FSEvents observer | **Tier 1 (Native)** |
-| **Windows 11 x64** | **AppContainer** | Windows 11 Process Sandbox API + Low Integrity + Job Object | **Tier 2 (Experimental)** |
-
----
-
-<a id="rescue"></a>
-
-## Session Rescue (Recovery Engine)
-
-Vetto embeds a provider-neutral, **read-only and transactional recovery engine** for corrupted, interrupted, or damaged agent sessions across **Claude Code**, **OpenAI Codex**, and **Cursor**:
-
-```bash
-# 1. Multi-Agent Discovery: scan and diagnose local session health
-vetto rescue --adapter claude --root ~/.claude --json scan
-vetto rescue --adapter codex --root ~/.codex diagnose
-vetto rescue --adapter cursor --root ~/.config/Cursor scan
-
-# 2. Transactional WAL Checkpointing: safely clear stale locks ('already has an active writer')
-vetto rescue --adapter codex checkpoint ~/.codex/sessions/.../rollout.jsonl
-
-# 3. Non-destructive Sanitized Snapshots
-vetto rescue --adapter claude snapshot session.jsonl --output ./recovered_session.jsonl
-```
-
-- **Guarantees**: Never exposes credentials, follows symlinks, or mutates original state files without transactional receipts.
-
----
-
-<a id="hooks"></a>
-
-## Transparent Shell & Git Auto-Wrapping (`vetto hook`)
-
-Instead of manually prefixing every command, install transparent shell and Git hooks to automatically sandbox subagents:
-
-```bash
-# Install transparent shim dispatcher into ~/.local/bin/vetto-shims
-vetto hook install
-
-# Inspect active hooks and recursive sandbox barriers
+vetto hook install --scope global --git
 vetto hook status
-
-# Uninstall and restore pristine PATH
 vetto hook uninstall
 ```
 
----
+This installs shim dispatchers so that intercepted toolchain binaries are
+wrapped without prefixing every command by hand.
 
-<a id="anti-features"></a>
+## Platform support
 
-<p align="center">
-  <img src="./assets/readme/section-limits.svg" width="100%" alt="Honest Limits & Guarantees">
-</p>
+| Platform | Tier | Primitives | Notes |
+| :--- | :--- | :--- | :--- |
+| Linux x86_64 / aarch64 | `full` | Landlock, user/mount/PID/net/IPC namespaces, seccomp-BPF | Most complete backend |
+| Linux without unprivileged userns | `fs-only` | Landlock, seccomp-BPF | No mount/PID/net namespace; no relay modes |
+| macOS (Intel / Apple Silicon) | Seatbelt | `sandbox-exec` profile, FSEvents | `--net=off` only; Endpoint Security is opt-in and notify-only |
+| Windows 11 x64 | Experimental | `processmodel.dll` sandbox API, AppContainer, low integrity, Job Object | `--net=off` only; inherited stdio, so use `--tui=none` |
 
-## Honest Limits & Deliberate Anti-Features
+## Known limits
 
-### Deliberate Anti-Features
-- **No Background Daemon**: No long-running services, background daemons, or root helper processes.
-- **Zero Telemetry**: No cloud connections, analytics pings, or data collection.
-- **No TLS Interception**: No custom root CAs, MITM proxies, or certificate tampering.
-- **No Docker/VM Requirement**: Native kernel primitives execute with near-zero runtime latency.
+These are properties of the current implementation, not planned work:
 
-### Known Boundaries
-- Observation feeds (e.g. FSEvents, `/proc` poller) provide visibility, not enforcement authority. The kernel sandbox is the sole security authority.
-- Linux FS-ONLY tier provides filesystem and seccomp containment, but lacks complete PID/Network namespace isolation.
+- Observation feeds (`/proc` polling, seccomp user-notify, kernel audit,
+  FSEvents, ETW) provide visibility only. The kernel sandbox is the sole
+  enforcement authority, and losing a feed never weakens it.
+- `fs-only` has no PID or network namespace. A deliberately `setsid()`-detached
+  grandchild is a documented cleanup gap.
+- macOS relies on `sandbox-exec`, which Apple has deprecated. FSEvents reports
+  coarse directory changes, never reads or denials.
+- Windows fails before process creation when the experimental sandbox API is
+  unavailable. There is no weaker fallback tier.
+- The multi-agent runtime is Unix-only; Windows rejects a multi-agent launch.
+- No performance overhead figure is guaranteed. See
+  [docs/performance.md](docs/performance.md) for the benchmark method.
 
----
+## Deliberately absent
+
+- No background daemon, service or root helper.
+- No telemetry, analytics or network calls of its own.
+- No TLS interception, custom root CA or MITM proxy.
+- No Docker, VM or container runtime requirement.
 
 ## Documentation
 
-- [Architecture & Startup Lifecycle](ARCHITECTURE.md)
-- [Threat Model & Security Policy](SECURITY.md)
-- [Platform Backends & Capability Details](docs/platform-backends.md)
-- [CI/CD & GitHub Actions Integration](docs/ci-cd.md)
-- [Network Topologies & Broker Details](docs/network.md)
-
----
+- [Architecture and startup order](ARCHITECTURE.md)
+- [Threat model](docs/threat-model.md) and [security policy](SECURITY.md)
+- [Platform backends](docs/platform-backends.md)
+- [Network topology](docs/network.md)
+- [Profiles](docs/profiles.md)
+- [CI/CD integration](docs/ci-cd.md)
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+Apache-2.0. See [LICENSE](LICENSE). The rescue subsystem originates from the
+MIT-licensed `codex-rescue` project; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
