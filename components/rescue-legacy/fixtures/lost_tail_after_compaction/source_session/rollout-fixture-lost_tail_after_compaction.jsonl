@@ -1,5 +1,0 @@
-{"timestamp":"2026-08-12T00:00:00Z","type":"session_meta","payload":{"id":"fixture-lost_tail_after_compaction","session_id":"fixture-lost_tail_after_compaction","cwd":"fixtures/lost_tail_after_compaction/repo_actual","cli_version":"0.147.0"}}
-{"timestamp":"2026-08-12T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"fixture lost_tail_after_compaction"}}
-{"type":"response_item","payload":{"type":"function_call","name":"shell_command","call_id":"test-1","arguments":"{\"command\": \"pytest\"}"}}
-{"type":"response_item","payload":{"type":"function_call_output","call_id":"test-1","output":{"exit_code":0,"command":"pytest"}}}
-{"type":"compacted","payload":{"message":"generic summary without operational tail","replacement_history":[],"window_number":1,"window_id":"w1"}}

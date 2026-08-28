@@ -72,8 +72,9 @@ recovery without a verified adapter.
 
 ## Repository migration
 
-The historical Codex Rescue tree is imported under `components/rescue-legacy`
-with its MIT license and commit ancestry preserved. New Rust rescue code is
+The historical Codex Rescue tree is no longer vendored in this repository. Its
+MIT license and commit ancestry stay recorded in `THIRD_PARTY_NOTICES.md` and in
+the public upstream repository. New Rust rescue code is
 Apache-2.0. The original public repository remains available as compatibility
 history and points users to Vetto; active development and npm installation use
 `shleder/vetto` and `@shledery/vetto`.

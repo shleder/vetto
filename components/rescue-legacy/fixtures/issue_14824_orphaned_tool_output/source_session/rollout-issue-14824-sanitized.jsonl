@@ -1,3 +1,0 @@
-{"type":"session_meta","payload":{"id":"issue-14824-sanitized","session_id":"issue-14824-sanitized","cwd":"fixtures/issue_14824_orphaned_tool_output/repo_actual","cli_version":"0.147.0"}}
-{"type":"event_msg","payload":{"type":"user_message","message":"sanitized long tool-heavy turn"}}
-{"type":"response_item","payload":{"type":"function_call","name":"wait","call_id":"call-14824-orphaned-wait","arguments":"{\"cell_id\":\"sanitized-cell\",\"yield_time_ms\":60000}"}}

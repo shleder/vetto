@@ -1,3 +1,0 @@
-{"timestamp":"2026-08-12T00:00:00Z","type":"session_meta","payload":{"id":"fixture-kill_apply_patch","session_id":"fixture-kill_apply_patch","cwd":"fixtures/kill_apply_patch/repo_actual","cli_version":"0.147.0"}}
-{"timestamp":"2026-08-12T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"fixture kill_apply_patch"}}
-{"type":"response_item","payload":{"type":"function_call","name":"apply_patch","call_id":"call-patch","arguments":"*** Begin Patch"}}
