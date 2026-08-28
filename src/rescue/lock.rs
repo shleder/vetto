@@ -453,12 +453,9 @@ mod tests {
         let path = temp_lock_path("timeout");
         let guard = SessionLockGuard::try_acquire(&path, 30_000).expect("first lock");
 
-        let handle = std::thread::spawn({
-            let path = path.clone();
-            move || {
-                std::thread::sleep(Duration::from_millis(50));
-                drop(guard);
-            }
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(guard);
         });
 
         let guard2 = SessionLockGuard::acquire_with_timeout(&path, 30_000, Duration::from_secs(2))

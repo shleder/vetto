@@ -173,7 +173,6 @@ mod tests {
 
     #[test]
     fn test_high_entropy_masking() {
-        let secret = "aB3$9zK#mP!2qL@8vX*1yR&4wT(7jN)";
         // Strip non-entropy chars to form a token
         let token = "aB39zKmP2qL8vX1yR4wT7jN_xY9ZaBc";
         assert!(is_entropy_masked(token.as_bytes()));

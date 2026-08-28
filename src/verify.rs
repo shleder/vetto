@@ -359,7 +359,7 @@ fn parse_probe_output(output: &str, tier: Option<Tier>, checks: &mut Vec<CheckRe
             )),
             ("NET", "nobash") => checks.push(skipped(
                 "net-loopback",
-                "no bash inside the sandbox; /dev/tcp probe unavailable",
+                "no bash inside the sandbox; /dev/tcp probe unavailable".to_string(),
             )),
             ("WRITE", "denied") => checks.push(pass(
                 "write-outside",

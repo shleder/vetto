@@ -8,8 +8,7 @@
 //! - macOS: `~/Library/Application Support/Cursor/User/workspaceStorage/<workspace_id>/state.vscdb`
 //! - Windows: `%APPDATA%\Cursor\User\workspaceStorage\<workspace_id>\state.vscdb`
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,8 +19,6 @@ use std::os::unix::fs::MetadataExt;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
-
-use crate::report;
 
 use super::adapter::RescueAdapter;
 use super::lock::SessionLockGuard;

@@ -20,7 +20,6 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::types::{RepairReceipt, RollbackReceipt};
-use super::wal::SqliteWalManager;
 
 static ROLLBACK_NONCE: AtomicU64 = AtomicU64::new(0);
 

@@ -4,7 +4,6 @@
 //! All specified conditions must hold (logical AND) for the layer to be merged.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
