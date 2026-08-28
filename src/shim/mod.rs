@@ -4,6 +4,7 @@
 //! this module intercepts execution, prevents recursive sandbox nesting via `VETTO_SANDBOXED=1`,
 //! discovers project policy, and delegates to the real host binary.
 
+pub mod docker;
 pub mod registry;
 
 use anyhow::{bail, Context, Result};
@@ -136,6 +137,19 @@ pub fn find_project_root() -> Option<PathBuf> {
 
 /// Fast native dispatch entrypoint for shimmed binaries.
 pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
+    if registry::ShimRegistry::is_container_runtime(binary_name) {
+        let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let executor = registry::ShimRegistry::create_docker_executor(current_dir);
+        if let Ok(config) = executor.parse_cli_args(args) {
+            match executor.execute_sandboxed_emulation(config) {
+                Ok(status) => return Ok(status.code().unwrap_or(0)),
+                Err(e) => {
+                    tracing::debug!("vetto-docker: emulation fallback: {e}");
+                }
+            }
+        }
+    }
+
     let real_binary = find_real_binary(binary_name)
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
 

@@ -15,9 +15,12 @@ pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod events;
+pub mod governance;
 pub mod init;
 pub mod logger;
+pub mod mcp;
 pub mod multi;
+pub mod net_l7;
 pub mod policy;
 #[cfg(unix)]
 pub mod pty;
@@ -27,3 +30,5 @@ pub mod sandbox;
 pub mod shim;
 #[cfg(unix)]
 pub mod tui;
+pub mod watchdog;
+pub mod wasm;
