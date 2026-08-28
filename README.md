@@ -74,8 +74,8 @@ Vetto inspects actual host kernel capabilities at runtime instead of assuming en
 
 ```console
 $ vetto doctor
-vetto v0.2.0 doctor
-landlock:                available (ABI 4)
+vetto v0.2.3 doctor
+landlock:                available (ABI 4/5)
 unprivileged userns:     yes
 full namespace stack:    yes
 seccomp filters:         yes
@@ -217,20 +217,41 @@ vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
 
 ## Session Rescue (Recovery Engine)
 
-Vetto embeds a provider-neutral, **read-only and copy-only recovery engine** for corrupted, interrupted, or damaged agent sessions (`Codex`, `Claude Code`):
+Vetto embeds a provider-neutral, **read-only and transactional recovery engine** for corrupted, interrupted, or damaged agent sessions across **Claude Code**, **OpenAI Codex**, and **Cursor**:
 
 ```bash
-# Scan and discover local agent sessions
-vetto rescue --json scan
+# 1. Multi-Agent Discovery: scan and diagnose local session health
+vetto rescue --adapter claude --root ~/.claude --json scan
+vetto rescue --adapter codex --root ~/.codex diagnose
+vetto rescue --adapter cursor --root ~/.config/Cursor scan
 
-# Inspect session health and detect projection desync / malformed records
-vetto rescue diagnose ~/.codex/sessions/2026/08/25/session.jsonl
+# 2. Transactional WAL Checkpointing: safely clear stale locks ('already has an active writer')
+vetto rescue --adapter codex checkpoint ~/.codex/sessions/.../rollout.jsonl
 
-# Create a verified, sanitized snapshot without touching the original
-vetto rescue snapshot session.jsonl --output ./recovered_session.jsonl
+# 3. Non-destructive Sanitized Snapshots
+vetto rescue --adapter claude snapshot session.jsonl --output ./recovered_session.jsonl
 ```
 
-- **Guarantees**: Never reads credentials, follows symlinks, or overwrites existing files.
+- **Guarantees**: Never exposes credentials, follows symlinks, or mutates original state files without transactional receipts.
+
+---
+
+<a id="hooks"></a>
+
+## Transparent Shell & Git Auto-Wrapping (`vetto hook`)
+
+Instead of manually prefixing every command, install transparent shell and Git hooks to automatically sandbox subagents:
+
+```bash
+# Install transparent shim dispatcher into ~/.local/bin/vetto-shims
+vetto hook install
+
+# Inspect active hooks and recursive sandbox barriers
+vetto hook status
+
+# Uninstall and restore pristine PATH
+vetto hook uninstall
+```
 
 ---
 

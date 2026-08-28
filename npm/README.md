@@ -7,12 +7,13 @@ npm install --global @shledery/vetto
 vetto doctor
 ```
 
-The package also includes copy-only Codex session inspection:
+The package includes multi-agent session rescue and repair:
 
 ```bash
-vetto rescue --json scan
-vetto rescue diagnose SESSION
-vetto rescue snapshot SESSION --output ./recovery/session.jsonl
+vetto rescue --adapter claude --json scan
+vetto rescue --adapter codex diagnose ~/.codex/sessions/.../rollout.jsonl
+vetto rescue --adapter codex checkpoint ~/.codex/sessions/.../rollout.jsonl
+vetto rescue snapshot ~/.claude/projects/.../session.jsonl --output ./recovered.jsonl
 ```
 
 `vetto` ships the native `vetto` executable in the package. It does
@@ -20,7 +21,7 @@ not run an install script, download code at install time, or require a Rust
 toolchain. The small launcher runs on the Node.js installation that provides
 npm.
 
-Prebuilt targets in `0.2.0`:
+Prebuilt targets in `0.2.3`:
 
 | Platform | Architecture | Native path |
 | --- | --- | --- |
