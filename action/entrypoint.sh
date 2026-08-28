@@ -17,7 +17,47 @@ if [[ -z "${VETTO_ACTION_COMMAND}" ]]; then
 fi
 
 mkdir -p -- "${report_dir}"
-cargo build --locked --release --manifest-path "${manifest}"
+
+version="${VETTO_ACTION_VERSION:-0.2.3}"
+use_prebuilt="${VETTO_ACTION_USE_PREBUILT:-true}"
+prebuilt_ok=false
+
+if [[ "${use_prebuilt}" == "true" || "${use_prebuilt}" == "1" ]]; then
+  kernel="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+
+  case "${kernel}" in
+    linux) os="linux" ;;
+    darwin) os="macos" ;;
+    msys*|mingw*|cygwin*) os="windows" ;;
+    *) os="${kernel}" ;;
+  esac
+
+  case "${arch}" in
+    x86_64|amd64) target_arch="x86_64" ;;
+    aarch64|arm64) target_arch="aarch64" ;;
+    *) target_arch="${arch}" ;;
+  esac
+
+  archive_name="vetto-${os}-${target_arch}.tar.gz"
+  download_url="https://github.com/shleder/vetto/releases/download/v${version}/${archive_name}"
+  temp_dir="${RUNNER_TEMP:-/tmp}/vetto-action-bin"
+  mkdir -p "${temp_dir}"
+
+  echo "vetto action: fetching precompiled binary from ${download_url}..."
+  if curl -sSLf --retry 3 --connect-timeout 5 "${download_url}" | tar -xz -C "${temp_dir}" 2>/dev/null; then
+    if [[ -x "${temp_dir}/vetto" ]]; then
+      binary="${temp_dir}/vetto"
+      prebuilt_ok=true
+      echo "vetto action: successfully loaded native binary (${os}-${target_arch} v${version})"
+    fi
+  fi
+fi
+
+if [[ "${prebuilt_ok}" != "true" ]]; then
+  echo "vetto action: precompiled binary unavailable, building from source via cargo..."
+  cargo build --locked --release --manifest-path "${manifest}"
+fi
 
 args=(
   --ci

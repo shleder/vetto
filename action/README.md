@@ -1,8 +1,6 @@
 # vetto GitHub Action
 
-The composite action builds the checked-out vetto source with `--locked` and
-runs one command in CI. It does not download or publish a release and does not
-start a persistent service.
+Fast, zero-daemon sandbox for AI coding agents in GitHub Actions. Downloads precompiled native binaries in ~1 second (with automatic source build fallback) and runs agent commands under kernel-level isolation with SARIF security reporting.
 
 ```yaml
 permissions:
