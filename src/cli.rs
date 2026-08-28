@@ -189,12 +189,12 @@ pub enum Command {
     },
     /// Inspect and copy persisted agent sessions without modifying originals.
     Rescue {
-        /// Recovery adapter: codex, claude, cursor, opencode or antigravity.
+        /// Recovery adapter: codex, claude or cursor.
         #[arg(long, default_value = "codex", value_name = "ID")]
         adapter: String,
         /// Explicit agent state root. When omitted each adapter resolves its
-        /// own default from <ADAPTER>_HOME or that agent's conventional
-        /// per-user state directory.
+        /// own default: CODEX_HOME or $HOME/.codex, CLAUDE_HOME or
+        /// $HOME/.claude, and the platform Cursor user directory.
         #[arg(long, value_name = "PATH")]
         root: Option<PathBuf>,
         /// Emit sanitized machine-readable JSON.

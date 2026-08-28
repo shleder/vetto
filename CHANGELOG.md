@@ -11,9 +11,6 @@ packaging recipes therefore still target `0.2.3`.
 
 ### Added
 
-- Add read-only rescue adapters for OpenCode (`OPENCODE_HOME`, else
-  `$HOME/.local/share/opencode`) and Antigravity (`ANTIGRAVITY_HOME`, else
-  `$HOME/.gemini/antigravity`).
 - Grant read scope to the resolved agent binary directory and include user
   toolchains in the default profiles, so a wrapped agent can execute its own
   interpreter without a hand-written policy.

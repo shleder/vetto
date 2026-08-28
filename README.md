@@ -176,7 +176,7 @@ The sanitizer is best-effort. Treat reports as potentially sensitive.
 ## Session rescue
 
 A recovery path for interrupted or corrupted agent sessions. Adapters: `codex`,
-`claude`, `cursor`, `opencode`, `antigravity`.
+`claude`, `cursor`.
 
 ```bash
 vetto rescue --json scan --limit 25
@@ -199,8 +199,6 @@ a pre-repair backup (`~/.vetto/rescue_backups` by default) and a receipt, and
 | `codex` | `CODEX_HOME`, else `$HOME/.codex` |
 | `claude` | `CLAUDE_HOME`, else `$HOME/.claude` |
 | `cursor` | platform Cursor user directory |
-| `opencode` | `OPENCODE_HOME`, else `$HOME/.local/share/opencode` |
-| `antigravity` | `ANTIGRAVITY_HOME`, else `$HOME/.gemini/antigravity` |
 
 ## Shell and Git hooks
 
