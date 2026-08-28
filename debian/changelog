@@ -1,3 +1,9 @@
+vetto (0.2.4-1) unstable; urgency=medium
+
+  * Sync the source-only recipe with the published 0.2.4 release.
+
+ -- vetto contributors <noreply@github.com>  Fri, 28 Aug 2026 00:00:00 +0300
+
 vetto (0.2.3-1) unstable; urgency=medium
 
   * Sync the source-only recipe with the published 0.2.3 release.

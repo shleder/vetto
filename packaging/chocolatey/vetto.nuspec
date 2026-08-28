@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>vetto</id>
-    <version>0.2.3</version>
+    <version>0.2.4</version>
     <title>vetto</title>
     <authors>vetto contributors</authors>
     <projectUrl>https://github.com/shleder/vetto</projectUrl>

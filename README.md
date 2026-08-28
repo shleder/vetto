@@ -14,9 +14,10 @@ There is no fallback to an unconfined process.
 
 ## Status
 
-- Latest installable release: **0.2.3** (npm `latest`, GitHub release assets).
-- `Cargo.toml` in `main` is `0.2.4`; that release is still a draft with no
-  published artifacts, so packaging recipes target `0.2.3`.
+- Latest installable release: **0.2.4** (GitHub release assets).
+- npm `latest` is **0.2.3** until `vetto-npm-0.2.4.tgz` is published from the
+  release; the tarball and its checksum are attached to the v0.2.4 GitHub
+  release.
 - Linux is the most complete backend. macOS is functional but narrower.
   Windows is experimental. See [Platform support](#platform-support).
 
