@@ -1,10 +1,12 @@
 pub mod adapter;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod codex_index;
 pub mod codex_inventory;
 pub mod cursor;
 pub mod lock;
+pub mod opencode;
 pub mod rollback;
 pub mod safe_fs;
 pub mod types;
@@ -19,9 +21,11 @@ use crate::cli::RescueCommand;
 use crate::report;
 
 use adapter::RescueAdapter;
+use antigravity::AntigravityAdapter;
 use claude::ClaudeAdapter;
 use codex::CodexAdapter;
 use cursor::CursorAdapter;
+use opencode::OpenCodeAdapter;
 use types::{Availability, RescueContext, SessionRef};
 
 const DEFAULT_INDEX_SCAN_LIMIT: usize = 50;
@@ -31,8 +35,10 @@ fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
         "codex" => Ok(Box::new(CodexAdapter)),
         "claude" => Ok(Box::new(ClaudeAdapter)),
         "cursor" => Ok(Box::new(CursorAdapter)),
+        "opencode" => Ok(Box::new(OpenCodeAdapter)),
+        "antigravity" => Ok(Box::new(AntigravityAdapter)),
         other => bail!(
-            "unsupported rescue adapter {other:?} in {}; available: codex, claude, cursor",
+            "unsupported rescue adapter {other:?} in {}; available: codex, claude, cursor, opencode, antigravity",
             env!("CARGO_PKG_VERSION")
         ),
     }
@@ -73,6 +79,20 @@ fn default_root(adapter: &str, explicit: Option<&Path>) -> Result<PathBuf> {
                 Ok(dir)
             } else {
                 bail!("could not determine default Cursor user directory; pass --root");
+            }
+        }
+        "opencode" => {
+            if let Some(dir) = OpenCodeAdapter::default_root() {
+                Ok(dir)
+            } else {
+                bail!("could not determine default OpenCode user directory; pass --root");
+            }
+        }
+        "antigravity" => {
+            if let Some(dir) = AntigravityAdapter::default_root() {
+                Ok(dir)
+            } else {
+                bail!("could not determine default Antigravity user directory; pass --root");
             }
         }
         other => bail!("adapter {other:?} requires an explicit --root"),
