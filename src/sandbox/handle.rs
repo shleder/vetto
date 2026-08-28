@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
+use crate::sandbox::linux::proctrack;
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 #[cfg(windows)]
@@ -46,9 +48,13 @@ pub enum KillStrategy {
     #[cfg(target_os = "linux")]
     PidNsPipe(std::os::unix::io::OwnedFd),
     /// FS-ONLY / macOS: kill(-pgid) plus SIGKILL to the direct child.
-    /// Honest limit (FS-ONLY): grandchildren that setsid() away survive.
+    ///
+    /// On Linux (FS-ONLY), `sweep` additionally runs a bounded best-effort
+    /// sweep after the group kill: descendants that escaped via setsid() are
+    /// reparented to vetto (child sub-reaper) and get SIGKILLed there. On
+    /// macOS `sweep` is false and behavior is unchanged.
     #[cfg(unix)]
-    ProcessGroup { pid: i32, pgid: i32 },
+    ProcessGroup { pid: i32, pgid: i32, sweep: bool },
     /// Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
     #[cfg(windows)]
     JobObject {
@@ -82,7 +88,7 @@ impl SandboxHandle {
                     libc::kill(self.root_pid as i32, libc::SIGSTOP);
                 },
                 #[cfg(unix)]
-                Some(KillStrategy::ProcessGroup { pid, pgid }) => unsafe {
+                Some(KillStrategy::ProcessGroup { pid, pgid, .. }) => unsafe {
                     libc::kill(-*pgid, libc::SIGSTOP);
                     libc::kill(*pid, libc::SIGSTOP);
                 },
@@ -101,7 +107,7 @@ impl SandboxHandle {
                     libc::kill(self.root_pid as i32, libc::SIGCONT);
                 },
                 #[cfg(unix)]
-                Some(KillStrategy::ProcessGroup { pid, pgid }) => unsafe {
+                Some(KillStrategy::ProcessGroup { pid, pgid, .. }) => unsafe {
                     libc::kill(-*pgid, libc::SIGCONT);
                     libc::kill(*pid, libc::SIGCONT);
                 },
@@ -164,10 +170,27 @@ impl SandboxHandle {
                 #[cfg(target_os = "linux")]
                 KillStrategy::PidNsPipe(fd) => drop(fd), // EOF => inner init kills all
                 #[cfg(unix)]
-                KillStrategy::ProcessGroup { pid, pgid } => unsafe {
-                    libc::kill(-pgid, libc::SIGKILL);
-                    libc::kill(pid, libc::SIGKILL);
-                },
+                KillStrategy::ProcessGroup { pid, pgid, sweep } => {
+                    // SAFETY: group + direct-child SIGKILL on the sandbox we
+                    // spawned.
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                        libc::kill(pid, libc::SIGKILL);
+                    }
+                    // Linux FS-ONLY only: after the group kill, sweep the
+                    // reparented orphan descendants (setsid escapers) that
+                    // the group signal cannot reach. macOS keeps the
+                    // historical behavior unchanged.
+                    #[cfg(target_os = "linux")]
+                    if sweep {
+                        proctrack::sweep_reparented(
+                            proctrack::SWEEP_BUDGET_MS,
+                            self.root_pid as i32,
+                        );
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    let _ = sweep;
+                }
                 #[cfg(windows)]
                 KillStrategy::JobObject { job, process } => {
                     // Drop the job first so kill-on-close is armed while the

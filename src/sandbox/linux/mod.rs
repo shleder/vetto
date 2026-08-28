@@ -35,6 +35,7 @@ pub mod mounts;
 pub mod namespaces;
 pub mod net_relay;
 pub mod observe_seccomp;
+pub mod proctrack;
 pub mod seccomp_netblock;
 pub mod visibility;
 
@@ -1192,7 +1193,17 @@ struct FsChildArgs<'a> {
 }
 
 /// FS-ONLY: the child IS the agent. Landlock + seccomp netblock, no
-/// namespaces. Honest limit: setsid()-detached grandchildren can escape.
+/// namespaces.
+///
+/// setsid()-detached grandchildren escape `kill(-pgid)`. The gap is closed
+/// best-effort, not by the kernel: before the fork vetto registers as a
+/// child sub-reaper, so descendants that outlive the agent child — including
+/// setsid escapers — are reparented to vetto, where teardown runs a bounded
+/// sweep ([`proctrack::sweep_reparented`]) that reaps and SIGKILLs them.
+/// Residual risk: escapers survive when the sub-reaper prctl failed, when
+/// they sit in uninterruptible sleep past the sweep budget, or when a
+/// reparenting cascade outlives it. The FULL tier kills in the kernel and
+/// has no such window.
 ///
 /// SAFETY: must only be called in a freshly forked single-threaded child.
 unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
@@ -1302,6 +1313,17 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     // allowlist was rejected in LinuxSandbox::spawn: FS-ONLY always netblocks.
     let net_off = true;
 
+    // Close the setsid escape hatch (best-effort): as a child sub-reaper,
+    // vetto adopts every descendant that outlives the agent child, so the
+    // teardown sweep can reach escapers kill(-pgid) cannot. If the prctl
+    // fails the historical gap remains; say so loudly instead of silently.
+    if let Err(error) = crate::multi::isolation::set_subreaper() {
+        tracing::warn!(
+            "fs-only: PR_SET_CHILD_SUBREAPER failed ({error}); setsid-detached \
+             grandchildren may survive teardown"
+        );
+    }
+
     let (err_r, err_w) = pipe2_cloexec()?;
     let (notif_parent, notif_child) = if observe {
         let (a, b) = socketpair_cloexec()?;
@@ -1357,10 +1379,20 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
         None => None,
     };
 
+    // Arm the process-exit safety net AFTER the last fork in this process:
+    // supervise exits via std::process::exit (no Drop), so without this
+    // handler a normally-exiting FS-ONLY session would never kill(-pgid) nor
+    // sweep its reparented setsid escapers.
+    proctrack::arm_exit_sweep(pid, pid);
+
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
-            strategy: Some(KillStrategy::ProcessGroup { pid, pgid: pid }),
+            strategy: Some(KillStrategy::ProcessGroup {
+                pid,
+                pgid: pid,
+                sweep: true,
+            }),
         },
         broker_ctrl_fd: None,
         relay_port: None,
