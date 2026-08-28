@@ -7,14 +7,15 @@
 //! HONEST LIMITS (also in SECURITY.md):
 //! - Seatbelt denials are invisible to FSEvents (same enforcement-vs-
 //!   visibility gap as Linux); macOS visibility is inherently delayed.
-//! - No PDEATHSIG on macOS: v0.1 kills the agent process group only when
-//!   vetto exits normally. A SIGKILLed vetto may leave orphans (roadmap:
-//!   kqueue EVFILT_PROC watchdog).
+//! - A forked kqueue watchdog (`pdeath_watch`) SIGKILLs the agent when vetto
+//!   dies, closing the SIGKILLed-vetto orphan gap. It is best-effort: if the
+//!   fork fails the session runs without it (reported on stderr).
 //! - Relay network modes (`allowlist`/`strict`) are Linux-only; macOS
 //!   supports `--net=off` only and rejects the rest before forking.
 
 pub mod endpoint_security;
 pub mod fsevents;
+pub mod pdeath_watch;
 pub mod seatbelt;
 
 use std::ffi::CString;
@@ -270,6 +271,12 @@ fn child(
         // SAFETY: immediate exit; nothing else to report through.
         unsafe { libc::_exit(117) };
     }
+
+    // Fork the parent-death watchdog BEFORE the sandbox applies: the helper
+    // must stay unsandboxed (it needs kqueue + kill) and watches vetto via
+    // getppid() from this freshly forked child.
+    // SAFETY: scalar-only getpid/getppid calls.
+    pdeath_watch::spawn(unsafe { libc::getppid() }, unsafe { libc::getpid() });
 
     // Apply native Seatbelt sandbox via dynamic C API in memory
     if let Err(err) = seatbelt::apply_seatbelt(policy, net) {

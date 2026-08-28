@@ -305,8 +305,8 @@ These are properties of the current implementation, not planned work:
 - macOS relies on `libsandbox` SBPL profiles — the same mechanism the
   deprecated `sandbox-exec` binary drives — so treat that surface as
   Apple-deprecated. FSEvents reports coarse directory changes, never reads or
-  denials. There is no `PDEATHSIG` equivalent: if vetto is `SIGKILL`ed, the
-  agent keeps running.
+  denials. A forked kqueue watchdog kills the agent when vetto itself is
+  `SIGKILL`ed; it is best-effort and reports its own failure if it cannot arm.
 - Windows fails before process creation when the experimental sandbox API is
   unavailable, and refuses the launch entirely when the policy has deny paths
   (the SandboxSpec contract has no verified deny field). There is no weaker

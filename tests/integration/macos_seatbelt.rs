@@ -61,6 +61,55 @@ fn relay_net_modes_are_rejected_loudly_before_spawn() {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn agent_is_killed_when_vetto_is_sigkilled() {
+    let mut vetto = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
+        .args(["--tui=none", "--", "sleep", "30"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn vetto");
+    let vetto_pid = vetto.id() as i32;
+
+    // Wait for the agent (a direct child of vetto) to appear.
+    let agent_pid = loop {
+        let out = std::process::Command::new("/usr/bin/pgrep")
+            .args(["-P", &vetto_pid.to_string()])
+            .output()
+            .expect("pgrep");
+        if let Some(line) = String::from_utf8_lossy(&out.stdout).lines().next() {
+            if let Ok(pid) = line.trim().parse::<i32>() {
+                break pid;
+            }
+        }
+        if vetto.try_wait().map(|s| s.is_some()).unwrap_or(true) {
+            panic!("vetto exited before the agent spawned");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    // SIGKILL vetto itself; the pdeath watchdog must kill the agent shortly.
+    vetto.kill().expect("SIGKILL vetto");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    loop {
+        let alive = std::process::Command::new("/usr/bin/ps")
+            .args(["-p", &agent_pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !alive {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "agent {agent_pid} survived vetto's SIGKILL"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = vetto.wait();
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn macos_suite_not_applicable_on_this_platform() {
