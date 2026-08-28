@@ -3,6 +3,60 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.4] — unreleased
+
+The GitHub release for this version is still a draft and no `0.2.4` artifact is
+published to npm. `0.2.3` remains the latest installable release, and the
+packaging recipes therefore still target `0.2.3`.
+
+### Added
+
+- Add read-only rescue adapters for OpenCode (`OPENCODE_HOME`, else
+  `$HOME/.local/share/opencode`) and Antigravity (`ANTIGRAVITY_HOME`, else
+  `$HOME/.gemini/antigravity`).
+- Grant read scope to the resolved agent binary directory and include user
+  toolchains in the default profiles, so a wrapped agent can execute its own
+  interpreter without a hand-written policy.
+- Add a Claude Code slash-command plugin under `plugins/claude`.
+- Download a precompiled native binary in the GitHub Action, falling back to a
+  source build when no matching artifact exists.
+
+### Fixed
+
+- Use explicit CRLF line disciplines and flush stdout/stderr before the TUI
+  takes over the terminal, which previously produced interleaved output.
+- Restore the test schema files required by CI and correct the README badges.
+- Correct the `vetto rescue --adapter` and `--root` help text, which named only
+  two adapters and claimed a root argument was required for all but Codex.
+- Stop documenting a `vetto rescue checkpoint` command; no such subcommand
+  exists. The real set is `scan`, `diagnose`, `snapshot`, `fork`, `repair` and
+  `rollback`.
+- Align the Homebrew, Chocolatey, RPM, Debian and AUR recipes, the npm readme
+  and the VS Code lockfile with the published release instead of a mix of
+  0.2.0-alpha.2, 0.2.0, 0.2.2 and an unpublished version.
+
+### Removed
+
+- Drop the vendored `components/rescue-legacy` Python tree. Its MIT provenance
+  and commit ancestry stay recorded in `THIRD_PARTY_NOTICES.md`.
+
+## [0.2.3] — 2026-08-28
+
+### Added
+
+- Implement the 30 tracked engineering steps (phases 1-5) across the policy,
+  sandbox, observation, PTY and report modules.
+- Update the VS Code extension to expose `vetto hook install`, a rescue
+  quick-pick and a status-bar entry.
+
+### Fixed
+
+- Drain and flush the PTY master on exit and correct the carry-over token
+  check, which previously dropped trailing agent output.
+- Correct PTY redactor priority, ANSI parser reset, entropy character masking
+  and the WAL test expectations.
+- Resolve cross-platform compile types and the macOS `RcBlock` closure.
+
 ## [0.2.2] — 2026-08-27
 
 ### Added
@@ -102,7 +156,7 @@ AI coding agents.
 
 ### Distribution
 
-- Publish the cross-platform `@shleddy/vetto` npm package with bundled native
+- Publish the cross-platform `@shledery/vetto` npm package with bundled native
   executables for Linux x64/ARM64, macOS x64/Apple Silicon, and Windows x64.
 - Publish matching native archives and SHA-256 checksums in the GitHub release.
 - Keep crates.io publication out of this release; Cargo remains the build and
