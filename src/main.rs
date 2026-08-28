@@ -8,8 +8,6 @@
 
 
 use std::collections::HashMap;
-#[cfg(unix)]
-use std::io::Read;
 #[cfg(target_os = "linux")]
 use std::os::fd::IntoRawFd;
 #[cfg(unix)]
@@ -905,73 +903,33 @@ fn doctor_agent_check(agent: &str) -> Result<()> {
 }
 
 /// Build a throwaway sandbox around a probe script and verify every
-/// display_only_deny path is truly unreachable from inside.
+/// display_only_deny path is truly unreachable from inside. The spawn
+/// machinery lives in `doctor::probe`; this prints the per-path verdicts.
 #[cfg(unix)]
 fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
-    let backend = Box::new(sandbox::Backend::detect(NetMode::Off, false)?);
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("$HOME not set")?;
-    let tier = backend.tier().unwrap_or(policy::Tier::Full);
+    let tier = sandbox::Backend::detect(NetMode::Off, false)?
+        .tier()
+        .unwrap_or(policy::Tier::Full);
     let pol = policy::loader::load("default", None, &project, &home, tier)?;
     if pol.deny_resolved.is_empty() {
         println!("probe: no deny paths resolve on this machine (nothing to verify)");
         return Ok(());
     }
 
-    // The probe script reports, per path: directory contents readable or
-    // denied; file byte count or unreadable. FS-ONLY may expose directory
-    // entry names because Landlock is an access-control mechanism, not a
-    // visibility overlay, so the security property checked here is that no
-    // file content under a denied directory can be read. FULL still masks the
-    // whole directory. Overlaid files appear EMPTY (0 bytes).
-    let script = "for p in \"$@\"; do if [ -d \"$p\" ]; then leak=0; \
-                  for f in \"$p\"/* \"$p\"/.[!.]* \"$p\"/..?*; do \
-                  [ -f \"$f\" ] || continue; \
-                  if dd if=\"$f\" of=/dev/null bs=1 count=1 >/dev/null 2>&1; then leak=1; break; fi; done; \
-                  if [ \"$leak\" -eq 0 ]; then echo \"D|$p|contents-denied\"; \
-                  else echo \"D|$p|content-readable\"; fi; \
-                  else n=$(wc -c <\"$p\" 2>/dev/null) || { echo \"F|$p|unreadable\"; continue; }; \
-                  echo \"F|$p|$n\"; fi; done";
-
-    let mut agent_cmd = vec![
-        "/bin/sh".to_string(),
-        "-c".to_string(),
-        script.to_string(),
-        "vetto-probe".to_string(),
-    ];
-    for d in &pol.deny_resolved {
-        agent_cmd.push(d.path.display().to_string());
-    }
-
-    let (out_r, out_w) = pipe2()?;
-    let (err_r, err_w) = pipe2()?;
-    let opts = sandbox::SpawnOptions {
-        stdio: sandbox::StdioMode::Captured {
-            stdout_w: out_w.as_raw_fd(),
-            stderr_w: err_w.as_raw_fd(),
-        },
-        agent_cmd,
-        cwd: project.clone(),
-        env_extra: HashMap::new(),
-    };
-    let sandbox::Spawned { mut handle, .. } = backend.spawn(&pol, opts)?;
-    drop(out_w);
-    drop(err_w);
-
-    // Consume the OwnedFds into Files (taking ownership, no double close).
-    let mut output = String::new();
-    let mut f: std::fs::File = out_r.into();
-    let _ = f.read_to_string(&mut output);
-    let mut eout = String::new();
-    let mut ef: std::fs::File = err_r.into();
-    let _ = ef.read_to_string(&mut eout);
-    let _code = handle.wait();
+    let script_args: Vec<String> = pol
+        .deny_resolved
+        .iter()
+        .map(|d| d.path.display().to_string())
+        .collect();
+    let output = vetto::doctor::run_probe_script(&pol, &project, script_args)?;
 
     let mut failures = 0usize;
-    for line in output.lines() {
+    for line in output.stdout.lines() {
         let mut parts = line.splitn(3, '|');
         let (kind, path, verdict) = match (parts.next(), parts.next(), parts.next()) {
             (Some(k), Some(p), Some(v)) => (k, p, v),
@@ -1004,8 +962,8 @@ fn doctor_probe() -> Result<()> {
             _ => {}
         }
     }
-    if !eout.trim().is_empty() {
-        println!("  (probe stderr: {})", eout.trim());
+    if !output.stderr.trim().is_empty() {
+        println!("  (probe stderr: {})", output.stderr.trim());
     }
     if failures == 0 {
         println!(
