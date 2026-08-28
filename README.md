@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions/workflows/ci.yml"><img src="https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&color=2ea44f&label=npm" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/dm/%40shledery%2Fvetto?color=blue&label=downloads%2Fmo" alt="npm downloads"></a>
+  <a href="#platforms"><img src="https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-blue" alt="platforms"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/telemetry-zero-success" alt="Zero telemetry"></a>
 </p>
