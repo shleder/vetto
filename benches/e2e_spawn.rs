@@ -13,8 +13,9 @@
 //!   `perf` job fills it from a real run. Nothing in this file hardcodes a
 //!   latency expectation.
 
+// The bench is not shipped code and criterion macros trip style lints, so
+// clippy is quiet here; rustc warnings stay visible (they do not gate CI).
 #![allow(clippy::all)]
-#![allow(warnings)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
