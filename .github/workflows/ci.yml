@@ -13,7 +13,7 @@ jobs:
     name: fmt + clippy + test (ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,7 +40,7 @@ jobs:
     name: compile + syscall ABI tests (aarch64 via QEMU)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Register binfmt_misc so the aarch64 test binary executes under QEMU.
       - uses: docker/setup-qemu-action@v3
@@ -67,7 +67,7 @@ jobs:
     name: build + test (macOS arm64 and x86_64 check)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -83,7 +83,7 @@ jobs:
     name: build + test (Windows x86_64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

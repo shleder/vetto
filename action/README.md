@@ -8,7 +8,7 @@ permissions:
   security-events: write
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - uses: shleder/vetto/action@main
     with:
       command: codex exec "review this PR"
