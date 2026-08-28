@@ -2,7 +2,7 @@
   "name": "vetto-vscode",
   "displayName": "vetto",
   "description": "Run coding agents through the vetto sandbox and inspect session events.",
-  "version": "0.0.1",
+  "version": "0.2.3",
   "publisher": "shleder",
   "license": "Apache-2.0",
   "engines": {
@@ -14,6 +14,8 @@
   "activationEvents": [
     "onCommand:vetto.run",
     "onCommand:vetto.doctor",
+    "onCommand:vetto.hookInstall",
+    "onCommand:vetto.rescue",
     "onCommand:vetto.refreshEvents",
     "onCommand:vetto.openLastReport",
     "onView:vetto.events"
@@ -28,6 +30,14 @@
       {
         "command": "vetto.doctor",
         "title": "vetto: Doctor"
+      },
+      {
+        "command": "vetto.hookInstall",
+        "title": "vetto: Install Shell & Git Hooks"
+      },
+      {
+        "command": "vetto.rescue",
+        "title": "vetto: Rescue Agent Session"
       },
       {
         "command": "vetto.refreshEvents",

@@ -131,6 +131,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("vetto.hookInstall", () => {
+      const executable = vscode.workspace.getConfiguration("vetto").get<string>("executable", "vetto");
+      const terminal = vscode.window.createTerminal({ name: "vetto hook" });
+      terminal.show(true);
+      terminal.sendText(`${quote(executable)} hook install`, true);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vetto.rescue", async () => {
+      const adapter = await vscode.window.showQuickPick(
+        [
+          { label: "claude", description: "Scan and recover Claude Code project transcripts" },
+          { label: "codex", description: "Diagnose and checkpoint Codex SQLite state trees" },
+          { label: "cursor", description: "Inspect and repair Cursor session databases" },
+        ],
+        { title: "Select AI Agent Rescue Adapter" },
+      );
+      if (!adapter) return;
+
+      const executable = vscode.workspace.getConfiguration("vetto").get<string>("executable", "vetto");
+      const terminal = vscode.window.createTerminal({ name: `vetto rescue (${adapter.label})` });
+      terminal.show(true);
+      terminal.sendText(`${quote(executable)} rescue --adapter ${adapter.label} --json scan`, true);
+    }),
+  );
+
+  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
+  statusBarItem.text = "$(shield) Vetto";
+  statusBarItem.tooltip = "Vetto: Operator OS Sandbox & Agent Protection (Click to Run)";
+  statusBarItem.command = "vetto.run";
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("vetto.refreshEvents", () => provider.refresh()),
   );
 
