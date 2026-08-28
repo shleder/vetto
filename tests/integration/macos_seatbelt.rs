@@ -58,8 +58,16 @@ fn relay_net_modes_are_rejected_loudly_before_spawn() {
 #[cfg(target_os = "macos")]
 #[test]
 fn agent_is_killed_when_vetto_is_sigkilled() {
+    // Same environment contract as every other macOS session test: the
+    // isolated harness HOME and a scratch cwd. Running against the runner's
+    // real $HOME and the repo checkout makes this the only session whose
+    // policy surface differs, which is exactly the kind of divergence a
+    // flaky-looking failure feeds on.
+    let proj = crate::common::TempProject::new("pdeath-watch");
     let mut vetto = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
         .args(["--tui=none", "--", "sleep", "30"])
+        .current_dir(proj.path())
+        .env("HOME", crate::common::test_home())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())

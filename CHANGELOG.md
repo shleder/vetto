@@ -16,7 +16,9 @@ Keep a Changelog; versioning follows SemVer.
   warn and ignore it. A `session_timeout` event lands in JSONL and reports.
 - `--limits cpu=,as=,procs=,nofile=,fsize=` resource ceilings merged
   strictest-wins with policy limits; enforced via rlimits on Linux, the Job
-  Object on Windows and setrlimit in the child on macOS.
+  Object on Windows and best-effort setrlimit in the macOS child (Darwin
+  refuses several ceilings per host configuration; refusals are surfaced on
+  stderr, never silently ignored).
 - `vetto policy explain` prints the effective merged policy (tier, network,
   roots, masked secrets, limits, environment); `vetto policy lint` flags
   dangerous configurations (home-wide write/read roots, no-op denies, missing
