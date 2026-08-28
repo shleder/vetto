@@ -71,3 +71,33 @@ Performance targets in the mega-spec are acceptance goals, not measured facts.
 They may be marked achieved only when the benchmark artifacts are reproducible
 on all claimed platforms. Until then documentation must say “not yet measured”
 rather than inventing a number.
+
+## End-to-end spawn overhead
+
+`benches/e2e_spawn.rs` measures the whole sandbox life cycle as a black box:
+spawn `vetto --tui=none -- /bin/true`, wait for exit, and require a success
+status. Each sample pays policy loading, tier selection, sandbox installation
+and teardown, so the number is a total per-session cost, not a hot-path cost.
+A session that exits non-zero panics the bench: a broken sandbox is never
+recorded as a measurement.
+
+Method:
+
+- The host tier is probed once with `vetto doctor`. A `full` host measures
+  both the `full` variant and the `fs-only` variant (forced with
+  `VETTO_FORCE_TIER=fs-only`); an `fs-only` host measures `fs-only` only; a
+  `NONE` (fail-closed) host records nothing and exits successfully.
+- Criterion runs the `e2e-spawn-exit` group with 20 samples per variant after
+  a 2 s warm-up. Independently of criterion, a 30-sample wall-clock loop per
+  variant records each run and writes the median and p95 in milliseconds to
+  the path in `VETTO_PERF_OUT` for the CI compare step.
+- Reference numbers come from the CI `perf` job on GitHub-hosted ubuntu
+  runners only; medians from that job are the reference points. Do not
+  promote a laptop run to a baseline.
+
+The committed baseline (`benches/baseline/perf-baseline.json`) starts empty on
+purpose: it is filled from a real CI run of the `perf` job, never from local
+hardware. Until that first run lands there are no published spawn-overhead
+numbers and the compare step only records. Once variants exist, the gate is a
+gross regression check — a variant fails when its latest median exceeds 3.0x
+its baseline median — not a tight latency budget.

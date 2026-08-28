@@ -112,3 +112,84 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  perf:
+    name: e2e spawn overhead + baseline gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --all-features
+
+      # The bench resolves the vetto binary itself (CARGO_BIN_EXE_vetto) and
+      # writes its 30-sample median/p95 summary to VETTO_PERF_OUT. It exits 0
+      # without recording anything when the host has no usable sandbox tier,
+      # so an incapable runner must not fail this job.
+      - name: Run e2e spawn benchmark
+        env:
+          VETTO_PERF_OUT: ${{ runner.temp }}/vetto-perf-latest.json
+        run: cargo bench --bench e2e_spawn --all-features
+
+      # Gate: the committed baseline stays empty until this job has produced
+      # one real run; only then do 3.0x median regressions fail the job.
+      - name: Compare against perf baseline
+        env:
+          VETTO_PERF_LATEST: ${{ runner.temp }}/vetto-perf-latest.json
+          VETTO_PERF_BASELINE: ${{ github.workspace }}/benches/baseline/perf-baseline.json
+        run: |
+          python3 - <<'PY' "$VETTO_PERF_LATEST" "$VETTO_PERF_BASELINE"
+          import json
+          import sys
+
+          latest_path, baseline_path = sys.argv[1], sys.argv[2]
+
+          with open(latest_path, encoding="utf-8") as fh:
+              latest = json.load(fh)
+          with open(baseline_path, encoding="utf-8") as fh:
+              baseline = json.load(fh)
+
+          base = baseline.get("variants") or {}
+          if not base:
+              print("no baseline yet; recording only")
+              sys.exit(0)
+
+          current = latest.get("variants") or {}
+          failures = []
+          for name in sorted(base):
+              reference = base[name].get("median_ms")
+              if reference is None or reference <= 0:
+                  print(f"baseline variant '{name}' has no usable median_ms")
+                  sys.exit(1)
+              if name not in current:
+                  print(f"variant '{name}' missing from latest perf summary")
+                  failures.append(name)
+                  continue
+              median = current[name].get("median_ms")
+              if median is None:
+                  print(f"latest variant '{name}' has no median_ms")
+                  failures.append(name)
+                  continue
+              if median > 3.0 * reference:
+                  print(
+                      f"variant '{name}': median {median} ms exceeds "
+                      f"3.0x baseline {reference} ms"
+                  )
+                  failures.append(name)
+
+          if failures:
+              print(f"perf gate failed: {', '.join(failures)}")
+              sys.exit(1)
+          print("perf gate passed")
+          PY
+
+      - name: Upload perf summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-summary
+          path: ${{ runner.temp }}/vetto-perf-latest.json
