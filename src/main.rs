@@ -129,7 +129,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         include_project_policy: true,
         ..policy::loader::PolicyLoadOptions::default()
     };
-    let pol = policy::loader::load_with_options(
+    let mut pol = policy::loader::load_with_options(
         &cfg.profile,
         cfg.policy_path.as_deref(),
         &project,
