@@ -5,6 +5,22 @@ in the current specification. It is not a compatibility promise; supported
 capabilities are determined by `vetto doctor`, platform documentation and the
 test matrix for the exact revision being used.
 
+## In progress — hardening/v0.3 branch
+
+- boundary verification battery (`vetto verify`, `--verify` preflight that
+  refuses to start an agent on any leak);
+- `--timeout` session watchdog with guaranteed tree teardown (subreaper sweep
+  for fs-only setsid grandchildren, macOS parent-death watchdog already
+  merged);
+- `--limits` resource ceilings with Linux/Windows/macOS parity;
+- `vetto policy explain` / `vetto policy lint`;
+- Windows: deny-path overlap analysis instead of blanket refusal, Job Object
+  memory/process limits, first enforcement integration tests;
+- black-box e2e spawn benchmark with a CI perf job (baseline fills from CI,
+  never from laptops);
+- pin the llvm-cov `--fail-under` threshold from the first real coverage
+  number, then treat regressions as build failures.
+
 ## Stabilization gate
 
 - keep the fail-closed Linux, macOS and Windows capability probes covered by
