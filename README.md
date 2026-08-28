@@ -297,7 +297,9 @@ These are properties of the current implementation, not planned work:
 - `fs-only` has no mount namespace. To keep carved-out secrets unreadable, read
   permission is stripped from write-root rules, and the honest cost is that a
   file created **directly at a write root** (outside enumerated clean
-  subdirectories) cannot be read back in the same session. It also has no PID
+  subdirectories) cannot be read back in the same session, and directory entry
+  names under denied paths stay visible. vetto prints this degradation warning
+  at session start whenever the policy has deny paths. It also has no PID
   namespace: a deliberately `setsid()`-detached grandchild is a documented
   cleanup gap.
 - macOS relies on `libsandbox` SBPL profiles — the same mechanism the

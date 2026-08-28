@@ -137,6 +137,18 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         tier_for_policy,
         &policy_options,
     )?;
+    if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
+        pol.warnings.push(
+            "fs-only tier: display_only_deny paths cannot be masked with mount \
+             overlays here. They are carved out of the read allowlist instead: \
+             directory entry NAMES may stay visible (content stays denied), and \
+             a file created directly at a write root cannot be read back in this \
+             session because read is stripped from write-root rules to keep \
+             carved-out secrets unreadable. Prefer the full tier if either \
+             property matters for this session."
+                .to_string(),
+        );
+    }
     use std::io::Write;
     for w in &pol.warnings {
         eprint!("vetto: policy warning: {w}\r\n");
@@ -307,6 +319,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                           by load-time policy rules, not mount overlays"
                     .to_string(),
             });
+            if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
+                bus.publish(Event::Notice {
+                    ts: events::types::now(),
+                    message: "fs-only tier: denied secret paths are allowlist-carved, \
+                              not masked — entry names may be visible and files created \
+                              directly at a write root cannot be read back this session"
+                        .to_string(),
+                });
+            }
         }
     }
 
