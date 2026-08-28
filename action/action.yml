@@ -20,6 +20,14 @@ inputs:
     description: Directory for generated reports.
     required: false
     default: .vetto/reports
+  version:
+    description: Vetto release version to use (e.g. 0.2.3).
+    required: false
+    default: "0.2.3"
+  use-prebuilt:
+    description: Download precompiled native binary instead of compiling from source.
+    required: false
+    default: "true"
   fail-on-block:
     description: "false disables; true fails at one observed block; a positive integer sets the threshold."
     required: false
@@ -58,6 +66,8 @@ runs:
         VETTO_ACTION_NET: ${{ inputs.net }}
         VETTO_ACTION_REPORT: ${{ inputs.report }}
         VETTO_ACTION_REPORT_DIR: ${{ inputs.report-dir }}
+        VETTO_ACTION_VERSION: ${{ inputs.version }}
+        VETTO_ACTION_USE_PREBUILT: ${{ inputs.use-prebuilt }}
         VETTO_ACTION_FAIL_ON_BLOCK: ${{ inputs.fail-on-block }}
       run: bash "$GITHUB_ACTION_PATH/entrypoint.sh"
 
