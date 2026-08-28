@@ -136,22 +136,17 @@ $ vetto --profile strict -- codex exec "inspect credentials & deploy"
 
 ## Quickstart
 
-Install via Homebrew, shell script, or npm, then wrap any agent command with `vetto --`:
-
-### 1. Installation
+Install globally with npm (includes prebuilt native binaries for Linux, macOS, Windows):
 
 ```bash
-# macOS & Linux via Homebrew
-brew install shleder/tap/vetto
-
-# Or standalone shell installer (Linux & macOS)
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/scripts/install.sh | sh
-
-# Or global install via npm (includes prebuilt binaries for Linux, macOS, Windows)
 npm install --global @shledery/vetto
-
-# Verify host kernel capabilities
 vetto doctor
+```
+
+Or run instantly without installation:
+
+```bash
+npx @shledery/vetto doctor
 ```
 
 ### 2. Wrap Your Agent
