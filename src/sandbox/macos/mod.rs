@@ -90,7 +90,8 @@ impl MacosSandbox {
         // SIGABRT, no stderr). The parent has no threads yet, so a fork
         // here is safe, and the child pid is exactly what the helper needs
         // to watch. The helper closes every inherited descriptor above 2.
-        pdeath_watch::spawn(libc::getpid(), pid);
+        // SAFETY: scalar-only getpid.
+        pdeath_watch::spawn(unsafe { libc::getpid() }, pid);
 
         // Same readiness protocol as the Linux chains.
         let mut b = [0u8; 1];
