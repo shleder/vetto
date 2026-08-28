@@ -1,8 +1,10 @@
-# vetto
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled OS boundary around local AI coding agents">
+</p>
 
 <p align="center">
   <strong>Your AI agent runs with your tokens, your files, and your network.</strong><br>
-  <code>vetto</code> enforces an operator-controlled OS security boundary around it — before the process exists.<br>
+  vetto enforces an operator-controlled OS security boundary around it — before the process exists.<br>
   <em>If the kernel boundary cannot be established, nothing launches.</em>
 </p>
 
@@ -82,13 +84,9 @@ audit feed readable:     no
 chosen tier:             full
 ```
 
-```text
-  01. RESOLVE POLICY       02. PROBE HOST          03. INSTALL BOUNDARY      04. EXECUTE AGENT
-┌─────────────────────┐  ┌────────────────────┐  ┌───────────────────────┐  ┌─────────────────────┐
-│ Base + Org + Local  │─▶│ Kernel Landlock    │─▶│ Apply VFS & Net Gates │─▶│ Spawn Agent Subtree │
-│ Rules & Deny Config │  │ ABI v1–5 & Seccomp │  │ [Fail-Closed Halt]    │  │ (Inherited Sandbox) │
-└─────────────────────┘  └────────────────────┘  └───────────────────────┘  └─────────────────────┘
-```
+<p align="center">
+  <img src="./assets/readme/boundary.svg" width="100%" alt="Vetto lifecycle and boundary validation flow">
+</p>
 
 ---
 
@@ -120,19 +118,9 @@ paths = [
 
 <a id="quickstart"></a>
 
-```console
-$ vetto --profile strict -- codex exec "inspect credentials & deploy"
-
-[vetto] OS sandbox applied: Landlock ABI v5, Seccomp-BPF, UserNS (0.8ms)
-[agent] Reading credentials: cat ~/.ssh/id_rsa ~/.aws/credentials
-[vetto] [BLOCKED] VFS Mask: ~/.ssh/id_rsa mapped to /dev/null (0 bytes returned)
-[agent] Probing AWS metadata: curl -s http://169.254.169.254/latest/meta-data/
-[vetto] [BLOCKED] Net Deny: 169.254.169.254:80 [EPERM: Network unreachable]
-[agent] Dumping tokens: OPENAI_API_KEY=sk-proj-9A8f7B2... ghp_9381kLz...
-[vetto] [PTY REDACT] Entropy filter scrubbed 2 secret tokens -> [REDACTED]
-─────────────────────────────────────────────────────────────────────────────
-✓ Operator boundary held: 0 leaks, 0 disk bloat, 0 unconfined processes.
-```
+<p align="center">
+  <img src="./assets/readme/section-run.svg" width="100%" alt="Quickstart: Install and wrap your agent">
+</p>
 
 ## Quickstart
 
@@ -205,6 +193,10 @@ vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
 
 <a id="platforms"></a>
 
+<p align="center">
+  <img src="./assets/readme/section-platforms.svg" width="100%" alt="Platform Matrix">
+</p>
+
 ## Platform Matrix
 
 | Platform | Tier | Backend Primitives | Status |
@@ -259,6 +251,10 @@ vetto hook uninstall
 ---
 
 <a id="anti-features"></a>
+
+<p align="center">
+  <img src="./assets/readme/section-limits.svg" width="100%" alt="Honest Limits & Guarantees">
+</p>
 
 ## Honest Limits & Deliberate Anti-Features
 
