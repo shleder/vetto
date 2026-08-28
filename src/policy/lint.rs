@@ -268,7 +268,10 @@ mod tests {
             allow_write: vec![home.join("sub")],
             ..Policy::default()
         };
-        assert!(evaluate(&policy, &home).is_empty(), "child root is fine");
+        assert!(
+            rule_home_write_root(&policy, &home).is_none(),
+            "child root is fine"
+        );
 
         let policy = Policy {
             allow_write: vec![home.clone()],
@@ -305,7 +308,10 @@ mod tests {
             allow_read: vec![home.join(".cargo")],
             ..Policy::default()
         };
-        assert!(evaluate(&policy, &home).is_empty(), "narrow read is fine");
+        assert!(
+            rule_home_blanket_read(&policy, &home).is_none(),
+            "narrow read is fine"
+        );
 
         let policy = Policy {
             allow_read: vec![home.clone()],
@@ -332,10 +338,7 @@ mod tests {
 
         policy.allow_read = vec![root.clone()];
         policy.deny_resolved = vec![entry(&root.join("secret.env"), false)];
-        assert!(
-            evaluate(&policy, neutral_home).is_empty(),
-            "covered deny is fine"
-        );
+        assert!(rule_useless_deny(&policy).is_none(), "covered deny is fine");
 
         let outside = scratch("useless-deny-outside");
         policy.deny_resolved = vec![entry(&outside.join("elsewhere.pem"), false)];

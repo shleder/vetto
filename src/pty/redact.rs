@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RedactionStyle {
     /// In-place padding with '*' (preserves exact terminal column width for TUIs).
+    #[default]
     PadMask,
     /// Marker string substitution (e.g., "[REDACTED]").
     Marker,
