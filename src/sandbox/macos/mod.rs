@@ -12,9 +12,12 @@
 //!   fork fails the session runs without it (reported on stderr).
 //! - Relay network modes (`allowlist`/`strict`) are Linux-only; macOS
 //!   supports `--net=off` only and rejects the rest before forking.
+//! - Policy rlimits (CPU, address space, processes, open files, file size)
+//!   are applied in the child before exec, matching the Linux tier.
 
 pub mod endpoint_security;
 pub mod fsevents;
+pub mod limits;
 pub mod pdeath_watch;
 pub mod seatbelt;
 
@@ -97,7 +100,14 @@ impl MacosSandbox {
         Ok(Spawned {
             handle: SandboxHandle {
                 root_pid: pid as u32,
-                strategy: Some(KillStrategy::ProcessGroup { pid, pgid: pid }),
+                strategy: Some(KillStrategy::ProcessGroup {
+                    pid,
+                    pgid: pid,
+                    // No sub-reaper sweep on macOS: kill(-pgid) semantics
+                    // are unchanged. setsid escapers remain the documented
+                    // macOS gap (no pidns, no PR_SET_CHILD_SUBREAPER use).
+                    sweep: false,
+                }),
             },
             broker_ctrl_fd: None,
             relay_port: None,
@@ -266,6 +276,14 @@ fn child(
         }
         StdioMode::Inherit => {}
     }
+
+    // Policy rlimits in the child, same soft=hard semantics as the Linux
+    // tier: an explicit value can never be raised back by the agent after
+    // exec. Runs after stdio setup and before the watchdog / Seatbelt chain.
+    if let Err(e) = limits::apply_before_exec(&policy.limits) {
+        child_fail(err_w, 121, &format!("resource limits: {e}"));
+    }
+
     if let Err(e) = std::env::set_current_dir(&opts.cwd) {
         let _ = e;
         // SAFETY: immediate exit; nothing else to report through.
