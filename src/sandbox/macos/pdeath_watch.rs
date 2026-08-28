@@ -28,6 +28,10 @@
 /// `vetto_pid` is the process to watch (normally `getppid()` from the caller),
 /// `agent_pid` is the process to kill (normally `getpid()` pre-exec).
 pub fn spawn(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) {
+    // Diagnostic kill-switch: isolates the watchdog when bisecting a failure.
+    if std::env::var_os("VETTO_NO_PDEATH_WATCH").is_some() {
+        return;
+    }
     if vetto_pid <= 0 || agent_pid <= 0 || vetto_pid == agent_pid {
         return;
     }

@@ -305,8 +305,13 @@ fn child(
     // default profile unusable. Enforced values still cannot be raised back
     // by the agent after exec; refusals are surfaced, not hidden.
     child_trace("limits-about-to-apply");
-    for refused in limits::apply_before_exec(&policy.limits) {
-        eprintln!("vetto: {refused}");
+    // Diagnostic kill-switch: isolates the setrlimit calls when bisecting.
+    if std::env::var_os("VETTO_NO_MAC_LIMITS").is_some() {
+        child_trace("limits-skipped-by-env");
+    } else {
+        for refused in limits::apply_before_exec(&policy.limits) {
+            eprintln!("vetto: {refused}");
+        }
     }
     child_trace("limits-done");
 
@@ -341,7 +346,10 @@ fn child(
 
     // SAFETY: execve with NUL-terminated vectors built above.
     unsafe { libc::execve(prog.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
-    // SAFETY: execve failed; nothing more to say.
+    child_trace("execve-returned");
+    // SAFETY: execve failed; surface errno for post-mortem, then exit.
+    let errno = std::io::Error::last_os_error();
+    child_trace(&format!("execve-errno: {errno}"));
     unsafe { libc::_exit(127) }
 }
 
