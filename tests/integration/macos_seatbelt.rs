@@ -68,6 +68,7 @@ fn agent_is_killed_when_vetto_is_sigkilled() {
         .args(["--tui=none", "--", "sleep", "30"])
         .current_dir(proj.path())
         .env("HOME", crate::common::test_home())
+        .env("VETTO_CHILD_TRACE", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())

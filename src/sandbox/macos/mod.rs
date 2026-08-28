@@ -201,6 +201,16 @@ fn dup2_to(fd: RawFd, target: RawFd) -> Result<(), String> {
     }
 }
 
+/// Pre-exec stage tracer, enabled per-session with VETTO_CHILD_TRACE=1.
+/// The child cannot use logging machinery after fork; a raw stderr line is
+/// the only honest breadcrumb trail when a stage dies without a message
+/// (e.g. a silent SIGABRT from a platform library).
+fn child_trace(stage: &str) {
+    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
+        eprintln!("vetto: child stage: {stage}");
+    }
+}
+
 fn child(
     policy: &Policy,
     net: &NetMode,
@@ -209,6 +219,7 @@ fn child(
     err_w: RawFd,
     opts: &SpawnOptions,
 ) -> ! {
+    child_trace("entered");
     let mut keep: Vec<RawFd> = vec![err_w];
     match opts.stdio {
         StdioMode::Pty { slave_fd } => keep.push(slave_fd),
@@ -293,24 +304,30 @@ fn child(
     // configuration, and failing every session over that would make the
     // default profile unusable. Enforced values still cannot be raised back
     // by the agent after exec; refusals are surfaced, not hidden.
+    child_trace("limits-about-to-apply");
     for refused in limits::apply_before_exec(&policy.limits) {
         eprintln!("vetto: {refused}");
     }
+    child_trace("limits-done");
 
     if let Err(e) = std::env::set_current_dir(&opts.cwd) {
         let _ = e;
         // SAFETY: immediate exit; nothing else to report through.
         unsafe { libc::_exit(117) };
     }
+    child_trace("cwd-set");
 
     // Apply native Seatbelt sandbox via dynamic C API in memory
     if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
         child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
     }
+    child_trace("seatbelt-applied");
 
+    child_trace("ready-about-to-send");
     // Tell the parent we are ready, then execve agent binary directly.
     // SAFETY: raw write of one byte.
     let _ = unsafe { libc::write(err_w, b"R".as_ptr().cast(), 1) };
+    child_trace("ready-sent");
     close_all_except(&[0, 1, 2]);
 
     let prog = match agent.first() {
