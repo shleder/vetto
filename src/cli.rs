@@ -363,8 +363,9 @@ mod tests {
 
     #[test]
     fn hook_subcommand_parses_install_and_status() {
-        let install_cli = Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
-            .expect("hook install parsing");
+        let install_cli =
+            Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
+                .expect("hook install parsing");
         assert!(matches!(
             install_cli.command,
             Some(Command::Hook {
@@ -391,8 +392,9 @@ mod tests {
 
     #[test]
     fn shim_subcommand_parses_binary_and_args() {
-        let cli = Cli::try_parse_from(["vetto", "shim", "node", "--", "index.js", "--port", "3000"])
-            .expect("shim parsing");
+        let cli =
+            Cli::try_parse_from(["vetto", "shim", "node", "--", "index.js", "--port", "3000"])
+                .expect("shim parsing");
         assert!(matches!(
             cli.command,
             Some(Command::Shim {

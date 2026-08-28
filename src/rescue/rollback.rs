@@ -78,7 +78,10 @@ pub fn atomic_commit_bytes(target_path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Rollback a previous repair by verifying receipt hashes and restoring
 /// the pre-repair backup archive atomically.
-pub fn rollback_repair(receipt_path: &Path, target_override: Option<&Path>) -> Result<RollbackReceipt> {
+pub fn rollback_repair(
+    receipt_path: &Path,
+    target_override: Option<&Path>,
+) -> Result<RollbackReceipt> {
     let receipt_bytes = fs::read(receipt_path)
         .with_context(|| format!("read repair receipt {}", receipt_path.display()))?;
     let receipt: RepairReceipt = serde_json::from_slice(&receipt_bytes)
@@ -213,7 +216,11 @@ mod tests {
         };
 
         let receipt_path = dir.join("receipt.json");
-        fs::write(&receipt_path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
+        fs::write(
+            &receipt_path,
+            serde_json::to_string_pretty(&receipt).unwrap(),
+        )
+        .unwrap();
 
         let rb_receipt = rollback_repair(&receipt_path, Some(&target)).expect("rollback");
         assert_eq!(rb_receipt.restored_sha256, receipt.original_sha256);

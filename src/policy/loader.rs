@@ -21,7 +21,6 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
-use crate::error::VettoError;
 use super::checker;
 use super::conditions::{self, ConditionContext, RawConditions};
 use super::defaults;
@@ -29,6 +28,7 @@ use super::glob_resolve::{self, Vars};
 use super::types::{
     DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, Tier,
 };
+use crate::error::VettoError;
 
 /// Enumeration budget for FS-ONLY project masking (entries, not bytes).
 const FS_ONLY_ENUMERATION_BUDGET: usize = 20_000;
@@ -187,7 +187,9 @@ pub struct MergedPolicy {
 impl MergedPolicy {
     fn apply(&mut self, layer: &RawLayer, source_kind: PolicySourceKind) -> Result<()> {
         // Check enterprise lockdown violation if currently locked down
-        if self.is_immutable && source_kind.precedence() > PolicySourceKind::SystemGlobal.precedence() {
+        if self.is_immutable
+            && source_kind.precedence() > PolicySourceKind::SystemGlobal.precedence()
+        {
             // Cannot override security immutability or weaken limits
             if let Some(sec) = &layer.security {
                 if sec.immutable == Some(false) {
@@ -429,7 +431,14 @@ impl LayeredPolicyLoader {
                     if let Ok(text) = std::fs::read_to_string(&path) {
                         let label = format!("system:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
-                        merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::SystemGlobal)?;
+                        merge_layer(
+                            &layer,
+                            &label,
+                            &context,
+                            &mut stack,
+                            &mut merged,
+                            PolicySourceKind::SystemGlobal,
+                        )?;
                     }
                 }
             }
@@ -449,7 +458,14 @@ impl LayeredPolicyLoader {
                     if let Ok(text) = std::fs::read_to_string(&path) {
                         let label = format!("user:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
-                        merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::UserGlobal)?;
+                        merge_layer(
+                            &layer,
+                            &label,
+                            &context,
+                            &mut stack,
+                            &mut merged,
+                            PolicySourceKind::UserGlobal,
+                        )?;
                     }
                 }
             }
@@ -474,7 +490,14 @@ impl LayeredPolicyLoader {
             if base.environment.is_none() && merged.pass_through.is_empty() {
                 merged.pass_through = defaults::default_env_passthrough();
             }
-            merge_layer(&base, base_profile, &context, &mut stack, &mut merged, PolicySourceKind::BuiltinProfile)?;
+            merge_layer(
+                &base,
+                base_profile,
+                &context,
+                &mut stack,
+                &mut merged,
+                PolicySourceKind::BuiltinProfile,
+            )?;
         }
 
         // -------------------------------------------------------------------
@@ -538,7 +561,14 @@ impl LayeredPolicyLoader {
                 })?;
                 let label = path.display().to_string();
                 let layer = parse_layer(&text, &label)?;
-                merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::Repository)?;
+                merge_layer(
+                    &layer,
+                    &label,
+                    &context,
+                    &mut stack,
+                    &mut merged,
+                    PolicySourceKind::Repository,
+                )?;
                 applied_project_path = Some(path);
             } else if explicit {
                 let path = options
@@ -556,7 +586,8 @@ impl LayeredPolicyLoader {
                     if let Ok(entries) = std::fs::read_dir(&fragments_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+                            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml")
+                            {
                                 fragment_files.push(path);
                             }
                         }
@@ -567,7 +598,14 @@ impl LayeredPolicyLoader {
                         if let Ok(text) = std::fs::read_to_string(&frag_path) {
                             let label = frag_path.display().to_string();
                             let layer = parse_layer(&text, &label)?;
-                            merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::RepositoryFragment)?;
+                            merge_layer(
+                                &layer,
+                                &label,
+                                &context,
+                                &mut stack,
+                                &mut merged,
+                                PolicySourceKind::RepositoryFragment,
+                            )?;
                         }
                     }
                 }
@@ -591,7 +629,14 @@ impl LayeredPolicyLoader {
                 if let Ok(text) = std::fs::read_to_string(&path) {
                     let label = format!("override:{}", path.display());
                     let layer = parse_layer(&text, &label)?;
-                    merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::LocalOverride)?;
+                    merge_layer(
+                        &layer,
+                        &label,
+                        &context,
+                        &mut stack,
+                        &mut merged,
+                        PolicySourceKind::LocalOverride,
+                    )?;
                 }
             }
         }
@@ -609,7 +654,14 @@ impl LayeredPolicyLoader {
                     .with_context(|| format!("failed to read policy file {}", path.display()))?;
                 let label = format!("cli:{}", path.display());
                 let layer = parse_layer(&text, &label)?;
-                merge_layer(&layer, &label, &context, &mut stack, &mut merged, PolicySourceKind::CliExplicit)?;
+                merge_layer(
+                    &layer,
+                    &label,
+                    &context,
+                    &mut stack,
+                    &mut merged,
+                    PolicySourceKind::CliExplicit,
+                )?;
             }
         }
 
@@ -672,7 +724,7 @@ pub fn load(
     project: &Path,
     home: &Path,
     tier: Tier,
-    ) -> Result<Policy> {
+) -> Result<Policy> {
     let options = PolicyLoadOptions {
         include_project_policy: false,
         include_system_policy: false,
@@ -861,14 +913,18 @@ fn build_policy(
     // 1. Remove deny_write paths from allow_write
     if !deny_write_resolved.is_empty() {
         allow_write_resolved.retain(|allowed| {
-            !deny_write_resolved.iter().any(|denied| allowed == denied || allowed.starts_with(denied))
+            !deny_write_resolved
+                .iter()
+                .any(|denied| allowed == denied || allowed.starts_with(denied))
         });
     }
 
     // 2. Remove deny_read paths from allow_read
     if !deny_read_resolved.is_empty() {
         allow_read_resolved.retain(|allowed| {
-            !deny_read_resolved.iter().any(|denied| allowed == denied || allowed.starts_with(denied))
+            !deny_read_resolved
+                .iter()
+                .any(|denied| allowed == denied || allowed.starts_with(denied))
         });
     }
 
@@ -1308,7 +1364,10 @@ deny = ["SECRET_*"]
         assert_eq!(loaded.metadata.name, "subtractive-test");
         assert!(loaded.deny_write.contains(&root.join(".git")));
         assert!(loaded.deny_read.contains(&PathBuf::from("/usr/secret")));
-        assert!(loaded.environment.pass_through.contains(&"SAFE_VAR".to_string()));
+        assert!(loaded
+            .environment
+            .pass_through
+            .contains(&"SAFE_VAR".to_string()));
         assert!(loaded.environment.deny.contains(&"SECRET_*".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
@@ -1322,8 +1381,12 @@ deny = ["SECRET_*"]
 
         let mut merged = MergedPolicy::default();
         let mut sec_layer = RawLayer::default();
-        sec_layer.security = Some(RawSecurity { immutable: Some(true) });
-        merged.apply(&sec_layer, PolicySourceKind::SystemGlobal).unwrap();
+        sec_layer.security = Some(RawSecurity {
+            immutable: Some(true),
+        });
+        merged
+            .apply(&sec_layer, PolicySourceKind::SystemGlobal)
+            .unwrap();
 
         assert!(merged.is_immutable);
 
@@ -1331,7 +1394,8 @@ deny = ["SECRET_*"]
             allow_write: vec!["/etc".into()],
             ..Default::default()
         };
-        let err = apply_overrides(&mut merged, &overrides).expect_err("lockdown must reject CLI write additions");
+        let err = apply_overrides(&mut merged, &overrides)
+            .expect_err("lockdown must reject CLI write additions");
         assert!(err.to_string().contains("enterprise lockdown"));
 
         let _ = std::fs::remove_dir_all(root);

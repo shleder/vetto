@@ -12,7 +12,9 @@ use crate::cli::shell_env::{self, ShellHookStatus, ShellKind};
 use crate::shim::registry::{ShimInfo, ShimRegistry};
 
 /// Scope of hook and shim installation.
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum HookScope {
     /// User-global scope (~/.vetto/shims)
@@ -22,7 +24,9 @@ pub enum HookScope {
 }
 
 /// Shell type selector for CLI arguments.
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ShellType {
     Bash,
@@ -144,11 +148,7 @@ pub fn run_cli(command: &HookCommand) -> Result<()> {
             force,
             git,
         } => handle_install(*scope, shells, shims, *force, *git),
-        HookCommand::Uninstall {
-            scope,
-            shells,
-            git,
-        } => handle_uninstall(*scope, shells, *git),
+        HookCommand::Uninstall { scope, shells, git } => handle_uninstall(*scope, shells, *git),
         HookCommand::Status { scope, json } => handle_status(*scope, *json),
     }
 }
@@ -211,7 +211,11 @@ fn handle_install(
     println!("vetto hook install: successfully configured environment");
     println!("  scope     : {:?}", scope);
     println!("  shims dir : {}", shims_dir.display());
-    println!("  shims ({}) : {}", created_shims.len(), binaries.join(", "));
+    println!(
+        "  shims ({}) : {}",
+        created_shims.len(),
+        binaries.join(", ")
+    );
     println!("  configured shells:");
     for (shell, profile) in &configured_profiles {
         println!("    - {:<10} -> {}", shell.name(), profile.display());
@@ -226,11 +230,7 @@ fn handle_install(
     Ok(())
 }
 
-fn handle_uninstall(
-    scope: HookScope,
-    shells: &[ShellType],
-    uninstall_git: bool,
-) -> Result<()> {
+fn handle_uninstall(scope: HookScope, shells: &[ShellType], uninstall_git: bool) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
     let home_dir = get_home_dir()?;
 
@@ -276,7 +276,10 @@ fn handle_uninstall(
         }
     }
     if uninstall_git {
-        println!("  git hooks     : unset core.hooksPath ({})", if git_unset { "cleaned" } else { "was not set" });
+        println!(
+            "  git hooks     : unset core.hooksPath ({})",
+            if git_unset { "cleaned" } else { "was not set" }
+        );
     }
 
     Ok(())
@@ -329,12 +332,24 @@ fn handle_status(scope: HookScope, json: bool) -> Result<()> {
         } else {
             "- profile missing"
         };
-        println!("    {:<12} : {:<18} ({})", hook.shell.name(), status_str, hook.profile_path.display());
+        println!(
+            "    {:<12} : {:<18} ({})",
+            hook.shell.name(),
+            status_str,
+            hook.profile_path.display()
+        );
     }
 
     println!();
     println!("  git auto-wrapping:");
-    println!("    configured    : {}", if git_hooks.is_configured { "✓ active" } else { "✗ inactive" });
+    println!(
+        "    configured    : {}",
+        if git_hooks.is_configured {
+            "✓ active"
+        } else {
+            "✗ inactive"
+        }
+    );
     if let Some(ref path) = git_hooks.configured_hooks_path {
         println!("    core.hooksPath: {}", path);
     }
@@ -359,14 +374,12 @@ mod tests {
 
     #[test]
     fn parses_hook_install_subcommand() {
-        let cli = TestCli::try_parse_from(["vetto", "install", "--scope", "local", "--git", "--force"])
-            .expect("parse hook install");
+        let cli =
+            TestCli::try_parse_from(["vetto", "install", "--scope", "local", "--git", "--force"])
+                .expect("parse hook install");
         match cli.hook {
             HookCommand::Install {
-                scope,
-                force,
-                git,
-                ..
+                scope, force, git, ..
             } => {
                 assert_eq!(scope, HookScope::Local);
                 assert!(force);
@@ -378,8 +391,8 @@ mod tests {
 
     #[test]
     fn parses_hook_status_json_subcommand() {
-        let cli = TestCli::try_parse_from(["vetto", "status", "--json"])
-            .expect("parse hook status");
+        let cli =
+            TestCli::try_parse_from(["vetto", "status", "--json"]).expect("parse hook status");
         match cli.hook {
             HookCommand::Status { scope, json } => {
                 assert_eq!(scope, HookScope::Global);

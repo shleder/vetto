@@ -280,7 +280,9 @@ impl CgroupV2Session {
     pub fn create(session_id: &str) -> VettoResult<Self> {
         let base = Path::new("/sys/fs/cgroup");
         if !base.exists() {
-            return Err(VettoError::Sandbox("cgroup v2 is not mounted at /sys/fs/cgroup".into()));
+            return Err(VettoError::Sandbox(
+                "cgroup v2 is not mounted at /sys/fs/cgroup".into(),
+            ));
         }
         let vetto_dir = base.join("vetto");
         if !vetto_dir.exists() {
@@ -292,8 +294,9 @@ impl CgroupV2Session {
             base.join(format!("vetto_session_{session_id}"))
         };
 
-        fs::create_dir_all(&session_dir)
-            .map_err(|e| VettoError::Sandbox(format!("create cgroup {}: {e}", session_dir.display())))?;
+        fs::create_dir_all(&session_dir).map_err(|e| {
+            VettoError::Sandbox(format!("create cgroup {}: {e}", session_dir.display()))
+        })?;
 
         let c_path = std::ffi::CString::new(session_dir.as_os_str().as_encoded_bytes())
             .map_err(|_| VettoError::Sandbox("invalid cgroup path".into()))?;
@@ -322,8 +325,12 @@ impl CgroupV2Session {
     /// Attach PID to this cgroup by writing to `cgroup.procs`.
     pub fn attach_pid(&self, pid: libc::pid_t) -> VettoResult<()> {
         let procs_file = self.path.join("cgroup.procs");
-        fs::write(&procs_file, format!("{pid}\n"))
-            .map_err(|e| VettoError::Sandbox(format!("attach PID {pid} to cgroup {}: {e}", self.path.display())))?;
+        fs::write(&procs_file, format!("{pid}\n")).map_err(|e| {
+            VettoError::Sandbox(format!(
+                "attach PID {pid} to cgroup {}: {e}",
+                self.path.display()
+            ))
+        })?;
         Ok(())
     }
 
@@ -374,7 +381,7 @@ struct MapElemAttr {
 struct ProgLoadAttr {
     prog_type: u32,
     insn_cnt: u32,
-    insns: u64, // pointer to instructions
+    insns: u64,   // pointer to instructions
     license: u64, // pointer to license string
     log_level: u32,
     log_size: u32,

@@ -138,7 +138,10 @@ pub fn conditions_match(conditions: &RawConditions, context: &ConditionContext<'
         let Some(active_agent) = context.agent else {
             return false;
         };
-        if !agent_list.iter().any(|candidate| candidate.eq_ignore_ascii_case(active_agent)) {
+        if !agent_list
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(active_agent))
+        {
             return false;
         }
     }
@@ -149,7 +152,8 @@ pub fn conditions_match(conditions: &RawConditions, context: &ConditionContext<'
         let current_os = context.os.unwrap_or(std::env::consts::OS);
         let matches_os = candidates.iter().any(|candidate| {
             candidate.eq_ignore_ascii_case(current_os)
-                || (candidate.eq_ignore_ascii_case("unix") && (current_os == "linux" || current_os == "macos"))
+                || (candidate.eq_ignore_ascii_case("unix")
+                    && (current_os == "linux" || current_os == "macos"))
         });
         if !matches_os {
             return false;
@@ -204,7 +208,14 @@ fn get_env_val(key: &str, custom_env: Option<&HashMap<String, String>>) -> Optio
 }
 
 fn is_ci_detected(custom_env: Option<&HashMap<String, String>>) -> bool {
-    for var in ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS", "CIRCLECI", "JENKINS_URL"] {
+    for var in [
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "TRAVIS",
+        "CIRCLECI",
+        "JENKINS_URL",
+    ] {
         if let Some(val) = get_env_val(var, custom_env) {
             let v = val.trim().to_ascii_lowercase();
             if v == "1" || v == "true" || !v.is_empty() {

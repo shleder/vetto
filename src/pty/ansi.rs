@@ -143,7 +143,9 @@ impl AnsiRedactor {
 
         // Check if ending inside an unfinished ANSI sequence
         if self.parser.state != AnsiState::Ground {
-            self.parser.partial_escape.extend_from_slice(&full_input[text_start..]);
+            self.parser
+                .partial_escape
+                .extend_from_slice(&full_input[text_start..]);
         } else if text_start < len {
             let trailing_text = &full_input[text_start..];
             output.extend(self.redactor.redact_chunk(trailing_text));

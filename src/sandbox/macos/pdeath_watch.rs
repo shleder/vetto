@@ -105,7 +105,14 @@ unsafe fn run_watch(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) -> ! {
             tv_sec: 1,
             tv_nsec: 0,
         };
-        let n = libc::kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), 8, &mut timeout);
+        let n = libc::kevent(
+            kq,
+            std::ptr::null(),
+            0,
+            events.as_mut_ptr(),
+            8,
+            &mut timeout,
+        );
         if n < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
@@ -129,13 +136,15 @@ unsafe fn run_watch(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) -> ! {
         }
         // Timed out: the registration can miss an exit that happened before
         // it landed, so re-check liveness once per second.
-        if libc::kill(vetto_pid, 0) == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        if libc::kill(vetto_pid, 0) == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         {
             libc::kill(agent_pid, libc::SIGKILL);
             libc::close(kq);
             libc::_exit(0);
         }
-        if libc::kill(agent_pid, 0) == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        if libc::kill(agent_pid, 0) == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         {
             libc::close(kq);
             libc::_exit(0);

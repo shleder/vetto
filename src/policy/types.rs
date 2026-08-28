@@ -1,8 +1,8 @@
 //! Policy representation after load-time resolution.
 
+use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 /// Linux capability tier the policy was loaded for (affects masking strategy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,7 +220,11 @@ impl Policy {
 
     /// Is `path` inside any write root? (lexical prefix check, best-effort)
     pub fn in_write_scope(&self, path: &Path) -> bool {
-        if self.deny_write.iter().any(|denied| path.starts_with(denied)) {
+        if self
+            .deny_write
+            .iter()
+            .any(|denied| path.starts_with(denied))
+        {
             return false;
         }
         self.allow_write.iter().any(|root| path.starts_with(root))

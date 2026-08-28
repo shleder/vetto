@@ -374,13 +374,25 @@ mod tests {
     #[test]
     fn timeout_parses_seconds_minutes_hours_and_rejects_zero() {
         let cfg = config(&["--timeout", "90s"]).expect("90s");
-        assert_eq!(cfg.session_timeout, Some(std::time::Duration::from_secs(90)));
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(90))
+        );
         let cfg = config(&["--timeout", "30m"]).expect("30m");
-        assert_eq!(cfg.session_timeout, Some(std::time::Duration::from_secs(1800)));
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(1800))
+        );
         let cfg = config(&["--timeout", "2h"]).expect("2h");
-        assert_eq!(cfg.session_timeout, Some(std::time::Duration::from_secs(7200)));
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(7200))
+        );
         let cfg = config(&["--timeout", "45"]).expect("bare seconds");
-        assert_eq!(cfg.session_timeout, Some(std::time::Duration::from_secs(45)));
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
         assert!(config(&["--timeout", "0s"]).is_err());
         assert!(config(&["--timeout", "soon"]).is_err());
     }

@@ -512,9 +512,8 @@ impl RescueAdapter for ClaudeAdapter {
             }
         }
 
-        let mut notices = vec![
-            "Claude transcript stream repair and project reconciler are active".to_string(),
-        ];
+        let mut notices =
+            vec!["Claude transcript stream repair and project reconciler are active".to_string()];
         let mut findings = Vec::new();
         if !terminated_with_newline {
             notices.push("transcript tail is not newline-terminated".to_string());
@@ -608,8 +607,9 @@ impl RescueAdapter for ClaudeAdapter {
         backup_dir: &Path,
     ) -> Result<RepairReceipt> {
         let lock_path = context.root.join(".vetto_repair.lock");
-        let _guard = SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
-            .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
+        let _guard =
+            SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
+                .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
 
         let canonical_target = Self::validate_session_path(context, &session.source_path)?;
         let original_bytes = Self::read_stable(context, &canonical_target)?;
@@ -629,7 +629,14 @@ impl RescueAdapter for ClaudeAdapter {
             let quarantine_path = canonical_target
                 .parent()
                 .unwrap_or(&context.root)
-                .join(format!("{}.corrupt.{}", canonical_target.file_name().unwrap_or_default().to_string_lossy(), timestamp_unix_secs));
+                .join(format!(
+                    "{}.corrupt.{}",
+                    canonical_target
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy(),
+                    timestamp_unix_secs
+                ));
             let _ = fs::write(&quarantine_path, &original_bytes);
         }
 
@@ -668,8 +675,13 @@ impl RescueAdapter for ClaudeAdapter {
             .with_context(|| format!("sync tmp repair file {}", tmp_path.display()))?;
         drop(file);
 
-        fs::rename(&tmp_path, &canonical_target)
-            .with_context(|| format!("atomic rename {} -> {}", tmp_path.display(), canonical_target.display()))?;
+        fs::rename(&tmp_path, &canonical_target).with_context(|| {
+            format!(
+                "atomic rename {} -> {}",
+                tmp_path.display(),
+                canonical_target.display()
+            )
+        })?;
 
         #[cfg(unix)]
         if let Ok(dir_file) = File::open(parent_dir) {
@@ -761,8 +773,12 @@ mod tests {
 
         let (repaired, actions, corrupt) = ClaudeAdapter::repair_transcript(raw, Some("s1"));
         assert!(!corrupt);
-        assert!(actions.iter().any(|a| a.contains("truncated_incomplete_tail")));
-        assert!(actions.iter().any(|a| a.contains("appended_session_completed_marker")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("truncated_incomplete_tail")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("appended_session_completed_marker")));
 
         let repaired_str = String::from_utf8(repaired).unwrap();
         assert!(repaired_str.contains("session_start"));
@@ -774,7 +790,9 @@ mod tests {
     fn repairs_empty_transcript() {
         let (repaired, actions, corrupt) = ClaudeAdapter::repair_transcript(b"", Some("empty-s"));
         assert!(!corrupt);
-        assert!(actions.iter().any(|a| a.contains("initialized_empty_session_schema")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("initialized_empty_session_schema")));
         let repaired_str = String::from_utf8(repaired).unwrap();
         assert!(repaired_str.contains("session_start"));
         assert!(repaired_str.contains("session_completed"));

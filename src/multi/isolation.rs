@@ -68,14 +68,19 @@ impl IsolationBarrier {
     }
 
     /// Verify that two agents are strictly isolated from cross-process signaling.
-    pub fn verify_signal_isolation(&self, source_agent: &str, target_agent: &str) -> VettoResult<()> {
+    pub fn verify_signal_isolation(
+        &self,
+        source_agent: &str,
+        target_agent: &str,
+    ) -> VettoResult<()> {
         if source_agent == target_agent {
             return Ok(());
         }
 
-        let records = self.records.lock().map_err(|_| {
-            VettoError::Sandbox("isolation barrier lock poisoned".into())
-        })?;
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| VettoError::Sandbox("isolation barrier lock poisoned".into()))?;
 
         let src = records.get(source_agent).ok_or_else(|| {
             VettoError::Sandbox(format!("source agent '{source_agent}' not registered"))
@@ -103,13 +108,14 @@ impl IsolationBarrier {
 
     /// Verify IPC isolation for the given agent.
     pub fn verify_ipc_isolation(&self, agent_name: &str) -> VettoResult<()> {
-        let records = self.records.lock().map_err(|_| {
-            VettoError::Sandbox("isolation barrier lock poisoned".into())
-        })?;
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| VettoError::Sandbox("isolation barrier lock poisoned".into()))?;
 
-        let record = records.get(agent_name).ok_or_else(|| {
-            VettoError::Sandbox(format!("agent '{agent_name}' not registered"))
-        })?;
+        let record = records
+            .get(agent_name)
+            .ok_or_else(|| VettoError::Sandbox(format!("agent '{agent_name}' not registered")))?;
 
         if !record.ipc_ns_isolated {
             return Err(VettoError::Sandbox(format!(
@@ -122,9 +128,10 @@ impl IsolationBarrier {
 
     /// Verify total memory quota when launching or expanding an agent.
     pub fn check_memory_quota(&self, agent_name: &str, requested_bytes: u64) -> VettoResult<()> {
-        let records = self.records.lock().map_err(|_| {
-            VettoError::Sandbox("isolation barrier lock poisoned".into())
-        })?;
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| VettoError::Sandbox("isolation barrier lock poisoned".into()))?;
 
         if let Some(record) = records.get(agent_name) {
             if let Some(ceiling) = record.memory_ceiling_bytes {
@@ -171,12 +178,16 @@ mod tests {
         barrier.register_agent("agent-a", 1001, true, true, Some(64 * 1024 * 1024));
         barrier.register_agent("agent-b", 1002, true, true, Some(64 * 1024 * 1024));
 
-        assert!(barrier.verify_signal_isolation("agent-a", "agent-b").is_ok());
+        assert!(barrier
+            .verify_signal_isolation("agent-a", "agent-b")
+            .is_ok());
         assert!(barrier.verify_ipc_isolation("agent-a").is_ok());
         assert!(barrier.verify_ipc_isolation("agent-b").is_ok());
 
         // Same agent self-signaling is permitted
-        assert!(barrier.verify_signal_isolation("agent-a", "agent-a").is_ok());
+        assert!(barrier
+            .verify_signal_isolation("agent-a", "agent-a")
+            .is_ok());
     }
 
     #[test]
@@ -185,7 +196,9 @@ mod tests {
         barrier.register_agent("unisolated-a", 2001, false, true, None);
         barrier.register_agent("agent-b", 2002, true, true, None);
 
-        assert!(barrier.verify_signal_isolation("unisolated-a", "agent-b").is_err());
+        assert!(barrier
+            .verify_signal_isolation("unisolated-a", "agent-b")
+            .is_err());
     }
 
     #[test]
@@ -201,7 +214,11 @@ mod tests {
         let barrier = IsolationBarrier::new();
         barrier.register_agent("bounded-agent", 4001, true, true, Some(32 * 1024 * 1024));
 
-        assert!(barrier.check_memory_quota("bounded-agent", 16 * 1024 * 1024).is_ok());
-        assert!(barrier.check_memory_quota("bounded-agent", 64 * 1024 * 1024).is_err());
+        assert!(barrier
+            .check_memory_quota("bounded-agent", 16 * 1024 * 1024)
+            .is_ok());
+        assert!(barrier
+            .check_memory_quota("bounded-agent", 64 * 1024 * 1024)
+            .is_err());
     }
 }

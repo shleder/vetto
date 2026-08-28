@@ -6,7 +6,6 @@
 //!   3. Only after a successful spawn: event bus consumers (broker, notifier,
 //!      audit reader, visibility poller, jsonl, stats) and the UI loop.
 
-
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::fd::IntoRawFd;
@@ -217,7 +216,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         let report = vetto::verify::preflight(&pol, &cfg.net)?;
         eprintln!("vetto: verify: {}", report.summary());
         if report.leaks() > 0 {
-            bail!("--verify: boundary verification failed; refusing to start the agent (fail-closed)");
+            bail!(
+                "--verify: boundary verification failed; refusing to start the agent (fail-closed)"
+            );
         }
         Some(report)
     } else {

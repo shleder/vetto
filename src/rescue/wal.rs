@@ -47,8 +47,13 @@ impl SqliteWalManager {
         }
 
         let mut copied = Vec::new();
-        fs::copy(src_db, dst_db)
-            .with_context(|| format!("copy main sqlite db {} -> {}", src_db.display(), dst_db.display()))?;
+        fs::copy(src_db, dst_db).with_context(|| {
+            format!(
+                "copy main sqlite db {} -> {}",
+                src_db.display(),
+                dst_db.display()
+            )
+        })?;
         copied.push(dst_db.to_path_buf());
 
         let src_base = src_db.to_string_lossy();
@@ -176,9 +181,11 @@ mod tests {
 
         let conn = Connection::open(&recovered_path).unwrap();
         let status: String = conn
-            .query_row("SELECT status FROM sessions WHERE key = 'sess-1'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT status FROM sessions WHERE key = 'sess-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "active");
 

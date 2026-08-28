@@ -14,7 +14,9 @@ pub const CMD_MARKER_START: &str = "rem >>> vetto shim environment >>>";
 pub const CMD_MARKER_END: &str = "rem <<< vetto shim environment <<<";
 
 /// Supported shell kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ShellKind {
     Bash,
@@ -196,9 +198,10 @@ pub fn install_shell_hook(
 
     let snippet = generate_snippet(shell, shims_dir);
 
-    let new_content = if let (Some(start_idx), Some(end_idx)) =
-        (existing_content.find(start_marker), existing_content.find(end_marker))
-    {
+    let new_content = if let (Some(start_idx), Some(end_idx)) = (
+        existing_content.find(start_marker),
+        existing_content.find(end_marker),
+    ) {
         if !force {
             // Already installed and force not requested
             return Ok(profile_path);
@@ -251,7 +254,9 @@ pub fn uninstall_shell_hook(shell: ShellKind, home_dir: &Path) -> Result<Option<
         let content = fs::read_to_string(&profile_path)
             .with_context(|| format!("failed to read {}", profile_path.display()))?;
 
-        if let (Some(start_idx), Some(end_idx)) = (content.find(start_marker), content.find(end_marker)) {
+        if let (Some(start_idx), Some(end_idx)) =
+            (content.find(start_marker), content.find(end_marker))
+        {
             let after_end = end_idx + end_marker.len();
             let end_of_line = content[after_end..]
                 .find('\n')

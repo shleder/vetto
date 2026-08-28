@@ -541,7 +541,10 @@ fn create_private_sqlite_snapshot_with_recovery(
                         has_sidecars = true;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error).with_context(|| format!("inspect {label} SQLite sidecar")),
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("inspect {label} SQLite sidecar"))
+                    }
                 }
             }
 
@@ -566,7 +569,12 @@ fn create_private_sqlite_snapshot_with_recovery(
         })();
 
         match result {
-            Ok(()) => return Ok(PrivateSqliteSnapshot { directory, path: db_path }),
+            Ok(()) => {
+                return Ok(PrivateSqliteSnapshot {
+                    directory,
+                    path: db_path,
+                })
+            }
             Err(error) => {
                 let _ = fs::remove_file(&db_path);
                 let _ = fs::remove_dir_all(&directory);
