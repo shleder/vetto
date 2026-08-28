@@ -44,10 +44,8 @@ pub fn detect_argv0_shim() -> Option<String> {
 /// to eliminate circular interception loops.
 pub fn find_real_binary(name: &str) -> Result<PathBuf> {
     let name_path = Path::new(name);
-    if name_path.is_absolute() {
-        if is_executable_file(name_path) && !is_shim_path(name_path) {
-            return Ok(name_path.to_path_buf());
-        }
+    if name_path.is_absolute() && is_executable_file(name_path) && !is_shim_path(name_path) {
+        return Ok(name_path.to_path_buf());
     }
 
     let path_var = env::var_os("PATH").context("PATH environment variable is not set")?;

@@ -849,17 +849,15 @@ impl CodexAdapter {
                             updated_at_ms = Some(u as i64);
                         }
                     }
-                } else if kind == "response_item" || kind == "event_msg" {
-                    if first_user_msg.is_none() {
-                        if let Some(payload) = val.get("payload") {
-                            if payload.get("type").and_then(|v| v.as_str()) == Some("message")
-                                && payload.get("role").and_then(|v| v.as_str()) == Some("user")
-                            {
-                                if let Some(content) =
-                                    payload.get("content").and_then(|v| v.as_str())
-                                {
-                                    first_user_msg = Some(content.to_string());
-                                }
+                } else if (kind == "response_item" || kind == "event_msg")
+                    && first_user_msg.is_none()
+                {
+                    if let Some(payload) = val.get("payload") {
+                        if payload.get("type").and_then(|v| v.as_str()) == Some("message")
+                            && payload.get("role").and_then(|v| v.as_str()) == Some("user")
+                        {
+                            if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
+                                first_user_msg = Some(content.to_string());
                             }
                         }
                     }

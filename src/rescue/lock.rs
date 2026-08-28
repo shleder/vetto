@@ -71,6 +71,7 @@ impl SessionLockGuard {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(lock_path)
             .with_context(|| format!("open lockfile {}", lock_path.display()))?;
 

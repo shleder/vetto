@@ -5,18 +5,12 @@ use super::entropy;
 use std::collections::VecDeque;
 
 /// Redaction replacement style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RedactionStyle {
     /// In-place padding with '*' (preserves exact terminal column width for TUIs).
     PadMask,
     /// Marker string substitution (e.g., "[REDACTED]").
     Marker,
-}
-
-impl Default for RedactionStyle {
-    fn default() -> Self {
-        Self::PadMask
-    }
 }
 
 /// Pattern descriptor for Aho-Corasick automaton.

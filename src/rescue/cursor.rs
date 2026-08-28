@@ -402,11 +402,11 @@ impl RescueAdapter for CursorAdapter {
                     let (key, val) = row?;
                     records += 1;
                     if let Some(raw) = val {
-                        if CURSOR_INTERESTING_KEYS.contains(&key.as_str()) {
-                            if serde_json::from_str::<serde_json::Value>(&raw).is_err() {
-                                malformed_records += 1;
-                                findings.push(format!("TRUNCATED_JSON_PAYLOAD_{key}"));
-                            }
+                        if CURSOR_INTERESTING_KEYS.contains(&key.as_str())
+                            && serde_json::from_str::<serde_json::Value>(&raw).is_err()
+                        {
+                            malformed_records += 1;
+                            findings.push(format!("TRUNCATED_JSON_PAYLOAD_{key}"));
                         }
                     }
                 }

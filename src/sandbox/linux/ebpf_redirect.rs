@@ -210,23 +210,12 @@ impl BpfInsn {
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SocketDst {
     pub ip: [u8; 16],
     pub port: u16,
     pub family: u16,
     pub _pad: u32,
-}
-
-impl Default for SocketDst {
-    fn default() -> Self {
-        Self {
-            ip: [0; 16],
-            port: 0,
-            family: 0,
-            _pad: 0,
-        }
-    }
 }
 
 impl SocketDst {
@@ -479,12 +468,7 @@ impl EbpfRedirectManager {
         // Store original port at fp - 16
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET family at fp - 14
-        insns.push(BpfInsn::st_imm(
-            BPF_H,
-            BPF_REG_10,
-            -14,
-            libc::AF_INET as i32,
-        ));
+        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET));
 
         // Get socket cookie: bpf_get_socket_cookie(ctx) -> r0
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));
@@ -574,12 +558,7 @@ impl EbpfRedirectManager {
         ));
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET6 family
-        insns.push(BpfInsn::st_imm(
-            BPF_H,
-            BPF_REG_10,
-            -14,
-            libc::AF_INET6 as i32,
-        ));
+        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET6));
 
         // Get socket cookie
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));

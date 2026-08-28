@@ -348,6 +348,12 @@ pub struct LayeredPolicyLoader {
     pub load_local_override: bool,
 }
 
+impl Default for LayeredPolicyLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LayeredPolicyLoader {
     pub fn new() -> Self {
         Self {
@@ -586,8 +592,7 @@ impl LayeredPolicyLoader {
                     if let Ok(entries) = std::fs::read_dir(&fragments_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml")
-                            {
+                            if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
                                 fragment_files.push(path);
                             }
                         }
@@ -832,14 +837,14 @@ fn validate_parent_name(parent: &str) -> Result<()> {
 }
 
 fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Result<()> {
-    if merged.is_immutable {
-        if !overrides.allow_write.is_empty() || !overrides.allow_read.is_empty() {
-            // Check if CLI overrides attempt to widen when locked down
-            // In enterprise lockdown mode, adding paths via CLI is prohibited
-            return Err(anyhow::Error::new(VettoError::PolicyLockdownViolation(
-                "cannot add filesystem allow paths via CLI in enterprise lockdown mode".into(),
-            )));
-        }
+    if merged.is_immutable
+        && (!overrides.allow_write.is_empty() || !overrides.allow_read.is_empty())
+    {
+        // Check if CLI overrides attempt to widen when locked down
+        // In enterprise lockdown mode, adding paths via CLI is prohibited
+        return Err(anyhow::Error::new(VettoError::PolicyLockdownViolation(
+            "cannot add filesystem allow paths via CLI in enterprise lockdown mode".into(),
+        )));
     }
 
     merged.allow_write.extend(overrides.allow_write.clone());
@@ -1380,10 +1385,12 @@ deny = ["SECRET_*"]
         std::fs::create_dir_all(&root).unwrap();
 
         let mut merged = MergedPolicy::default();
-        let mut sec_layer = RawLayer::default();
-        sec_layer.security = Some(RawSecurity {
-            immutable: Some(true),
-        });
+        let sec_layer = RawLayer {
+            security: Some(RawSecurity {
+                immutable: Some(true),
+            }),
+            ..RawLayer::default()
+        };
         merged
             .apply(&sec_layer, PolicySourceKind::SystemGlobal)
             .unwrap();

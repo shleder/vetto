@@ -263,12 +263,17 @@ mod tests {
     #[test]
     fn home_write_root_fires_on_home_and_ancestor_not_on_child() {
         let home = scratch("write-root-home");
-        let mut policy = Policy::default();
 
-        policy.allow_write = vec![home.join("sub")];
+        let policy = Policy {
+            allow_write: vec![home.join("sub")],
+            ..Policy::default()
+        };
         assert!(evaluate(&policy, &home).is_empty(), "child root is fine");
 
-        policy.allow_write = vec![home.clone()];
+        let policy = Policy {
+            allow_write: vec![home.clone()],
+            ..Policy::default()
+        };
         let findings = evaluate(&policy, &home);
         assert!(
             findings
@@ -277,7 +282,10 @@ mod tests {
             "root == home must fire: {findings:?}"
         );
 
-        policy.allow_write = vec![home.parent().expect("scratch has a parent").to_path_buf()];
+        let policy = Policy {
+            allow_write: vec![home.parent().expect("scratch has a parent").to_path_buf()],
+            ..Policy::default()
+        };
         let findings = evaluate(&policy, &home);
         assert!(
             findings
@@ -292,12 +300,17 @@ mod tests {
     #[test]
     fn home_blanket_read_fires_only_on_home_itself() {
         let home = scratch("blanket-read-home");
-        let mut policy = Policy::default();
 
-        policy.allow_read = vec![home.join(".cargo")];
+        let policy = Policy {
+            allow_read: vec![home.join(".cargo")],
+            ..Policy::default()
+        };
         assert!(evaluate(&policy, &home).is_empty(), "narrow read is fine");
 
-        policy.allow_read = vec![home.clone()];
+        let policy = Policy {
+            allow_read: vec![home.clone()],
+            ..Policy::default()
+        };
         let findings = evaluate(&policy, &home);
         assert!(
             findings
