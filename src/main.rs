@@ -143,9 +143,12 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         tier_for_policy,
         &policy_options,
     )?;
+    use std::io::Write;
     for w in &pol.warnings {
-        eprintln!("vetto: policy warning: {w}");
+        eprint!("vetto: policy warning: {w}\r\n");
     }
+    let _ = std::io::stderr().flush();
+    let _ = std::io::stdout().flush();
 
     // execve does not search PATH; resolve the agent binary ourselves.
     let mut agent_cmd = cfg.agent.clone();
