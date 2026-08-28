@@ -189,12 +189,12 @@ pub enum Command {
     },
     /// Inspect and copy persisted agent sessions without modifying originals.
     Rescue {
-        /// Recovery adapter. The npm alpha ships Codex; main also has an
-        /// experimental, explicit-root Claude read-only adapter.
+        /// Recovery adapter: codex, claude, cursor, opencode or antigravity.
         #[arg(long, default_value = "codex", value_name = "ID")]
         adapter: String,
-        /// Explicit agent state root (required for non-Codex adapters; Codex
-        /// defaults to CODEX_HOME or $HOME/.codex).
+        /// Explicit agent state root. When omitted each adapter resolves its
+        /// own default from <ADAPTER>_HOME or that agent's conventional
+        /// per-user state directory.
         #[arg(long, value_name = "PATH")]
         root: Option<PathBuf>,
         /// Emit sanitized machine-readable JSON.
