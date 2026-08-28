@@ -270,6 +270,9 @@ mod win_lock {
     pub const ERROR_LOCK_VIOLATION: u32 = 33;
 
     #[repr(C)]
+    // Mirrors the Win32 `OVERLAPPED` declaration verbatim; the acronym is
+    // the platform's name, not our style choice.
+    #[allow(clippy::upper_case_acronyms)]
     pub struct OVERLAPPED {
         pub internal: usize,
         pub internal_high: usize,

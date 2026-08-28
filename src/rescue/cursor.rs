@@ -8,7 +8,9 @@
 //! - macOS: `~/Library/Application Support/Cursor/User/workspaceStorage/<workspace_id>/state.vscdb`
 //! - Windows: `%APPDATA%\Cursor\User\workspaceStorage\<workspace_id>\state.vscdb`
 
-use std::fs::{self, File};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

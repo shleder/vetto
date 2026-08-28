@@ -277,11 +277,13 @@ fn child(
         StdioMode::Inherit => {}
     }
 
-    // Policy rlimits in the child, same soft=hard semantics as the Linux
-    // tier: an explicit value can never be raised back by the agent after
-    // exec. Runs after stdio setup and before the watchdog / Seatbelt chain.
-    if let Err(e) = limits::apply_before_exec(&policy.limits) {
-        child_fail(err_w, 121, &format!("resource limits: {e}"));
+    // Policy rlimits in the child, best-effort on macOS: the kernel refuses
+    // several ceilings (RLIMIT_AS, raising the NPROC hard ceiling) per host
+    // configuration, and failing every session over that would make the
+    // default profile unusable. Enforced values still cannot be raised back
+    // by the agent after exec; refusals are surfaced, not hidden.
+    for refused in limits::apply_before_exec(&policy.limits) {
+        eprintln!("vetto: {refused}");
     }
 
     if let Err(e) = std::env::set_current_dir(&opts.cwd) {
