@@ -1,10 +1,8 @@
-<p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="vetto applies an operator-controlled OS boundary around local AI coding agents">
-</p>
+# vetto
 
 <p align="center">
   <strong>Your AI agent runs with your tokens, your files, and your network.</strong><br>
-  vetto enforces an operator-controlled OS security boundary around it — before the process exists.<br>
+  <code>vetto</code> enforces an operator-controlled OS security boundary around it — before the process exists.<br>
   <em>If the kernel boundary cannot be established, nothing launches.</em>
 </p>
 
@@ -84,9 +82,13 @@ audit feed readable:     no
 chosen tier:             full
 ```
 
-<p align="center">
-  <img src="./assets/readme/boundary.svg" width="100%" alt="Vetto lifecycle and boundary validation flow">
-</p>
+```text
+  01. RESOLVE POLICY       02. PROBE HOST          03. INSTALL BOUNDARY      04. EXECUTE AGENT
+┌─────────────────────┐  ┌────────────────────┐  ┌───────────────────────┐  ┌─────────────────────┐
+│ Base + Org + Local  │─▶│ Kernel Landlock    │─▶│ Apply VFS & Net Gates │─▶│ Spawn Agent Subtree │
+│ Rules & Deny Config │  │ ABI v1–5 & Seccomp │  │ [Fail-Closed Halt]    │  │ (Inherited Sandbox) │
+└─────────────────────┘  └────────────────────┘  └───────────────────────┘  └─────────────────────┘
+```
 
 ---
 
@@ -208,10 +210,6 @@ vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
 
 <a id="platforms"></a>
 
-<p align="center">
-  <img src="./assets/readme/section-platforms.svg" width="100%" alt="Platform Matrix">
-</p>
-
 ## Platform Matrix
 
 | Platform | Tier | Backend Primitives | Status |
@@ -266,10 +264,6 @@ vetto hook uninstall
 ---
 
 <a id="anti-features"></a>
-
-<p align="center">
-  <img src="./assets/readme/section-limits.svg" width="100%" alt="Honest Limits & Guarantees">
-</p>
 
 ## Honest Limits & Deliberate Anti-Features
 
