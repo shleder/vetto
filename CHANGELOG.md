@@ -3,11 +3,7 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
-## [0.2.4] — unreleased
-
-The GitHub release for this version is still a draft and no `0.2.4` artifact is
-published to npm. `0.2.3` remains the latest installable release, and the
-packaging recipes therefore still target `0.2.3`.
+## [0.2.4] — 2026-08-28
 
 ### Added
 
@@ -18,8 +14,17 @@ packaging recipes therefore still target `0.2.3`.
 - Download a precompiled native binary in the GitHub Action, falling back to a
   source build when no matching artifact exists.
 
+### Removed
+
+- Drop the vendored `components/rescue-legacy` Python tree. Its MIT provenance
+  and commit ancestry stay recorded in `THIRD_PARTY_NOTICES.md`.
+
 ### Fixed
 
+- Fix the build, which was broken on every target since 0.2.3. A leftover
+  `pub mod docker;` declaration pointed at a deleted file (`E0583`), and the
+  agent-binary read-scope change mutated an immutably bound policy (`E0596`).
+  No 0.2.4 artifact could be produced until both were corrected.
 - Use explicit CRLF line disciplines and flush stdout/stderr before the TUI
   takes over the terminal, which previously produced interleaved output.
 - Restore the test schema files required by CI and correct the README badges.
@@ -31,11 +36,6 @@ packaging recipes therefore still target `0.2.3`.
 - Align the Homebrew, Chocolatey, RPM, Debian and AUR recipes, the npm readme
   and the VS Code lockfile with the published release instead of a mix of
   0.2.0-alpha.2, 0.2.0, 0.2.2 and an unpublished version.
-
-### Removed
-
-- Drop the vendored `components/rescue-legacy` Python tree. Its MIT provenance
-  and commit ancestry stay recorded in `THIRD_PARTY_NOTICES.md`.
 
 ## [0.2.3] — 2026-08-28
 
