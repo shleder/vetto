@@ -71,7 +71,6 @@ trusted boundary you bet your machine on.
 - **Two large subsystems are dead code**: a Linux eBPF redirect path (~900
   lines) and a macOS Endpoint Security deny-capable engine. Neither is wired
   into a session; the README of no version should be read as claiming they are.
-- **macOS `--net=strict` currently behaves exactly like `--net=off`.**
 - `docs/tutorials/` are outlines, not finished tutorials. There is no coverage
   measurement in CI, and no performance-overhead figures anywhere.
 
@@ -170,7 +169,8 @@ Platform truth:
   (anti-rebinding).
 - Linux `fs-only`: relay modes are rejected. `off` is enforced by a
   socket-family seccomp filter.
-- macOS: `allowlist` is rejected; `strict` currently behaves the same as `off`.
+- macOS: `off` only — both relay modes (`allowlist`, `strict`) are rejected
+  before spawn with an explicit reason.
 - Windows: `off` only.
 - `--git-ssh` is Linux-only.
 

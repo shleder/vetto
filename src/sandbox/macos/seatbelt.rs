@@ -72,6 +72,8 @@ pub fn generate_sbpl_template_and_params(
         params.push((key, val));
     }
 
+    // Only --net=off reaches the child on macOS: the parent-side spawn
+    // rejects relay modes before forking. This arm stays defensive.
     match net {
         NetMode::Off => sb.push_str("(deny network*)\n"),
         NetMode::Allowlist(_) | NetMode::Strict(_) => sb.push_str("(deny network*)\n"),

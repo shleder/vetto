@@ -10,7 +10,8 @@
 //! - No PDEATHSIG on macOS: v0.1 kills the agent process group only when
 //!   vetto exits normally. A SIGKILLed vetto may leave orphans (roadmap:
 //!   kqueue EVFILT_PROC watchdog).
-//! - `--net=allowlist` is Linux-only in v0.1.
+//! - Relay network modes (`allowlist`/`strict`) are Linux-only; macOS
+//!   supports `--net=off` only and rejects the rest before forking.
 
 pub mod endpoint_security;
 pub mod fsevents;
@@ -45,8 +46,13 @@ impl MacosSandbox {
         if !Self::seatbelt_available() {
             bail!("Seatbelt (sandbox_init_with_parameters / sandbox-exec) unavailable; refusing to run unsandboxed (fail-closed)");
         }
+        // Relay modes require the Linux netns + broker stack. Both are
+        // rejected loudly here instead of silently degrading to --net=off.
         if matches!(self.net, NetMode::Allowlist(_)) {
-            bail!("--net=allowlist is Linux-only in v0.1");
+            bail!("--net=allowlist requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+        }
+        if matches!(self.net, NetMode::Strict(_)) {
+            bail!("--net=strict requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
         }
 
         let (err_r, err_w) = pipe2()?;

@@ -36,6 +36,31 @@ fn seatbelt_blocks_home_secrets() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn relay_net_modes_are_rejected_loudly_before_spawn() {
+    // Both relay modes must fail closed with an explicit reason on macOS —
+    // never silently degrade to --net=off.
+    for mode in [
+        "--net=allowlist:example.com",
+        "--net=strict:github.com:22",
+    ] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
+            .args(["--tui=none", mode, "--", "true"])
+            .output()
+            .expect("vetto run");
+        assert!(
+            !out.status.success(),
+            "{mode} must be rejected on macOS"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("network-namespace relay"),
+            "{mode} rejection must explain why: {stderr}"
+        );
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn macos_suite_not_applicable_on_this_platform() {
