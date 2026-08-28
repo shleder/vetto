@@ -74,7 +74,7 @@ Vetto inspects actual host kernel capabilities at runtime instead of assuming en
 
 ```console
 $ vetto doctor
-vetto v0.2.3 doctor
+vetto v0.2.4 doctor
 landlock:                available (ABI 4/5)
 unprivileged userns:     yes
 full namespace stack:    yes
