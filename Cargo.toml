@@ -57,6 +57,10 @@ criterion = "0.5"
 name = "performance"
 harness = false
 
+[[bench]]
+name = "e2e_spawn"
+harness = false
+
 [profile.release]
 lto = true
 strip = true
