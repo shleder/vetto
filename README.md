@@ -118,9 +118,19 @@ paths = [
 
 <a id="quickstart"></a>
 
-<p align="center">
-  <img src="./assets/readme/demo.svg" width="100%" alt="Vetto live terminal: Landlock kernel isolation and real-time PTY secret redaction">
-</p>
+```console
+$ vetto --profile strict -- codex exec "inspect credentials & deploy"
+
+[vetto] OS sandbox applied: Landlock ABI v5, Seccomp-BPF, UserNS (0.8ms)
+[agent] Reading credentials: cat ~/.ssh/id_rsa ~/.aws/credentials
+[vetto] [BLOCKED] VFS Mask: ~/.ssh/id_rsa mapped to /dev/null (0 bytes returned)
+[agent] Probing AWS metadata: curl -s http://169.254.169.254/latest/meta-data/
+[vetto] [BLOCKED] Net Deny: 169.254.169.254:80 [EPERM: Network unreachable]
+[agent] Dumping tokens: OPENAI_API_KEY=sk-proj-9A8f7B2... ghp_9381kLz...
+[vetto] [PTY REDACT] Entropy filter scrubbed 2 secret tokens -> [REDACTED]
+─────────────────────────────────────────────────────────────────────────────
+✓ Operator boundary held: 0 leaks, 0 disk bloat, 0 unconfined processes.
+```
 
 ## Quickstart
 
