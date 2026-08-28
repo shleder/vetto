@@ -49,6 +49,7 @@ pub fn classify_event(event: &Event) -> Option<SuspiciousSignal> {
         Event::SessionStarted { .. }
         | Event::SecretMasked { .. }
         | Event::Notice { .. }
+        | Event::SessionTimeout { .. }
         | Event::SessionEnded { .. } => None,
     }
 }
