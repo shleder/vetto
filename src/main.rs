@@ -6,7 +6,6 @@
 //!   3. Only after a successful spawn: event bus consumers (broker, notifier,
 //!      audit reader, visibility poller, jsonl, stats) and the UI loop.
 
-#![allow(clippy::all)]
 
 use std::collections::HashMap;
 #[cfg(unix)]
