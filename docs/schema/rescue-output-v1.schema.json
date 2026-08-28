@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/shleder/vetto/blob/main/docs/schema/rescue-output-v1.schema.json",
+  "title": "Vetto Rescue public JSON output v1",
+  "description": "Forward-compatible public JSON shapes emitted by vetto rescue --json. Internal source handles and provider state paths are not part of this contract; user-derived strings are best-effort sanitized before serialization.",
+  "type": "object",
+  "anyOf": [
+    { "$ref": "#/$defs/scan" },
+    { "$ref": "#/$defs/diagnose" },
+    { "$ref": "#/$defs/receipt" }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "optionalUnixSeconds": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "status": {
+      "type": "object",
+      "description": "Adapter availability is separate from the support claim. Unknown future values are allowed for forward compatibility.",
+      "required": ["adapter", "availability", "support_level", "reason"],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/nonEmptyString" },
+        "availability": { "$ref": "#/$defs/nonEmptyString" },
+        "support_level": { "$ref": "#/$defs/nonEmptyString" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "session": {
+      "type": "object",
+      "description": "Public session metadata. The internal source handle is intentionally not a public field.",
+      "required": [
+        "adapter",
+        "key",
+        "relative_path",
+        "bytes",
+        "modified_unix_secs"
+      ],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/nonEmptyString" },
+        "key": { "$ref": "#/$defs/nonEmptyString" },
+        "relative_path": { "$ref": "#/$defs/nonEmptyString" },
+        "bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "modified_unix_secs": { "$ref": "#/$defs/optionalUnixSeconds" }
+      },
+      "additionalProperties": true
+    },
+    "discovery": {
+      "type": "object",
+      "required": [
+        "mode",
+        "scope",
+        "source",
+        "complete",
+        "limit",
+        "candidate_count",
+        "returned_count"
+      ],
+      "properties": {
+        "mode": { "$ref": "#/$defs/nonEmptyString" },
+        "scope": { "$ref": "#/$defs/nonEmptyString" },
+        "source": { "$ref": "#/$defs/nonEmptyString" },
+        "complete": { "type": "boolean" },
+        "limit": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "candidate_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "returned_count": { "$ref": "#/$defs/nonNegativeInteger" }
+      },
+      "additionalProperties": true
+    },
+    "scan": {
+      "type": "object",
+      "description": "The public result of rescue scan. Unknown fields are accepted so newer Vetto versions can extend the result without breaking consumers.",
+      "required": ["status", "sessions", "discovery"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "sessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/session" }
+        },
+        "discovery": { "$ref": "#/$defs/discovery" }
+      },
+      "additionalProperties": true
+    },
+    "diagnose": {
+      "type": "object",
+      "description": "The public SessionView result of rescue diagnose.",
+      "required": [
+        "adapter",
+        "key",
+        "relative_path",
+        "bytes",
+        "sha256",
+        "health",
+        "records",
+        "malformed_records",
+        "oversized_records",
+        "terminated_with_newline",
+        "findings",
+        "notices"
+      ],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/nonEmptyString" },
+        "key": { "$ref": "#/$defs/nonEmptyString" },
+        "relative_path": { "$ref": "#/$defs/nonEmptyString" },
+        "bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "health": { "$ref": "#/$defs/nonEmptyString" },
+        "records": { "$ref": "#/$defs/nonNegativeInteger" },
+        "malformed_records": { "$ref": "#/$defs/nonNegativeInteger" },
+        "oversized_records": { "$ref": "#/$defs/nonNegativeInteger" },
+        "terminated_with_newline": { "type": "boolean" },
+        "findings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notices": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "receipt": {
+      "type": "object",
+      "description": "The shared copy-only receipt returned by rescue snapshot and rescue fork.",
+      "required": [
+        "adapter",
+        "source_key",
+        "destination",
+        "bytes",
+        "sha256",
+        "source_preserved"
+      ],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/nonEmptyString" },
+        "source_key": { "$ref": "#/$defs/nonEmptyString" },
+        "destination": { "$ref": "#/$defs/nonEmptyString" },
+        "bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "source_preserved": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
