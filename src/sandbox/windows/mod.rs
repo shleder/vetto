@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::config::NetMode;
-use crate::policy::Policy;
+use crate::policy::{Policy, ResourceLimits};
 use crate::sandbox::handle::{KillStrategy, SandboxHandle, SpawnOptions};
 use crate::sandbox::Spawned;
 
@@ -65,6 +65,13 @@ const CREATE_UNICODE_ENVIRONMENT: Dword = 0x0000_0400;
 
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Dword = 9;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Dword = 0x0000_2000;
+const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: Dword = 0x0000_0008;
+// Defined for completeness of the extended-limit flag family.  The backend
+// currently expresses the address-space ceiling through the job-wide memory
+// limit only, so the per-process variant stays unused.
+#[allow(dead_code)]
+const JOB_OBJECT_LIMIT_PROCESS_MEMORY: Dword = 0x0000_0100;
+const JOB_OBJECT_LIMIT_JOB_MEMORY: Dword = 0x0000_0200;
 
 const TOKEN_ASSIGN_PRIMARY: Dword = 0x0001;
 const TOKEN_DUPLICATE: Dword = 0x0002;
@@ -580,7 +587,7 @@ impl WindowsSandbox {
 
         let process = process_info.process;
         let thread = process_info.thread;
-        let job = match create_kill_on_close_job() {
+        let job = match create_kill_on_close_job(&policy.limits) {
             Ok(job) => job,
             Err(error) => {
                 // SAFETY: process/thread are valid handles returned by the
@@ -657,20 +664,46 @@ fn close_handle(handle: Handle) {
     }
 }
 
-fn create_kill_on_close_job() -> Result<OwnedHandle> {
+fn create_kill_on_close_job(limits: &ResourceLimits) -> Result<OwnedHandle> {
     // SAFETY: null attributes/name request an unnamed Job Object.
     let job = unsafe { CreateJobObjectW(null_mut(), null()) };
     if !valid_handle(job) {
         bail!("CreateJobObjectW failed: {}", last_error())
     }
-    let mut limits = JobObjectExtendedLimitInformation {
+    // Optional ceilings from the policy.  A Job memory limit caps the total
+    // commit charge of every process in the job, which is the closest Job
+    // Object approximation of RLIMIT_AS (`address_space_bytes`).  A zero or
+    // absent limit leaves the flag unset and reproduces the previous behavior
+    // exactly; values that cannot be represented on this platform fail closed.
+    let mut limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let job_memory_limit = match limits.address_space_bytes {
+        Some(bytes) if bytes > 0 => {
+            limit_flags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+            match usize::try_from(bytes) {
+                Ok(bytes) => bytes,
+                Err(_) => bail!("address_space_bytes does not fit the platform usize: {bytes}"),
+            }
+        }
+        _ => 0,
+    };
+    let active_process_limit = match limits.processes {
+        Some(processes) if processes > 0 => {
+            limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            match u32::try_from(processes) {
+                Ok(processes) => processes,
+                Err(_) => bail!("processes does not fit a 32-bit Job Object limit: {processes}"),
+            }
+        }
+        _ => 0,
+    };
+    let mut extended = JobObjectExtendedLimitInformation {
         basic_limit_information: JobObjectBasicLimitInformation {
             per_process_user_time_limit: 0,
             per_job_user_time_limit: 0,
-            limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            limit_flags,
             minimum_working_set_size: 0,
             maximum_working_set_size: 0,
-            active_process_limit: 0,
+            active_process_limit,
             affinity: 0,
             priority_class: 0,
             scheduling_class: 0,
@@ -684,17 +717,17 @@ fn create_kill_on_close_job() -> Result<OwnedHandle> {
             other_transfer_count: 0,
         },
         process_memory_limit: 0,
-        job_memory_limit: 0,
+        job_memory_limit,
         peak_process_memory_used: 0,
         peak_job_memory_used: 0,
     };
-    // SAFETY: `limits` has the documented Job Object layout and remains live
+    // SAFETY: `extended` has the documented Job Object layout and remains live
     // for the duration of this call.
     let ok = unsafe {
         SetInformationJobObject(
             job,
             JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            (&mut limits as *mut JobObjectExtendedLimitInformation).cast(),
+            (&mut extended as *mut JobObjectExtendedLimitInformation).cast(),
             size_of::<JobObjectExtendedLimitInformation>() as Dword,
         )
     };
@@ -708,7 +741,10 @@ fn create_kill_on_close_job() -> Result<OwnedHandle> {
 }
 
 fn probe_job_object() -> bool {
-    create_kill_on_close_job().is_ok()
+    // Probes carry no policy: default limits leave the optional job limit
+    // flags unset, so the probe exercises exactly the always-on
+    // kill-on-close path.
+    create_kill_on_close_job(&ResourceLimits::default()).is_ok()
 }
 
 fn probe_restricted_token() -> (bool, bool) {
@@ -1098,11 +1134,32 @@ fn build_sandbox_spec(policy: &Policy, net: &NetMode) -> Result<Vec<u8>> {
     if !matches!(net, &NetMode::Off) {
         bail!("domain network modes require a DNS/IP policy compiler; refusing a weaker network policy")
     }
-    if !policy.deny_resolved.is_empty() {
-        // The published SandboxSpec.fbs contract exposes read/write and
-        // read-only grants, but no verified denied-path field.  Do not put an
-        // invented FlatBuffer slot on the wire and claim that it is enforced.
-        bail!("Windows process sandbox has no verified denied-path field; refusing a weaker filesystem policy")
+    // The published SandboxSpec.fbs contract exposes read/write and read-only
+    // grants, but no verified denied-path field.  The compiled spec is
+    // default-deny outside the grant roots, so a deny path that lies outside
+    // every granted root is already unreachable for the sandboxed child and
+    // needs no extra field; do not put an invented FlatBuffer slot on the wire
+    // and claim that it is enforced.  A deny path that sits inside a granted
+    // root cannot be subtracted from the spec, so that genuinely dangerous
+    // configuration must fail closed with an actionable reason.
+    let granted_roots: Vec<&Path> = policy
+        .allow_write
+        .iter()
+        .chain(policy.allow_read.iter())
+        .map(|root| root.as_path())
+        .collect();
+    for denied in &policy.deny_resolved {
+        if let Some(root) = granted_roots
+            .iter()
+            .copied()
+            .find(|root| path_inside_root(&denied.path, root))
+        {
+            bail!(
+                "secret path {} sits inside granted root {}; Windows SandboxSpec cannot subtract a subpath — narrow the grant or drop the secret from display_only_deny",
+                denied.path.display(),
+                root.display()
+            );
+        }
     }
 
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(4096);
@@ -1171,6 +1228,61 @@ fn build_sandbox_spec(policy: &Policy, net: &NetMode) -> Result<Vec<u8>> {
     Ok(builder.finished_data().to_vec())
 }
 
+/// Component-wise lexical check for `candidate == root || candidate` being
+/// below `root`.  Components — not raw strings — are compared so mixed `/` and
+/// `\` separators and repeated separators cannot defeat the check, and
+/// comparison folds Unicode case because Windows filesystems resolve paths
+/// case-insensitively (a spurious match only causes a redundant fail-closed
+/// bail, while a missed match would leave a readable secret inside a grant).
+/// This is a lexical analysis of the spec inputs only: symlink aliases whose
+/// target leaves the granted tree and 8.3 short names are not modeled here.
+/// `deny_resolved` entries are loader-resolved existing paths and grants are
+/// validated absolute below, which keeps the common forms aligned.
+fn path_inside_root(candidate: &Path, root: &Path) -> bool {
+    let mut roots = root.components();
+    let mut candidates = candidate.components();
+    loop {
+        match (candidates.next(), roots.next()) {
+            // Every root component matched: candidate equals the root or lies
+            // underneath it.
+            (_, None) => return true,
+            // Candidate exhausted while root components remain: candidate is a
+            // strict prefix of the root, not inside it.
+            (None, Some(_)) => return false,
+            (Some(cand), Some(root_component)) => {
+                if !windows_component_match(cand, root_component) {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+/// Case-insensitive equality of two path components.  Structural matching
+/// keeps unit components (`RootDir`, `CurDir`, `ParentDir`) independent of
+/// their `as_os_str` rendering; prefixes and normal names fold case because
+/// Windows filesystems match paths case-insensitively.
+fn windows_component_match(
+    left: std::path::Component<'_>,
+    right: std::path::Component<'_>,
+) -> bool {
+    fn fold(value: &std::ffi::OsStr) -> String {
+        value.to_string_lossy().to_lowercase()
+    }
+    match (left, right) {
+        (std::path::Component::RootDir, std::path::Component::RootDir) => true,
+        (std::path::Component::CurDir, std::path::Component::CurDir) => true,
+        (std::path::Component::ParentDir, std::path::Component::ParentDir) => true,
+        (std::path::Component::Prefix(left), std::path::Component::Prefix(right)) => {
+            fold(left.as_os_str()) == fold(right.as_os_str())
+        }
+        (std::path::Component::Normal(left), std::path::Component::Normal(right)) => {
+            fold(left) == fold(right)
+        }
+        _ => false,
+    }
+}
+
 fn identity_nonce() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1180,7 +1292,51 @@ fn identity_nonce() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{privileged_network_backend_status, quote_windows_arg, wide_null};
+    use std::path::Path;
+
+    use super::{
+        path_inside_root, privileged_network_backend_status, quote_windows_arg, wide_null,
+    };
+
+    #[test]
+    fn path_inside_root_matches_children_and_the_root_itself() {
+        let root = Path::new(r"C:\Users\dev\project");
+        assert!(path_inside_root(Path::new(r"C:\Users\dev\project"), root));
+        assert!(path_inside_root(
+            Path::new(r"C:\Users\dev\project\.env"),
+            root
+        ));
+        assert!(path_inside_root(
+            Path::new(r"C:\Users\dev\project\sub\.env"),
+            root
+        ));
+        // A sibling sharing a string prefix is not inside the root.
+        assert!(!path_inside_root(
+            Path::new(r"C:\Users\dev\project2\.env"),
+            root
+        ));
+        // A parent of the root is not inside it.
+        assert!(!path_inside_root(Path::new(r"C:\Users\dev"), root));
+        assert!(!path_inside_root(
+            Path::new(r"D:\Users\dev\project\.env"),
+            root
+        ));
+    }
+
+    #[test]
+    fn path_inside_root_folds_case_and_mixed_separators() {
+        // Windows resolves paths case-insensitively and accepts both
+        // separators; the overlap refusal must not miss such matches.
+        let root = Path::new(r"C:\Users\dev\project");
+        assert!(path_inside_root(
+            Path::new(r"c:/users/DEV/PROJECT/.env"),
+            root
+        ));
+        assert!(path_inside_root(
+            Path::new(r"C:/users/dev/project/.ssh"),
+            root
+        ));
+    }
 
     #[test]
     fn windows_argv_quoting_handles_spaces_and_trailing_slashes() {
