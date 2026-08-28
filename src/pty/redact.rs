@@ -262,7 +262,7 @@ impl StreamingRedactor {
             let safe_emit = tail.len() - 256;
             result.extend_from_slice(&tail[..safe_emit]);
             self.carry_over.extend_from_slice(&tail[safe_emit..]);
-        } else if !tail.is_empty() && (is_token_char(*tail.last().unwrap()) || tail.contains(&b'-')) {
+        } else if !tail.is_empty() && is_token_char(*tail.last().unwrap()) {
             self.carry_over.extend_from_slice(tail);
         } else {
             result.extend_from_slice(tail);

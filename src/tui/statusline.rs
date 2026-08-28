@@ -55,10 +55,6 @@ pub fn run(
     let mut redactor = pty::AnsiRedactor::new();
 
     let exit_code = loop {
-        if let Some(code) = handle.try_wait() {
-            break code;
-        }
-
         // Outer resize -> resize inner pty (the kernel then signals the
         // agent's foreground group on the pty; we do not signal manually).
         if let Some((rows, cols)) = pty::resizer::sync_to_outer(master) {
@@ -90,6 +86,26 @@ pub fn run(
             let mut out = io::stdout();
             let _ = out.write_all(&redacted);
             let _ = out.flush();
+        }
+
+        if let Some(code) = handle.try_wait() {
+            // Drain any remaining bytes from master after child exit
+            loop {
+                let n = pty::read_ready(master, &mut buf);
+                if n == 0 {
+                    break;
+                }
+                let redacted = redactor.redact_chunk(&buf[..n]);
+                let mut out = io::stdout();
+                let _ = out.write_all(&redacted);
+            }
+            let flushed = redactor.flush();
+            if !flushed.is_empty() {
+                let mut out = io::stdout();
+                let _ = out.write_all(&flushed);
+            }
+            let _ = io::stdout().flush();
+            break code;
         }
 
         app_state.drain(&mut rx);
