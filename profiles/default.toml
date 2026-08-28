@@ -35,6 +35,16 @@ pass_through = [
   "NO_COLOR", "CI", "TERM_PROGRAM",
 ]
 
+# Resource ceilings applied right before the agent execve. Any --limits CLI
+# value merges strictest-wins on top of these; file_size_bytes stays unset
+# (no ceiling on created file sizes).
+[limits]
+cpu_seconds = 14400
+address_space_bytes = 8589934592
+processes = 2048
+open_files = 1024
+
+
 [display_only_deny]
 # NOT an enforcement mechanism by itself. Documentation + doctor probes;
 # on Linux Tier FULL these paths are additionally masked with bind-mount
