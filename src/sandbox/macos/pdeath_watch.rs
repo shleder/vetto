@@ -1,20 +1,26 @@
 //! Parent-death watchdog for the macOS backend.
 //!
-//! Linux has `PR_SET_PDEATHSIG`; macOS has nothing equivalent, so before the
-//! agent `execve`s we fork a tiny unsandboxed helper that watches vetto's pid
-//! with a kqueue `EVFILT_PROC`/`NOTE_EXIT` registration and SIGKILLs the agent
-//! if vetto dies. Without it, a SIGKILLed vetto leaves a running (sandboxed,
-//! but unmanaged and unkillable-by-vetto) agent behind.
+//! Linux has `PR_SET_PDEATHSIG`; macOS has nothing equivalent, so vetto's
+//! PARENT forks a tiny unsandboxed helper right after the agent child exists.
+//! The helper watches vetto's pid with a kqueue `EVFILT_PROC`/`NOTE_EXIT`
+//! registration and SIGKILLs the agent if vetto dies. Without it, a SIGKILLed
+//! vetto leaves a running (sandboxed, but unmanaged) agent behind.
 //!
-//! The helper is forked from the single-threaded pre-exec child (the same
-//! fork-safety rule as every other chain), immediately detaches from stdio
-//! and the agent's process group, and self-exits when the agent exits. A
-//! 1-second kevent timeout doubles as a poll: `kill(vetto_pid, 0)` catches
-//! exits that were missed before the registration landed.
+//! The helper MUST be forked from the parent, not from the agent child: a
+//! second fork inside the child poisons libSystem's fork-safety state, and
+//! the CoreFoundation/ObjC calls inside `sandbox_init_with_parameters` then
+//! abort the agent with a silent SIGABRT before it ever execs. The parent
+//! never execs and has no threads at that point, so its fork is safe.
+//!
+//! The helper immediately detaches from stdio (and closes every inherited
+//! descriptor) and from the agent's process group, and self-exits when the
+//! agent exits. A 1-second kevent timeout doubles as a poll:
+//! `kill(vetto_pid, 0)` catches exits that were missed before the
+//! registration landed.
 //!
 //! Best-effort by design: if the fork or kqueue setup fails, the session
 //! continues without the watchdog (the Linux-level guarantees do not apply
-//! here anyway); failures are reported on the child's stderr.
+//! here anyway); failures are reported on vetto's stderr.
 
 /// Fork the watchdog helper. Called in the agent process after fork, before
 /// `apply_seatbelt`, so the helper itself is never sandboxed.
@@ -176,15 +182,23 @@ unsafe fn detach_from_session_stdio() {
     let _ = libc::setsid();
     let devnull = b"/dev/null\0";
     let fd = libc::open(devnull.as_ptr().cast(), libc::O_RDWR);
-    if fd < 0 {
-        return;
-    }
-    for target in 0..=2 {
-        if target != fd {
-            libc::dup2(fd, target);
+    if fd >= 0 {
+        for target in 0..=2 {
+            if target != fd {
+                libc::dup2(fd, target);
+            }
+        }
+        if fd > 2 {
+            libc::close(fd);
         }
     }
-    if fd > 2 {
-        libc::close(fd);
+    // Forked from vetto's parent context: drop EVERY inherited descriptor
+    // (sandbox setup pipes, pty ends, stdio pipes) so the helper can never
+    // hold an end open past the agent's exit and break EOF/drain semantics.
+    // SAFETY: sysconf is scalar-only; EBADF on closed slots is ignored.
+    let max = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) } as i32;
+    let max = max.clamp(16, 65_536);
+    for candidate in 3..max {
+        unsafe { libc::close(candidate) };
     }
 }

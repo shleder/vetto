@@ -7,9 +7,10 @@
 //! HONEST LIMITS (also in SECURITY.md):
 //! - Seatbelt denials are invisible to FSEvents (same enforcement-vs-
 //!   visibility gap as Linux); macOS visibility is inherently delayed.
-//! - A forked kqueue watchdog (`pdeath_watch`) SIGKILLs the agent when vetto
-//!   dies, closing the SIGKILLed-vetto orphan gap. It is best-effort: if the
-//!   fork fails the session runs without it (reported on stderr).
+//! - A kqueue watchdog (`pdeath_watch`, forked from the parent right after
+//!   the agent child exists) SIGKILLs the agent when vetto dies, closing the
+//!   SIGKILLed-vetto orphan gap. Best-effort: if the fork fails the session
+//!   runs without it (reported on stderr).
 //! - Relay network modes (`allowlist`/`strict`) are Linux-only; macOS
 //!   supports `--net=off` only and rejects the rest before forking.
 //! - Policy rlimits (CPU, address space, processes, open files, file size)
@@ -81,6 +82,15 @@ impl MacosSandbox {
             child(policy_ref, net_ref, agent_c, env_c, err_w_raw, opts_ref);
         }
         drop(err_w);
+
+        // The parent-death watchdog must be forked HERE, from the parent —
+        // never inside the child. A second fork in the child poisons
+        // libSystem's fork-safety state, and the CF/ObjC calls inside
+        // `sandbox_init_with_parameters` then abort the agent (silent
+        // SIGABRT, no stderr). The parent has no threads yet, so a fork
+        // here is safe, and the child pid is exactly what the helper needs
+        // to watch. The helper closes every inherited descriptor above 2.
+        pdeath_watch::spawn(libc::getpid(), pid);
 
         // Same readiness protocol as the Linux chains.
         let mut b = [0u8; 1];
@@ -291,12 +301,6 @@ fn child(
         // SAFETY: immediate exit; nothing else to report through.
         unsafe { libc::_exit(117) };
     }
-
-    // Fork the parent-death watchdog BEFORE the sandbox applies: the helper
-    // must stay unsandboxed (it needs kqueue + kill) and watches vetto via
-    // getppid() from this freshly forked child.
-    // SAFETY: scalar-only getpid/getppid calls.
-    pdeath_watch::spawn(unsafe { libc::getppid() }, unsafe { libc::getpid() });
 
     // Apply native Seatbelt sandbox via dynamic C API in memory
     if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
