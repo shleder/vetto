@@ -1,10 +1,30 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/shleder/vetto/main/docs/assets/vetto-banner.svg" width="720" alt="VETTO"/>
+
+```text
+██╗   ██╗ ███████╗ █████████╗████████╗ ██████╗
+██║   ██║██╔════╝ ╚══██╔══╝ ╚══██╔══╝██╔═══██╗
+██║   ██║█████╗     ██║      ██║   ██║   ██║
+╚██╗ ██╔╝██╔════╝    ██║      ██║   ██║   ██║
+ ╚████╔╝  ███████╗   ██║      ██║   ╚██████╔╝
+  ╚═══╝   ╚══════╝   ╚═╝      ╚═╝    ╚═════╝
+```
+
+# VETTO
+
+<p align="center">
+  <b>Daemon-Less, Fail-Closed Sandbox &amp; Security Layer for AI Coding Agents</b>
+</p>
+
+[![Release](https://img.shields.io/github/v/release/shleder/vetto?include_prereleases&label=release&color=blue&style=flat-square)](https://github.com/shleder/vetto/releases)
+[![npm version](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#platform-support)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Fail-Closed](https://img.shields.io/badge/fallback-none%20%2F%20fail--closed-success?style=flat-square)](#honest-status)
+
 </div>
 
-[![CI](https://github.com/shleder/vetto/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm)](https://www.npmjs.com/package/@shledery/vetto)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+---
 
 `vetto` puts a local AI coding agent inside an OS-level sandbox **before the
 agent process starts**. It is a single Rust binary: no daemon, no background
