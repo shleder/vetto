@@ -13,9 +13,7 @@
 use crate::policy::ResourceLimits;
 
 fn apply_one(resource: libc::c_int, value: Option<u64>) -> Option<String> {
-    let Some(value) = value else {
-        return None;
-    };
+    let value = value?;
     let requested = value;
     let value = requested as libc::rlim_t;
     if value as u128 != requested as u128 {

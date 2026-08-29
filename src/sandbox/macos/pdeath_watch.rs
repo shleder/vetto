@@ -111,7 +111,7 @@ unsafe fn run_watch(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) -> ! {
 
     loop {
         let mut events = [receipts[0]; 8];
-        let mut timeout = libc::timespec {
+        let timeout = libc::timespec {
             tv_sec: 1,
             tv_nsec: 0,
         };
@@ -121,7 +121,7 @@ unsafe fn run_watch(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) -> ! {
             0,
             events.as_mut_ptr(),
             8,
-            &mut timeout,
+            &timeout,
         );
         if n < 0 {
             let err = std::io::Error::last_os_error();
