@@ -144,9 +144,11 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
         ) -> libc::c_int;
         type SandboxFreeError = unsafe extern "C" fn(errorbuf: *mut libc::c_char);
 
-        let sandbox_init: SandboxInitWithParameters = unsafe { std::mem::transmute(init_sym) };
+        let sandbox_init: SandboxInitWithParameters = unsafe {
+            std::mem::transmute::<*mut libc::c_void, SandboxInitWithParameters>(init_sym)
+        };
         let sandbox_free: Option<SandboxFreeError> = if !free_sym.is_null() {
-            Some(unsafe { std::mem::transmute(free_sym) })
+            Some(unsafe { std::mem::transmute::<*mut libc::c_void, SandboxFreeError>(free_sym) })
         } else {
             None
         };
