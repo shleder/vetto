@@ -43,6 +43,44 @@ fn sigabrt_bisect_diagnostic() {
         );
         eprintln!("{line}");
         matrix.push(line);
+        if label == "baseline" {
+            // The full child stderr (profile dump included) and the newest
+            // crash report name the exact abort reason.
+            println!("bisect[baseline] FULL STDERR:\n{stderr}");
+            let reports = std::env::var_os("HOME")
+                .map(|h| {
+                    let mut p = std::path::PathBuf::from(h);
+                    p.push("Library/Logs/DiagnosticReports");
+                    p
+                })
+                .map(|dir| {
+                    let mut names: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+                        std::fs::read_dir(dir)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .map(|e| e.path())
+                            .filter(|p| {
+                                p.to_string_lossy().contains("sleep")
+                                    || p.extension().map(|x| x == "ips").unwrap_or(false)
+                            })
+                            .filter_map(|p| {
+                                let meta = std::fs::metadata(&p).ok()?;
+                                Some((meta.modified().ok()?, p))
+                            })
+                            .collect();
+                    names.sort();
+                    names.into_iter().map(|(_, p)| p).collect()
+                })
+                .unwrap_or_default();
+            match reports.last() {
+                Some(newest) => println!(
+                    "bisect[baseline] newest diagnostic report {newest:?}:\n{}",
+                    std::fs::read_to_string(newest).unwrap_or_default()
+                ),
+                None => println!("bisect[baseline] no crash reports found"),
+            }
+        }
     }
     // Deliberate: the matrix must reach the CI log verbatim, and cargo test
     // only prints captured output for FAILING tests. Remove this diagnostic
