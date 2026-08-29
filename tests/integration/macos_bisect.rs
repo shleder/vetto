@@ -13,7 +13,7 @@ fn sigabrt_bisect_diagnostic() {
     let lines: Vec<&str> = full.lines().collect();
     let join = |slice: &[&str]| slice.join("\n");
     let head = join(&lines[..30]);
-    let tail = join(&[lines[..5], &lines[30..]].concat());
+    let tail = join(&[lines[..5], lines[30..]].concat());
     let nonet = join(
         &lines
             .iter()
