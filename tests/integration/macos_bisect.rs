@@ -7,32 +7,30 @@
 #[cfg(target_os = "macos")]
 #[test]
 fn sigabrt_bisect_diagnostic() {
-    let profiles: [(&str, &str); 4] = [
-        (
-            "sexec-minimal",
-            "(version 1)(deny default)(allow process-exec)(allow process-fork)\
-             (allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))",
-        ),
-        ("sexec-allow-all", "(version 1)(allow default)"),
-        (
-            // The exact profile vetto generated when it aborted, replayed
-            // through sandbox-exec: separates profile CONTENT from the
-            // sandbox_init_with_parameters application path.
-            "sexec-vetto-replay",
-            include_str!("fixtures/macos-bisect-replay.sbpl"),
-        ),
-        (
-            "sexec-vetto-replay-debug",
-            include_str!("fixtures/macos-bisect-replay.sbpl"),
-        ),
+    // Clause-level bisect of the aborted profile. The fixture is the full
+    // profile; variants slice it so one CI run narrows the poison clause.
+    let full = include_str!("fixtures/macos-bisect-replay.sbpl");
+    let lines: Vec<&str> = full.lines().collect();
+    let join = |slice: &[&str]| slice.join("\n");
+    let head = join(&lines[..30]);
+    let tail = join(&[lines[..5], &lines[30..]].concat());
+    let nonet = join(
+        &lines
+            .iter()
+            .copied()
+            .filter(|l| !l.contains("(deny network*)"))
+            .collect::<Vec<_>>(),
+    );
+    let profiles: [(&str, String); 6] = [
+        ("sexec-minimal", "(version 1)(deny default)(allow process-exec)(allow process-fork)(allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))".to_string()),
+        ("replay-full", full.to_string()),
+        ("replay-head", head),
+        ("replay-tail", tail),
+        ("replay-nonet", nonet),
+        ("replay-nonet-plus-mach", format!("{nonet}(allow mach-lookup)")),
     ];
     for (label, profile) in profiles {
         let started = std::time::Instant::now();
-        let profile = if label.ends_with("-debug") {
-            format!("{profile}(debug deny)")
-        } else {
-            profile.to_string()
-        };
         let out = std::process::Command::new("/usr/bin/sandbox-exec")
             .args(["-p", &profile, "/bin/sleep", "1"])
             .output()
