@@ -200,24 +200,32 @@ mod tests {
         let mut policy = Policy::default();
         policy.allow_read.push(PathBuf::from("/test/read"));
         policy.allow_write.push(PathBuf::from("/test/write"));
+        policy.deny_resolved.push(crate::policy::DenyEntry {
+            path: PathBuf::from("/test/secret"),
+            is_dir: false,
+        });
 
         let (template, params) = generate_sbpl_template_and_params(&policy, &NetMode::Off);
-        assert!(template.contains("(param \"ALLOW_READ_DIR_0\")"));
+        // Write-isolation model: reads are broad, write roots and secret
+        // denies are the parameterized clauses.
         assert!(template.contains("(param \"ALLOW_WRITE_DIR_0\")"));
+        assert!(template.contains("(param \"DENY_PATH_0\")"));
+        assert!(!template.contains("ALLOW_READ_DIR"));
         assert!(template.contains("(deny network*)"));
+        assert!(template.contains("(allow network-outbound (remote unix-socket))"));
 
         assert_eq!(params.len(), 2);
         assert_eq!(
             params[0],
-            ("ALLOW_READ_DIR_0".to_string(), "/test/read".to_string())
+            ("ALLOW_WRITE_DIR_0".to_string(), "/test/write".to_string())
         );
         assert_eq!(
             params[1],
-            ("ALLOW_WRITE_DIR_0".to_string(), "/test/write".to_string())
+            ("DENY_PATH_0".to_string(), "/test/secret".to_string())
         );
 
         let inlined = generate(&policy, &NetMode::Off);
-        assert!(inlined.contains("\"/test/read\""));
         assert!(inlined.contains("\"/test/write\""));
+        assert!(inlined.contains("\"/test/secret\""));
     }
 }
