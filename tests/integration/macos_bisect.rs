@@ -9,6 +9,7 @@
 #[cfg(target_os = "macos")]
 #[test]
 fn sigabrt_bisect_diagnostic() {
+    let mut matrix = Vec::new();
     for (label, envs) in [
         ("baseline", vec![]),
         ("no-watchdog", vec![("VETTO_NO_PDEATH_WATCH", "1")]),
@@ -35,12 +36,21 @@ fn sigabrt_bisect_diagnostic() {
             .filter_map(|l| l.strip_prefix("vetto: child stage: "))
             .collect();
         let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
-        println!(
+        let line = format!(
             "bisect[{label}]: code={:?} secs={elapsed:.1} stages={stages:?} stderr_tail={:?}",
             out.status.code(),
             tail.iter().rev().copied().collect::<Vec<_>>().join(" | ")
         );
+        eprintln!("{line}");
+        matrix.push(line);
     }
+    // Deliberate: the matrix must reach the CI log verbatim, and cargo test
+    // only prints captured output for FAILING tests. Remove this diagnostic
+    // once the SIGABRT root cause is fixed.
+    panic!(
+        "DIAGNOSTIC MATRIX (remove with the SIGABRT fix):\n{}",
+        matrix.join("\n")
+    );
 }
 
 #[cfg(not(target_os = "macos"))]
