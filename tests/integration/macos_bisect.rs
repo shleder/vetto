@@ -7,24 +7,34 @@
 #[cfg(target_os = "macos")]
 #[test]
 fn sigabrt_bisect_diagnostic() {
-    let profiles: [(&str, &str); 3] = [
+    let profiles: [(&str, &str); 4] = [
         (
             "sexec-minimal",
             "(version 1)(deny default)(allow process-exec)(allow process-fork)\
              (allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))",
         ),
-        (
-            "sexec-deny-net",
-            "(version 1)(deny default)(allow process-exec)(allow process-fork)\
-             (allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))\
-             (deny network*)(allow network-outbound (remote unix-socket))",
-        ),
         ("sexec-allow-all", "(version 1)(allow default)"),
+        (
+            // The exact profile vetto generated when it aborted, replayed
+            // through sandbox-exec: separates profile CONTENT from the
+            // sandbox_init_with_parameters application path.
+            "sexec-vetto-replay",
+            include_str!("fixtures/macos-bisect-replay.sbpl"),
+        ),
+        (
+            "sexec-vetto-replay-debug",
+            include_str!("fixtures/macos-bisect-replay.sbpl"),
+        ),
     ];
     for (label, profile) in profiles {
         let started = std::time::Instant::now();
+        let profile = if label.ends_with("-debug") {
+            format!("{profile}(debug deny)")
+        } else {
+            profile.to_string()
+        };
         let out = std::process::Command::new("/usr/bin/sandbox-exec")
-            .args(["-p", profile, "/bin/sleep", "1"])
+            .args(["-p", &profile, "/bin/sleep", "1"])
             .output()
             .expect("run sandbox-exec");
         let stderr = String::from_utf8_lossy(&out.stderr);
