@@ -21,6 +21,12 @@ pub fn generate_sbpl_template_and_params(
     let mut params = Vec::new();
 
     sb.push_str("(version 1)\n(deny default)\n");
+    // Diagnostic: (debug deny) prints every denial to the process's stderr,
+    // which the VETTO_CHILD_TRACE=1 session already captures. Enabled only
+    // under the trace env so production profiles stay quiet.
+    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
+        sb.push_str("(debug deny)\n");
+    }
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
     sb.push_str("(allow sysctl-read)\n");
     // Process startup on macOS talks to launchd/sysmond over XPC
