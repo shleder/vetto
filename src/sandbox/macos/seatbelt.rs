@@ -23,6 +23,11 @@ pub fn generate_sbpl_template_and_params(
     sb.push_str("(version 1)\n(deny default)\n");
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
     sb.push_str("(allow sysctl-read)\n");
+    // Process startup on macOS talks to launchd/sysmond over XPC
+    // (mach-lookup). Without this the exec'd binary dies with a silent
+    // SIGABRT right after execve — the same class of failure the
+    // network* unix-socket exception below covers for the network* filter.
+    sb.push_str("(allow mach-lookup)\n");
 
     // Standard system runtime roots required on macOS. /bin, /sbin and the
     // /usr/bin family MUST stay readable: an exec'd image has to read its own
