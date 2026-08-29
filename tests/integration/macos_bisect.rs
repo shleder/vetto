@@ -11,10 +11,8 @@
 fn sigabrt_bisect_diagnostic() {
     let mut matrix = Vec::new();
     for (label, envs) in [
-        ("baseline", vec![]),
-        ("wb-tcpudp", vec![("VETTO_SEATBELT_MODE", "wb-tcpudp")]),
-        ("wb-mach", vec![("VETTO_SEATBELT_MODE", "wb-mach")]),
-        ("wb-socket", vec![("VETTO_SEATBELT_MODE", "wb-socket")]),
+        ("baseline-unix-allow", vec![]),
+        ("control-no-seatbelt", vec![("VETTO_SEATBELT_MODE", "none")]),
     ] {
         let proj = crate::common::TempProject::new("sigabrt-bisect");
         let started = std::time::Instant::now();
