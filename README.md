@@ -310,7 +310,7 @@ wrapped without prefixing every command by hand.
 | :--- | :--- | :--- | :--- |
 | Linux x86_64 / aarch64 | `full` | Landlock, user/mount/PID/net/IPC namespaces, seccomp-BPF | Most complete backend |
 | Linux without unprivileged userns | `fs-only` | Landlock, seccomp-BPF | No mount/PID/net namespace; no relay modes; see read-back cost below |
-| macOS (Intel / Apple Silicon) | Seatbelt | `libsandbox` SBPL profiles (`sandbox_init_with_parameters`), FSEvents | `--net=off` only (see Network); Endpoint Security code exists but is not wired in |
+| macOS (Intel / Apple Silicon) | Seatbelt | `libsandbox` SBPL profiles, write isolation + net=off | Reads are NOT isolated on current macOS (known SBPL limitation — see Known limits); secret deny rules are best-effort |
 | Windows 11 x64 | Experimental | `processmodel.dll` sandbox API, AppContainer, low integrity, Job Object | `--net=off` only; inherited stdio, so use `--tui=none`; no integration-test coverage of enforcement |
 
 ## Known limits
@@ -332,9 +332,16 @@ These are properties of the current implementation, not planned work:
   cleanup gap.
 - macOS relies on `libsandbox` SBPL profiles — the same mechanism the
   deprecated `sandbox-exec` binary drives — so treat that surface as
-  Apple-deprecated. FSEvents reports coarse directory changes, never reads or
-  denials. A forked kqueue watchdog kills the agent when vetto itself is
-  `SIGKILL`ed; it is best-effort and reports its own failure if it cannot arm.
+  Apple-deprecated. **Read isolation is not enforced on current macOS**: the
+  bisect matrix showed that multi-clause `(deny default)` profiles with
+  fragmented read allowlists abort every exec'd binary with a silent SIGABRT,
+  so the working macOS profile keeps reads broad and enforces write
+  isolation, net=off (no IP traffic) and trailing `display_only_deny` secret
+  denies — which the broad read allow currently outruns. Secret reads on
+  macOS are therefore not isolated yet; narrowing reads without breaking
+  process startup is the top roadmap item. A forked kqueue watchdog kills the
+  agent when vetto itself is `SIGKILL`ed; it is best-effort and reports its
+  own failure if it cannot arm.
 - Windows fails before process creation when the experimental sandbox API is
   unavailable, and refuses the launch when a secret path overlaps a granted
   read root (the SandboxSpec contract cannot subtract a subpath). There is no

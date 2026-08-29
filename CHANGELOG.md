@@ -27,9 +27,14 @@ Keep a Changelog; versioning follows SemVer.
   up front on stderr and as a session notice: secrets are allowlist-carved
   (entry names may stay visible) and files created directly at a write root
   cannot be read back in the same session.
-- macOS parent-death watchdog: a forked kqueue helper SIGKILLs the agent when
-  vetto itself is SIGKILLed, closing the orphan gap. Best-effort with an
-  explicit warning when it cannot arm.
+- macOS hardening round: `--net=strict` is rejected explicitly instead of
+  silently running as `off`; a forked kqueue watchdog kills the agent when
+  vetto itself is SIGKILLed; and the seatbelt profile moved to the
+  write-isolation + net=off model after a bisect matrix showed the old
+  fragmented-read `(deny default)` profile aborted every exec'd binary with
+  a silent SIGABRT on current macOS. Read isolation on macOS is a known,
+  documented limitation (secret reads are not isolated yet) — narrowing
+  reads without breaking process startup is the top roadmap item.
 
 ### Changed
 
