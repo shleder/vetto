@@ -70,7 +70,7 @@ fn sigabrt_bisect_diagnostic() {
                             })
                             .collect();
                     names.sort();
-                    names.into_iter().map(|(_, p)| p).collect()
+                    names.into_iter().map(|(_, p)| p).collect::<Vec<std::path::PathBuf>>()
                 })
                 .unwrap_or_default();
             match reports.last() {
