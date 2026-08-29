@@ -324,9 +324,12 @@ fn child(
 
     // Apply native Seatbelt sandbox via dynamic C API in memory.
     // VETTO_SEATBELT_MODE is a diagnostic bisect switch (SIGABRT hunt):
-    //   none          — do not sandbox at all (CI-only; never a fallback)
-    //   allow-all     — "(allow default)" profile
-    //   deny-net-only — everything allowed except the network
+    //   none           — do not sandbox at all (CI-only; never a fallback)
+    //   allow-all      — "(allow default)" profile
+    //   deny-net-only  — everything allowed except the network
+    //   wb-tcpudp      — deny TCP/UDP outbound only (no blanket network*)
+    //   wb-mach        — blanket deny network* + mach-lookup/system-socket
+    //   wb-socket      — blanket deny network* + system-socket allowed
     match std::env::var_os("VETTO_SEATBELT_MODE")
         .as_deref()
         .and_then(|m| m.to_str())
@@ -339,6 +342,17 @@ fn child(
                 "(version 1)\n(allow default)\n"
             } else {
                 "(version 1)\n(deny network*)\n"
+            };
+            child_trace(&format!("seatbelt-diagnostic-mode: {mode}"));
+            if let Err(err) = seatbelt::apply_seatbelt_raw(profile, &[]) {
+                child_fail(err_w, 120, &format!("apply seatbelt ({mode}): {err}"));
+            }
+        }
+        Some(mode @ ("wb-tcpudp" | "wb-mach" | "wb-socket")) => {
+            let profile = match mode {
+                "wb-tcpudp" => "(version 1)\n(deny network-outbound (remote tcp-port *))\n(deny network-outbound (remote udp-port *))\n",
+                "wb-mach" => "(version 1)\n(deny network*)\n(allow mach-lookup)\n(allow system-socket)\n",
+                _ => "(version 1)\n(deny network*)\n(allow system-socket)\n",
             };
             child_trace(&format!("seatbelt-diagnostic-mode: {mode}"));
             if let Err(err) = seatbelt::apply_seatbelt_raw(profile, &[]) {
