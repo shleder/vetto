@@ -115,14 +115,7 @@ unsafe fn run_watch(vetto_pid: libc::pid_t, agent_pid: libc::pid_t) -> ! {
             tv_sec: 1,
             tv_nsec: 0,
         };
-        let n = libc::kevent(
-            kq,
-            std::ptr::null(),
-            0,
-            events.as_mut_ptr(),
-            8,
-            &timeout,
-        );
+        let n = libc::kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), 8, &timeout);
         if n < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
