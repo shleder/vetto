@@ -327,6 +327,13 @@ fn child(
         child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
     }
     child_trace("seatbelt-applied");
+    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
+        eprintln!(
+            "vetto: child seatbelt profile:
+{}",
+            seatbelt::generate(policy, net)
+        );
+    }
 
     child_trace("ready-about-to-send");
     // Tell the parent we are ready, then execve agent binary directly.

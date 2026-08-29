@@ -24,12 +24,20 @@ pub fn generate_sbpl_template_and_params(
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
     sb.push_str("(allow sysctl-read)\n");
 
-    // Standard system runtime roots required on macOS
+    // Standard system runtime roots required on macOS. /bin, /sbin and the
+    // /usr/bin family MUST stay readable: an exec'd image has to read its own
+    // pages for code-signature validation, and a denied read aborts it with a
+    // silent SIGABRT right after execve.
     for runtime_root in [
         "/System",
         "/Library",
         "/private/var/db/dyld",
         "/usr/lib",
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
         "/usr/share",
         "/dev/null",
         "/dev/zero",
