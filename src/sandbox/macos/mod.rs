@@ -322,9 +322,34 @@ fn child(
     }
     child_trace("cwd-set");
 
-    // Apply native Seatbelt sandbox via dynamic C API in memory
-    if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
-        child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
+    // Apply native Seatbelt sandbox via dynamic C API in memory.
+    // VETTO_SEATBELT_MODE is a diagnostic bisect switch (SIGABRT hunt):
+    //   none          — do not sandbox at all (CI-only; never a fallback)
+    //   allow-all     — "(allow default)" profile
+    //   deny-net-only — everything allowed except the network
+    match std::env::var_os("VETTO_SEATBELT_MODE")
+        .as_deref()
+        .and_then(|m| m.to_str())
+    {
+        Some("none") => {
+            child_trace("seatbelt-skipped-by-env");
+        }
+        Some(mode @ ("allow-all" | "deny-net-only")) => {
+            let profile = if mode == "allow-all" {
+                "(version 1)\n(allow default)\n"
+            } else {
+                "(version 1)\n(deny network*)\n"
+            };
+            child_trace(&format!("seatbelt-diagnostic-mode: {mode}"));
+            if let Err(err) = seatbelt::apply_seatbelt_raw(profile, &[]) {
+                child_fail(err_w, 120, &format!("apply seatbelt ({mode}): {err}"));
+            }
+        }
+        _ => {
+            if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
+                child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
+            }
+        }
     }
     child_trace("seatbelt-applied");
     if std::env::var_os("VETTO_CHILD_TRACE").is_some() {

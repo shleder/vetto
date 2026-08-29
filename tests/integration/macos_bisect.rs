@@ -12,11 +12,14 @@ fn sigabrt_bisect_diagnostic() {
     let mut matrix = Vec::new();
     for (label, envs) in [
         ("baseline", vec![]),
-        ("no-watchdog", vec![("VETTO_NO_PDEATH_WATCH", "1")]),
-        ("no-limits", vec![("VETTO_NO_MAC_LIMITS", "1")]),
+        ("seatbelt-none", vec![("VETTO_SEATBELT_MODE", "none")]),
         (
-            "no-watchdog-no-limits",
-            vec![("VETTO_NO_PDEATH_WATCH", "1"), ("VETTO_NO_MAC_LIMITS", "1")],
+            "seatbelt-allow-all",
+            vec![("VETTO_SEATBELT_MODE", "allow-all")],
+        ),
+        (
+            "seatbelt-deny-net-only",
+            vec![("VETTO_SEATBELT_MODE", "deny-net-only")],
         ),
     ] {
         let proj = crate::common::TempProject::new("sigabrt-bisect");
@@ -70,7 +73,10 @@ fn sigabrt_bisect_diagnostic() {
                             })
                             .collect();
                     names.sort();
-                    names.into_iter().map(|(_, p)| p).collect::<Vec<std::path::PathBuf>>()
+                    names
+                        .into_iter()
+                        .map(|(_, p)| p)
+                        .collect::<Vec<std::path::PathBuf>>()
                 })
                 .unwrap_or_default();
             match reports.last() {
