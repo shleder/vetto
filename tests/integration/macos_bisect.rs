@@ -38,7 +38,7 @@ fn sigabrt_bisect_diagnostic() {
     // Blanket read-allow candidate: if the poison is a denied startup read,
     // this configuration survives and names the class of the missing read.
     cases.push((
-        "allow-all-reads".to_string(),
+        "allow-all-reads",
         full.to_string(),
         vec![("VETTO_ALLOW_ALL_READS", "1")],
     ));
