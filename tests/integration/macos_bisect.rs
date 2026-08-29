@@ -1,14 +1,14 @@
 //! DIAGNOSTIC for the macOS silent-SIGABRT hunt (remove with the fix).
-//!
-//! Step 1 — OUTSIDE-VETTO reproduction: does a plain `sandbox-exec`
-//! deny-default profile break /bin/sleep on this machine with no vetto
-//! involved? Step 2 — the in-vetto baseline for comparison.
 
 #[cfg(target_os = "macos")]
 #[test]
 fn sigabrt_bisect_diagnostic() {
-    // Clause-level bisect of the aborted profile. The fixture is the full
-    // profile; variants slice it so one CI run narrows the poison clause.
+    // Clause-level bisect of the aborted profile. Variants:
+    //   minimal       — proven working control
+    //   replay-full   — the exact aborted profile (control, expected to fail)
+    //   head / tail   — first 30 lines / line 1-5 + 31.. (narrows the half)
+    //   nonet         — full profile without the network deny
+    //   nonet+mach    — nonet plus an explicit mach-lookup allow
     let full = include_str!("fixtures/macos-bisect-replay.sbpl");
     let lines: Vec<&str> = full.lines().collect();
     let join = |slice: &[&str]| slice.join("\n");
@@ -16,33 +16,44 @@ fn sigabrt_bisect_diagnostic() {
     let mut tail_parts: Vec<&str> = lines[..5].to_vec();
     tail_parts.extend_from_slice(&lines[30..]);
     let tail = join(&tail_parts);
-    let nonet = join(
-        &lines
-            .iter()
-            .copied()
-            .filter(|l| !l.contains("(deny network*)"))
-            .collect::<Vec<_>>(),
-    );
-    let profiles: [(&str, String); 6] = [
-        ("sexec-minimal", "(version 1)(deny default)(allow process-exec)(allow process-fork)(allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))".to_string()),
-        ("replay-full", full.to_string()),
-        ("replay-head", head),
-        ("replay-tail", tail),
-        ("replay-nonet", nonet),
-        ("replay-nonet-plus-mach", format!("{nonet}(allow mach-lookup)")),
-    ];
-    for (label, profile) in profiles {
+    let mut nonet_lines: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| !l.contains("(deny network*)"))
+        .collect();
+    nonet_lines.push("(allow mach-lookup)".into());
+    let nonet_mach = nonet_lines.join("\n");
+
+    let mut cases: Vec<(&str, String, Vec<(&str, &str)>)> = Vec::new();
+    cases.push(("minimal", "(version 1)(deny default)(allow process-exec)(allow process-fork)(allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))".to_string(), vec![]));
+    cases.push(("replay-full", full.to_string(), vec![]));
+    cases.push(("replay-head", head, vec![]));
+    cases.push(("replay-tail", tail, vec![]));
+    cases.push((
+        "replay-nonet",
+        join(&nonet_lines[..nonet_lines.len() - 1]),
+        vec![],
+    ));
+    cases.push(("replay-nonet-mach", nonet_mach, vec![]));
+    // Blanket read-allow candidate: if the poison is a denied startup read,
+    // this configuration survives and names the class of the missing read.
+    cases.push((
+        "allow-all-reads".to_string(),
+        full.to_string(),
+        vec![("VETTO_ALLOW_ALL_READS", "1")],
+    ));
+
+    for (label, profile, envs) in cases {
         let started = std::time::Instant::now();
         let out = std::process::Command::new("/usr/bin/sandbox-exec")
             .args(["-p", &profile, "/bin/sleep", "1"])
             .output()
             .expect("run sandbox-exec");
-        let stderr = String::from_utf8_lossy(&out.stderr);
         eprintln!(
             "sexec[{label}]: code={:?} secs={:.1} stderr={:?}",
             out.status.code(),
             started.elapsed().as_secs_f64(),
-            stderr.trim()
+            String::from_utf8_lossy(&out.stderr).trim()
         );
     }
 

@@ -29,6 +29,12 @@ pub fn generate_sbpl_template_and_params(
     }
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
     sb.push_str("(allow sysctl-read)\n");
+    // Diagnostic bisect switch: a blanket read allow isolates whether the
+    // SIGABRT comes from a denied startup read (see the macos_bisect test).
+    // VETTO_ALLOW_ALL_READS=1 weakens read isolation — CI diagnostics only.
+    if std::env::var_os("VETTO_ALLOW_ALL_READS").is_some() {
+        sb.push_str("(allow file-read* (subpath \"/\"))\n");
+    }
     // Process startup on macOS talks to launchd/sysmond over XPC
     // (mach-lookup). Without this the exec'd binary dies with a silent
     // SIGABRT right after execve — the same class of failure the
