@@ -1,92 +1,65 @@
-//! DIAGNOSTIC for the macOS silent-SIGABRT hunt: the same session under four
-//! configurations (watchdog / limits toggled by the VETTO_NO_* kill-switches)
-//! so one CI run pinpoints which pre-exec stage turns the exec'd agent into a
-//! silent SIGABRT. A healthy session takes ~2s (sleep exits 0); an aborted
-//! agent makes vetto exit near-instantly with code 134 (128 + SIGABRT).
+//! DIAGNOSTIC for the macOS silent-SIGABRT hunt (remove with the fix).
 //!
-//! Not an assertion on purpose: the printed matrix is the result.
+//! Step 1 — OUTSIDE-VETTO reproduction: does a plain `sandbox-exec`
+//! deny-default profile break /bin/sleep on this machine with no vetto
+//! involved? Step 2 — the in-vetto baseline for comparison.
 
 #[cfg(target_os = "macos")]
 #[test]
 fn sigabrt_bisect_diagnostic() {
-    let mut matrix = Vec::new();
-    for (label, envs) in [
-        ("baseline-unix-allow", vec![]),
-        ("control-no-seatbelt", vec![("VETTO_SEATBELT_MODE", "none")]),
-    ] {
-        let proj = crate::common::TempProject::new("sigabrt-bisect");
+    let profiles: [(&str, &str); 3] = [
+        (
+            "sexec-minimal",
+            "(version 1)(deny default)(allow process-exec)(allow process-fork)\
+             (allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))",
+        ),
+        (
+            "sexec-deny-net",
+            "(version 1)(deny default)(allow process-exec)(allow process-fork)\
+             (allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))\
+             (deny network*)(allow network-outbound (remote unix-socket))",
+        ),
+        ("sexec-allow-all", "(version 1)(allow default)"),
+    ];
+    for (label, profile) in profiles {
         let started = std::time::Instant::now();
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
-            .args(["--tui=none", "--", "/bin/sleep", "2"])
-            .current_dir(proj.path())
-            .env("HOME", crate::common::test_home())
-            .env("VETTO_CHILD_TRACE", "1")
-            .envs(envs.iter().copied())
+        let out = std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", profile, "/bin/sleep", "1"])
             .output()
-            .expect("run vetto for bisect");
-        let elapsed = started.elapsed().as_secs_f64();
+            .expect("run sandbox-exec");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let stages: Vec<&str> = stderr
-            .lines()
-            .filter_map(|l| l.strip_prefix("vetto: child stage: "))
-            .collect();
-        let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
-        let line = format!(
-            "bisect[{label}]: code={:?} secs={elapsed:.1} stages={stages:?} stderr_tail={:?}",
+        eprintln!(
+            "sexec[{label}]: code={:?} secs={:.1} stderr={:?}",
             out.status.code(),
-            tail.iter().rev().copied().collect::<Vec<_>>().join(" | ")
+            started.elapsed().as_secs_f64(),
+            stderr.trim()
         );
-        eprintln!("{line}");
-        matrix.push(line);
-        if label == "baseline" {
-            // The full child stderr (profile dump included) and the newest
-            // crash report name the exact abort reason.
-            println!("bisect[baseline] FULL STDERR:\n{stderr}");
-            let reports = std::env::var_os("HOME")
-                .map(|h| {
-                    let mut p = std::path::PathBuf::from(h);
-                    p.push("Library/Logs/DiagnosticReports");
-                    p
-                })
-                .map(|dir| {
-                    let mut names: Vec<(std::time::SystemTime, std::path::PathBuf)> =
-                        std::fs::read_dir(dir)
-                            .into_iter()
-                            .flatten()
-                            .flatten()
-                            .map(|e| e.path())
-                            .filter(|p| {
-                                p.to_string_lossy().contains("sleep")
-                                    || p.extension().map(|x| x == "ips").unwrap_or(false)
-                            })
-                            .filter_map(|p| {
-                                let meta = std::fs::metadata(&p).ok()?;
-                                Some((meta.modified().ok()?, p))
-                            })
-                            .collect();
-                    names.sort();
-                    names
-                        .into_iter()
-                        .map(|(_, p)| p)
-                        .collect::<Vec<std::path::PathBuf>>()
-                })
-                .unwrap_or_default();
-            match reports.last() {
-                Some(newest) => println!(
-                    "bisect[baseline] newest diagnostic report {newest:?}:\n{}",
-                    std::fs::read_to_string(newest).unwrap_or_default()
-                ),
-                None => println!("bisect[baseline] no crash reports found"),
-            }
-        }
     }
-    // Deliberate: the matrix must reach the CI log verbatim, and cargo test
-    // only prints captured output for FAILING tests. Remove this diagnostic
-    // once the SIGABRT root cause is fixed.
-    panic!(
-        "DIAGNOSTIC MATRIX (remove with the SIGABRT fix):\n{}",
-        matrix.join("\n")
+
+    let proj = crate::common::TempProject::new("sigabrt-bisect");
+    let started = std::time::Instant::now();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vetto"))
+        .args(["--tui=none", "--", "/bin/sleep", "1"])
+        .current_dir(proj.path())
+        .env("HOME", crate::common::test_home())
+        .env("VETTO_CHILD_TRACE", "1")
+        .output()
+        .expect("run vetto for bisect");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stages: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("vetto: child stage: "))
+        .collect();
+    let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
+    eprintln!(
+        "bisect[baseline]: code={:?} secs={:.1} stages={stages:?} stderr_tail={:?}",
+        out.status.code(),
+        started.elapsed().as_secs_f64(),
+        tail.iter().rev().copied().collect::<Vec<_>>().join(" | ")
     );
+
+    // Deliberate: cargo test only prints captured output for FAILING tests.
+    panic!("DIAGNOSTIC (remove with the SIGABRT fix)");
 }
 
 #[cfg(not(target_os = "macos"))]
