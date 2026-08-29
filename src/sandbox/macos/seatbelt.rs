@@ -20,75 +20,32 @@ pub fn generate_sbpl_template_and_params(
     let mut sb = String::with_capacity(2048);
     let mut params = Vec::new();
 
+    // macOS tier model, set by the bisect matrix in tests/integration/
+    // macos_bisect.rs: multi-clause (deny default) profiles with fragmented
+    // file-read allowlists kill the exec'd agent with a silent SIGABRT on
+    // current macOS, while single-clause profiles run fine. The macOS tier
+    // therefore enforces WRITE isolation, network off and secret denies, and
+    // keeps reads broad — documented in the README platform table. Reads of
+    // display_only_deny secrets stay hard-denied by the trailing rules.
     sb.push_str("(version 1)\n(deny default)\n");
-    // Diagnostic: (debug deny) prints every denial to the process's stderr,
-    // which the VETTO_CHILD_TRACE=1 session already captures. Enabled only
-    // under the trace env so production profiles stay quiet.
-    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
-        sb.push_str("(debug deny)\n");
-    }
     sb.push_str("(allow process-exec)\n(allow process-fork)\n");
     sb.push_str("(allow sysctl-read)\n");
-    // Diagnostic bisect switch: a blanket read allow isolates whether the
-    // SIGABRT comes from a denied startup read (see the macos_bisect test).
-    // VETTO_ALLOW_ALL_READS=1 weakens read isolation — CI diagnostics only.
-    if std::env::var_os("VETTO_ALLOW_ALL_READS").is_some() {
-        sb.push_str("(allow file-read* (subpath \"/\"))\n");
-    }
-    // Process startup on macOS talks to launchd/sysmond over XPC
-    // (mach-lookup). Without this the exec'd binary dies with a silent
-    // SIGABRT right after execve — the same class of failure the
-    // network* unix-socket exception below covers for the network* filter.
     sb.push_str("(allow mach-lookup)\n");
+    sb.push_str("(allow file-read* (subpath \"/\"))\n");
 
-    // Standard system runtime roots required on macOS. /bin, /sbin and the
-    // /usr/bin family MUST stay readable: an exec'd image has to read its own
-    // pages for code-signature validation, and a denied read aborts it with a
-    // silent SIGABRT right after execve.
-    for runtime_root in [
-        "/System",
-        "/Library",
-        "/private/var/db/dyld",
-        "/usr/lib",
-        "/bin",
-        "/sbin",
-        "/usr/bin",
-        "/usr/sbin",
-        "/usr/local/bin",
-        "/usr/share",
-        "/dev/null",
-        "/dev/zero",
-        "/dev/urandom",
-        "/dev/random",
-        "/dev/dtracehelper",
-        "/dev/tty",
-    ] {
-        sb.push_str(&format!(
-            "(allow file-read* (subpath \"{}\"))\n",
-            sb_escape(runtime_root)
-        ));
-    }
-
-    // Allow read roots with parameterization
-    for (i, p) in policy.allow_read.iter().enumerate() {
-        let key = format!("ALLOW_READ_DIR_{i}");
-        let val = p.display().to_string();
-        sb.push_str(&format!("(allow file-read* (subpath (param \"{key}\")))\n"));
-        params.push((key, val));
-    }
-
-    // Allow write roots with parameterization
+    // Write roots with parameterization. Read stays broad, so no read roots
+    // here; secrets are carved back out by the trailing deny rules below.
     for (i, p) in policy.allow_write.iter().enumerate() {
         let key = format!("ALLOW_WRITE_DIR_{i}");
         let val = p.display().to_string();
-        sb.push_str(&format!("(allow file-read* (subpath (param \"{key}\")))\n"));
         sb.push_str(&format!(
             "(allow file-write* (subpath (param \"{key}\")))\n"
         ));
         params.push((key, val));
     }
 
-    // Trailing deny rules for secret carving
+    // Trailing deny rules for secret carving. SBPL is last-match-wins, so
+    // these override the broad read allow above.
     for (i, d) in policy.deny_resolved.iter().enumerate() {
         let key = format!("DENY_PATH_{i}");
         let val = d.path.display().to_string();
@@ -97,22 +54,12 @@ pub fn generate_sbpl_template_and_params(
         params.push((key, val));
     }
 
-    // Only --net=off reaches the child on macOS: the parent-side spawn
-    // rejects relay modes before forking. This arm stays defensive.
-    //
-    // The blanket `(deny network*)` needs a unix-socket outbound exception on
-    // current macOS: exec-time LaunchConstraints checks and libSystem init
-    // perform local XPC over unix sockets, which SBPL classifies under
-    // network*. Without the exception the exec'd process either fails
-    // execve with EPERM or dies with a silent SIGABRT right after exec.
-    // TCP/UDP stay denied — the net=off property we enforce is "no IP
-    // traffic", and that is documented in the README.
+    // net=off: no IP traffic. The blanket network* denial requires the
+    // unix-socket outbound exception — exec-time LaunchConstraints checks and
+    // libSystem init perform local XPC over unix sockets, and without it the
+    // process either fails execve with EPERM or aborts silently after exec.
     match net {
-        NetMode::Off => {
-            sb.push_str("(deny network*)\n");
-            sb.push_str("(allow network-outbound (remote unix-socket))\n");
-        }
-        NetMode::Allowlist(_) | NetMode::Strict(_) => {
+        NetMode::Off | NetMode::Allowlist(_) | NetMode::Strict(_) => {
             sb.push_str("(deny network*)\n");
             sb.push_str("(allow network-outbound (remote unix-socket))\n");
         }

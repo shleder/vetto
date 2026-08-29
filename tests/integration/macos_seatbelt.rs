@@ -128,6 +128,40 @@ fn agent_is_killed_when_vetto_is_sigkilled() {
     let _ = vetto.wait();
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn agent_survives_a_full_session() {
+    // Pin for the write-isolation profile model: the exec'd agent must live
+    // through a session (the multi-clause fragmented-read profiles aborted
+    // every exec'd binary with a silent SIGABRT; see the seatbelt module).
+    let proj = crate::common::TempProject::new("seatbelt-session");
+    let out = crate::common::run_vetto_in(proj.path(), &["--tui=none", "--", "/bin/sleep", "2"]);
+    assert!(
+        out.status.success(),
+        "session died: {:?} stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn secrets_stay_denied_under_broad_read() {
+    // The profile keeps reads broad, but SBPL last-match-wins must still
+    // carve display_only_deny secrets back out.
+    crate::common::ensure_fake_ssh_key();
+    let key_path = crate::common::test_home().join(".ssh/id_rsa");
+    let out = crate::common::run_vetto_in(
+        crate::common::test_home(),
+        &["--tui=none", "--", "cat", &key_path.to_string_lossy()],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("FAKE-TEST-KEY-MATERIAL-FOR-VETTO-IT"),
+        "ssh key readable through the seatbelt profile: {stdout}"
+    );
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn macos_suite_not_applicable_on_this_platform() {
