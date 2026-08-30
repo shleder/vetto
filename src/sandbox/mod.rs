@@ -58,6 +58,46 @@ pub enum Backend {
 impl Backend {
     /// Detect the strongest usable backend on this platform. Fails closed.
     pub fn detect(net: NetMode, observe_seccomp: bool) -> anyhow::Result<Self> {
+        Self::detect_with_backend(net, observe_seccomp, None)
+    }
+
+    /// Detect or select requested enforcement backend. Fails closed.
+    pub fn detect_with_backend(
+        net: NetMode,
+        observe_seccomp: bool,
+        backend_name: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        if let Some(name) = backend_name {
+            match name {
+                "auto" | "default" => {}
+                "process" => {}
+                "win-sandbox" | "windows-sandbox" => {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let caps = windows::windows_sandbox::capabilities();
+                        if !caps.launcher_present
+                            || !caps.virtualization_firmware_enabled
+                            || !caps.feature_enabled
+                        {
+                            anyhow::bail!("Windows Sandbox feature is not enabled or virtualization firmware is disabled: {}", caps.note);
+                        }
+                        return Ok(Backend::Windows(Box::new(windows::WindowsSandbox::new(
+                            net,
+                        )?)));
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        anyhow::bail!("--backend win-sandbox is only available on Windows");
+                    }
+                }
+                other => {
+                    anyhow::bail!(
+                        "unknown backend '{other}'; valid backends: auto, process, win-sandbox"
+                    );
+                }
+            }
+        }
+
         #[cfg(target_os = "linux")]
         {
             let probe = linux::probe();

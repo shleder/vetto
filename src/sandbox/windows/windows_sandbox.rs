@@ -67,6 +67,7 @@ pub struct SandboxSpec {
     pub working_directory: Option<PathBuf>,
     pub networking: bool,
     pub mapped_read_only: Vec<(PathBuf, PathBuf)>,
+    pub mapped_read_write: Vec<(PathBuf, PathBuf)>,
     pub memory_mb: Option<u32>,
 }
 
@@ -81,6 +82,14 @@ impl SandboxSpec {
             }
         }
         for (host, guest) in &self.mapped_read_only {
+            if !host.is_absolute() || !guest.is_absolute() {
+                bail!("Windows Sandbox mapped folders must use absolute paths");
+            }
+            if host.to_string_lossy().contains('\0') || guest.to_string_lossy().contains('\0') {
+                bail!("Windows Sandbox mapped folder contains NUL");
+            }
+        }
+        for (host, guest) in &self.mapped_read_write {
             if !host.is_absolute() || !guest.is_absolute() {
                 bail!("Windows Sandbox mapped folders must use absolute paths");
             }
@@ -106,7 +115,7 @@ pub fn render(spec: &SandboxSpec) -> Result<String> {
     if let Some(memory) = spec.memory_mb {
         xml.push_str(&format!("  <MemoryInMB>{memory}</MemoryInMB>\n"));
     }
-    if !spec.mapped_read_only.is_empty() {
+    if !spec.mapped_read_only.is_empty() || !spec.mapped_read_write.is_empty() {
         xml.push_str("  <MappedFolders>\n");
         for (host, guest) in &spec.mapped_read_only {
             xml.push_str("    <MappedFolder>\n      <HostFolder>");
@@ -115,6 +124,15 @@ pub fn render(spec: &SandboxSpec) -> Result<String> {
             xml.push_str(&escape_xml(&guest.to_string_lossy()));
             xml.push_str(
                 "</SandboxFolder>\n      <ReadOnly>true</ReadOnly>\n    </MappedFolder>\n",
+            );
+        }
+        for (host, guest) in &spec.mapped_read_write {
+            xml.push_str("    <MappedFolder>\n      <HostFolder>");
+            xml.push_str(&escape_xml(&host.to_string_lossy()));
+            xml.push_str("</HostFolder>\n      <SandboxFolder>");
+            xml.push_str(&escape_xml(&guest.to_string_lossy()));
+            xml.push_str(
+                "</SandboxFolder>\n      <ReadOnly>false</ReadOnly>\n    </MappedFolder>\n",
             );
         }
         xml.push_str("  </MappedFolders>\n");

@@ -3,7 +3,10 @@
 //! sink with BEST-EFFORT secret redaction.
 
 pub mod jsonl;
+pub mod oslog;
 pub mod sanitizer;
+
+pub use oslog::OsLogSink;
 
 use tracing_subscriber::filter::LevelFilter;
 

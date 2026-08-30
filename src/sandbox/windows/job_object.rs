@@ -15,9 +15,21 @@ type Handle = RawHandle;
 type Dword = u32;
 
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Dword = 9;
+pub const JOB_OBJECT_IO_RATE_CONTROL_INFORMATION: Dword = 37;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Dword = 0x0000_2000;
 const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: Dword = 0x0000_0400;
 const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct JobObjectIoRateControlInformation {
+    pub max_iops: i64,
+    pub max_bandwidth: i64,
+    pub reservation_iops: i64,
+    pub volume_name: *const u16,
+    pub base_io_size: u32,
+    pub control_flags: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -129,6 +141,39 @@ impl JobObject {
             });
         }
         Ok(())
+    }
+
+    /// Configure optional IO rate control (MaxIops / MaxBandwidth) for this Job Object.
+    /// Returns Ok(true) if applied, Ok(false) if unsupported by the OS, or Err on failure.
+    pub fn set_io_rate_limits(
+        &self,
+        max_iops: Option<u64>,
+        max_bandwidth_bytes: Option<u64>,
+    ) -> Result<bool> {
+        if max_iops.is_none() && max_bandwidth_bytes.is_none() {
+            return Ok(true);
+        }
+        let info = JobObjectIoRateControlInformation {
+            max_iops: max_iops.map(|v| v as i64).unwrap_or(0),
+            max_bandwidth: max_bandwidth_bytes.map(|v| v as i64).unwrap_or(0),
+            reservation_iops: 0,
+            volume_name: std::ptr::null(),
+            base_io_size: 0,
+            control_flags: 0,
+        };
+        let ok = unsafe {
+            SetInformationJobObject(
+                self.handle.as_raw_handle().cast(),
+                JOB_OBJECT_IO_RATE_CONTROL_INFORMATION,
+                (&info as *const JobObjectIoRateControlInformation).cast(),
+                size_of::<JobObjectIoRateControlInformation>() as Dword,
+            )
+        };
+        if ok == 0 {
+            Ok(false)
+        } else {
+            Ok(true)
+        }
     }
 
     pub fn raw_handle(&self) -> RawHandle {

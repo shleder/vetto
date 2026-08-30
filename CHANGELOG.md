@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **SBPL regression tracking (Feature 56)**: Added `probe_sbpl_read_fragment()` to detect dynamic linker SIGABRT regressions with fragmented read rules on macOS; surfaced in `vetto doctor` under `sbpl-read-fragment`.
+- **macOS unified log sink (Feature 57)**: Added `sandbox::logger::oslog::OsLogSink` streaming policy denials, warnings, and sandbox lifecycle events to macOS unified log (`/usr/bin/logger -t vetto`) via `--oslog` or `oslog = true` in policy.
+- **macOS .pkg installer packaging and notarization (Feature 58)**: Added `packaging/macos/build_pkg.sh` and guide (`packaging/macos/README.md`) for signed `.pkg` distribution, Apple notarytool submission, and stapling.
+- **Windows Less Privileged AppContainer / LPAC (Feature 59)**: Added LPAC SID (`S-1-15-2-2`) isolation via `--lpac` / `lpac = true` and capability probing in `vetto doctor`.
+- **Windows Job Object IO rate control (Feature 60)**: Added `max_iops` and `max_bandwidth` resource limit controls backed by `JOB_OBJECT_IO_RATE_CONTROL_INFORMATION` (class 37).
+- **Windows Authenticode digital signing (Feature 61)**: Added `packaging/windows/sign.ps1` and guide (`packaging/windows/README.md`) for automated SHA-256 / RFC 3161 Authenticode binary signing in release pipelines.
+- **Windows Sandbox VM backend opt-in (Feature 62)**: Added `--backend win-sandbox` support with `mapped_read_write` folder support in `windows_sandbox.rs` and capability-gated launch.
+- **Cross-platform policy parity test suite (Feature 63)**: Added `tests/integration/policy_parity.rs` and documented the full OS Parity Guarantee Matrix in `docs/platform-backends.md`.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added
