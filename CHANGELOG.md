@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- Seccomp profile configuration (`seccomp_profile = "agent-min"`) blocking exotic and legacy syscalls (personality, syslog, chroot, raw I/O, clock tampering, fanotify) for hardened agent containment.
+- Seccomp user-notify supervisor framework with default-deny policy handling and blocked attempt event auditing.
+- cgroup v2 transient lifecycle and resource quota management (`cgroup = { memory_max = "2g", pids_max = 512, swap_max = "0" }`) with RAII cleanup on process teardown.
+- CPU quota (`cpu_max = "50%"`) and I/O scheduling priority (`io_priority = "idle"`) limits applied via `SYS_ioprio_set` and cgroup v2 `cpu.max`.
+- Restricted device node masking in mount namespaces (`dev_allow` allowlist support with default masking for dangerous `/dev` hardware and memory nodes).
+- Tier downgrade guarantee and downgrade test matrix (Tier FULL -> FS-ONLY -> SECCOMP -> fail-closed).
+- `vetto redteam` subcommand and test battery evaluating 8 kernel containment and breakout attack vectors with text summary and `--json` output.
+- Seccomp-only micro-tier (`VETTO_FORCE_TIER=seccomp` / `Tier::Seccomp`) for legacy Linux environments lacking Landlock, with loud warnings.
+- Host environment detection (devcontainer, Docker, Podman, WSL2, native) reported in `vetto doctor`.
+- GitHub Actions CI matrix updated for tier branches with fallback and redteam verification jobs.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added

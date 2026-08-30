@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "tier-*"]
   pull_request:
 
 env:
@@ -217,3 +217,17 @@ jobs:
         with:
           name: perf-summary
           path: ${{ runner.temp }}/vetto-perf-latest.json
+
+  micro-tier-fallback:
+    name: micro-tier downgrade & redteam (seccomp fallback)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test downgrade matrix and redteam
+        run: |
+          cargo test --test integration linux_downgrade --all-features
+          cargo test --test integration linux_redteam --all-features
+          cargo run --all-features -- redteam --json
+          VETTO_FORCE_TIER=seccomp cargo run --all-features -- doctor

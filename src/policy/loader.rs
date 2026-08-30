@@ -26,7 +26,8 @@ use super::conditions::{self, ConditionContext, RawConditions};
 use super::defaults;
 use super::glob_resolve::{self, Vars};
 use super::types::{
-    DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, Tier,
+    CgroupConfig, DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind,
+    ResourceLimits, SeccompNotifyConfig, SeccompProfile, Tier,
 };
 use crate::error::VettoError;
 
@@ -52,6 +53,18 @@ pub struct RawLayer {
     pub conditions: Option<RawConditions>,
     #[serde(default)]
     pub limits: Option<RawLimits>,
+    #[serde(default)]
+    pub seccomp_profile: Option<String>,
+    #[serde(default)]
+    pub seccomp_notify: Option<RawSeccompNotify>,
+    #[serde(default)]
+    pub cgroup: Option<RawCgroup>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+    #[serde(default)]
+    pub io_priority: Option<String>,
+    #[serde(default)]
+    pub dev_allow: Option<RawStringList>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -70,6 +83,21 @@ pub struct RawMetadata {
 pub struct RawSecurity {
     #[serde(default)]
     pub immutable: Option<bool>,
+    #[serde(default)]
+    pub seccomp_profile: Option<String>,
+    #[serde(default)]
+    pub seccomp_notify: Option<RawSeccompNotify>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawSeccompNotify {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub default_action: Option<String>,
+    #[serde(default)]
+    pub allow_syscalls: Option<RawStringList>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -83,6 +111,8 @@ pub struct RawFilesystem {
     pub deny_write: Option<RawStringList>,
     #[serde(default)]
     pub deny_read: Option<RawStringList>,
+    #[serde(default)]
+    pub dev_allow: Option<RawStringList>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -129,6 +159,41 @@ pub struct RawLimits {
     pub open_files: Option<u64>,
     #[serde(default)]
     pub file_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub cgroup: Option<RawCgroup>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+    #[serde(default)]
+    pub io_priority: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawCgroup {
+    #[serde(default)]
+    pub memory_max: Option<String>,
+    #[serde(default)]
+    pub pids_max: Option<RawValueOrString>,
+    #[serde(default)]
+    pub swap_max: Option<String>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum RawValueOrString {
+    Num(u64),
+    Str(String),
+}
+
+impl RawValueOrString {
+    pub fn to_string_repr(&self) -> String {
+        match self {
+            Self::Num(n) => n.to_string(),
+            Self::Str(s) => s.clone(),
+        }
+    }
 }
 
 impl RawLimits {
@@ -182,6 +247,12 @@ pub struct MergedPolicy {
     pub network_mode: Option<String>,
     pub network_allow: Vec<String>,
     pub is_immutable: bool,
+    pub seccomp_profile: Option<String>,
+    pub seccomp_notify: Option<SeccompNotifyConfig>,
+    pub cgroup: Option<CgroupConfig>,
+    pub cpu_max: Option<String>,
+    pub io_priority: Option<String>,
+    pub dev_allow: Option<Vec<String>>,
 }
 
 impl MergedPolicy {
@@ -204,6 +275,35 @@ impl MergedPolicy {
             if let Some(true) = sec.immutable {
                 self.is_immutable = true;
             }
+            if let Some(prof) = &sec.seccomp_profile {
+                self.seccomp_profile = Some(prof.clone());
+            }
+            if let Some(notif) = &sec.seccomp_notify {
+                self.seccomp_notify = Some(SeccompNotifyConfig {
+                    enabled: notif.enabled.unwrap_or(true),
+                    default_action: notif.default_action.clone(),
+                    allow_syscalls: notif
+                        .allow_syscalls
+                        .clone()
+                        .map(RawStringList::into_vec)
+                        .unwrap_or_default(),
+                });
+            }
+        }
+
+        if let Some(prof) = &layer.seccomp_profile {
+            self.seccomp_profile = Some(prof.clone());
+        }
+        if let Some(notif) = &layer.seccomp_notify {
+            self.seccomp_notify = Some(SeccompNotifyConfig {
+                enabled: notif.enabled.unwrap_or(true),
+                default_action: notif.default_action.clone(),
+                allow_syscalls: notif
+                    .allow_syscalls
+                    .clone()
+                    .map(RawStringList::into_vec)
+                    .unwrap_or_default(),
+            });
         }
 
         if let Some(metadata) = &layer.metadata {
@@ -230,6 +330,12 @@ impl MergedPolicy {
             if let Some(deny_read) = &filesystem.deny_read {
                 self.deny_read.extend(deny_read.clone().into_vec());
             }
+            if let Some(dev_allow) = &filesystem.dev_allow {
+                self.dev_allow = Some(dev_allow.clone().into_vec());
+            }
+        }
+        if let Some(dev_allow) = &layer.dev_allow {
+            self.dev_allow = Some(dev_allow.clone().into_vec());
         }
 
         if let Some(deny) = &layer.display_only_deny {
@@ -267,6 +373,34 @@ impl MergedPolicy {
 
         if let Some(limits) = &layer.limits {
             self.limits.merge_strictest(&limits.to_resource_limits());
+            if let Some(cg) = &limits.cgroup {
+                self.cgroup = Some(CgroupConfig {
+                    memory_max: cg.memory_max.clone(),
+                    pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
+                    swap_max: cg.swap_max.clone(),
+                    cpu_max: cg.cpu_max.clone(),
+                });
+            }
+            if let Some(cpu) = &limits.cpu_max {
+                self.cpu_max = Some(cpu.clone());
+            }
+            if let Some(ioprio) = &limits.io_priority {
+                self.io_priority = Some(ioprio.clone());
+            }
+        }
+        if let Some(cg) = &layer.cgroup {
+            self.cgroup = Some(CgroupConfig {
+                memory_max: cg.memory_max.clone(),
+                pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
+                swap_max: cg.swap_max.clone(),
+                cpu_max: cg.cpu_max.clone(),
+            });
+        }
+        if let Some(cpu) = &layer.cpu_max {
+            self.cpu_max = Some(cpu.clone());
+        }
+        if let Some(ioprio) = &layer.io_priority {
+            self.io_priority = Some(ioprio.clone());
         }
 
         Ok(())
@@ -959,6 +1093,14 @@ fn build_policy(
         metadata.name.clone()
     };
 
+    let seccomp_profile = match merged.seccomp_profile.as_deref() {
+        Some(name) => match SeccompProfile::parse(name) {
+            Some(prof) => prof,
+            None => bail!("unknown seccomp_profile '{name}'; known profiles: default, agent-min"),
+        },
+        None => SeccompProfile::Default,
+    };
+
     let mut policy = Policy {
         name,
         metadata,
@@ -973,6 +1115,12 @@ fn build_policy(
             deny: normalize_env_patterns(merged.deny_env.clone()),
         },
         deny_network: !merged.deny_network.is_empty(),
+        seccomp_profile,
+        seccomp_notify: merged.seccomp_notify.clone(),
+        cgroup: merged.cgroup.clone(),
+        cpu_max: merged.cpu_max.clone(),
+        io_priority: merged.io_priority.clone(),
+        dev_allow: merged.dev_allow.clone(),
         is_immutable: merged.is_immutable,
         warnings,
     };

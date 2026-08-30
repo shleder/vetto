@@ -640,6 +640,99 @@ fn addfd_notifier_loop(
     }
 }
 
+/// Spawn the user-notify enforcement supervisor.
+/// Evaluates policy decisions for intercepted syscalls (default deny).
+pub fn spawn_enforcement_supervisor(
+    listener_fd: OwnedFd,
+    bus: EventBus,
+    config: crate::policy::SeccompNotifyConfig,
+    policy: Arc<crate::policy::Policy>,
+    sandbox_cwd: PathBuf,
+) {
+    std::thread::Builder::new()
+        .name("vetto-enforce-notifier".into())
+        .spawn(move || enforcement_supervisor_loop(listener_fd, bus, config, policy, sandbox_cwd))
+        .expect("spawn enforcement notifier thread");
+}
+
+fn enforcement_supervisor_loop(
+    listener: OwnedFd,
+    bus: EventBus,
+    config: crate::policy::SeccompNotifyConfig,
+    policy: Arc<crate::policy::Policy>,
+    sandbox_cwd: PathBuf,
+) {
+    let fd = listener.as_raw_fd();
+    loop {
+        let mut notif = zeroed_notif();
+        if unsafe { libc::ioctl(fd, SECCOMP_IOCTL_NOTIF_RECV, &mut notif) } != 0 {
+            break;
+        }
+
+        let is_default_allow = config.default_action.as_deref() == Some("allow");
+        let allowed = is_default_allow || is_syscall_allowed(notif.data.nr, &config.allow_syscalls);
+
+        if allowed {
+            if !send_continue_response(fd, notif.id) {
+                break;
+            }
+        } else {
+            let comm = read_comm(notif.pid).unwrap_or_else(|| "?".into());
+            let path =
+                extract_path(fd, &notif).unwrap_or_else(|| format!("syscall:{}", notif.data.nr));
+            bus.publish(Event::BlockedAttempt {
+                ts: crate::events::types::now(),
+                pid: notif.pid,
+                comm,
+                path,
+                source: "seccomp-user-notify-enforce".into(),
+            });
+
+            if !send_error_response(fd, notif.id, libc::EPERM) {
+                break;
+            }
+        }
+    }
+}
+
+fn send_error_response(fd: libc::c_int, id: u64, error_code: i32) -> bool {
+    if !notif_id_valid(fd, id) {
+        return true;
+    }
+    let resp = SeccompNotifResp {
+        id,
+        val: -1,
+        error: error_code,
+        flags: 0,
+    };
+    unsafe { libc::ioctl(fd, SECCOMP_IOCTL_NOTIF_SEND, &resp) == 0 }
+}
+
+fn is_syscall_allowed(nr: i32, allow_list: &[String]) -> bool {
+    for allowed in allow_list {
+        if let Ok(num) = allowed.parse::<i32>() {
+            if num == nr {
+                return true;
+            }
+        }
+        if match_syscall_name(nr, allowed) {
+            return true;
+        }
+    }
+    false
+}
+
+fn match_syscall_name(nr: i32, name: &str) -> bool {
+    match name {
+        "mount" => nr == libc::SYS_mount as i32,
+        "umount" | "umount2" => nr == libc::SYS_umount2 as i32,
+        "pivot_root" => nr == libc::SYS_pivot_root as i32,
+        "chroot" => nr == libc::SYS_chroot as i32,
+        "syslog" => nr == libc::SYS_syslog as i32,
+        _ => false,
+    }
+}
+
 fn inject_exact_fd(
     listener_fd: libc::c_int,
     notif: &SeccompNotif,

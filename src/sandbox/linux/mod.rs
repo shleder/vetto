@@ -27,6 +27,7 @@
 //!   97/98  relay: loopback bring-up / bind failed
 
 pub mod audit_reader;
+pub mod cgroup;
 pub mod debug_guard;
 pub mod landlock;
 pub mod limits;
@@ -101,17 +102,21 @@ fn kernel_release() -> String {
 
 /// Fail-closed tier selection. `Err` means: the agent does NOT run.
 ///
-/// `VETTO_FORCE_TIER=full|fs-only` (testing override) can only select a tier
+/// `VETTO_FORCE_TIER=full|fs-only|seccomp` (testing override) can only select a tier
 /// whose primitives are actually available — it can never bypass fail-closed.
 pub fn pick_tier(probe: &Probe) -> Result<Tier> {
     match std::env::var("VETTO_FORCE_TIER").as_deref() {
+        Ok("seccomp") if probe.seccomp_filter_available => return Ok(Tier::Seccomp),
         Ok("fs-only") if probe.seccomp_filter_available => return Ok(Tier::FsOnly),
         Ok("full") if probe.full_tier_available => return Ok(Tier::Full),
         _ => {}
     }
     if probe.landlock_abi.is_none() {
+        if probe.seccomp_filter_available {
+            return Ok(Tier::Seccomp);
+        }
         bail!(
-            "Landlock is unavailable on this kernel (needs >= 5.13 with landlock enabled); \
+            "Landlock and seccomp filters are unavailable on this kernel; \
              refusing to run the agent unsandboxed (fail-closed)"
         );
     }
@@ -139,7 +144,7 @@ impl LinuxSandbox {
     /// only (see module docs). The caller owns the stdio fds passed via
     /// `opts.stdio` and must close its own duplicates after this returns.
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> Result<Spawned> {
-        if self.tier == Tier::FsOnly && self.net.uses_relay() {
+        if (self.tier == Tier::FsOnly || self.tier == Tier::Seccomp) && self.net.uses_relay() {
             bail!(
                 "--net relay modes require Tier FULL (unprivileged user namespaces), \
                  which is unavailable on this machine; refusing to run (fail-closed)"
@@ -152,6 +157,7 @@ impl LinuxSandbox {
         match self.tier {
             Tier::Full => spawn_full(policy, opts, self.observe_seccomp, relay_port),
             Tier::FsOnly => spawn_fs_only(policy, opts, self.observe_seccomp),
+            Tier::Seccomp => spawn_seccomp_only(policy, opts, self.observe_seccomp),
         }
     }
 }
@@ -679,6 +685,12 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
         unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
         child_exit(126);
     }
+    if let Err(error) = limits::apply_io_priority(policy.io_priority.as_deref()) {
+        let message = format!("[vetto-child] io priority failed: {error}\n");
+        // SAFETY: raw write to stderr for diagnostics before dying.
+        unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
+        child_exit(126);
+    }
     let r = unsafe { libc::execve(prog.as_ptr(), argv_ptr.as_ptr(), envp_ptr.as_ptr()) };
     let msg = format!(
         "[vetto-child] execve failed r={r} errno={}\n",
@@ -808,7 +820,8 @@ fn child_b(
         // The actual NetMode selects the socket policy: FULL/off is
         // AF_UNIX-only, while FULL/allowlist additionally permits IPv4/IPv6
         // for the loopback proxy. Both variants retain syscall hardening.
-        if let Err(e) = seccomp_netblock::install_for(socket_policy) {
+        if let Err(e) = seccomp_netblock::install_for_profile(socket_policy, policy.seccomp_profile)
+        {
             child_fail(err_w, 126, &format!("seccomp hardening: {e}"));
         }
         // Readiness belongs to C, not the outer namespace helper: by this
@@ -968,6 +981,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     }
     if let Err(e) = mounts::isolate_tmp() {
         child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
+    }
+    if let Err(e) = mounts::mask_restricted_devices(policy.dev_allow.as_deref()) {
+        child_fail(err_w, 115, &format!("mask restricted devices: {e}"));
     }
     if let Err(e) = namespaces::unshare(namespaces::CLONE_NEWIPC) {
         child_fail(err_w, 115, &format!("unshare ipc: {e}"));
@@ -1166,6 +1182,10 @@ fn spawn_full(
         None => None,
     };
 
+    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+        let _ = cg.add_process(pid as u32);
+    }
+
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
@@ -1261,7 +1281,10 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
     }
 
     if net_off {
-        if let Err(e) = seccomp_netblock::install() {
+        if let Err(e) = seccomp_netblock::install_for_profile(
+            seccomp_netblock::SocketPolicy::UnixOnly,
+            policy.seccomp_profile,
+        ) {
             child_fail(err_w, 123, &format!("network block: {e}"));
         }
     }
@@ -1353,6 +1376,10 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     drop(err_w);
     drop(notif_child);
 
+    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+        let _ = cg.add_process(pid as u32);
+    }
+
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
         ByteRead::Byte(b'E') | ByteRead::Eof => {
@@ -1382,6 +1409,176 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     // supervise exits via std::process::exit (no Drop), so without this
     // handler a normally-exiting FS-ONLY session would never kill(-pgid) nor
     // sweep its reparented setsid escapers.
+    proctrack::arm_exit_sweep(pid, pid);
+
+    Ok(Spawned {
+        handle: SandboxHandle {
+            root_pid: pid as u32,
+            strategy: Some(KillStrategy::ProcessGroup {
+                pid,
+                pgid: pid,
+                sweep: true,
+            }),
+        },
+        broker_ctrl_fd: None,
+        relay_port: None,
+        notif_listener,
+    })
+}
+
+/// Seccomp-only micro-tier: single fork, no namespaces, no Landlock, only seccomp filter and limits.
+unsafe fn child_seccomp_only(a: FsChildArgs<'_>) -> ! {
+    let FsChildArgs {
+        parent_pid,
+        err_w,
+        notif_child,
+        observe,
+        net_off: _,
+        policy,
+        opts,
+    } = a;
+
+    let mut keep: Vec<RawFd> = vec![0, 1, 2, err_w];
+    if let Some(fd) = notif_child {
+        keep.push(fd);
+    }
+    if let StdioMode::Pty { slave_fd } = opts.stdio {
+        keep.push(slave_fd);
+    }
+    if let StdioMode::Captured { stdout_w, stderr_w } = opts.stdio {
+        keep.push(stdout_w);
+        keep.push(stderr_w);
+    }
+    close_all_except(&keep);
+
+    child_pdeathsig(parent_pid);
+
+    match opts.stdio {
+        StdioMode::Pty { .. } => {
+            if unsafe { libc::setsid() } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setsid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
+        StdioMode::Captured { .. } | StdioMode::Inherit => {
+            if unsafe { libc::setpgid(0, 0) } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setpgid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
+    }
+
+    if let Err(e) = seccomp_netblock::install_for_profile(
+        seccomp_netblock::SocketPolicy::UnixOnly,
+        policy.seccomp_profile,
+    ) {
+        child_fail(err_w, 123, &format!("seccomp filter: {e}"));
+    }
+
+    if observe {
+        if let Some(nc) = notif_child {
+            let mut ok = false;
+            if let Ok(listener) = observe_seccomp::install_tap() {
+                child_write_all(nc, b"T");
+                if net_relay::send_fd(nc, listener).is_ok() {
+                    ok = true;
+                }
+                unsafe { libc::close(listener) };
+            }
+            if !ok {
+                child_write_all(nc, b"N");
+            }
+            unsafe { libc::close(nc) };
+        }
+    }
+
+    if let Err(msg) = child_stdio_setup(&opts.stdio) {
+        child_fail(err_w, 124, &format!("stdio: {msg}"));
+    }
+    if !opts.cwd.as_os_str().is_empty() {
+        if let Err(e) = std::env::set_current_dir(&opts.cwd) {
+            child_fail(err_w, 117, &format!("chdir {}: {e}", opts.cwd.display()));
+        }
+    }
+
+    child_write_all(err_w, b"R");
+    close_all_except(&[0, 1, 2]);
+    child_exec(policy, opts)
+}
+
+fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<Spawned> {
+    let parent_pid = unsafe { libc::getpid() };
+    if let Err(error) = crate::multi::isolation::set_subreaper() {
+        tracing::warn!(
+            "seccomp: PR_SET_CHILD_SUBREAPER failed ({error}); setsid-detached \
+             grandchildren may survive teardown"
+        );
+    }
+
+    let (err_r, err_w) = pipe2_cloexec()?;
+    let (notif_parent, notif_child) = if observe {
+        let (a, b) = socketpair_cloexec()?;
+        (Some(a), Some(b))
+    } else {
+        (None, None)
+    };
+
+    let args = FsChildArgs {
+        parent_pid,
+        err_w: err_w.as_raw_fd(),
+        notif_child: notif_child.as_ref().map(|f| f.as_raw_fd()),
+        observe,
+        net_off: true,
+        policy,
+        opts: &opts,
+    };
+
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        bail!("fork: {}", std::io::Error::last_os_error());
+    }
+    if pid == 0 {
+        unsafe { child_seccomp_only(args) }
+    }
+
+    drop(err_w);
+    drop(notif_child);
+
+    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+        let _ = cg.add_process(pid as u32);
+    }
+
+    match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
+        ByteRead::Byte(b'R') => {}
+        ByteRead::Byte(b'E') | ByteRead::Eof => {
+            return Err(err_from_dead_child(pid, err_r.as_raw_fd()));
+        }
+        ByteRead::Byte(other) => {
+            let code = reap_child(pid);
+            return Err(anyhow!(
+                "unexpected setup byte {other:#x} from sandbox child (exit {code})"
+            ));
+        }
+        ByteRead::Timeout => {
+            let code = kill_and_reap(pid);
+            return Err(anyhow!("sandbox setup timed out (child exit {code})"));
+        }
+    }
+
+    let notif_listener = match notif_parent {
+        Some(np) => match read_byte(np.as_raw_fd(), SETUP_TIMEOUT_MS) {
+            ByteRead::Byte(b'T') => net_relay::recv_fd(np.as_raw_fd()).ok(),
+            _ => None,
+        },
+        None => None,
+    };
+
     proctrack::arm_exit_sweep(pid, pid);
 
     Ok(Spawned {

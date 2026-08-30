@@ -10,6 +10,7 @@
 //! NEVER enforces filesystem paths anywhere in vetto.
 
 use crate::error::{VettoError, VettoResult};
+use crate::policy::SeccompProfile;
 
 #[cfg(target_arch = "x86_64")]
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
@@ -92,6 +93,52 @@ const HARDENING_SYSCALLS: &[u32] = &[
     NR_SWAPOFF,
 ];
 
+// In agent-min profile, deny additional legacy/exotic syscalls unneeded by
+// standard node/python agents.
+#[cfg(target_arch = "x86_64")]
+const AGENT_MIN_EXTRA_SYSCALLS: &[u32] = &[
+    libc::SYS_personality as u32,
+    libc::SYS_acct as u32,
+    libc::SYS_vhangup as u32,
+    libc::SYS_quotactl as u32,
+    libc::SYS_settimeofday as u32,
+    libc::SYS_clock_settime as u32,
+    libc::SYS_adjtimex as u32,
+    libc::SYS_clock_adjtime as u32,
+    libc::SYS_fanotify_init as u32,
+    libc::SYS_fanotify_mark as u32,
+    libc::SYS_syslog as u32,
+    libc::SYS_chroot as u32,
+    libc::SYS_lookup_dcookie as u32,
+    libc::SYS_vmsplice as u32,
+    libc::SYS_sysfs as u32,
+    libc::SYS_ustat as u32,
+    libc::SYS_iopl as u32,
+    libc::SYS_ioperm as u32,
+    libc::SYS_modify_ldt as u32,
+];
+
+#[cfg(target_arch = "aarch64")]
+const AGENT_MIN_EXTRA_SYSCALLS: &[u32] = &[
+    libc::SYS_personality as u32,
+    libc::SYS_acct as u32,
+    libc::SYS_vhangup as u32,
+    libc::SYS_quotactl as u32,
+    libc::SYS_settimeofday as u32,
+    libc::SYS_clock_settime as u32,
+    libc::SYS_adjtimex as u32,
+    libc::SYS_clock_adjtime as u32,
+    libc::SYS_fanotify_init as u32,
+    libc::SYS_fanotify_mark as u32,
+    libc::SYS_syslog as u32,
+    libc::SYS_chroot as u32,
+    libc::SYS_lookup_dcookie as u32,
+    libc::SYS_vmsplice as u32,
+];
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const AGENT_MIN_EXTRA_SYSCALLS: &[u32] = &[];
+
 const AF_UNIX: u32 = libc::AF_UNIX as u32;
 const AF_INET: u32 = libc::AF_INET as u32;
 const AF_INET6: u32 = libc::AF_INET6 as u32;
@@ -164,7 +211,14 @@ fn native_audit_arch() -> u32 {
     }
 }
 
-fn build_program(socket_policy: SocketPolicy) -> Vec<SockFilter> {
+pub fn build_program(socket_policy: SocketPolicy) -> Vec<SockFilter> {
+    build_program_for_profile(socket_policy, SeccompProfile::Default)
+}
+
+pub fn build_program_for_profile(
+    socket_policy: SocketPolicy,
+    profile: SeccompProfile,
+) -> Vec<SockFilter> {
     use BPF_JMP_JEQ_K as JEQ;
     use BPF_JMP_JSET_K as JSET;
     use BPF_LD_BPF_W_BPF_ABS as LD_ABS;
@@ -195,6 +249,11 @@ fn build_program(socket_policy: SocketPolicy) -> Vec<SockFilter> {
     let hardening_start = program.len();
     for syscall in HARDENING_SYSCALLS {
         program.push(bpf_jump(JEQ, *syscall, 0, 0));
+    }
+    if profile == SeccompProfile::AgentMin {
+        for syscall in AGENT_MIN_EXTRA_SYSCALLS {
+            program.push(bpf_jump(JEQ, *syscall, 0, 0));
+        }
     }
     let allow_index = program.len();
     program.push(bpf_stmt(RET, SECCOMP_RET_ALLOW));
@@ -249,6 +308,14 @@ pub fn install() -> VettoResult<()> {
 /// policy. Irreversible and inherited by every descendant; callers must
 /// treat an error as a fail-closed setup failure.
 pub fn install_for(socket_policy: SocketPolicy) -> VettoResult<()> {
+    install_for_profile(socket_policy, SeccompProfile::Default)
+}
+
+/// Install syscall hardening with a specific seccomp profile.
+pub fn install_for_profile(
+    socket_policy: SocketPolicy,
+    profile: SeccompProfile,
+) -> VettoResult<()> {
     // SAFETY: scalar-only prctl.
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
         return Err(VettoError::Seccomp(format!(
@@ -256,7 +323,7 @@ pub fn install_for(socket_policy: SocketPolicy) -> VettoResult<()> {
             std::io::Error::last_os_error()
         )));
     }
-    let prog = build_program(socket_policy);
+    let prog = build_program_for_profile(socket_policy, profile);
     let fprog = SockFProg {
         len: prog.len() as u16,
         filter: prog.as_ptr(),
@@ -506,6 +573,31 @@ mod tests {
         assert_eq!(
             build_program(SocketPolicy::UnixOnly)[2].k,
             SECCOMP_RET_KILL_PROCESS
+        );
+    }
+
+    #[test]
+    fn agent_min_profile_blocks_extra_syscalls() {
+        let program = build_program_for_profile(SocketPolicy::UnixOnly, SeccompProfile::AgentMin);
+        let denied = SECCOMP_RET_ERRNO | libc::EPERM as u32;
+        for syscall in HARDENING_SYSCALLS {
+            assert_eq!(eval(&program, *syscall, AF_UNIX), denied);
+        }
+        for syscall in AGENT_MIN_EXTRA_SYSCALLS {
+            assert_eq!(eval(&program, *syscall, AF_UNIX), denied);
+        }
+        // Ordinary syscalls (e.g. read/write/openat/close) are allowed
+        assert_eq!(
+            eval(&program, libc::SYS_read as u32, AF_UNIX),
+            SECCOMP_RET_ALLOW
+        );
+        assert_eq!(
+            eval(&program, libc::SYS_write as u32, AF_UNIX),
+            SECCOMP_RET_ALLOW
+        );
+        assert_eq!(
+            eval(&program, libc::SYS_close as u32, AF_UNIX),
+            SECCOMP_RET_ALLOW
         );
     }
 

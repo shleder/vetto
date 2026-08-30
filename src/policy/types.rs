@@ -5,13 +5,16 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Linux capability tier the policy was loaded for (affects masking strategy).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tier {
     /// Landlock + namespaces: secrets masked with mount overlays.
     Full,
     /// Landlock only (no userns): project secrets masked by explicit
     /// enumeration into the read allowlist; overlay masking unavailable.
     FsOnly,
+    /// Seccomp filter only (no Landlock, no namespaces): syscall hardening
+    /// and network blocks only, no filesystem isolation.
+    Seccomp,
 }
 
 impl Tier {
@@ -19,8 +22,53 @@ impl Tier {
         match self {
             Tier::Full => "full",
             Tier::FsOnly => "fs-only",
+            Tier::Seccomp => "seccomp",
         }
     }
+}
+
+/// Seccomp syscall filtering profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SeccompProfile {
+    #[default]
+    Default,
+    AgentMin,
+}
+
+impl SeccompProfile {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "default" | "standard" => Some(Self::Default),
+            "agent-min" | "agent_min" => Some(Self::AgentMin),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AgentMin => "agent-min",
+        }
+    }
+}
+
+/// Optional cgroup v2 resource limits configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CgroupConfig {
+    pub memory_max: Option<String>,
+    pub pids_max: Option<String>,
+    pub swap_max: Option<String>,
+    pub cpu_max: Option<String>,
+}
+
+/// Optional seccomp user-notify supervisor configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeccompNotifyConfig {
+    pub enabled: bool,
+    pub default_action: Option<String>,
+    #[serde(default)]
+    pub allow_syscalls: Vec<String>,
 }
 
 /// The 7-level policy hierarchy source classification.
@@ -182,6 +230,18 @@ pub struct Policy {
     /// enforcement additionally depends on the CLI `--net` mode, which lives
     /// outside the policy: this field only records policy-layer intent.
     pub deny_network: bool,
+    /// Seccomp syscall filtering profile ("default" or "agent-min").
+    pub seccomp_profile: SeccompProfile,
+    /// Optional seccomp user-notify supervisor configuration.
+    pub seccomp_notify: Option<SeccompNotifyConfig>,
+    /// Optional cgroup v2 resource limits configuration.
+    pub cgroup: Option<CgroupConfig>,
+    /// CPU quota limit (e.g. "50%").
+    pub cpu_max: Option<String>,
+    /// I/O priority applied before exec (e.g. "idle", "best-effort").
+    pub io_priority: Option<String>,
+    /// Allowed device nodes in /dev for mount namespace.
+    pub dev_allow: Option<Vec<String>>,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
@@ -201,6 +261,12 @@ impl Default for Policy {
             deny_resolved: Vec::new(),
             environment: EnvironmentPolicy::default(),
             deny_network: false,
+            seccomp_profile: SeccompProfile::Default,
+            seccomp_notify: None,
+            cgroup: None,
+            cpu_max: None,
+            io_priority: None,
+            dev_allow: None,
             is_immutable: false,
             warnings: Vec::new(),
         }
