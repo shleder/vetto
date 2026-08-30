@@ -1,77 +1,94 @@
-name: vetto sandbox
-description: Build vetto from this action checkout and run an agent in CI without a daemon.
+name: 'vetto-action'
+description: 'Run agent commands inside the vetto daemon-less security sandbox in GitHub Actions'
 inputs:
   command:
-    description: Agent command to execute through vetto.
+    description: 'Agent command to execute through vetto sandbox.'
     required: true
-  profile:
-    description: Built-in or project policy profile.
+  policy:
+    description: 'Optional custom policy file path or community policy.'
     required: false
-    default: strict
+    default: ''
   net:
-    description: Network mode (off, allowlist:..., or strict:host:port,...).
+    description: 'Network mode (off, allowlist:..., strict:...).'
     required: false
-    default: off
+    default: 'off'
+  profile:
+    description: 'Built-in policy profile (default, strict, permissive, audit).'
+    required: false
+    default: 'strict'
   report:
-    description: Comma-separated report formats.
+    description: 'Comma-separated report formats (json, sarif, md, html).'
     required: false
-    default: json,sarif
+    default: 'json,sarif'
   report-dir:
-    description: Directory for generated reports.
+    description: 'Directory for generated audit and security reports.'
     required: false
-    default: .vetto/reports
+    default: '.vetto/reports'
   version:
-    description: Vetto release version to use (e.g. 0.2.3).
+    description: 'Vetto version to install via npm (or latest).'
     required: false
-    default: "0.2.3"
-  use-prebuilt:
-    description: Download precompiled native binary instead of compiling from source.
-    required: false
-    default: "true"
+    default: 'latest'
   fail-on-block:
-    description: "false disables; true fails at one observed block; a positive integer sets the threshold."
+    description: 'Fail step if at least one blocked attempt is observed (true/false/threshold).'
     required: false
-    default: "false"
+    default: 'false'
   upload-sarif:
-    description: Upload the generated SARIF report to code scanning.
+    description: 'Upload generated SARIF report to GitHub Code Scanning.'
     required: false
-    default: "false"
+    default: 'false'
 outputs:
   sarif-path:
-    description: Path to the generated SARIF report, when present.
+    description: 'Path to the generated SARIF report file.'
     value: ${{ steps.run.outputs.sarif-path }}
   exit-code:
-    description: vetto process exit code.
+    description: 'Exit code of the sandboxed command.'
     value: ${{ steps.run.outputs.exit-code }}
 runs:
-  using: composite
+  using: 'composite'
   steps:
-    - name: Cache Rust build
-      uses: actions/cache@v4
-      with:
-        path: |
-          ${{ github.action_path }}/../target
-          ~/.cargo/registry
-          ~/.cargo/git
-        key: vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_repository }}-${{ github.action_ref }}
-        restore-keys: |
-          vetto-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_repository }}-
+    - name: Install vetto sandbox
+      shell: bash
+      run: |
+        if ! command -v vetto >/dev/null 2>&1; then
+          echo "Installing vetto via npm..."
+          if [ "${{ inputs.version }}" = "latest" ] || [ -z "${{ inputs.version }}" ]; then
+            npm install -g vetto || npm install -g @vetto/cli || true
+          else
+            npm install -g "vetto@${{ inputs.version }}" || true
+          fi
+        fi
+        if ! command -v vetto >/dev/null 2>&1; then
+          # Fallback: install native binary directly
+          kernel="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m)"
+          case "${arch}" in
+            x86_64|amd64) arch="x86_64" ;;
+            aarch64|arm64) arch="aarch64" ;;
+          esac
+          ver="${{ inputs.version }}"
+          [ "${ver}" = "latest" ] && ver="0.2.5"
+          ver="${ver#v}"
+          bin_url="https://github.com/shleder/vetto/releases/download/v${ver}/vetto-${kernel}-${arch}.tar.gz"
+          echo "Fetching native binary from ${bin_url}..."
+          mkdir -p "${HOME}/.local/bin"
+          curl -sSLf --retry 3 "${bin_url}" | tar -xz -C "${HOME}/.local/bin" 2>/dev/null || true
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+        fi
 
-    - name: Build and run vetto
+    - name: Run sandboxed command
       id: run
       shell: bash
       env:
         VETTO_ACTION_COMMAND: ${{ inputs.command }}
-        VETTO_ACTION_PROFILE: ${{ inputs.profile }}
+        VETTO_ACTION_POLICY: ${{ inputs.policy }}
         VETTO_ACTION_NET: ${{ inputs.net }}
+        VETTO_ACTION_PROFILE: ${{ inputs.profile }}
         VETTO_ACTION_REPORT: ${{ inputs.report }}
         VETTO_ACTION_REPORT_DIR: ${{ inputs.report-dir }}
-        VETTO_ACTION_VERSION: ${{ inputs.version }}
-        VETTO_ACTION_USE_PREBUILT: ${{ inputs.use-prebuilt }}
         VETTO_ACTION_FAIL_ON_BLOCK: ${{ inputs.fail-on-block }}
       run: bash "$GITHUB_ACTION_PATH/entrypoint.sh"
 
-    - name: Upload SARIF
+    - name: Upload SARIF report
       if: ${{ inputs.upload-sarif == 'true' && steps.run.outputs.sarif-path != '' && always() }}
       uses: github/codeql-action/upload-sarif@v3
       with:

@@ -17,9 +17,9 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
-use vetto::events::{Event, EventBus};
 use vetto::{
-    cli, events, exit_codes, history, logger, multi, policy, profile, report, rescue, sandbox, shim,
+    cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
+    rescue, sandbox, shim,
 };
 #[cfg(unix)]
 use vetto::{pty, tui};
@@ -81,6 +81,15 @@ fn run() -> Result<()> {
     let args = cli::Cli::parse();
     logger::init_flags(args.quiet, args.verbose);
 
+    if let Some(remote_url) = &args.remote {
+        return remote::run_remote_client(
+            remote_url,
+            args.agent.clone(),
+            args.policy.clone(),
+            Some(args.net.clone()),
+        );
+    }
+
     if args.multi {
         if args.command.is_some() {
             bail!("--multi cannot be combined with a subcommand");
@@ -108,6 +117,10 @@ fn run() -> Result<()> {
         Some(cli::Command::Init { force, wizard }) => init(*force, *wizard),
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
+        Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
+        Some(cli::Command::Mcp) => mcp::run_stdio_server(),
+        Some(cli::Command::Daemon { command }) => daemon::run_cli(command),
+        Some(cli::Command::Serve { port }) => remote::run_serve(*port),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
         Some(cli::Command::ShellEnv {
             session_id,
@@ -252,6 +265,41 @@ fn run() -> Result<()> {
                     )?;
                 vetto::policy::import::import_policy(from, path.as_deref(), output, &home)?;
                 println!("vetto: imported policy written to {}", output.display());
+                Ok(())
+            }
+            cli::PolicyCommand::Sign { file, key, out } => {
+                let sig_path =
+                    policy::crypto::sign_policy_file(file, key.as_deref(), out.as_deref())?;
+                println!(
+                    "Successfully signed policy file {} -> {}",
+                    file.display(),
+                    sig_path.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::Verify { file, sig, key } => {
+                policy::crypto::verify_policy_file(file, sig.as_deref(), key.as_deref())?;
+                println!(
+                    "Policy cryptographic verification SUCCESS for {}",
+                    file.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::Use { name, force } => {
+                let project = std::env::current_dir().context("getcwd")?;
+                let path = policy::community::install_community_policy(name, &project, *force)?;
+                println!(
+                    "Installed community policy '{}' into {}",
+                    name,
+                    path.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::List => {
+                println!("Available community policies in registry:");
+                for (name, desc) in policy::community::list_community_policies() {
+                    println!("  {:16} {}", name, desc);
+                }
                 Ok(())
             }
         },
@@ -700,6 +748,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
+    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]

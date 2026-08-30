@@ -98,6 +98,19 @@ Keep a Changelog; versioning follows SemVer.
   - Windows Authenticode digital signing script (`packaging/windows/sign.ps1`) and guide (`packaging/windows/README.md`) for automated SHA-256 / RFC 3161 Authenticode binary signing in release pipelines.
   - Windows Sandbox VM backend opt-in (`--backend win-sandbox`) with `mapped_read_write` folder support in `windows_sandbox.rs` and capability-gated launch.
   - Cross-platform policy parity test suite (`tests/integration/policy_parity.rs`) and full OS Parity Guarantee Matrix in `docs/platform-backends.md`.
+- **Tier 7 Ecosystem Integration Suite (Features 73–84)**:
+  - `vetto-action` (Composite GitHub Action): Daemon-less GitHub Action installing precompiled binary or npm package with zero user-side Rust compilation overhead, supporting `policy`, `net`, and `command` inputs with SARIF output.
+  - Model Context Protocol (MCP) Server: `vetto mcp` stdio JSON-RPC 2.0 server exposing the `run_sandboxed` tool for LLM clients (Claude Desktop, Cursor, Zed) to execute sandboxed tasks.
+  - One-liner Agent Plugins: `vetto plugin install claude-code` and `vetto plugin install opencode` with non-destructive JSON deep merge and automatic timestamped backups (`.bak.<timestamp>`).
+  - VS Code Extension: Minimal extension in `vscode/` adding the `Vetto: Run Task Sandboxed` command to run workspace `tasks.json` tasks inside the sandbox.
+  - Package Publishing Recipes: Homebrew tap bootstrap script and formula in `packaging/homebrew/`, Arch Linux AUR `PKGBUILD` and `.SRCINFO` in `packaging/aur/`, and `[package.metadata.binstall]` metadata in `Cargo.toml`.
+  - Multiplexer Daemon & Session Registry: `vetto daemon start/status/stop` with session registry and mandatory `SO_PEERCRED` / `getpeereid` peer credentials verification on Unix domain sockets.
+  - Loopback REST API: HTTP API bound strictly to `127.0.0.1` (`POST /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}`) authenticated via secret Bearer token (`~/.vetto/daemon/token`).
+  - Remote Execution (`vetto serve` & `vetto --remote`): Remote execution over SSH port forwarding with dedicated instructions and CLI client.
+  - Policy Cryptographic Signing (Ed25519): `vetto policy sign` and `vetto policy verify` with Ed25519 keys (`~/.vetto/signing.key`), plus `[security] require_signed = true` loader enforcement.
+  - Community Policy Registry: 7 battle-tested policies (`python-dev`, `node-dev`, `rust-dev`, `java-dev`, `data-science`, `read-only-audit`, `yolo-web`) and `vetto policy use <name>` CLI command.
+  - Docker Hybrid Integration: Multi-stage `Dockerfile.vetto` and detailed double-sandbox defense-in-depth documentation (`docs/integrations/docker-in-vetto.md`).
+  - Kubernetes Manifests: `k8s/deployment.yaml`, `k8s/daemonset.yaml`, `k8s/vetto-sidecar.yaml`, and documentation of Landlock seccomp compatibility.
 
 ## [0.2.5] — 2026-08-30
 

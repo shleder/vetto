@@ -1,0 +1,64 @@
+{
+  "name": "vetto-vscode",
+  "displayName": "Vetto Sandbox for VS Code",
+  "description": "Run VS Code tasks and AI agent commands inside the kernel-enforced Vetto sandbox",
+  "version": "0.2.5",
+  "publisher": "shleder",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages",
+    "Testing"
+  ],
+  "keywords": [
+    "sandbox",
+    "security",
+    "landlock",
+    "ai-agent",
+    "claude",
+    "codex"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:vetto.runTaskSandboxed"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vetto.runTaskSandboxed",
+        "title": "Run Task Sandboxed",
+        "category": "Vetto"
+      }
+    ],
+    "configuration": {
+      "title": "Vetto Sandbox",
+      "properties": {
+        "vetto.executablePath": {
+          "type": "string",
+          "default": "vetto",
+          "description": "Path to the vetto binary."
+        },
+        "vetto.defaultProfile": {
+          "type": "string",
+          "default": "default",
+          "description": "Default security policy profile (default, strict, permissive, audit)."
+        },
+        "vetto.defaultNet": {
+          "type": "string",
+          "default": "off",
+          "description": "Default network mode (off, allowlist:..., strict:...)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.24.0"
+  }
+}

@@ -1,0 +1,40 @@
+[metadata]
+name = "read-only-audit"
+description = "Strict read-only analysis profile (no writes allowed to project source files; writes confined to /tmp and reports)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}/.vetto/reports",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+]
+deny_write = [
+    "${PROJECT}",
+    "${HOME}",
+]
+deny_read = [
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+
+[network]
+mode = "off"
+
+[environment]
+pass_through = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

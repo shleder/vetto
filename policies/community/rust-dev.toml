@@ -1,0 +1,57 @@
+[metadata]
+name = "rust-dev"
+description = "Community policy tailored for Rust development (Cargo, rustc, crates.io)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${HOME}/.cargo/registry",
+    "${HOME}/.cargo/git",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}/.cargo",
+    "${HOME}/.rustup",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+    "${HOME}/.cargo/credentials.toml",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+    "${HOME}/.cargo/credentials.toml",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "crates.io",
+    "static.crates.io",
+    "github.com",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "RUSTUP_HOME",
+    "CARGO_HOME",
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

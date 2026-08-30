@@ -1,0 +1,56 @@
+[metadata]
+name = "node-dev"
+description = "Community policy tailored for Node.js / TypeScript development (npm, yarn, pnpm)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${HOME}/.npm",
+    "${HOME}/.yarn",
+    "${HOME}/.cache/yarn",
+    "${HOME}/.local/share/pnpm",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}/.npm",
+    "${HOME}/.yarn",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+    "${HOME}/.npmrc",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "registry.npmjs.org",
+    "registry.yarnpkg.com",
+    "github.com",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "NODE_ENV",
+    "NODE_PATH",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

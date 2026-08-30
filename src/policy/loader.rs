@@ -111,6 +111,8 @@ pub struct RawSecurity {
     pub lpac: Option<bool>,
     #[serde(default)]
     pub oslog: Option<bool>,
+    #[serde(default)]
+    pub require_signed: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -482,6 +484,7 @@ pub struct MergedPolicy {
     pub cpu_max: Option<String>,
     pub io_priority: Option<String>,
     pub dev_allow: Option<Vec<String>>,
+    pub require_signed: bool,
 }
 
 impl MergedPolicy {
@@ -535,6 +538,9 @@ impl MergedPolicy {
             }
             if let Some(lpac) = sec.lpac {
                 self.lpac = lpac;
+            }
+            if let Some(true) = sec.require_signed {
+                self.require_signed = true;
             }
         }
 
@@ -819,6 +825,7 @@ pub struct PolicyLoadOptions {
     pub include_project_policy: bool,
     pub include_fragments: bool,
     pub include_local_override: bool,
+    pub require_signed: bool,
     pub overrides: PolicyOverrides,
 }
 
@@ -837,6 +844,7 @@ impl Default for PolicyLoadOptions {
             include_project_policy: true,
             include_fragments: true,
             include_local_override: true,
+            require_signed: false,
             overrides: PolicyOverrides::default(),
         }
     }
@@ -850,12 +858,26 @@ pub struct LayeredPolicyLoader {
     pub load_user_policy: bool,
     pub load_fragments: bool,
     pub load_local_override: bool,
+    pub require_signed: bool,
 }
 
 impl Default for LayeredPolicyLoader {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn read_layer_file(path: &Path, require_signed: bool) -> Result<String> {
+    if require_signed {
+        super::crypto::verify_policy_file(path, None, None).with_context(|| {
+            format!(
+                "policy file '{}' failed signature verification (require_signed is active)",
+                path.display()
+            )
+        })?;
+    }
+    std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read policy file {}", path.display()))
 }
 
 impl LayeredPolicyLoader {
@@ -867,6 +889,7 @@ impl LayeredPolicyLoader {
             load_user_policy: true,
             load_fragments: true,
             load_local_override: true,
+            require_signed: false,
         }
     }
 
@@ -938,7 +961,8 @@ impl LayeredPolicyLoader {
                             }
                         }
                     }
-                    if let Ok(text) = std::fs::read_to_string(&path) {
+                    let req_signed = options.require_signed || self.require_signed;
+                    if let Ok(text) = read_layer_file(&path, req_signed) {
                         let label = format!("system:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
                         merge_layer(
@@ -965,7 +989,9 @@ impl LayeredPolicyLoader {
                 .or_else(|| default_user_policy_path(home));
             if let Some(path) = user_path {
                 if path.is_file() {
-                    if let Ok(text) = std::fs::read_to_string(&path) {
+                    let req_signed =
+                        merged.require_signed || options.require_signed || self.require_signed;
+                    if let Ok(text) = read_layer_file(&path, req_signed) {
                         let label = format!("user:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
                         merge_layer(
@@ -1085,9 +1111,9 @@ impl LayeredPolicyLoader {
                         path.display()
                     );
                 }
-                let text = std::fs::read_to_string(&path).with_context(|| {
-                    format!("failed to read project policy file {}", path.display())
-                })?;
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                let text = read_layer_file(&path, req_signed)?;
                 let label = path.display().to_string();
                 let layer = parse_layer(&text, &label)?;
                 merge_layer(
@@ -1123,7 +1149,9 @@ impl LayeredPolicyLoader {
                     // Sort deterministically alphabetically
                     fragment_files.sort();
                     for frag_path in fragment_files {
-                        if let Ok(text) = std::fs::read_to_string(&frag_path) {
+                        let req_signed =
+                            merged.require_signed || options.require_signed || self.require_signed;
+                        if let Ok(text) = read_layer_file(&frag_path, req_signed) {
                             let label = frag_path.display().to_string();
                             let layer = parse_layer(&text, &label)?;
                             merge_layer(
@@ -1154,7 +1182,9 @@ impl LayeredPolicyLoader {
                 None
             };
             if let Some(path) = local_path {
-                if let Ok(text) = std::fs::read_to_string(&path) {
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                if let Ok(text) = read_layer_file(&path, req_signed) {
                     let label = format!("override:{}", path.display());
                     let layer = parse_layer(&text, &label)?;
                     merge_layer(
@@ -1178,8 +1208,9 @@ impl LayeredPolicyLoader {
                 .and_then(|project_path| same_file_path(project_path, path))
                 .unwrap_or(false);
             if !duplicate_project {
-                let text = std::fs::read_to_string(path)
-                    .with_context(|| format!("failed to read policy file {}", path.display()))?;
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                let text = read_layer_file(path, req_signed)?;
                 let label = format!("cli:{}", path.display());
                 let layer = parse_layer(&text, &label)?;
                 merge_layer(
@@ -2111,6 +2142,64 @@ allow = ["$PROJECT/test.sock"]
         assert!(loaded
             .allow_unix_sockets
             .contains(&"$PROJECT/test.sock".to_string()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_require_signed_policy_enforcement() {
+        let root = std::env::temp_dir().join(format!("vetto-signed-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let policy_path = root.join("vetto.toml");
+        let content = r#"
+[metadata]
+name = "signed-test"
+
+[filesystem]
+allow_write = ["${PROJECT}"]
+allow_read = ["/usr", "${PROJECT}"]
+"#;
+        std::fs::write(&policy_path, content).unwrap();
+
+        // 1. Loading with require_signed=true when unsigned must fail
+        let mut loader = LayeredPolicyLoader::new();
+        loader.require_signed = true;
+        let mut options = PolicyLoadOptions::default();
+        options.require_signed = true;
+
+        let err = loader.load(
+            "default",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+            &options,
+        );
+        assert!(
+            err.is_err(),
+            "unsigned policy must fail when require_signed=true"
+        );
+
+        // 2. Sign policy
+        let keys_dir = root.join(".vetto");
+        let (signing_key, verifying_key) =
+            crate::policy::crypto::ensure_signing_keypair(&keys_dir).unwrap();
+        let sig = signing_key.sign(content.as_bytes());
+        let sig_text = crate::policy::crypto::create_signature_file_content(&sig, &verifying_key);
+        std::fs::write(root.join("vetto.toml.sig"), sig_text).unwrap();
+
+        // 3. Now it should succeed
+        let loaded = loader.load(
+            "default",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+            &options,
+        );
+        assert!(loaded.is_ok(), "signed policy must load successfully");
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vetto-agent-worker
+  labels:
+    app: vetto-agent-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vetto-agent-worker
+  template:
+    metadata:
+      labels:
+        app: vetto-agent-worker
+    spec:
+      containers:
+        - name: agent
+          image: ghcr.io/shleder/vetto-agent:0.2.5
+          command: ["vetto", "daemon", "start", "--port", "54321", "--foreground"]
+          ports:
+            - containerPort: 54321
+              name: daemon-api
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: Unconfined # Required for in-pod Landlock syscall availability
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: daemon-state
+              mountPath: /home/agent/.vetto/daemon
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: daemon-state
+          emptyDir:
+            medium: Memory
