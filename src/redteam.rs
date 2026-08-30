@@ -48,31 +48,16 @@ impl RedteamReport {
 }
 
 pub fn run_redteam_battery() -> RedteamReport {
-    let mut results = Vec::new();
-
-    // 1. setsid daemon escape
-    results.push(test_setsid_escape());
-
-    // 2. memfd_create + fexecve
-    results.push(test_memfd_fexecve());
-
-    // 3. /proc/self/mem write
-    results.push(test_proc_self_mem_write());
-
-    // 4. /proc/1/ns/mnt cross-ns escape
-    results.push(test_proc_1_ns_mnt());
-
-    // 5. raw socket AF_PACKET / AF_INET
-    results.push(test_raw_socket());
-
-    // 6. memory limit exceed
-    results.push(test_memory_limit());
-
-    // 7. pids limit exceed
-    results.push(test_pids_limit());
-
-    // 8. restricted dev open (/dev/kmsg, /dev/mem)
-    results.push(test_restricted_dev());
+    let results = vec![
+        test_setsid_escape(),
+        test_memfd_fexecve(),
+        test_proc_self_mem_write(),
+        test_proc_1_ns_mnt(),
+        test_raw_socket(),
+        test_memory_limit(),
+        test_pids_limit(),
+        test_restricted_dev(),
+    ];
 
     let passed = results
         .iter()
