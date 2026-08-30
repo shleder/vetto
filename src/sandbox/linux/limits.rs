@@ -84,6 +84,7 @@ mod tests {
             processes: Some(32),
             open_files: Some(128),
             file_size_bytes: Some(1024 * 1024),
+            ..Default::default()
         };
         assert_eq!(limits.cpu_seconds, Some(60));
         assert_eq!(limits.address_space_bytes, Some(64 * 1024 * 1024));

@@ -228,10 +228,9 @@ pub fn parse_bandwidth_str(value: &str) -> Option<u64> {
         (n, 1000u64 * 1000)
     } else if let Some(n) = lower.strip_suffix('k') {
         (n, 1000u64)
-    } else if let Some(n) = lower.strip_suffix('b') {
-        (n, 1u64)
     } else {
-        return None;
+        let n = lower.strip_suffix('b')?;
+        (n, 1u64)
     };
     let base: u64 = number.trim().parse().ok()?;
     base.checked_mul(mult)
@@ -1527,6 +1526,7 @@ deny = ["SECRET_*"]
         let sec_layer = RawLayer {
             security: Some(RawSecurity {
                 immutable: Some(true),
+                ..Default::default()
             }),
             ..RawLayer::default()
         };
