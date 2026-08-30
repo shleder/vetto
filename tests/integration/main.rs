@@ -34,6 +34,7 @@ mod linux_verify;
 mod linux_visibility;
 mod macos_seatbelt;
 mod multi_agent;
+mod onboarding;
 mod policy_loading;
 mod policy_overlays;
 mod policy_tools;
