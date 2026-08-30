@@ -2,8 +2,13 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
-use crate::common::vetto_cmd;
+use crate::common::vetto_bin;
+
+fn vetto_cmd() -> Command {
+    Command::new(vetto_bin())
+}
 
 #[test]
 fn test_feature_87_version_json() {

@@ -45,7 +45,7 @@ pub fn load_agent_durations(project_dir: &Path, agent_name: &str) -> Vec<u64> {
 
     if let Ok(file) = fs::File::open(&history_file) {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if let Ok(record) = serde_json::from_str::<SessionHistoryRecord>(&line) {
                 if record.agent == agent_name || record.agent.ends_with(agent_name) {
                     samples.push(record.duration_secs);
