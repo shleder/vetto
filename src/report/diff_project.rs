@@ -64,54 +64,50 @@ pub struct ProjectDiff {
 }
 
 impl ProjectDiff {
-    /// Whether any project files were added, modified, or deleted.
-    pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.modified.is_empty() && self.deleted.is_empty()
-    }
-
-    /// Total count of changed files.
     pub fn total_changed(&self) -> usize {
         self.added.len() + self.modified.len() + self.deleted.len()
     }
 
-    /// One-line human-readable summary of project diff.
+    pub fn is_empty(&self) -> bool {
+        self.total_changed() == 0
+    }
+
     pub fn summary(&self) -> String {
-        if self.is_empty() {
-            return "no file modifications detected in project directory".to_string();
-        }
         format!(
-            "project diff: {} file(s) changed (+{} added, ~{} modified, -{} deleted)",
+            "agent modified: {} file(s) ({} added, {} modified, {} deleted)",
             self.total_changed(),
             self.added.len(),
             self.modified.len(),
-            self.deleted.len(),
+            self.deleted.len()
         )
     }
 
-    /// Compute the diff between baseline manifest and current state of project root.
+    /// Compute the diff between an initial baseline manifest and current state on disk.
     pub fn compute(initial: &ProjectManifest, root: &Path) -> Self {
         let final_manifest = ProjectManifest::capture(root);
-
-        let initial_paths: BTreeSet<&PathBuf> = initial.files.keys().collect();
-        let final_paths: BTreeSet<&PathBuf> = final_manifest.files.keys().collect();
-
         let mut added = Vec::new();
         let mut modified = Vec::new();
         let mut deleted = Vec::new();
 
-        for path in final_paths.difference(&initial_paths) {
-            added.push((*path).clone());
+        let initial_keys: BTreeSet<&PathBuf> = initial.files.keys().collect();
+        let final_keys: BTreeSet<&PathBuf> = final_manifest.files.keys().collect();
+
+        // Added files
+        for key in final_keys.difference(&initial_keys) {
+            added.push((*key).clone());
         }
 
-        for path in initial_paths.difference(&final_paths) {
-            deleted.push((*path).clone());
+        // Deleted files
+        for key in initial_keys.difference(&final_keys) {
+            deleted.push((*key).clone());
         }
 
-        for path in initial_paths.intersection(&final_paths) {
-            let initial_fp = &initial.files[*path];
-            let final_fp = &final_manifest.files[*path];
+        // Modified files
+        for key in initial_keys.intersection(&final_keys) {
+            let initial_fp = &initial.files[*key];
+            let final_fp = &final_manifest.files[*key];
             if initial_fp != final_fp {
-                modified.push((*path).clone());
+                modified.push((*key).clone());
             }
         }
 
@@ -128,7 +124,11 @@ impl ProjectDiff {
 }
 
 fn fingerprint_file(path: &Path) -> Option<FileFingerprint> {
-    let meta = std::fs::metadata(path).ok()?;
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return None;
+    }
+
     let size = meta.len();
     let mtime_secs = meta
         .modified()
@@ -137,8 +137,8 @@ fn fingerprint_file(path: &Path) -> Option<FileFingerprint> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Compute lightweight hash for files <= 1MB
-    let sha256 = if size <= 1024 * 1024 {
+    // For files < 10 MB, compute sha256 hash. For larger files, use size + mtime hash
+    let sha256 = if size <= 10 * 1024 * 1024 {
         if let Ok(bytes) = std::fs::read(path) {
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
@@ -161,14 +161,14 @@ fn fingerprint_file(path: &Path) -> Option<FileFingerprint> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_test_dir(label: &str) -> PathBuf {
+    fn temp_test_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "vetto-test-{}-{}",
-            label,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+            "vetto-diff-{tag}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
                 .as_nanos()
         ));
         let _ = fs::remove_dir_all(&dir);
