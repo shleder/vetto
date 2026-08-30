@@ -359,17 +359,18 @@ impl MergedPolicy {
             if let Some(deny_network) = &network.deny_network {
                 self.deny_network.extend(deny_network.clone().into_vec());
             }
-            for preset_opt in [
+            for presets in [
                 &network.net_preset,
                 &network.net_presets,
                 &network.preset,
                 &network.presets,
-            ] {
-                if let Some(presets) = preset_opt {
-                    for preset_name in presets.clone().into_vec() {
-                        let domains = expand_net_preset(&preset_name)?;
-                        self.network_allow.extend(domains);
-                    }
+            ]
+            .into_iter()
+            .flatten()
+            {
+                for preset_name in presets.clone().into_vec() {
+                    let domains = expand_net_preset(&preset_name)?;
+                    self.network_allow.extend(domains);
                 }
             }
             if let Some(allow_cidr) = &network.allow_cidr {
@@ -378,12 +379,10 @@ impl MergedPolicy {
             if let Some(allow_cidrs) = &network.allow_cidrs {
                 self.allow_cidr.extend(allow_cidrs.clone().into_vec());
             }
-            for quota_opt in [&network.net_quota, &network.quota] {
-                if let Some(quotas) = quota_opt {
-                    for (domain, val) in quotas {
-                        let bytes = parse_quota_bytes(val)?;
-                        self.net_quota.insert(domain.clone(), bytes);
-                    }
+            for quotas in [&network.net_quota, &network.quota].into_iter().flatten() {
+                for (domain, val) in quotas {
+                    let bytes = parse_quota_bytes(val)?;
+                    self.net_quota.insert(domain.clone(), bytes);
                 }
             }
             if let Some(ports) = &network.net_ports {
