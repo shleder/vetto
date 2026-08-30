@@ -41,6 +41,21 @@ jobs:
         # exists; do not invent one.
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
+      - name: Report total coverage percentage
+        run: |
+          python3 - <<'PY'
+          hits = misses = 0
+          with open("lcov.info", encoding="utf-8") as fh:
+              for line in fh:
+                  if line.startswith("LF:"):
+                      misses += int(line[3:])
+                  elif line.startswith("LH:"):
+                      hits += int(line[3:])
+          total = hits + misses
+          pct = (hits * 100.0 / total) if total else 0.0
+          print(f"coverage: {hits}/{total} lines = {pct:.1f}%")
+          PY
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:

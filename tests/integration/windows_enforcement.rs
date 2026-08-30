@@ -186,4 +186,26 @@ mod windows_only {
             stdout(&output)
         );
     }
+
+    /// Positive control for read_outside_granted_roots_fails: the SAME read
+    /// against a file INSIDE the granted project root must succeed, proving
+    /// the sandbox denies by scope and not by blanket file blocking.
+    #[test]
+    fn read_inside_granted_root_succeeds() {
+        if !backend_available() {
+            eprintln!("{BACKEND_SKIP}");
+            return;
+        }
+        let proj = TempProject::new("win-positive-control");
+        write_file(&proj.path().join("inside.txt"), "VETTO-INSIDE-GRANT");
+        let output = run_vetto_in(
+            proj.path(),
+            &["--tui=none", "--", "cmd", "/c", "type", "inside.txt"],
+        );
+        assert!(
+            stdout(&output).contains("VETTO-INSIDE-GRANT"),
+            "read inside the granted root must work; stderr: {}",
+            stderr(&output)
+        );
+    }
 }

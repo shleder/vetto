@@ -16,7 +16,6 @@
 //! - Policy rlimits (CPU, address space, processes, open files, file size)
 //!   are applied in the child before exec, matching the Linux tier.
 
-pub mod endpoint_security;
 pub mod fsevents;
 pub mod limits;
 pub mod pdeath_watch;
