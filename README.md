@@ -98,7 +98,7 @@ published channels**.
 
 ```console
 $ vetto doctor
-vetto v0.2.4 doctor
+vetto v0.2.5 doctor
 kernel:                  6.8.0-generic
 landlock:                available (ABI 5)
 unprivileged userns:     yes
