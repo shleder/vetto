@@ -3,7 +3,7 @@
 //! Creates a lightweight TAR archive of project files in `~/.vetto/snapshots/<session>/`
 //! with a strict size limit, and provides rollback functionality to restore files.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

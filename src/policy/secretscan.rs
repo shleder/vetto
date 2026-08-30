@@ -93,9 +93,7 @@ pub fn is_ignored_directory(name: &str) -> bool {
 
 /// Determines if a file name itself indicates a secret file (e.g. .env, *.pem, *.key).
 pub fn is_secret_filename(path: &Path) -> Option<&'static str> {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return None;
-    };
+    let name = path.file_name().and_then(|n| n.to_str())?;
     let lower = name.to_ascii_lowercase();
 
     if lower == ".env" || lower.starts_with(".env.") {

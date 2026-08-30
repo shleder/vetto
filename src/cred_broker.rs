@@ -7,12 +7,11 @@
 #[allow(unused_imports)]
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
-use std::ffi::OsStr;
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[allow(unused_imports)]
 use crate::events::{Event, EventBus};

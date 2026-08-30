@@ -49,7 +49,7 @@ pub fn resolve_log_path(target: &str) -> Result<PathBuf> {
 /// Formats an event for console presentation in watch mode.
 pub fn format_event(event: &Event) -> String {
     let ts = event.ts().format("%H:%M:%S%.3f");
-    let kind = event.kind();
+    let _kind = event.kind();
 
     match event {
         Event::SessionStarted {
