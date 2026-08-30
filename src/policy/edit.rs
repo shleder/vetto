@@ -93,7 +93,7 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
             .expect("network section present")
             .as_table_mut()
             .expect("network table");
-        match inner.get("mode") {
+        match inner.get_mut("mode") {
             None => {
                 inner.insert(
                     "mode",
