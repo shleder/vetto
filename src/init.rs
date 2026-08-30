@@ -173,6 +173,7 @@ extends = ["default"]
 # Project directory and scratch space are writable:
 allow_write = [
   "$PROJECT",
+  "$PROJECT/target/",
   "/tmp",
   "/dev/null",
 ]

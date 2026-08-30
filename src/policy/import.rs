@@ -113,7 +113,26 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
                 "blockedPaths" | "deniedPaths" => {
                     extract_json_strings(&val, &mut deny_paths);
                 }
-                "network" | "allowedDomains" => {
+                "network" => {
+                    if let JsonValue::Object(net_map) = val {
+                        for (nkey, nval) in net_map {
+                            if matches!(
+                                nkey.as_str(),
+                                "allowed_hosts"
+                                    | "allowed_domains"
+                                    | "allowedDomains"
+                                    | "allowedHosts"
+                                    | "allow"
+                                    | "domains"
+                            ) {
+                                extract_json_strings(&nval, &mut allow_network);
+                            }
+                        }
+                    } else {
+                        extract_json_strings(&val, &mut allow_network);
+                    }
+                }
+                "allowedDomains" | "allowedHosts" => {
                     extract_json_strings(&val, &mut allow_network);
                 }
                 other => {
@@ -243,14 +262,36 @@ pub fn import_codex(input_path: Option<&Path>, home: &Path) -> Result<String> {
                 }
                 "network" => {
                     if let TomlValue::Table(net) = val {
-                        if let Some(domains) =
-                            net.get("allow").or_else(|| net.get("allowed_domains"))
-                        {
-                            extract_toml_strings(domains, &mut allow_network);
+                        for (nkey, nval) in net {
+                            if matches!(
+                                nkey.as_str(),
+                                "allow"
+                                    | "allowed_domains"
+                                    | "allowed_hosts"
+                                    | "allowedDomains"
+                                    | "allowedHosts"
+                                    | "domains"
+                            ) {
+                                extract_toml_strings(&nval, &mut allow_network);
+                            }
                         }
                     } else {
                         extract_toml_strings(&val, &mut allow_network);
                     }
+                }
+                "allowed_domains" | "allowedDomains" | "allowed_hosts" | "allowedHosts" => {
+                    extract_toml_strings(&val, &mut allow_network);
+                }
+                "sandbox_write_roots"
+                | "write_roots"
+                | "writable_roots"
+                | "allow_write"
+                | "writable_paths" => {
+                    extract_toml_strings(&val, &mut allow_write);
+                }
+                "sandbox_read_roots" | "read_roots" | "readable_roots" | "allow_read"
+                | "readable_paths" => {
+                    extract_toml_strings(&val, &mut allow_read);
                 }
                 other => {
                     eprintln!("vetto: import: ignoring unknown field '{other}' in Codex config");

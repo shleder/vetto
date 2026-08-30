@@ -129,7 +129,9 @@ pub fn load_global_config_from_home(home: &Path) -> Option<GlobalConfig> {
 }
 
 pub fn load_global_config() -> Option<GlobalConfig> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
     load_global_config_from_home(&home)
 }
 

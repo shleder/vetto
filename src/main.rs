@@ -107,8 +107,11 @@ fn main() -> Result<()> {
             ),
             cli::PolicyCommand::Import { from, path, output } => {
                 let home = std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(PathBuf::from)
-                    .context("$HOME is not set; vetto needs it to resolve paths")?;
+                    .context(
+                        "neither HOME nor USERPROFILE is set; vetto needs it to resolve paths",
+                    )?;
                 vetto::policy::import::import_policy(from, path.as_deref(), output, &home)?;
                 println!("vetto: imported policy written to {}", output.display());
                 Ok(())
@@ -168,8 +171,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve policy variables")?;
+        .context(
+            "neither $HOME nor %USERPROFILE% is set; vetto needs it to resolve policy variables",
+        )?;
 
     let tier_for_policy = match tier {
         Some(t) => t,

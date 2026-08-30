@@ -114,7 +114,7 @@ pub fn detect_agent(project: &Path) -> Result<DetectedAgent> {
 
     // 4. Honest error with list of supported agents
     bail!(
-        "no agent command provided and zero-config auto-detection found no AI agent.\n\
+        "could not auto-detect AI agent from project markers or PATH.\n\
          Supported agents: {}\n\
          To run an agent manually: vetto [OPTIONS] -- <command> [args...]\n\
          To configure policy: vetto init --wizard",
