@@ -53,8 +53,12 @@ fn main() -> Result<()> {
     }
 
     match &args.command {
-        Some(cli::Command::Doctor { probe, check_agent }) => doctor(*probe, check_agent.as_deref()),
-        Some(cli::Command::Init { force }) => init(*force),
+        Some(cli::Command::Doctor {
+            probe,
+            check_agent,
+            fix,
+        }) => doctor(*probe, check_agent.as_deref(), *fix),
+        Some(cli::Command::Init { force, wizard }) => init(*force, *wizard),
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
@@ -88,10 +92,11 @@ fn main() -> Result<()> {
             )
         }
         Some(cli::Command::Policy { command }) => match command {
-            cli::PolicyCommand::Explain { json } => {
+            cli::PolicyCommand::Explain { json, why } => {
                 let net = vetto::config::parse_net_mode(&args.net)?;
                 vetto::policy::explain::run_cli(
                     *json,
+                    why.as_deref(),
                     &args.profile,
                     args.policy.as_deref().map(PathBuf::from).as_deref(),
                     &net,
@@ -102,8 +107,17 @@ fn main() -> Result<()> {
                 &args.profile,
                 args.policy.as_deref().map(PathBuf::from).as_deref(),
             ),
+            cli::PolicyCommand::Import { from, path, output } => {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .context("$HOME is not set; vetto needs it to resolve paths")?;
+                vetto::policy::import::import_policy(from, path.as_deref(), output, &home)?;
+                println!("vetto: imported policy written to {}", output.display());
+                Ok(())
+            }
         },
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
+        Some(cli::Command::Man) => cli::print_man(),
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]
             {
@@ -115,7 +129,25 @@ fn main() -> Result<()> {
                 bail!("the SSH proxy helper is available on Linux only")
             }
         }
-        None => supervise(RunConfig::from_cli(&args)?),
+        None => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            if cfg.agent.is_empty() {
+                let project = std::env::current_dir().context("getcwd")?;
+                let detected = vetto::onboard::detect_agent(&project)?;
+                eprintln!(
+                    "vetto: zero-config auto-detected agent '{}' ({})",
+                    detected.name, detected.reason
+                );
+                cfg.agent = detected.command;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = Some(detected.name.to_string());
+                }
+                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                    cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+            }
+            supervise(cfg)
+        }
     }
 }
 
@@ -147,6 +179,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
     let policy_options = policy::loader::PolicyLoadOptions {
         agent: cfg.agent_preset.clone(),
+        preset: cfg.preset,
         include_project_policy: true,
         ..policy::loader::PolicyLoadOptions::default()
     };
@@ -216,9 +249,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         let report = vetto::verify::preflight(&pol, &cfg.net)?;
         eprintln!("vetto: verify: {}", report.summary());
         if report.leaks() > 0 {
-            bail!(
-                "--verify: boundary verification failed; refusing to start the agent (fail-closed)"
-            );
+            if cfg.shadow {
+                eprintln!(
+                    "vetto: shadow: would deny session startup due to boundary verification leaks (shadow mode active; continuing)"
+                );
+            } else {
+                bail!(
+                    "--verify: boundary verification failed; refusing to start the agent (fail-closed)"
+                );
+            }
         }
         Some(report)
     } else {
@@ -517,12 +556,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
     if let Some(threshold) = cfg.fail_on_block {
         if blocked_total >= threshold {
-            eprintln!(
-                "vetto: fail-on-block threshold reached (blocked={} threshold={})",
-                blocked_total, threshold
-            );
-            if code == 0 {
-                code = 1;
+            if cfg.shadow {
+                eprintln!(
+                    "vetto: shadow: would deny/fail session on block threshold (blocked={} threshold={}) (shadow mode active; exit code unchanged)",
+                    blocked_total, threshold
+                );
+            } else {
+                eprintln!(
+                    "vetto: fail-on-block threshold reached (blocked={} threshold={})",
+                    blocked_total, threshold
+                );
+                if code == 0 {
+                    code = 1;
+                }
             }
         }
     }
@@ -618,6 +664,17 @@ fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &s
     println!("  tier:  {tier}");
     println!("  net:   {}", cfg.net.label());
     println!("  git ssh: {}", if cfg.git_ssh { "enabled" } else { "off" });
+    println!(
+        "  shadow: {}",
+        if cfg.shadow {
+            "enabled (policy layer only)"
+        } else {
+            "off"
+        }
+    );
+    if let Some(preset) = cfg.preset {
+        println!("  preset: {}", preset.as_str());
+    }
     println!("  tui:   {:?}", cfg.tui);
     println!("  policy: {}", pol.summary());
     println!("  write roots:");
@@ -782,7 +839,7 @@ fn install_sigint_forwarder(_root_pid: u32, _tier: Option<policy::Tier>) {}
 // doctor
 // ---------------------------------------------------------------------------
 
-fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
+fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "linux")]
     {
@@ -810,6 +867,10 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
             Ok(t) => println!("chosen tier:             {}", t.label()),
             Err(e) => println!("chosen tier:             NONE — fail-closed: {e}"),
         }
+        if fix {
+            let fixes = vetto::doctor::fix::collect_linux_fixes(&p);
+            vetto::doctor::print_fixes(&fixes);
+        }
         if probe_deny {
             doctor_probe()?;
         }
@@ -821,6 +882,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
             yn(sandbox::macos::MacosSandbox::seatbelt_available())
         );
         println!("  note: sandbox-exec is deprecated by Apple; platform risk accepted");
+        if fix {
+            vetto::doctor::print_fixes(&[]);
+        }
         if probe_deny {
             doctor_probe()?;
         }
@@ -882,6 +946,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
+        if fix {
+            vetto::doctor::print_fixes(&[]);
+        }
         if probe_deny {
             println!("probe: display-only deny verification is unavailable on the Windows backend");
         }
@@ -985,8 +1052,8 @@ fn yn(b: bool) -> &'static str {
 // init / profiles
 // ---------------------------------------------------------------------------
 
-fn init(force: bool) -> Result<()> {
-    vetto::init::run_init(Path::new("."), force)
+fn init(force: bool, wizard: bool) -> Result<()> {
+    vetto::init::run_init(Path::new("."), force, wizard)
 }
 
 fn profiles() -> Result<()> {
