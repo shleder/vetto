@@ -184,6 +184,18 @@ pub struct Policy {
     pub deny_network: bool,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
+    /// Automatically scan project for secrets at session start and deny them.
+    pub auto_deny_secrets: bool,
+    /// Secrets to proxy through host credential broker without exposing to agent.
+    pub secret_proxies: Vec<String>,
+    /// Read-only mounts inside the mount namespace.
+    pub ro_mounts: Vec<PathBuf>,
+    /// Protect Git repository from modification on main/master and destructive push.
+    pub git_guard: bool,
+    /// Create project snapshot at session start with rollback capability.
+    pub snapshot: bool,
+    /// Mount an isolated tmpfs over /tmp for the session.
+    pub tmpfs_tmp: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
     pub warnings: Vec<String>,
 }
@@ -202,6 +214,12 @@ impl Default for Policy {
             environment: EnvironmentPolicy::default(),
             deny_network: false,
             is_immutable: false,
+            auto_deny_secrets: false,
+            secret_proxies: Vec::new(),
+            ro_mounts: Vec::new(),
+            git_guard: false,
+            snapshot: false,
+            tmpfs_tmp: true,
             warnings: Vec::new(),
         }
     }

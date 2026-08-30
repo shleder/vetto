@@ -3,6 +3,23 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Feature 25 (Auto secret scan)**: `vetto scan-secrets [path]` command and `auto_deny_secrets = true` policy option to automatically detect and deny credential patterns at session startup with bounding limits (3s timeout, 5000 files, 1MB per file).
+- **Feature 26 (Credential broker)**: Out-of-process host credential broker for `secrets.proxy = [...]` listening on a Unix domain socket, injecting auth headers (`Authorization`, `x-api-key`) only for allowlisted domains, and stripping sensitive credentials from the child environment.
+- **Feature 27 (Deny presets)**: Built-in `deny_preset = ["ssh", "aws", "gcp", "kube", "docker", "gnupg", "git", "npm", "cargo", "claude", "codex"]` in `vetto.toml`.
+- **Feature 28 (Glob denials)**: `--deny-glob` CLI flag and `deny_glob = ["**/*.pem"]` policy option resolving wildcard denial patterns across filesystem trees.
+- **Feature 29 (Read-only caches)**: `ro_mounts = ["~/.npm", "~/.cache/pip"]` mounted `MS_RDONLY` in the mount namespace on Linux.
+- **Feature 30 (Diff reporting)**: Fast in-memory baseline manifest capture at session start and summary diff calculation at session completion without duplicating the project directory.
+- **Feature 31 (Git protection)**: `git_guard = true` refuses to run with write permissions when on `main` or `master` branch, and shim/hook intercepts block destructive operations (`git push --force*`, `git push --delete`).
+- **Feature 32 (Snapshot and rollback)**: `snapshot = true` creates a tar snapshot in `~/.vetto/snapshots/<session>/` with a 50MB ceiling, and `vetto rollback <session>` restores modified/deleted files.
+- **Feature 33 (/proc and /sys masking)**: Mount namespace remounts `/sys` read-only and masks sensitive host/kernel endpoints (`/proc/kcore`, `/proc/kallsyms`, `/proc/sysrq-trigger`, `/proc/sched_debug`, `/proc/slabinfo`, etc.).
+- **Feature 34 (tmpfs for /tmp)**: `tmpfs_tmp = true` isolates `/tmp` in an unshared private tmpfs in the mount namespace.
+- **Feature 35 (Watch mode)**: `vetto watch <session-pid/log-path>` provides a live tail of JSONL session events with optional `--path` pattern filtering.
+- **Feature 36 (I/O metrics)**: Tracks total bytes read/written and operation counts, emitting session notices and including metrics in audit reports and CI JSON summaries.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added

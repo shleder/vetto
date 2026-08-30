@@ -6,6 +6,8 @@ pub mod glob_resolve;
 pub mod limits_spec;
 pub mod lint;
 pub mod loader;
+pub mod presets;
+pub mod secretscan;
 pub mod types;
 
 pub use conditions::{ConditionContext, RawConditions};

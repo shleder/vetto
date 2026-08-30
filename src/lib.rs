@@ -10,6 +10,7 @@ pub mod bench_support;
 pub mod classifier;
 pub mod cli;
 pub mod config;
+pub mod cred_broker;
 pub mod doctor;
 pub mod error;
 pub mod events;
@@ -26,3 +27,4 @@ pub mod shim;
 #[cfg(unix)]
 pub mod tui;
 pub mod verify;
+pub mod watch;

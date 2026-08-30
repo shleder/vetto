@@ -1,5 +1,6 @@
 //! Post-session audit reports (HTML / Markdown / JSON / SARIF).
 
+pub mod diff;
 pub mod html;
 pub mod json;
 pub mod markdown;

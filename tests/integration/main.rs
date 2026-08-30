@@ -40,4 +40,5 @@ mod policy_tools;
 mod rescue;
 mod secret_masking;
 mod shim_interception;
+mod tier3_files_secrets;
 mod windows_enforcement;
