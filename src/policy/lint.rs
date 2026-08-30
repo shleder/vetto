@@ -44,11 +44,14 @@ pub struct Finding {
 /// every rule and print findings. Exits 1 iff `strict` and any finding.
 pub fn run_cli(strict: bool, profile: &str, policy_path: Option<&Path>) -> Result<()> {
     // NetMode::Off: linting is static analysis and must not require a relay.
-    let backend = Backend::detect(NetMode::Off, false)?;
-    let tier = backend.tier();
+    let tier = match Backend::detect(NetMode::Off, false) {
+        Ok(b) => b.tier(),
+        Err(_) => Tier::FsOnly,
+    };
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("$HOME is not set; vetto needs it to resolve policy variables")?;
 

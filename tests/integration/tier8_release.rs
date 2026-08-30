@@ -5,7 +5,7 @@ use crate::common;
 
 #[test]
 fn tour_non_interactive_completes_all_steps_successfully() {
-    let mut cmd = common::vetto_cmd();
+    let mut cmd = Command::new(common::vetto_bin());
     cmd.arg("tour").arg("--non-interactive");
 
     let output = cmd.output().expect("invoke vetto tour --non-interactive");
@@ -23,7 +23,7 @@ fn tour_non_interactive_completes_all_steps_successfully() {
 
 #[test]
 fn upgrade_dry_run_and_check_flags_exit_zero() {
-    let mut cmd = common::vetto_cmd();
+    let mut cmd = Command::new(common::vetto_bin());
     cmd.arg("upgrade").arg("--check");
 
     let output = cmd.output().expect("invoke vetto upgrade --check");
@@ -35,7 +35,7 @@ fn upgrade_dry_run_and_check_flags_exit_zero() {
     );
     assert!(stdout.contains("vetto upgrade: checking updates"));
 
-    let mut dry_cmd = common::vetto_cmd();
+    let mut dry_cmd = Command::new(common::vetto_bin());
     dry_cmd.arg("upgrade").arg("--dry-run");
 
     let dry_output = dry_cmd.output().expect("invoke vetto upgrade --dry-run");

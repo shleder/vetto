@@ -131,6 +131,7 @@ fn execute_step_action(step_number: usize) -> Result<()> {
             println!("--- [Action: Inspecting Policy Structure] ---");
             let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/tmp"));
             let tier = crate::policy::Tier::Full;
@@ -149,6 +150,7 @@ fn execute_step_action(step_number: usize) -> Result<()> {
             let net = crate::config::NetMode::Off;
             let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/tmp"));
             if let Ok(pol) = crate::policy::loader::load(

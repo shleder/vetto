@@ -88,13 +88,13 @@ jobs:
             case "$AGENT" in
               claude-code)
                 npx -y @anthropic-ai/claude-code --version
-                $VETTO_BIN --verify --net=allowlist:api.anthropic.com:443 -- npx -y @anthropic-ai/claude-code --version
+                $VETTO_BIN --verify --net=allowlist:api.anthropic.com -- npx -y @anthropic-ai/claude-code --version
                 ;;
               codex)
-                $VETTO_BIN --verify --net=allowlist:api.openai.com:443 -- echo "codex execution simulated under verified sandbox"
+                $VETTO_BIN --verify --net=allowlist:api.openai.com -- echo "codex execution simulated under verified sandbox"
                 ;;
               gemini)
-                $VETTO_BIN --verify --net=allowlist:generativelanguage.googleapis.com:443 -- echo "gemini execution simulated under verified sandbox"
+                $VETTO_BIN --verify --net=allowlist:generativelanguage.googleapis.com -- echo "gemini execution simulated under verified sandbox"
                 ;;
             esac
           else

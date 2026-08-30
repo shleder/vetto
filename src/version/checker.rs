@@ -84,7 +84,8 @@ pub fn save_cache(cache_path: &Path, cache: &VersionCache) -> std::io::Result<()
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let data = serde_json::to_string_pretty(cache)?;
+    let data = serde_json::to_string_pretty(cache)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     fs::write(cache_path, data)
 }
 
