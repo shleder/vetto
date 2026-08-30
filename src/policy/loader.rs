@@ -1419,6 +1419,7 @@ deny = ["SECRET_*"]
         let sec_layer = RawLayer {
             security: Some(RawSecurity {
                 immutable: Some(true),
+                ..Default::default()
             }),
             ..RawLayer::default()
         };
@@ -1478,9 +1479,9 @@ allow_read = ["/usr", "${PROJECT}"]
         // 2. Sign policy
         let keys_dir = root.join(".vetto");
         let (signing_key, verifying_key) =
-            super::crypto::ensure_signing_keypair(&keys_dir).unwrap();
+            crate::policy::crypto::ensure_signing_keypair(&keys_dir).unwrap();
         let sig = signing_key.sign(content.as_bytes());
-        let sig_text = super::crypto::create_signature_file_content(&sig, &verifying_key);
+        let sig_text = crate::policy::crypto::create_signature_file_content(&sig, &verifying_key);
         std::fs::write(root.join("vetto.toml.sig"), sig_text).unwrap();
 
         // 3. Now it should succeed

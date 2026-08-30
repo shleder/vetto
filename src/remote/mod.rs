@@ -3,8 +3,6 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::thread;
-use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde_json::json;
