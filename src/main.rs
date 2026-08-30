@@ -511,7 +511,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             if cfg.dry_run && cfg.backend.as_deref().unwrap_or("auto") == "auto" {
                 (None, Some(policy::Tier::Full))
             } else {
-                return Err(e).context("sandbox initialization failed; run `vetto doctor` for the full capability picture");
+                return Err(e);
             }
         }
     };
@@ -778,9 +778,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
-    let spawned = backend
-        .spawn(&pol, opts)
-        .context("failed to spawn sandboxed agent process; run `vetto doctor` for the full capability picture")?;
+    let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
     let broker_ctrl_fd = spawned.broker_ctrl_fd;
