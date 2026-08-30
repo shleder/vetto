@@ -333,7 +333,7 @@ jobs:
           fi
 
           npm_tarball="$(find all-assets -name 'vetto-npm-*.tgz' -print -quit)"
-          npm publish "$npm_tarball" --access public --tag "$dist_tag"
+          npm publish "./$npm_tarball" --access public --tag "$dist_tag"
 
       - name: Publish to crates.io
         env:
