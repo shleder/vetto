@@ -191,7 +191,7 @@ pub fn run_show(
     net: &NetMode,
 ) -> Result<()> {
     let _ = effective;
-    run_cli(json, profile, policy_path, net)
+    run_cli(json, None, profile, policy_path, net)
 }
 
 fn tier_label(tier: Option<Tier>) -> &'static str {
