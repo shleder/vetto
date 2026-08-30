@@ -10,7 +10,9 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::thread;
 
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use serde_json::json;
