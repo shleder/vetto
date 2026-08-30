@@ -101,6 +101,7 @@ fn bench_observe_seccomp(c: &mut Criterion) {
         deny_resolved: Vec::new(),
         deny_network: false,
         is_immutable: false,
+        system_log: false,
         environment: EnvironmentPolicy {
             pass_through: Vec::new(),
             deny: Vec::new(),

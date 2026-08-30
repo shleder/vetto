@@ -142,8 +142,7 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        let _ = pid;
-        true
+        crate::rescue::lock::is_process_alive(pid)
     }
     #[cfg(not(any(unix, windows)))]
     {
