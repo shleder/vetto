@@ -1,0 +1,46 @@
+name: Something didn't work on first run
+description: You installed vetto and hit a wall — tell us where.
+title: "[first-run]: "
+labels: ["first-run"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying vetto! Run `vetto doctor` and paste the output below —
+        it contains no secrets, only kernel capability flags.
+
+        If `vetto doctor` itself fails, that is exactly what we want to see.
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: "Ubuntu 24.04 / macOS 15.1 / Windows 11 x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install vetto?
+      options:
+        - npm install --global @shledery/vetto
+        - npx @shledery/vetto
+        - curl installer (scripts/install.sh)
+        - cargo install vetto
+        - GitHub release archive
+        - from source
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`vetto doctor` output"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What did you run, what did you expect, what happened?
+      placeholder: "I ran `vetto` in my project, expected ..., got ..."
+    validations:
+      required: true

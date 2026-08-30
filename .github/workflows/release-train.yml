@@ -334,3 +334,22 @@ jobs:
 
           npm_tarball="$(find all-assets -name 'vetto-npm-*.tgz' -print -quit)"
           npm publish "$npm_tarball" --access public --tag "$dist_tag"
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "::warning ::CRATES_TOKEN is not set; skipping crates.io publish."
+            exit 0
+          fi
+          version="$(grep -m1 '^version' Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
+          if curl -fsSL -A "vetto-release-bot (github.com/shleder/vetto)" \
+              "https://crates.io/api/v1/crates/vetto" | grep -q "\"num\":\"$version\""; then
+            echo "::notice ::vetto $version is already on crates.io; skipping."
+            exit 0
+          fi
+          # The build is already verified by the build jobs in this run.
+          cargo publish --no-verify
