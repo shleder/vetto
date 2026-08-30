@@ -1,0 +1,333 @@
+name: release-train
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      channel:
+        description: "Release channel (npm dist-tag)"
+        required: true
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - alpha
+      dry_run:
+        description: "Dry-run mode (build, check, test, but skip external publish)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  GH_REPO: ${{ github.repository }}
+  IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+  IS_DRY_RUN: ${{ github.event_name == 'push' || inputs.dry_run }}
+  RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+
+jobs:
+  version-check:
+    name: inspect versions and changelog
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      is_dry_run: ${{ env.IS_DRY_RUN }}
+      channel: ${{ env.RELEASE_CHANNEL }}
+      changelog: ${{ steps.ver.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Extract version and changelog entry
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_ver="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          npm_ver="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",$/\1/p' npm/package.json | head -n 1)"
+          
+          if [[ "$cargo_ver" != "$npm_ver" ]]; then
+            echo "Version mismatch: Cargo.toml ($cargo_ver) vs npm/package.json ($npm_ver)" >&2
+            exit 1
+          fi
+
+          echo "version=$cargo_ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$cargo_ver" >> "$GITHUB_OUTPUT"
+
+          # Extract changelog snippet for current release or unreleased
+          changelog_snippet="$(python3 - <<'PY'
+          import re
+          with open("CHANGELOG.md", encoding="utf-8") as f:
+              text = f.read()
+          match = re.search(r'## \[(?:Unreleased|' + re.escape("0.2.5") + r')\].*?\n(.*?)(?=\n## \[|\Z)', text, re.DOTALL)
+          if match:
+              print(match.group(1).strip()[:2000])
+          else:
+              print("See CHANGELOG.md for details.")
+          PY
+          )"
+          
+          # Multiline output in GitHub Actions
+          EOF="$(openssl rand -hex 8)"
+          echo "changelog<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$changelog_snippet" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: version-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: vetto-linux-x86_64
+            archive: vetto-linux-x86_64.tar.gz
+            binary: vetto
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            artifact: vetto-linux-aarch64
+            archive: vetto-linux-aarch64.tar.gz
+            binary: vetto
+          - os: macos-15
+            target: aarch64-apple-darwin
+            artifact: vetto-macos-aarch64
+            archive: vetto-macos-aarch64.tar.gz
+            binary: vetto
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: vetto-macos-x86_64
+            archive: vetto-macos-x86_64.tar.gz
+            binary: vetto
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: vetto-windows-x86_64
+            archive: vetto-windows-x86_64.zip
+            binary: vetto.exe
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install ARM64 cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
+      - name: Compile release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package Unix release archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          test -f "$binary"
+          mkdir -p release-assets
+          tar -czf "release-assets/${{ matrix.archive }}" \
+            -C "$(dirname "$binary")" "$(basename "$binary")"
+          (cd release-assets && sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256")
+
+      - name: Package Windows release archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $archive = "release-assets/${{ matrix.archive }}"
+          Compress-Archive -LiteralPath $binary -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.archive }}" | Set-Content -Encoding ascii "$archive.sha256"
+
+      - name: Generate SLSA Build Provenance Attestation
+        uses: actions/attest-build-provenance@v1
+        continue-on-error: true
+        with:
+          subject-path: release-assets/*
+
+      - name: Upload native archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release-assets/*
+
+  npm-package:
+    name: assemble multi-platform npm package
+    needs: [version-check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all native release archives
+        uses: actions/download-artifact@v4
+        with:
+          path: native-assets
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Assemble npm distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.version-check.outputs.version }}"
+
+          rm -rf npm-stage npm-dist
+          mkdir -p npm-stage npm-dist
+          cp -R npm/. npm-stage/
+          rm -f npm-stage/.npmignore npm-stage/.gitignore
+          rm -rf npm-stage/native
+
+          extract_binary() {
+            local archive="$1"
+            local target="$2"
+            mkdir -p "npm-stage/native/$target"
+            tar -xzf "native-assets/$archive.tar.gz" -C "npm-stage/native/$target"
+          }
+
+          extract_binary vetto-linux-x86_64 linux-x64
+          extract_binary vetto-linux-aarch64 linux-arm64
+          extract_binary vetto-macos-x86_64 darwin-x64
+          extract_binary vetto-macos-aarch64 darwin-arm64
+          mkdir -p npm-stage/native/win32-x64
+          unzip -q native-assets/vetto-windows-x86_64.zip -d npm-stage/native/win32-x64
+
+          chmod +x npm-stage/bin/vetto.js
+          chmod +x npm-stage/native/linux-x64/vetto
+          chmod +x npm-stage/native/linux-arm64/vetto
+          chmod +x npm-stage/native/darwin-x64/vetto
+          chmod +x npm-stage/native/darwin-arm64/vetto
+
+          npm test --prefix npm-stage
+          npm pack ./npm-stage --pack-destination ./npm-dist
+          mv npm-dist/*.tgz "npm-dist/vetto-npm-${version}.tgz"
+          (cd npm-dist && sha256sum "vetto-npm-${version}.tgz" > "vetto-npm-${version}.tgz.sha256")
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist/*
+
+  npm-smoke:
+    name: npm smoke (${{ matrix.os }})
+    needs: npm-package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Test npm installation and binary invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir smoke && cd smoke
+          npm init --yes >/dev/null 2>&1
+          tarball="$(find ../npm-dist -maxdepth 1 -name '*.tgz' -print -quit)"
+          npm install --ignore-scripts "$tarball"
+          node <<'NODE'
+          const { spawnSync } = require("child_process");
+          const windows = process.platform === "win32";
+          const command = windows ? (process.env.ComSpec || "cmd.exe") : "node_modules/.bin/vetto";
+          const args = windows ? ["/d", "/c", "node_modules\\.bin\\vetto.cmd", "--version"] : ["--version"];
+          const res = spawnSync(command, args, { stdio: "inherit" });
+          if (res.error) throw res.error;
+          process.exit(res.status === null ? 1 : res.status);
+          NODE
+
+  publish:
+    name: publish release and npm package
+    needs: [version-check, npm-package, npm-smoke]
+    runs-on: ubuntu-latest
+    if: needs.version-check.outputs.is_dry_run == 'false'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-assets
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version-check.outputs.tag }}
+          CHANGELOG: ${{ needs.version-check.outputs.changelog }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease_flag=""
+          if [[ "${{ needs.version-check.outputs.channel }}" == "alpha" ]]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              $prerelease_flag \
+              --title "vetto ${TAG#v}" \
+              --notes "$CHANGELOG" \
+              all-assets/*
+          else
+            gh release upload "$TAG" all-assets/* --clobber
+          fi
+
+      - name: Publish to NPM registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CHANNEL: ${{ needs.version-check.outputs.channel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::warning ::NPM_TOKEN is not set; skipping npm publish in dry-run/private repository."
+            exit 0
+          fi
+
+          dist_tag="latest"
+          if [[ "$CHANNEL" == "alpha" ]]; then
+            dist_tag="alpha"
+          fi
+
+          npm_tarball="$(find all-assets -name 'vetto-npm-*.tgz' -print -quit)"
+          npm publish "$npm_tarball" --access public --tag "$dist_tag"

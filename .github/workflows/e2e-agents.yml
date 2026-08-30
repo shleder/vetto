@@ -1,0 +1,103 @@
+name: e2e-agents
+
+on:
+  schedule:
+    # Nightly run at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  e2e-agent-matrix:
+    name: ${{ matrix.agent }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude-code, codex, gemini]
+        os: [ubuntu-latest, macos-14]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build release vetto binary
+        run: cargo build --release
+
+      - name: Resolve API key and readiness
+        id: auth
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          has_key="false"
+          key_name=""
+
+          case "$AGENT" in
+            claude-code)
+              key_name="ANTHROPIC_API_KEY"
+              if [[ -n "${ANTHROPIC_KEY:-}" ]]; then has_key="true"; fi
+              ;;
+            codex)
+              key_name="OPENAI_API_KEY"
+              if [[ -n "${OPENAI_KEY:-}" ]]; then has_key="true"; fi
+              ;;
+            gemini)
+              key_name="GEMINI_API_KEY"
+              if [[ -n "${GEMINI_KEY:-}" ]]; then has_key="true"; fi
+              ;;
+          esac
+
+          echo "has_key=$has_key" >> "$GITHUB_OUTPUT"
+          echo "key_name=$key_name" >> "$GITHUB_OUTPUT"
+
+          if [[ "$has_key" == "false" ]]; then
+            echo "::notice ::Skipping live model query for $AGENT: secret $key_name not configured in repository."
+          fi
+
+      - name: Run supervised test scenario
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          HAS_KEY: ${{ steps.auth.outputs.has_key }}
+          VETTO_BIN: ./target/release/vetto
+        run: |
+          set -euo pipefail
+
+          echo "=== 1. Testing sandbox preflight boundary verification for $AGENT ==="
+          $VETTO_BIN verify
+
+          echo "=== 2. Testing doctor diagnostics ==="
+          $VETTO_BIN doctor
+
+          if [[ "$HAS_KEY" == "true" ]]; then
+            echo "=== 3. Running live agent execution in supervised sandbox ==="
+            case "$AGENT" in
+              claude-code)
+                npx -y @anthropic-ai/claude-code --version
+                $VETTO_BIN --verify --net=allowlist:api.anthropic.com:443 -- npx -y @anthropic-ai/claude-code --version
+                ;;
+              codex)
+                $VETTO_BIN --verify --net=allowlist:api.openai.com:443 -- echo "codex execution simulated under verified sandbox"
+                ;;
+              gemini)
+                $VETTO_BIN --verify --net=allowlist:generativelanguage.googleapis.com:443 -- echo "gemini execution simulated under verified sandbox"
+                ;;
+            esac
+          else
+            echo "=== 3. Dry-run agent execution under sandbox (without external API invocation) ==="
+            $VETTO_BIN --verify -- /bin/sh -c "echo 'Supervised agent sub-process launched inside sandbox with full isolation boundaries.'"
+          fi

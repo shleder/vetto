@@ -23,6 +23,9 @@ pub mod report;
 pub mod rescue;
 pub mod sandbox;
 pub mod shim;
+pub mod telemetry;
+pub mod tour;
 #[cfg(unix)]
 pub mod tui;
 pub mod verify;
+pub mod version;

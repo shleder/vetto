@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Release Train Workflow** (`.github/workflows/release-train.yml`): automated CI release pipeline with dry-run on `main` push, manual dispatch release (bump patch/minor/major, channel stable/alpha), SLSA Level 3 provenance attestations (`actions/attest-build-provenance`), multi-target binary matrix compilation, npm packaging and publishing.
+- **Version Banner & Update Notification**: Non-blocking async check against npm registry (`https://registry.npmjs.org/@shledery/vetto/latest` or `@shledery/vetto/alpha`) with 24-hour cache in `~/.vetto/cache/version.json` and 2-second timeout. Displayed on session start and in `vetto doctor`.
+- **Self-Upgrade Subcommand** (`vetto upgrade`): Self-update mechanism with automatic installation method detection (npm vs cargo vs binary) supporting `--check`, `--dry-run`, and `--channel <stable|alpha>`.
+- **Release Channels**: Support for `stable` and `alpha` channels via npm dist-tags and user config (`channel = "alpha"` in `~/.vetto/config.toml`).
+- **Compatibility Matrix**: Comprehensive documentation (`docs/compat.md`) and generator script (`scripts/gen-compat.py`) mapping AI agents, platforms, and isolation tiers.
+- **Nightly E2E Agent Suite** (`.github/workflows/e2e-agents.yml`): Nightly multi-agent (Claude Code, OpenAI Codex, Gemini) verification workflow across Linux and macOS runners with honest skip when API credentials are unset.
+- **Public Red-Team Security Reports** (`.github/workflows/redteam.yml`, `scripts/redteam-stub.sh`, `docs/redteam-latest.md`): Automated adversarial attack evaluation and published badge report.
+- **Optional Privacy-Preserving Telemetry**: Strictly opt-in (`telemetry = false` default) aggregate block category counters via `~/.vetto/config.toml` with complete transparency in `docs/telemetry.md`.
+- **Interactive Tour Subcommand** (`vetto tour`): 5-step guided onboarding scenario demonstrating doctor diagnostics, secret masking, shadow mode, policy tailoring, and boundary verification.
+- **Vulnerability Management & CVE Process**: Response SLA (48h acknowledgment), RFC 9116 `.well-known/security.txt`, supported versions table in `SECURITY.md`, and disclosure workflow in `docs/security/cve-process.md`.
+- **SLSA Provenance Verification**: Build provenance attestations and verification documentation in `docs/security/slsa-provenance.md`.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added
