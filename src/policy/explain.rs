@@ -185,9 +185,6 @@ fn tier_label(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::Full) => Tier::Full.label(),
         Some(Tier::FsOnly) => Tier::FsOnly.label(),
-        #[cfg(target_os = "windows")]
-        _ => "windows-sandbox",
-        #[cfg(not(target_os = "windows"))]
         None => "macos-seatbelt",
     }
 }
@@ -197,9 +194,6 @@ fn masking_strategy(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::Full) => "mount-masked",
         Some(Tier::FsOnly) => "allowlist-carved",
-        #[cfg(target_os = "windows")]
-        _ => "token-restricted",
-        #[cfg(not(target_os = "windows"))]
         None => "seatbelt-denied",
     }
 }

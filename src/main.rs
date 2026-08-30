@@ -623,9 +623,6 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
     match tier {
         Some(policy::Tier::Full) => policy::Tier::Full.label(),
         Some(policy::Tier::FsOnly) => policy::Tier::FsOnly.label(),
-        #[cfg(target_os = "windows")]
-        _ => "windows-sandbox",
-        #[cfg(not(target_os = "windows"))]
         None => "macos-seatbelt",
     }
 }
