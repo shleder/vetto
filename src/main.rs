@@ -418,6 +418,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         bail!("no agent command provided; usage: vetto [OPTIONS] -- <command> [args...]");
     }
 
+    // Resolve the agent command before sandbox detection so missing commands immediately return exit code 127
+    let mut agent_cmd = cfg.agent.clone();
+    agent_cmd[0] = resolve_in_path(&agent_cmd[0])?;
+
     let user_config = vetto::version::load_user_config().unwrap_or_default();
     vetto::version::print_banner_if_update_available(
         env!("CARGO_PKG_VERSION"),
@@ -529,9 +533,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let _ = std::io::stderr().flush();
     let _ = std::io::stdout().flush();
 
-    // execve does not search PATH; resolve the agent binary ourselves.
-    let mut agent_cmd = cfg.agent.clone();
-    agent_cmd[0] = resolve_in_path(&agent_cmd[0])?;
     let bin_path = std::path::PathBuf::from(&agent_cmd[0]);
     if let Some(parent) = bin_path.parent() {
         if !pol.in_read_scope(&bin_path) {
