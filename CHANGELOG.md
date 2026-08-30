@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- Zero-config auto-detection (`vetto` without arguments): inspects workspace project markers and PATH executables to auto-detect the active AI agent, applies agent-tailored allowlists and secure defaults, and launches supervision.
+- Interactive first-run wizard (`vetto init --wizard`): 3-step interactive setup generating a commented `policy.toml` tailored to project ecosystem (Rust, Node, Python, Go, Java, Ruby, PHP).
+- Security presets (`--preset paranoid|balanced|yolo`): instant baseline security profiles with tailored network access and secret masking rules.
+- Agent network allowlists: out-of-the-box domain allowlists for Claude, Codex, Gemini, Aider, OpenCode, Cursor, Copilot, and Cline.
+- Actionable remediation hints on blocked attempts: TUI and events surface concrete policy modifications when file access or network requests are denied.
+- Path permission inspection (`vetto policy explain --why <path>`): inspects path permissions (WRITABLE, READ_ONLY, DENIED, BLOCKED) and provides exact TOML remediation instructions (supports text and `--json`).
+- Shadow mode (`--shadow`, `RunConfig.shadow`): evaluates policy boundaries in log-only mode ("would deny") during preflight verification.
+- Diagnostic remediation (`vetto doctor --fix`): prints concrete fix commands and sysctl configurations for missing kernel primitives (Landlock LSM, unprivileged userns, seccomp, audit feed).
+- External policy importer (`vetto policy import --from claude|codex`): parses Claude settings JSON or Codex config TOML and generates compatible `policy.toml`.
+- 3-tier configuration hierarchy: `~/.vetto/config.toml` (global defaults) -> `./policy.toml` / `.vetto/policy.toml` (project policy) -> CLI flags (strictest wins).
+- Shell completions and man pages (`vetto completions <shell>`, `vetto man`): native shell completions for Bash, Zsh, Fish, PowerShell, Elvish and man page generation via `clap_mangen`.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added
