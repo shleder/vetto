@@ -163,6 +163,11 @@ impl LiveEventAggregator {
             Event::Notice { .. } => {
                 self.counters.notices = self.counters.notices.saturating_add(1);
             }
+            Event::DnsResolved { .. } | Event::NetEgress { .. } => {}
+            Event::NetQuotaExceeded { .. } => {
+                self.counters.blocked_net = self.counters.blocked_net.saturating_add(1);
+                self.counters.blocked_total = self.counters.blocked_total.saturating_add(1);
+            }
             Event::SecretMasked { .. } => {
                 self.counters.files_total = self.counters.files_total.saturating_add(1);
             }

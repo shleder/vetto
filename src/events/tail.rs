@@ -142,6 +142,36 @@ pub fn format_event_row(event: &Event) -> String {
                 t, "net_request", status, host, port
             )
         }
+        Event::DnsResolved { host, ips, .. } => {
+            format!(
+                "{:<10}  {:<16}  {:<10}  {} -> {:?}",
+                t, "dns_resolved", "DNS", host, ips
+            )
+        }
+        Event::NetEgress {
+            host,
+            ip,
+            port,
+            bytes_tx,
+            bytes_rx,
+            ..
+        } => {
+            format!(
+                "{:<10}  {:<16}  {:<10}  {}:{} (tx={} rx={})",
+                t, "net_egress", ip, host, port, bytes_tx, bytes_rx
+            )
+        }
+        Event::NetQuotaExceeded {
+            host,
+            limit_bytes,
+            used_bytes,
+            ..
+        } => {
+            format!(
+                "{:<10}  {:<16}  {:<10}  {} (limit={} used={})",
+                t, "net_quota", "EXCEEDED", host, limit_bytes, used_bytes
+            )
+        }
         Event::SecretMasked { path, .. } => {
             format!(
                 "{:<10}  {:<16}  {:<10}  masked: {}",

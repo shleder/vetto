@@ -173,6 +173,27 @@ fn describe_replay_event(event: &Event) -> String {
                 if *allowed { "ALLOW" } else { "DENIED" }
             )
         }
+        Event::DnsResolved { host, ips, .. } => {
+            format!("dns {host} -> {:?}", ips)
+        }
+        Event::NetEgress {
+            host,
+            ip,
+            port,
+            bytes_tx,
+            bytes_rx,
+            ..
+        } => {
+            format!("net {host} ({ip}:{port}) tx={bytes_tx} rx={bytes_rx}")
+        }
+        Event::NetQuotaExceeded {
+            host,
+            limit_bytes,
+            used_bytes,
+            ..
+        } => {
+            format!("quota exceeded {host}: {used_bytes}/{limit_bytes} bytes")
+        }
         Event::SecretMasked { path, .. } => {
             format!("masked secret mount: {path}")
         }

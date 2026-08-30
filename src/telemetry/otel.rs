@@ -167,6 +167,52 @@ mod inner {
                         ],
                     );
                 }
+                Event::DnsResolved { host, ips, .. } => {
+                    span.add_event_with_timestamp(
+                        "dns_resolved",
+                        ts,
+                        vec![
+                            KeyValue::new("host", host.clone()),
+                            KeyValue::new("ips", format!("{ips:?}")),
+                        ],
+                    );
+                }
+                Event::NetEgress {
+                    host,
+                    ip,
+                    port,
+                    bytes_tx,
+                    bytes_rx,
+                    ..
+                } => {
+                    span.add_event_with_timestamp(
+                        "net_egress",
+                        ts,
+                        vec![
+                            KeyValue::new("host", host.clone()),
+                            KeyValue::new("ip", ip.clone()),
+                            KeyValue::new("port", *port as i64),
+                            KeyValue::new("bytes_tx", *bytes_tx as i64),
+                            KeyValue::new("bytes_rx", *bytes_rx as i64),
+                        ],
+                    );
+                }
+                Event::NetQuotaExceeded {
+                    host,
+                    limit_bytes,
+                    used_bytes,
+                    ..
+                } => {
+                    span.add_event_with_timestamp(
+                        "net_quota_exceeded",
+                        ts,
+                        vec![
+                            KeyValue::new("host", host.clone()),
+                            KeyValue::new("limit_bytes", *limit_bytes as i64),
+                            KeyValue::new("used_bytes", *used_bytes as i64),
+                        ],
+                    );
+                }
                 Event::SecretMasked { path, .. } => {
                     span.add_event_with_timestamp(
                         "secret_masked",
