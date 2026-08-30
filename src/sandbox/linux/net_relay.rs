@@ -1620,6 +1620,8 @@ mod tests {
             policy: BrokerPolicy::Allowlist(vec!["127.0.0.1".into()]),
             debug_guard: Some(guard.clone()),
             mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
         };
 
         // Blocked without token

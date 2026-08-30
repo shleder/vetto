@@ -542,6 +542,9 @@ impl AgentStats {
             // rollups have no dedicated timeout field.
             Event::SessionTimeout { .. } => {}
             Event::SecretMasked { .. } => {}
+            Event::DnsResolved { .. } => {}
+            Event::NetEgress { .. } => {}
+            Event::NetQuotaExceeded { .. } => {}
         }
     }
 }

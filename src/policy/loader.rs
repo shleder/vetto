@@ -235,7 +235,7 @@ impl RawLimits {
 }
 
 /// String or array form for convenient TOML definitions.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum RawStringList {
     One(String),

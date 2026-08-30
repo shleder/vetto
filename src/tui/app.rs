@@ -222,6 +222,9 @@ impl AppState {
             // Session-level marker like start/end: it lands in the event ring
             // via describe() below but drives no counters or samples.
             Event::SessionTimeout { .. } => {}
+            Event::DnsResolved { .. } => {}
+            Event::NetEgress { .. } => {}
+            Event::NetQuotaExceeded { .. } => {}
         }
         self.last_line = describe(&ev);
         self.events.push_back(ev);
@@ -427,6 +430,22 @@ pub fn describe(ev: &Event) -> String {
         Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),
         Event::Notice { message, .. } => format!("[{t}] {message}"),
         Event::SessionTimeout { .. } => format!("[{t}] session timeout: sandbox torn down"),
+        Event::DnsResolved { host, ips, .. } => {
+            format!("[{t}] dns {host} -> {}", ips.join(","))
+        }
+        Event::NetEgress {
+            host,
+            bytes_tx,
+            bytes_rx,
+            ..
+        } => {
+            format!("[{t}] net {host} (tx: {bytes_tx}B, rx: {bytes_rx}B)")
+        }
+        Event::NetQuotaExceeded {
+            host, limit_bytes, ..
+        } => {
+            format!("[{t}] quota exceeded: {host} (limit {limit_bytes}B)")
+        }
     }
 }
 
