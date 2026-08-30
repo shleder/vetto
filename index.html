@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vetto — recover lost Codex sessions, run agents in an OS boundary</title>
+<title>vetto — fail-closed OS sandbox for AI coding agents</title>
 <meta name="description" content="vetto rescue recovers lost Codex CLI sessions with read-only diagnosis and verified copy-only snapshots. vetto also wraps any coding agent in a fail-closed OS sandbox: Landlock on Linux, Seatbelt on macOS. Open source, Apache-2.0.">
-<meta property="og:title" content="vetto — recover lost Codex sessions, run agents in an OS boundary">
-<meta property="og:description" content="Read-only session recovery plus a fail-closed sandbox for AI coding agents. Linux/macOS first, Windows experimental. npm install --global @shleddy/vetto">
+<meta property="og:title" content="vetto — fail-closed OS sandbox for AI coding agents">
+<meta property="og:description" content="A fail-closed OS sandbox for AI coding agents, plus read-only session recovery. Linux/macOS first, Windows experimental. npm install --global @shledery/vetto">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e14'/%3E%3Cpath d='M11 8 L5 16 L11 24 M21 8 L27 16 L21 24' stroke='%233fb950' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
@@ -230,7 +230,7 @@
       kernel-enforced boundary — <span class="r">or it does not run at all.</span>
     </p>
     <div class="install">
-      <code><span class="p">$</span> npm install --global @shleddy/vetto</code>
+      <code><span class="p">$</span> npm install --global @shledery/vetto</code>
       <button id="copybtn" type="button">copy</button>
     </div>
     <div class="cta-row">
@@ -382,7 +382,7 @@
     <span class="sp"></span>
     <a href="https://github.com/shleder/vetto?utm_source=landing&amp;utm_medium=footer&amp;utm_campaign=v020" target="_blank" rel="noopener">GitHub</a>
     <a href="https://github.com/shleder/vetto/blob/main/SECURITY.md" target="_blank" rel="noopener">Security model</a>
-    <a href="https://www.npmjs.com/package/@shleddy/vetto" target="_blank" rel="noopener">npm</a>
+    <a href="https://www.npmjs.com/package/@shledery/vetto" target="_blank" rel="noopener">npm</a>
   </div>
 </footer>
 
@@ -393,7 +393,7 @@
   // copy button
   var btn = document.getElementById("copybtn");
   if (btn) btn.addEventListener("click", function () {
-    var t = "npm install --global @shleddy/vetto";
+    var t = "npm install --global @shledery/vetto";
     function done() { btn.textContent = "copied"; setTimeout(function () { btn.textContent = "copy"; }, 1400); }
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done);
     else done();
