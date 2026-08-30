@@ -1,47 +1,51 @@
-//! DIAGNOSTIC: three hypotheses for why multi-clause seatbelt profiles abort
-//! the exec'd binary on this runner while single-clause ones live:
-//!   A. newlines in the profile string
-//!   B. the (debug deny) directive
-//!   C. fragmented per-directory file-read allows (vs one blanket subpath "/")
-//! Pure sandbox-exec reproduction, no vetto involved. Remove with the fix.
+//! DIAGNOSTIC: narrows which fragmented file-read clause kills the exec'd
+//! binary under (deny default) on this runner. Pure sandbox-exec, no vetto.
+//! Remove with the read-isolation fix.
 
 #[cfg(target_os = "macos")]
 #[test]
 fn profile_shape_bisect() {
-    let head_clauses = "(deny default)(allow process-exec)(allow process-fork)\
-(allow sysctl-read)(allow mach-lookup)\
+    let prelude = "(version 1)(deny default)(allow process-exec)(allow process-fork)\
+(allow sysctl-read)(allow mach-lookup)";
+    let cases: [(&str, String); 5] = [
+        // Control: blanket read (proven live).
+        (
+            "C1-blanket-read",
+            format!("{prelude}(allow file-read* (subpath \"/\"))"),
+        ),
+        // Fragmented without any /dev/* clauses.
+        (
+            "C2-no-dev",
+            format!(
+                "{prelude}\
 (allow file-read* (subpath \"/System\"))\
 (allow file-read* (subpath \"/Library\"))\
 (allow file-read* (subpath \"/private/var/db/dyld\"))\
 (allow file-read* (subpath \"/usr/lib\"))\
 (allow file-read* (subpath \"/bin\"))\
 (allow file-read* (subpath \"/usr/bin\"))\
-(allow file-read* (subpath \"/usr/share\"))\
-(allow file-read* (subpath \"/dev/null\"))\
-(allow file-read* (subpath \"/dev/urandom\"))";
-
-    let cases: [(&str, String); 4] = [
-        // Control: minimal, single line (proven live in earlier rounds).
-        (
-            "control-minimal",
-            "(version 1)(deny default)(allow process-exec)(allow process-fork)\
-(allow mach-lookup)(allow sysctl-read)(allow file-read* (subpath \"/\"))"
-                .to_string(),
+(allow file-read* (subpath \"/usr/share\"))"
+            ),
         ),
-        // A: multi-line allow-default.
+        // Bare minimum for dyld + sleep.
         (
-            "A-multiline-allow-default",
-            "(version 1)\n(allow default)\n".to_string(),
+            "C3-minimal-fragments",
+            format!(
+                "{prelude}\
+(allow file-read* (subpath \"/System\"))\
+(allow file-read* (subpath \"/usr/lib\"))\
+(allow file-read* (subpath \"/bin\"))"
+            ),
         ),
-        // B: head clauses single line, with debug deny.
+        // The most suspicious dev fragment alone.
         (
-            "B-singleline-debugdeny",
-            format!("{head_clauses}(debug deny)"),
+            "C4-dev-urandom-only",
+            format!("{prelude}(allow file-read* (subpath \"/dev/urandom\"))"),
         ),
-        // C: head clauses multi line, no debug deny.
+        // /System fragment alone.
         (
-            "C-multiline-head",
-            format!("(version 1)\n(deny default)\n{head_clauses}"),
+            "C5-system-only",
+            format!("{prelude}(allow file-read* (subpath \"/System\"))"),
         ),
     ];
 
