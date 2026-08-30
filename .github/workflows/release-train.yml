@@ -71,12 +71,13 @@ jobs:
           echo "version=$cargo_ver" >> "$GITHUB_OUTPUT"
           echo "tag=v$cargo_ver" >> "$GITHUB_OUTPUT"
 
-          # Extract changelog snippet for current release or unreleased
-          changelog_snippet="$(python3 - <<'PY'
-          import re
+          changelog_snippet="$(python3 - "$cargo_ver" <<'PY'
+          import re, sys
           with open("CHANGELOG.md", encoding="utf-8") as f:
               text = f.read()
-          match = re.search(r'## \[(?:Unreleased|' + re.escape("0.2.5") + r')\].*?\n(.*?)(?=\n## \[|\Z)', text, re.DOTALL)
+          ver = sys.argv[1] if len(sys.argv) > 1 else ""
+          pattern = r'## \[(?:Unreleased|' + re.escape(ver) + r')\].*?\n(.*?)(?=\n## \[|\Z)' if ver else r'## \[(?:Unreleased|[^\]]+)\].*?\n(.*?)(?=\n## \[|\Z)'
+          match = re.search(pattern, text, re.DOTALL)
           if match:
               print(match.group(1).strip()[:2000])
           else:
@@ -113,7 +114,7 @@ jobs:
             artifact: vetto-macos-aarch64
             archive: vetto-macos-aarch64.tar.gz
             binary: vetto
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: vetto-macos-x86_64
             archive: vetto-macos-x86_64.tar.gz
