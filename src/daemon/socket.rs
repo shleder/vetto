@@ -184,7 +184,7 @@ pub fn send_socket_request(
     _socket_path: &Path,
     _req: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    bail!("Unix domain sockets are supported on Unix only")
+    anyhow::bail!("Unix domain sockets are supported on Unix only")
 }
 
 #[cfg(test)]

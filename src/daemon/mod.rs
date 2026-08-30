@@ -18,6 +18,7 @@ use std::thread;
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
+#[cfg(unix)]
 use serde_json::json;
 
 use registry::SessionRegistry;
@@ -122,7 +123,6 @@ pub fn start_daemon(custom_socket: Option<&Path>, port: u16, foreground: bool) -
 pub fn query_daemon_status() -> Result<()> {
     let state_dir = auth::default_daemon_dir()?;
     let pid_path = state_dir.join("daemon.pid");
-    let socket_path = state_dir.join(socket::SOCKET_FILENAME);
 
     if !pid_path.exists() {
         println!(
@@ -137,6 +137,7 @@ pub fn query_daemon_status() -> Result<()> {
 
     #[cfg(unix)]
     {
+        let socket_path = state_dir.join(socket::SOCKET_FILENAME);
         if socket_path.exists() {
             match socket::send_socket_request(&socket_path, &json!({"action": "list_sessions"})) {
                 Ok(resp) => {
@@ -149,13 +150,16 @@ pub fn query_daemon_status() -> Result<()> {
                                 s.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                                 s.get("pid").and_then(|v| v.as_u64()).unwrap_or(0),
                                 s.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
-                                s.get("policy").and_then(|v| v.as_str()).unwrap_or("?")
+                                s.get("policy").and_then(|v| v.as_str()).unwrap_or("?"),
                             );
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Daemon Socket: UNREACHABLE ({e})");
+                    println!(
+                        "Daemon Socket: UNREACHABLE ({}) - error: {e}",
+                        socket_path.display()
+                    );
                 }
             }
         }
@@ -183,8 +187,11 @@ pub fn stop_daemon() -> Result<()> {
     }
 
     let _ = fs::remove_file(&pid_path);
-    let socket_path = state_dir.join(socket::SOCKET_FILENAME);
-    let _ = fs::remove_file(&socket_path);
+    #[cfg(unix)]
+    {
+        let socket_path = state_dir.join(socket::SOCKET_FILENAME);
+        let _ = fs::remove_file(&socket_path);
+    }
 
     println!("Vetto daemon stopped.");
     Ok(())
