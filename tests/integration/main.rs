@@ -33,7 +33,6 @@ mod linux_verify;
 #[cfg(target_os = "linux")]
 mod linux_visibility;
 mod macos_seatbelt;
-mod macos_shape_bisect;
 mod multi_agent;
 mod policy_loading;
 mod policy_overlays;
