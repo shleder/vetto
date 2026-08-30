@@ -43,9 +43,8 @@ pub struct Finding {
 /// Load the effective policy (like a supervised session, network off), run
 /// every rule and print findings. Exits 1 iff `strict` and any finding.
 pub fn run_cli(strict: bool, profile: &str, policy_path: Option<&Path>) -> Result<()> {
-    // NetMode::Off: linting is static analysis and must not require a relay.
-    let backend = Backend::detect(NetMode::Off, false)?;
-    let tier = backend.tier();
+    let backend = Backend::detect(NetMode::Off, false).ok();
+    let tier = backend.as_ref().and_then(|b| b.tier());
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")

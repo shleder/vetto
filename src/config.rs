@@ -152,6 +152,8 @@ pub struct RunConfig {
     pub fail_on_block: Option<u64>,
     pub git_ssh: bool,
     pub session_timeout: Option<std::time::Duration>,
+    pub auto_timeout_requested: bool,
+    pub system_log: bool,
     pub limits_spec: Option<String>,
     pub verify_preflight: bool,
     pub shadow: bool,
@@ -219,10 +221,6 @@ impl RunConfig {
         }
 
         let timeout_str = cli.timeout.as_deref().or(global.timeout.as_deref());
-        let session_timeout = match timeout_str {
-            Some(raw) => Some(parse_session_timeout(raw)?),
-            None => None,
-        };
 
         let limits_spec = match (cli.limits.as_deref(), global.limits.as_deref()) {
             (Some(cli_l), Some(glob_l)) => Some(format!("{glob_l},{cli_l}")),
@@ -279,6 +277,20 @@ impl RunConfig {
             }
         };
 
+        let mut auto_timeout_requested = false;
+        let session_timeout = match timeout_str {
+            Some("auto") => {
+                auto_timeout_requested = true;
+                let proj = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let agent_name = agent_preset
+                    .as_deref()
+                    .unwrap_or_else(|| cli.agent.first().map(|s| s.as_str()).unwrap_or("default"));
+                crate::history::compute_auto_timeout(&proj, agent_name)
+            }
+            Some(raw) => Some(parse_session_timeout(raw)?),
+            None => None,
+        };
+
         Ok(Self {
             profile,
             preset,
@@ -295,6 +307,8 @@ impl RunConfig {
             fail_on_block,
             git_ssh,
             session_timeout,
+            auto_timeout_requested,
+            system_log: cli.system_log,
             limits_spec,
             verify_preflight,
             shadow,

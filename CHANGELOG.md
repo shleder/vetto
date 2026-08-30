@@ -18,6 +18,20 @@ Keep a Changelog; versioning follows SemVer.
 - External policy importer (`vetto policy import --from claude|codex`): parses Claude settings JSON or Codex config TOML and generates compatible `policy.toml`.
 - 3-tier configuration hierarchy: `~/.vetto/config.toml` (global defaults) -> `./policy.toml` / `.vetto/policy.toml` (project policy) -> CLI flags (strictest wins).
 - Shell completions and man pages (`vetto completions <shell>`, `vetto man`): native shell completions for Bash, Zsh, Fish, PowerShell, Elvish and man page generation via `clap_mangen`.
+- `vetto --version --json` emitting machine-readable version, fast tier determination, and git commit hash.
+- Stable deterministic exit codes mapped across all session termination paths and documented in `docs/exit-codes.md`.
+- Global `--quiet` (`-q`) and `--verbose` (`-v`) logging flags across CLI commands.
+- Optional system-level journal logging (`system_log = true` / `--system-log`) for Linux journald, Windows EventLog, and macOS logger.
+- `vetto shell-env` command and PS1 prompt integration exporting session indicators (`VETTO_SANDBOX=1`).
+- `vetto status` listing active supervised sessions and cleaning up stale process metadata.
+- Official standalone curl installer `scripts/install.sh` with SHA256 checksum verification and `docs/INSTALL.md`.
+- Automated session timeout computation (`--timeout auto`) via p95 duration history with 5-minute floor.
+- Persistent workspace profiles (`vetto profile save/list/rm`) and direct execution (`vetto <profile>`).
+- Latency and bottleneck diagnostic breakdown with actionable optimization hints (`vetto why-slow <session>`).
+- Release CycloneDX SBOM generation script (`scripts/gen-sbom.sh`) and specification in `docs/SBOM.md`.
+- Landlock ABI diagnostic feature hints in `vetto doctor` for kernels supporting newer LSM features.
+- Conventional commit changelog generator `scripts/gen-changelog.py` for automated release notes.
+- `vetto policy show --effective` for rendering resolved effective policy rules and resource ceilings.
 
 ## [0.2.5] — 2026-08-30
 

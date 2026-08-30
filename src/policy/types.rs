@@ -187,6 +187,8 @@ pub struct Policy {
     pub deny_network: bool,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
+    /// Whether system-level event logging (journald, EventLog, syslog) is enabled.
+    pub system_log: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
     pub warnings: Vec<String>,
 }
@@ -205,6 +207,7 @@ impl Default for Policy {
             environment: EnvironmentPolicy::default(),
             deny_network: false,
             is_immutable: false,
+            system_log: false,
             warnings: Vec::new(),
         }
     }

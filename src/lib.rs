@@ -13,11 +13,14 @@ pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod events;
+pub mod exit_codes;
+pub mod history;
 pub mod init;
 pub mod logger;
 pub mod multi;
 pub mod onboard;
 pub mod policy;
+pub mod profile;
 #[cfg(unix)]
 pub mod pty;
 pub mod report;

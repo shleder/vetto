@@ -603,6 +603,37 @@ pub fn apply_policy_with_net_ports(
     Ok(())
 }
 
+/// Feature hints describing capabilities of higher Landlock ABIs.
+pub fn abi_feature_hints(kernel_abi: u32) -> Vec<String> {
+    let mut hints = Vec::new();
+    if kernel_abi >= 2 {
+        hints.push(format!(
+            "kernel supports Landlock ABI {kernel_abi}: file reparenting (REFER) available"
+        ));
+    }
+    if kernel_abi >= 3 {
+        hints.push(format!(
+            "kernel supports Landlock ABI {kernel_abi}: file truncation (TRUNCATE) available"
+        ));
+    }
+    if kernel_abi >= 4 {
+        hints.push(format!(
+            "kernel supports Landlock ABI {kernel_abi}: TCP network port filtering available"
+        ));
+    }
+    if kernel_abi >= 5 {
+        hints.push(format!(
+            "kernel supports Landlock ABI {kernel_abi}: character device ioctl isolation (IOCTL_DEV) available"
+        ));
+    }
+    if kernel_abi >= 6 {
+        hints.push(format!(
+            "kernel supports Landlock ABI {kernel_abi}: IPC and signal scoping available"
+        ));
+    }
+    hints
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,5 +719,15 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir(&path);
+    }
+
+    #[test]
+    fn abi_feature_hints_reports_higher_abi_capabilities() {
+        assert!(abi_feature_hints(1).is_empty());
+        let hints_3 = abi_feature_hints(3);
+        assert!(hints_3.iter().any(|h| h.contains("TRUNCATE")));
+        let hints_6 = abi_feature_hints(6);
+        assert!(hints_6.iter().any(|h| h.contains("IPC and signal scoping")));
+        assert!(hints_6.iter().any(|h| h.contains("IOCTL_DEV")));
     }
 }

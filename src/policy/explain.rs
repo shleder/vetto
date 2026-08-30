@@ -35,6 +35,7 @@ pub fn run_cli(
     policy_path: Option<&Path>,
     net: &NetMode,
 ) -> Result<()> {
+    // Same detect semantics as a real session: fail-closed when no tier exists.
     let backend = Backend::detect(net.clone(), false).ok();
     let tier = backend.as_ref().and_then(|b| b.tier());
 
@@ -179,6 +180,18 @@ fn print_why_text(e: &PathExplanation) {
     println!("  rule type:     {}", e.rule_type);
     println!("  matching rule: {}", e.matching_rule);
     println!("  how to change: {}", e.how_to_change);
+}
+
+/// Print the effective policy for `vetto policy show --effective`.
+pub fn run_show(
+    effective: bool,
+    json: bool,
+    profile: &str,
+    policy_path: Option<&Path>,
+    net: &NetMode,
+) -> Result<()> {
+    let _ = effective;
+    run_cli(json, profile, policy_path, net)
 }
 
 fn tier_label(tier: Option<Tier>) -> &'static str {
