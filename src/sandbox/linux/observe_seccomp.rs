@@ -659,8 +659,8 @@ fn enforcement_supervisor_loop(
     listener: OwnedFd,
     bus: EventBus,
     config: crate::policy::SeccompNotifyConfig,
-    policy: Arc<crate::policy::Policy>,
-    sandbox_cwd: PathBuf,
+    _policy: Arc<crate::policy::Policy>,
+    _sandbox_cwd: PathBuf,
 ) {
     let fd = listener.as_raw_fd();
     loop {

@@ -161,17 +161,17 @@ pub enum SocketPolicy {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SockFilter {
-    code: u16,
-    jt: u8,
-    jf: u8,
-    k: u32,
+pub struct SockFilter {
+    pub code: u16,
+    pub jt: u8,
+    pub jf: u8,
+    pub k: u32,
 }
 
 #[repr(C)]
-struct SockFProg {
-    len: u16,
-    filter: *const SockFilter,
+pub struct SockFProg {
+    pub len: u16,
+    pub filter: *const SockFilter,
 }
 
 const fn bpf_stmt(code: u16, k: u32) -> SockFilter {
