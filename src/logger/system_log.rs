@@ -43,11 +43,14 @@ pub fn format_event_for_system_log(event: &Event) -> String {
         }
         Event::BlockedAttempt {
             ts,
+            pid,
+            comm,
             path,
-            operation,
-            agent_cmd,
+            source,
         } => {
-            format!("VETTO_BLOCKED_ATTEMPT ts={ts} path={path} op={operation} cmd={agent_cmd}")
+            format!(
+                "VETTO_BLOCKED_ATTEMPT ts={ts} pid={pid} comm={comm} path={path} source={source}"
+            )
         }
         Event::SecretMasked { ts, path } => {
             format!("VETTO_SECRET_MASKED ts={ts} path={path}")
@@ -58,11 +61,7 @@ pub fn format_event_for_system_log(event: &Event) -> String {
         Event::SessionTimeout { ts } => {
             format!("VETTO_SESSION_TIMEOUT ts={ts}")
         }
-        _ => format!(
-            "VETTO_EVENT ts={} desc={}",
-            event.timestamp(),
-            event.describe()
-        ),
+        _ => format!("VETTO_EVENT ts={} kind={}", event.ts(), event.kind()),
     }
 }
 
@@ -139,7 +138,7 @@ mod tests {
     #[test]
     fn formats_events_correctly() {
         let ev = Event::Notice {
-            ts: "2026-08-30T12:00:00Z".into(),
+            ts: crate::events::types::now(),
             message: "test notice".into(),
         };
         let line = format_event_for_system_log(&ev);

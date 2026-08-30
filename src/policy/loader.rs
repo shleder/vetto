@@ -1395,6 +1395,7 @@ deny = ["SECRET_*"]
         let sec_layer = RawLayer {
             security: Some(RawSecurity {
                 immutable: Some(true),
+                ..Default::default()
             }),
             ..RawLayer::default()
         };
