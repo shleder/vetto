@@ -332,6 +332,12 @@ jobs:
             dist_tag="alpha"
           fi
 
+          version="$(node -p "require('./npm/package.json').version")"
+          if npm view "@shledery/vetto@$version" version >/dev/null 2>&1; then
+            echo "::notice ::@shledery/vetto@$version is already on npm; skipping."
+            exit 0
+          fi
+
           npm_tarball="$(find all-assets -name 'vetto-npm-*.tgz' -print -quit)"
           npm publish "./$npm_tarball" --access public --tag "$dist_tag"
 
