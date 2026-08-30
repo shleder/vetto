@@ -410,6 +410,7 @@ fn activate_pending(
                 NetMode::Strict(rules) => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
                 }
+                NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask,
                 NetMode::Off => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new())
                 }
@@ -429,6 +430,8 @@ fn activate_pending(
                 policy: broker_policy,
                 debug_guard: Some(debug_guard),
                 mode: crate::sandbox::linux::net_relay::RelayMode::NetNs,
+                allow_cidr: policy.allow_cidr.clone(),
+                quotas: policy.net_quota.clone(),
             };
             crate::sandbox::linux::net_relay::spawn_broker(
                 fd.into_raw_fd(),

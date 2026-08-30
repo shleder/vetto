@@ -380,9 +380,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 NetMode::Strict(rules) => {
                     sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
                 }
+                NetMode::Ask => sandbox::linux::net_relay::BrokerPolicy::Ask,
                 NetMode::Off => sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
             };
-            sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_policy, bus.clone());
+            let mut broker_config = sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
+            broker_config.allow_cidr = pol.allow_cidr.clone();
+            broker_config.quotas = pol.net_quota.clone();
+            sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus.clone());
         }
         let _ = relay_port;
         if let Some(fd) = notif_listener {
