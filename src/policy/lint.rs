@@ -46,7 +46,7 @@ pub fn run_cli(strict: bool, profile: &str, policy_path: Option<&Path>) -> Resul
     // NetMode::Off: linting is static analysis and must not require a relay.
     let tier = match Backend::detect(NetMode::Off, false) {
         Ok(b) => b.tier(),
-        Err(_) => Tier::FsOnly,
+        Err(_) => Some(Tier::FsOnly),
     };
 
     let project = std::env::current_dir().context("getcwd")?;

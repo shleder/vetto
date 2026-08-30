@@ -19,7 +19,7 @@ pub fn run_cli(json: bool, profile: &str, policy_path: Option<&Path>, net: &NetM
     // Same detect semantics as a real session: fail-closed when no tier exists.
     let tier = match Backend::detect(net.clone(), false) {
         Ok(b) => b.tier(),
-        Err(_) => Tier::FsOnly,
+        Err(_) => Some(Tier::FsOnly),
     };
 
     let project = std::env::current_dir().context("getcwd")?;
