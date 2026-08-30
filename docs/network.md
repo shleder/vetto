@@ -83,6 +83,19 @@ allow_tcp_connect = [443, 80]
 allow_tcp_bind = [8080]
 ```
 
+## Unix sockets
+
+Unix domain sockets (`AF_UNIX`) are permitted for local IPC across all network modes (including `--net=off`). In Linux seccomp filters, `AF_UNIX` socket creation and socketpairs are always permitted.
+
+Filesystem-backed Unix sockets require explicit filesystem read/write access to the socket file and its parent directory. You can grant access via `vetto allow <path>` or configure them in policy:
+
+```toml
+[unix_sockets]
+allow = ["$PROJECT/agent.sock", "/run/user/$UID/podman/podman.sock"]
+```
+
+Paths configured in `[unix_sockets] allow` are automatically granted read and write access in the filesystem sandbox.
+
 ## Upstream Proxies
 
 The host broker respects upstream `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables without leaking proxy credentials or endpoints to the sandboxed agent.

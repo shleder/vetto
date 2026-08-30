@@ -511,7 +511,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             if cfg.dry_run && cfg.backend.as_deref().unwrap_or("auto") == "auto" {
                 (None, Some(policy::Tier::Full))
             } else {
-                return Err(e);
+                return Err(e).context("sandbox initialization failed; run `vetto doctor` for the full capability picture");
             }
         }
     };
@@ -631,14 +631,18 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         && (tier == Some(policy::Tier::FsOnly) || tier == Some(policy::Tier::Seccomp))
     {
         bail!(
-            "network relay modes require Tier FULL (unprivileged user namespaces), \
-             unavailable on this machine; refusing to run (fail-closed)"
+            "network relay modes require Tier FULL (missing unprivileged user namespaces); \
+             refusing to run (fail-closed)\n\
+             action: enable unprivileged userns (`sysctl -w kernel.unprivileged_userns_clone=1`) or re-run with `--net=off`; run `vetto doctor` for the full capability picture"
         );
     }
 
     #[cfg(not(target_os = "linux"))]
     if cfg.git_ssh {
-        bail!("--git-ssh is available on Linux only");
+        bail!(
+            "--git-ssh is available on Linux only\n\
+             action: use standard HTTPS git remotes (`--net=allowlist:github.com`) on this OS; run `vetto doctor` for supported network features"
+        );
     }
 
     // Optional pre-spawn boundary verification. A leak here is a policy or
@@ -653,7 +657,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 );
             } else {
                 bail!(
-                    "--verify: boundary verification failed; refusing to start the agent (fail-closed)"
+                    "--verify: boundary verification failed (detected filesystem or network leaks); \
+                     refusing to start the agent (fail-closed)\n\
+                     action: review the leak findings above and adjust your policy grants; run `vetto doctor --probe`"
                 );
             }
         }
@@ -756,7 +762,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     #[cfg(windows)]
     let stdio = {
         if cfg.tui != TuiMode::None {
-            bail!("the Windows backend currently requires --tui=none or --ci");
+            bail!(
+                "the Windows backend currently requires --tui=none or --ci\n\
+                 action: re-run with `--tui=none` or `--ci`"
+            );
         }
         sandbox::StdioMode::Inherit
     };
@@ -769,7 +778,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
-    let spawned = backend.spawn(&pol, opts)?;
+    let spawned = backend
+        .spawn(&pol, opts)
+        .context("failed to spawn sandboxed agent process; run `vetto doctor` for the full capability picture")?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
     let broker_ctrl_fd = spawned.broker_ctrl_fd;

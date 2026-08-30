@@ -48,18 +48,34 @@ impl MacosSandbox {
 
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> Result<Spawned> {
         if !Self::seatbelt_available() {
-            bail!("Seatbelt (sandbox_init_with_parameters / sandbox-exec) unavailable; refusing to run unsandboxed (fail-closed)");
+            bail!(
+                "missing Seatbelt primitive (sandbox_init_with_parameters / sandbox-exec unavailable); \
+                 refusing to run unsandboxed (fail-closed)\n\
+                 action: ensure macOS sandbox libraries and /usr/bin/sandbox-exec are accessible; run `vetto doctor` for the full capability picture"
+            );
         }
         // Relay modes require the Linux netns + broker stack. Both are
         // rejected loudly here instead of silently degrading to --net=off.
         if matches!(self.net, NetMode::Allowlist(_)) {
-            bail!("--net=allowlist requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+            bail!(
+                "--net=allowlist requires the Linux network-namespace relay and is unavailable on macOS; \
+                 refusing silently-weaker enforcement (fail-closed)\n\
+                 action: run with `--net=off` on macOS; run `vetto doctor` for the full capability picture"
+            );
         }
         if matches!(self.net, NetMode::Strict(_)) {
-            bail!("--net=strict requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+            bail!(
+                "--net=strict requires the Linux network-namespace relay and is unavailable on macOS; \
+                 refusing silently-weaker enforcement (fail-closed)\n\
+                 action: run with `--net=off` on macOS; run `vetto doctor` for the full capability picture"
+            );
         }
         if matches!(self.net, NetMode::Ask) {
-            bail!("--net=ask requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+            bail!(
+                "--net=ask requires the Linux network-namespace relay and is unavailable on macOS; \
+                 refusing silently-weaker enforcement (fail-closed)\n\
+                 action: run with `--net=off` on macOS; run `vetto doctor` for the full capability picture"
+            );
         }
 
         let (err_r, err_w) = pipe2()?;

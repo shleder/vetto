@@ -484,6 +484,7 @@ in one automated train.
 ## Documentation
 
 - [Architecture and startup order](ARCHITECTURE.md)
+- [Sandbox comparison (vetto vs. agent sandboxes vs. containers)](docs/comparison.md)
 - [Threat model](docs/threat-model.md)
 - [Network internals](docs/network.md)
 - [Platform backends](docs/platform-backends.md)

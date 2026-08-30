@@ -79,7 +79,11 @@ impl Backend {
                             || !caps.virtualization_firmware_enabled
                             || !caps.feature_enabled
                         {
-                            anyhow::bail!("Windows Sandbox feature is not enabled or virtualization firmware is disabled: {}", caps.note);
+                            anyhow::bail!(
+                                "Windows Sandbox feature is not enabled or virtualization firmware is disabled: {}\n\
+                                 action: enable Hyper-V / Windows Sandbox in Windows Features and virtualization in BIOS; run `vetto doctor` for the full capability picture",
+                                caps.note
+                            );
                         }
                         return Ok(Backend::Windows(Box::new(windows::WindowsSandbox::new(
                             net,
@@ -87,12 +91,16 @@ impl Backend {
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
-                        anyhow::bail!("--backend win-sandbox is only available on Windows");
+                        anyhow::bail!(
+                            "--backend win-sandbox is only available on Windows\n\
+                             action: use `--backend auto` or `--backend process` on this operating system; run `vetto doctor` for supported backends"
+                        );
                     }
                 }
                 other => {
                     anyhow::bail!(
-                        "unknown backend '{other}'; valid backends: auto, process, win-sandbox"
+                        "unknown backend '{other}'; valid backends: auto, process, win-sandbox\n\
+                         action: select a valid backend or omit the flag; run `vetto doctor` for the full capability picture"
                     );
                 }
             }

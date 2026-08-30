@@ -116,8 +116,9 @@ pub fn pick_tier(probe: &Probe) -> Result<Tier> {
             return Ok(Tier::Seccomp);
         }
         bail!(
-            "Landlock and seccomp filters are unavailable on this kernel; \
-             refusing to run the agent unsandboxed (fail-closed)"
+            "missing Landlock and seccomp primitives on this kernel; \
+             refusing to run the agent unsandboxed (fail-closed)\n\
+             action: upgrade your kernel (Linux 5.13+) or enable CONFIG_SECURITY_LANDLOCK=y; run `vetto doctor` for the full capability picture"
         );
     }
     if probe.full_tier_available {
@@ -127,8 +128,9 @@ pub fn pick_tier(probe: &Probe) -> Result<Tier> {
         return Ok(Tier::FsOnly);
     }
     bail!(
-        "no enforcement tier possible: unprivileged user namespaces are disabled AND \
-         seccomp filters are unavailable; refusing to run unsandboxed (fail-closed)"
+        "no enforcement tier possible: unprivileged user namespaces and seccomp filters are unavailable; \
+         refusing to run unsandboxed (fail-closed)\n\
+         action: enable unprivileged user namespaces (`sysctl -w kernel.unprivileged_userns_clone=1` or `sysctl -w user.max_user_namespaces=15000`); run `vetto doctor` for the full capability picture"
     );
 }
 
@@ -146,8 +148,9 @@ impl LinuxSandbox {
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> Result<Spawned> {
         if (self.tier == Tier::FsOnly || self.tier == Tier::Seccomp) && self.net.uses_relay() {
             bail!(
-                "--net relay modes require Tier FULL (unprivileged user namespaces), \
-                 which is unavailable on this machine; refusing to run (fail-closed)"
+                "--net relay modes require Tier FULL (missing unprivileged user namespaces); \
+                 refusing to run (fail-closed)\n\
+                 action: enable unprivileged userns (`sysctl -w kernel.unprivileged_userns_clone=1`) or re-run with `--net=off`; run `vetto doctor` for the full capability picture"
             );
         }
         let relay_port = match self.net {
