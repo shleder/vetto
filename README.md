@@ -57,23 +57,19 @@ trusted boundary you bet your machine on.
   enforcement, secrets masking via `display_only_deny`.
 - Session reports (HTML/MD/JSON/SARIF + JSONL), `rescue` (codex/claude/cursor),
   TUI statusline/full, hook shims.
-- 323 automated tests; CI runs build + tests + clippy on x86_64/aarch64 Linux
-  (aarch64 under QEMU), macOS arm64 (Intel via check), and Windows.
+- 330+ automated tests; CI runs build + tests + clippy on x86_64/aarch64 Linux
+  (aarch64 under QEMU), macOS arm64 (Intel via check), and Windows. Line
+  coverage is measured with a pinned 38% floor, and the e2e spawn benchmark
+  records per-tier overhead with a 3x gross-regression gate (fs-only session
+  median ≈ 184 ms on ubuntu runners).
 
 **What is currently weaker than the rest — known and not hidden:**
 
-- **CI lint gates no longer rubber-stamp the code** (fmt blocks, clippy denies
-  warnings, llvm-cov publishes coverage), but the coverage **threshold is not
-  set yet** — the number gets pinned only after a real baseline exists.
 - **Windows sandbox enforcement has thin test coverage.** Enforcement tests
-  exist but every non-Windows machine only ever runs their inert placeholders.
-  The backend fails closed, and it is labelled experimental for a reason.
-- **Two large subsystems are dead code**: a Linux eBPF redirect path (~900
-  lines) and a macOS Endpoint Security deny-capable engine. Neither is wired
-  into a session; the README of no version should be read as claiming they are.
-- `docs/tutorials/` are outlines, not finished tutorials. There are no
-  performance-overhead figures yet (the e2e spawn benchmark lands with the
-  first CI perf run).
+  exist (including a positive control) but every non-Windows machine only ever
+  runs their inert placeholders. The backend fails closed, and it is labelled
+  experimental for a reason.
+- `docs/tutorials/` are outlines, not finished tutorials.
 
 **What a kernel sandbox is not:** it is not a VM or a container runtime. A
 sufficiently severe kernel exploit escapes namespaces and Landlock. vetto

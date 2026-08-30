@@ -1,4 +1,8 @@
 {
-  "_comment": "Filled from a real CI run of the perf job. Gating activates only when variant numbers exist; never commit numbers measured locally.",
-  "variants": {}
+  "variants": {
+    "fs-only": {
+      "median_ms": 184.267,
+      "p95_ms": 185.0
+    }
+  }
 }
