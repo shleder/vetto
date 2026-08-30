@@ -32,6 +32,8 @@ pub enum PolicySourceKind {
     UserGlobal,
     /// 3. Built-in Profile (`default`, `strict`, `audit`, `permissive`)
     BuiltinProfile,
+    /// 3b. Security Preset (`paranoid`, `balanced`, `yolo`)
+    Preset,
     /// 4. Agent Preset (`codex`, `claude`, `cursor`, `aider`, `cline`, `opencode`, `copilot`, `custom`)
     AgentPreset,
     /// 5. Repository Policy (`.vetto/policy.toml` or `vetto.toml`)
@@ -51,7 +53,7 @@ impl PolicySourceKind {
         match self {
             Self::SystemGlobal => 1,
             Self::UserGlobal => 2,
-            Self::BuiltinProfile => 3,
+            Self::BuiltinProfile | Self::Preset => 3,
             Self::AgentPreset => 4,
             Self::Repository | Self::RepositoryFragment => 5,
             Self::LocalOverride => 6,
@@ -64,6 +66,7 @@ impl PolicySourceKind {
             Self::SystemGlobal => "system-global",
             Self::UserGlobal => "user-global",
             Self::BuiltinProfile => "builtin-profile",
+            Self::Preset => "preset",
             Self::AgentPreset => "agent-preset",
             Self::Repository => "repository",
             Self::RepositoryFragment => "repository-fragment",

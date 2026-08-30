@@ -306,6 +306,7 @@ pub struct PolicyOverrides {
 #[derive(Debug, Clone)]
 pub struct PolicyLoadOptions {
     pub agent: Option<String>,
+    pub preset: Option<crate::policy::presets::Preset>,
     pub branch: Option<String>,
     pub git_tag: Option<String>,
     pub project_policy: Option<PathBuf>,
@@ -323,6 +324,7 @@ impl Default for PolicyLoadOptions {
     fn default() -> Self {
         Self {
             agent: None,
+            preset: None,
             branch: None,
             git_tag: None,
             project_policy: None,
@@ -507,6 +509,22 @@ impl LayeredPolicyLoader {
         }
 
         // -------------------------------------------------------------------
+        // Tier 3b: Security Preset (paranoid, balanced, yolo)
+        // -------------------------------------------------------------------
+        if let Some(preset) = options.preset {
+            let layer = crate::policy::presets::preset_layer(preset, options.agent.as_deref());
+            let label = format!("preset:{}", preset.as_str());
+            merge_layer(
+                &layer,
+                &label,
+                &context,
+                &mut stack,
+                &mut merged,
+                PolicySourceKind::Preset,
+            )?;
+        }
+
+        // -------------------------------------------------------------------
         // Tier 4: Agent Preset
         // -------------------------------------------------------------------
         let agent_path = match options.agent.as_deref() {
@@ -533,7 +551,7 @@ impl LayeredPolicyLoader {
         }
 
         // -------------------------------------------------------------------
-        // Tier 5: Repository Policy (.vetto/policy.toml or vetto.toml) + Fragments
+        // Tier 5: Repository Policy (policy.toml, .vetto/policy.toml, or vetto.toml) + Fragments
         // -------------------------------------------------------------------
         let mut applied_project_path = None;
         if options.include_project_policy {
@@ -541,9 +559,12 @@ impl LayeredPolicyLoader {
                 Some(path) => (Some(path.clone()), true),
                 None => {
                     let dot_vetto_policy = project.join(".vetto/policy.toml");
+                    let policy_toml = project.join("policy.toml");
                     let vetto_toml = project.join("vetto.toml");
                     if is_usable_file(&dot_vetto_policy) {
                         (Some(dot_vetto_policy), false)
+                    } else if is_usable_file(&policy_toml) {
+                        (Some(policy_toml), false)
                     } else if is_usable_file(&vetto_toml) {
                         (Some(vetto_toml), false)
                     } else {
@@ -712,13 +733,25 @@ fn default_system_policy_path() -> Option<PathBuf> {
 }
 
 fn default_user_policy_path(home: &Path) -> Option<PathBuf> {
+    let dot_vetto_config = home.join(".vetto/config.toml");
+    if is_usable_file(&dot_vetto_config) {
+        return Some(dot_vetto_config);
+    }
+    let dot_vetto_policy = home.join(".vetto/policy.toml");
+    if is_usable_file(&dot_vetto_policy) {
+        return Some(dot_vetto_policy);
+    }
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let xdg_path = PathBuf::from(xdg).join("vetto/policy.toml");
-        if xdg_path.exists() {
+        if is_usable_file(&xdg_path) {
             return Some(xdg_path);
         }
     }
-    Some(home.join(".config/vetto/policy.toml"))
+    let config_policy = home.join(".config/vetto/policy.toml");
+    if is_usable_file(&config_policy) {
+        return Some(config_policy);
+    }
+    Some(config_policy)
 }
 
 /// Load a policy either from a built-in profile name or a custom TOML path,
