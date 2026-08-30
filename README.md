@@ -76,6 +76,12 @@ npm install --global @shledery/vetto
 vetto doctor
 ```
 
+macOS and Linux via Homebrew (prebuilt release binaries, SHA256-pinned):
+
+```bash
+brew install shleder/tap/vetto
+```
+
 Without installing:
 
 ```bash
