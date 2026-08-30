@@ -106,6 +106,7 @@ fn bench_observe_seccomp(c: &mut Criterion) {
             deny: Vec::new(),
         },
         warnings: Vec::new(),
+        ..Policy::default()
     };
     let allowed = root.join("rule-0000").to_string_lossy().into_owned();
     let blocked = std::env::temp_dir()

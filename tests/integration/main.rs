@@ -42,3 +42,4 @@ mod rescue;
 mod secret_masking;
 mod shim_interception;
 mod windows_enforcement;
+mod windows_sandbox;

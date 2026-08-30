@@ -25,20 +25,19 @@ impl OsLogSink {
 fn sink_loop(mut rx: broadcast::Receiver<Event>) {
     while let Ok(ev) = rx.blocking_recv() {
         let msg = match &ev {
-            Event::Blocked(b) => {
-                format!(
-                    "denial: operation={} target={} reason={}",
-                    b.operation, b.target, b.reason
-                )
+            Event::BlockedAttempt {
+                comm, path, source, ..
+            } => {
+                format!("denial: comm={comm} path={path} source={source}")
             }
-            Event::Warning(w) => {
-                format!("warning: {}", w.message)
+            Event::Notice { message, .. } => {
+                format!("notice: {message}")
             }
-            Event::Spawned(s) => {
-                format!("session spawned: pid={} tier={}", s.pid, s.tier)
+            Event::SessionStarted { pid, tier, .. } => {
+                format!("session spawned: pid={pid} tier={tier}")
             }
-            Event::Exited(e) => {
-                format!("session exited: exit_code={}", e.exit_code)
+            Event::SessionEnded { exit_code, .. } => {
+                format!("session exited: exit_code={exit_code}")
             }
             _ => format!("{:?}", ev),
         };
