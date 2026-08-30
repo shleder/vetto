@@ -53,6 +53,40 @@ exact configured port. A rule for `api.github.com:443` does not allow port 22.
 A base-domain rule also covers its DNS subdomains; label boundaries are
 checked, so `notgithub.com` does not match `github.com`.
 
+## Interactive Ask Mode
+
+```console
+vetto --net=ask -- agent command
+```
+
+In interactive mode, any network connection attempt triggers an interactive confirmation prompt on stderr. Confirmed domains are cached in-memory for the duration of the session. If stdin is not a TTY (such as in CI or background scripts), interactive prompts fail closed and deny the connection.
+
+## Wildcard Domains and Presets
+
+Network rules support wildcard subdomains:
+- `*.githubusercontent.com` matches `raw.githubusercontent.com` and `avatars.githubusercontent.com`, but does NOT match the base domain `githubusercontent.com`.
+
+Policies can specify standard ecosystem presets:
+```toml
+[network]
+net_presets = ["npm", "git", "pip", "huggingface"]
+allow_cidr = ["10.0.0.0/8"]
+net_quota = { "api.openai.com" = "100mb" }
+```
+
+## Landlock Net Ports (ABI 4+)
+
+On Linux kernels with Landlock ABI 4+ (Linux 6.7+), TCP bind and connect operations can be restricted at the kernel level:
+```toml
+[net_ports]
+allow_tcp_connect = [443, 80]
+allow_tcp_bind = [8080]
+```
+
+## Upstream Proxies
+
+The host broker respects upstream `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables without leaking proxy credentials or endpoints to the sandboxed agent.
+
 ## Git over SSH
 
 ```console
