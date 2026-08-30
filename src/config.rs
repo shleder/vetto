@@ -192,7 +192,7 @@ impl RunConfig {
             .or(Some(50));
         let report_max_age_secs = cli.report_max_age_secs.or(global.report_max_age_secs);
 
-        let preset_str = cli.preset.as_deref().or_else(|| global.preset.as_deref());
+        let preset_str = cli.preset.as_deref().or(global.preset.as_deref());
         let preset = match preset_str {
             Some(p) => Some(Preset::parse(p)?),
             None => None,

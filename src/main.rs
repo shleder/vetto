@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 
-#[cfg(unix)]
-use vetto::config::NetMode;
-use vetto::config::{RunConfig, TuiMode};
+use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
 use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox, shim};
 #[cfg(unix)]
