@@ -14,6 +14,6 @@ pub use loader::{
     PolicyOverrides,
 };
 pub use types::{
-    DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits,
-    SubtractiveRules, Tier,
+    CgroupConfig, DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind,
+    ResourceLimits, SeccompNotifyConfig, SeccompProfile, SubtractiveRules, Tier,
 };
