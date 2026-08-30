@@ -26,6 +26,7 @@ pub mod policy;
 pub mod profile;
 #[cfg(unix)]
 pub mod pty;
+pub mod redteam;
 pub mod report;
 pub mod rescue;
 pub mod sandbox;

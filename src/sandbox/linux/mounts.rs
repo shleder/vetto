@@ -283,6 +283,79 @@ pub fn mask_path(path: &Path, is_dir: bool) -> VettoResult<bool> {
     Ok(true)
 }
 
+/// Mask restricted and dangerous device nodes inside the mount namespace.
+/// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
+/// If `dev_allow` is None, default dangerous device nodes are masked.
+pub fn mask_restricted_devices(dev_allow: Option<&[String]>) -> VettoResult<()> {
+    let dev_dir = Path::new("/dev");
+    if !dev_dir.exists() || !dev_dir.is_dir() {
+        return Ok(());
+    }
+
+    if let Some(allowed_list) = dev_allow {
+        let mut allowed_set: std::collections::HashSet<String> = allowed_list
+            .iter()
+            .map(|s| {
+                s.trim_start_matches("/dev/")
+                    .trim_start_matches('/')
+                    .to_string()
+            })
+            .collect();
+        allowed_set.insert("null".into());
+        allowed_set.insert("zero".into());
+        allowed_set.insert("full".into());
+        allowed_set.insert("random".into());
+        allowed_set.insert("urandom".into());
+        allowed_set.insert("tty".into());
+        allowed_set.insert("pts".into());
+        allowed_set.insert("shm".into());
+        allowed_set.insert("fd".into());
+        allowed_set.insert("stdin".into());
+        allowed_set.insert("stdout".into());
+        allowed_set.insert("stderr".into());
+
+        if let Ok(entries) = std::fs::read_dir(dev_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !allowed_set.contains(&name) {
+                    let path = entry.path();
+                    let is_dir = path.is_dir();
+                    let _ = mask_path(&path, is_dir);
+                }
+            }
+        }
+    } else {
+        let dangerous_devs = [
+            "/dev/kmsg",
+            "/dev/mem",
+            "/dev/kmem",
+            "/dev/port",
+            "/dev/core",
+            "/dev/dri",
+            "/dev/snd",
+            "/dev/input",
+            "/dev/kvm",
+            "/dev/vhost-net",
+            "/dev/vhost-vsock",
+            "/dev/autofs",
+            "/dev/btrfs-control",
+            "/dev/loop-control",
+            "/dev/mapper/control",
+            "/dev/rtc0",
+            "/dev/hpet",
+        ];
+        for d in dangerous_devs {
+            let path = Path::new(d);
+            if path.exists() {
+                let is_dir = path.is_dir();
+                let _ = mask_path(path, is_dir);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Blackhole DNS inside allowlist mode: the child must never resolve on its
 /// own; the broker resolves remotely instead.
 pub fn blackhole_resolv_conf() -> VettoResult<()> {

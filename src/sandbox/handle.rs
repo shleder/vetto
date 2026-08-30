@@ -72,6 +72,8 @@ pub struct SandboxHandle {
     /// for waiting there).
     pub root_pid: u32,
     pub strategy: Option<KillStrategy>,
+    #[cfg(target_os = "linux")]
+    pub _cgroup: Option<crate::sandbox::linux::cgroup::CgroupHandle>,
 }
 
 impl SandboxHandle {

@@ -198,6 +198,7 @@ fn tier_label(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::Full) => Tier::Full.label(),
         Some(Tier::FsOnly) => Tier::FsOnly.label(),
+        Some(Tier::Seccomp) => Tier::Seccomp.label(),
         None => "macos-seatbelt",
     }
 }
@@ -207,6 +208,7 @@ fn masking_strategy(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::Full) => "mount-masked",
         Some(Tier::FsOnly) => "allowlist-carved",
+        Some(Tier::Seccomp) => "unmasked-filesystem-seccomp-only",
         None => "seatbelt-denied",
     }
 }

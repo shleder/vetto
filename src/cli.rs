@@ -284,6 +284,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run red-team sandbox containment and kernel isolation attack battery.
+    Redteam {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain the effective policy or lint it for dangerous configurations.
     Policy {
         #[command(subcommand)]

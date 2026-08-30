@@ -200,6 +200,23 @@ fn run() -> Result<()> {
                 &net,
             )
         }
+        Some(cli::Command::Redteam { json }) => {
+            let report = vetto::redteam::run_redteam_battery();
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("vetto redteam — isolation & containment attack battery\n");
+                for r in &report.results {
+                    println!("[{:?}] #{}: {} — {}", r.status, r.id, r.name, r.description);
+                    println!("       detail: {}", r.details);
+                }
+                println!("\n{}", report.summary());
+            }
+            if !report.success {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Some(cli::Command::Policy { command }) => match command {
             cli::PolicyCommand::Explain { json, why } => {
                 let net = vetto::config::parse_net_mode(args.net.as_deref().unwrap_or("off"))?;
@@ -524,7 +541,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
     tracing::debug!("backend: {}", backend.describe());
 
-    if cfg.net.uses_relay() && tier == Some(policy::Tier::FsOnly) {
+    if cfg.net.uses_relay()
+        && (tier == Some(policy::Tier::FsOnly) || tier == Some(policy::Tier::Seccomp))
+    {
         bail!(
             "network relay modes require Tier FULL (unprivileged user namespaces), \
              unavailable on this machine; refusing to run (fail-closed)"
@@ -664,6 +683,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
+    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
@@ -784,6 +804,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 });
             }
         }
+        Some(policy::Tier::Seccomp) => {
+            bus.publish(Event::Notice {
+                ts: events::types::now(),
+                message: "WARNING: Running in Tier SECCOMP (micro-mode). Filesystem isolation is NOT enforced on this system because Landlock is unavailable. Only syscall filtering and network blocking are active."
+                    .to_string(),
+            });
+        }
         _ => {
             bus.publish(Event::Notice {
                 ts: events::types::now(),
@@ -824,18 +851,42 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         let _ = relay_port;
         if let Some(fd) = notif_listener {
             let notifier_policy = std::sync::Arc::new(pol.clone());
-            sandbox::linux::observe_seccomp::spawn_notifier(
-                fd,
-                bus.clone(),
-                notifier_policy,
-                project.clone(),
-            );
-            bus.publish(Event::Notice {
-                ts: events::types::now(),
-                message: "blocked-attempt observation via --observe-seccomp \
-                          (BEST-EFFORT; paths are racy; Landlock stays the sole enforcer)"
-                    .to_string(),
-            });
+            if let Some(notify_cfg) = &pol.seccomp_notify {
+                if notify_cfg.enabled {
+                    sandbox::linux::observe_seccomp::spawn_enforcement_supervisor(
+                        fd,
+                        bus.clone(),
+                        notify_cfg.clone(),
+                        notifier_policy,
+                        project.clone(),
+                    );
+                    bus.publish(Event::Notice {
+                        ts: events::types::now(),
+                        message: "seccomp user-notify supervisor enforcement active (default deny)"
+                            .to_string(),
+                    });
+                } else {
+                    sandbox::linux::observe_seccomp::spawn_notifier(
+                        fd,
+                        bus.clone(),
+                        notifier_policy,
+                        project.clone(),
+                    );
+                }
+            } else {
+                sandbox::linux::observe_seccomp::spawn_notifier(
+                    fd,
+                    bus.clone(),
+                    notifier_policy,
+                    project.clone(),
+                );
+                bus.publish(Event::Notice {
+                    ts: events::types::now(),
+                    message: "blocked-attempt observation via --observe-seccomp \
+                              (BEST-EFFORT; paths are racy; Landlock stays the sole enforcer)"
+                        .to_string(),
+                });
+            }
         }
         let audit_reason = sandbox::linux::audit_reader::spawn_reader_if_available(bus.clone());
         if !cfg.observe_seccomp {
@@ -1073,6 +1124,7 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
     match tier {
         Some(policy::Tier::Full) => policy::Tier::Full.label(),
         Some(policy::Tier::FsOnly) => policy::Tier::FsOnly.label(),
+        Some(policy::Tier::Seccomp) => policy::Tier::Seccomp.label(),
         None => "macos-seatbelt",
     }
 }
@@ -1308,6 +1360,8 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     }
     #[cfg(target_os = "linux")]
     {
+        let env_info = vetto::doctor::detect_environment();
+        println!("environment:             {}", env_info.summary);
         let p = sandbox::linux::probe();
         println!("kernel:                  {}", p.kernel);
         println!(

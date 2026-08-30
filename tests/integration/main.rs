@@ -13,6 +13,8 @@ mod env_stripping;
 mod git_hooks;
 mod heavy_scenarios;
 #[cfg(target_os = "linux")]
+mod linux_downgrade;
+#[cfg(target_os = "linux")]
 mod linux_landlock;
 #[cfg(target_os = "linux")]
 mod linux_limits_cli;
@@ -20,6 +22,8 @@ mod linux_limits_cli;
 mod linux_netmodes;
 #[cfg(target_os = "linux")]
 mod linux_orphans;
+#[cfg(target_os = "linux")]
+mod linux_redteam;
 #[cfg(target_os = "linux")]
 mod linux_seccomp_blocks;
 #[cfg(target_os = "linux")]

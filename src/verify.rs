@@ -308,7 +308,7 @@ fn tier_label(tier: Option<Tier>) -> String {
 fn net_pass_detail(tier: Option<Tier>) -> String {
     match tier {
         Some(Tier::Full) => "host loopback listener unreachable (netns isolation)".to_string(),
-        Some(Tier::FsOnly) => {
+        Some(Tier::FsOnly) | Some(Tier::Seccomp) => {
             "host loopback listener unreachable (seccomp socket block)".to_string()
         }
         None if cfg!(target_os = "macos") => {
