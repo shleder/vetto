@@ -121,9 +121,8 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
             metadata: Some(RawMetadata {
                 name: Some("preset:paranoid".into()),
                 description: Some("Paranoid preset: everything closed, network off".into()),
-                extends: None,
+                ..Default::default()
             }),
-            security: None,
             filesystem: Some(RawFilesystem {
                 allow_write: Some(RawStringList::Many(vec![
                     "$PROJECT".into(),
@@ -132,35 +131,28 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                 ])),
                 allow_read: Some(RawStringList::Many(vec!["$PROJECT".into()])),
                 deny_write: Some(RawStringList::Many(vec!["$PROJECT/.git".into()])),
-                deny_read: None,
+                ..Default::default()
             }),
             display_only_deny: Some(RawDeny {
                 paths: Some(RawStringList::Many(deny_paths)),
             }),
-            environment: None,
             network: Some(RawNetwork {
                 mode: Some("off".into()),
-                allow: None,
-                deny: None,
-                deny_network: None,
+                ..Default::default()
             }),
-            conditions: None,
-            limits: None,
+            ..Default::default()
         },
         Preset::Balanced => {
             let net = if !network_domains.is_empty() {
                 RawNetwork {
                     mode: Some(format!("allowlist:{}", network_domains.join(","))),
                     allow: Some(RawStringList::Many(network_domains)),
-                    deny: None,
-                    deny_network: None,
+                    ..Default::default()
                 }
             } else {
                 RawNetwork {
                     mode: Some("off".into()),
-                    allow: None,
-                    deny: None,
-                    deny_network: None,
+                    ..Default::default()
                 }
             };
 
@@ -168,9 +160,8 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                 metadata: Some(RawMetadata {
                     name: Some("preset:balanced".into()),
                     description: Some("Balanced preset: standard development access".into()),
-                    extends: None,
+                    ..Default::default()
                 }),
-                security: None,
                 filesystem: Some(RawFilesystem {
                     allow_write: Some(RawStringList::Many(vec![
                         "$PROJECT".into(),
@@ -186,15 +177,13 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                         "$HOME/.local/share".into(),
                     ])),
                     deny_write: Some(RawStringList::Many(vec!["$PROJECT/.git".into()])),
-                    deny_read: None,
+                    ..Default::default()
                 }),
                 display_only_deny: Some(RawDeny {
                     paths: Some(RawStringList::Many(deny_paths)),
                 }),
-                environment: None,
                 network: Some(net),
-                conditions: None,
-                limits: None,
+                ..Default::default()
             }
         }
         Preset::Yolo => {
@@ -202,8 +191,7 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                 Some(RawNetwork {
                     mode: Some(format!("allowlist:{}", network_domains.join(","))),
                     allow: Some(RawStringList::Many(network_domains)),
-                    deny: None,
-                    deny_network: None,
+                    ..Default::default()
                 })
             } else {
                 None
@@ -215,9 +203,8 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     description: Some(
                         "Yolo preset: permissive write/read with secret masking".into(),
                     ),
-                    extends: None,
+                    ..Default::default()
                 }),
-                security: None,
                 filesystem: Some(RawFilesystem {
                     allow_write: Some(RawStringList::Many(vec![
                         "$PROJECT".into(),
@@ -227,15 +214,13 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     ])),
                     allow_read: Some(RawStringList::Many(vec!["/".into()])),
                     deny_write: Some(RawStringList::Many(vec!["$PROJECT/.git".into()])),
-                    deny_read: None,
+                    ..Default::default()
                 }),
                 display_only_deny: Some(RawDeny {
                     paths: Some(RawStringList::Many(deny_paths)),
                 }),
-                environment: None,
                 network: net,
-                conditions: None,
-                limits: None,
+                ..Default::default()
             }
         }
     }
