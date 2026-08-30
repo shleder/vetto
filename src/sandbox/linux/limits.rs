@@ -49,6 +49,64 @@ pub fn apply_before_exec(limits: &ResourceLimits) -> VettoResult<()> {
     Ok(())
 }
 
+const SYS_IOPRIO_SET: libc::c_long = libc::SYS_ioprio_set;
+const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+const IOPRIO_CLASS_SHIFT: libc::c_int = 13;
+const IOPRIO_CLASS_NONE: libc::c_int = 0;
+const IOPRIO_CLASS_RT: libc::c_int = 1;
+const IOPRIO_CLASS_BE: libc::c_int = 2;
+const IOPRIO_CLASS_IDLE: libc::c_int = 3;
+
+fn ioprio_prio_value(class: libc::c_int, data: libc::c_int) -> libc::c_int {
+    (class << IOPRIO_CLASS_SHIFT) | (data & 0x1fff)
+}
+
+/// Apply I/O scheduling class and priority immediately before execve.
+pub fn apply_io_priority(priority_spec: Option<&str>) -> VettoResult<()> {
+    let Some(spec) = priority_spec else {
+        return Ok(());
+    };
+    let spec = spec.trim().to_lowercase();
+    let (class, data) = match spec.as_str() {
+        "idle" => (IOPRIO_CLASS_IDLE, 0),
+        "best-effort" | "be" => (IOPRIO_CLASS_BE, 4),
+        "realtime" | "rt" => (IOPRIO_CLASS_RT, 4),
+        "none" => (IOPRIO_CLASS_NONE, 0),
+        s if s.starts_with("best-effort:") || s.starts_with("be:") => {
+            let num = s
+                .split(':')
+                .nth(1)
+                .and_then(|n| n.parse::<i32>().ok())
+                .unwrap_or(4)
+                .clamp(0, 7);
+            (IOPRIO_CLASS_BE, num)
+        }
+        s if s.starts_with("realtime:") || s.starts_with("rt:") => {
+            let num = s
+                .split(':')
+                .nth(1)
+                .and_then(|n| n.parse::<i32>().ok())
+                .unwrap_or(4)
+                .clamp(0, 7);
+            (IOPRIO_CLASS_RT, num)
+        }
+        _ => {
+            return Err(VettoError::Sandbox(format!(
+                "invalid io_priority spec '{spec}'"
+            )))
+        }
+    };
+    let value = ioprio_prio_value(class, data);
+    let ret = unsafe { libc::syscall(SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS, 0, value) };
+    if ret != 0 {
+        return Err(VettoError::Sandbox(format!(
+            "ioprio_set({spec}): {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
 /// Apply strict ceilings on POSIX IPC structures (locked memory and message queues)
 /// to prevent cross-agent resource exhaustion.
 pub fn apply_ipc_resource_ceilings(
@@ -84,6 +142,7 @@ mod tests {
             processes: Some(32),
             open_files: Some(128),
             file_size_bytes: Some(1024 * 1024),
+            ..Default::default()
         };
         assert_eq!(limits.cpu_seconds, Some(60));
         assert_eq!(limits.address_space_bytes, Some(64 * 1024 * 1024));

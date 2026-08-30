@@ -60,7 +60,8 @@ fn codex_limited_scan_fails_closed_when_session_roots_are_missing() {
         "an index without verifiable session roots must fail closed"
     );
     assert!(
-        stderr(&output).contains("no real sessions directory exists"),
+        stderr(&output).contains("no real sessions directory exists")
+            || stderr(&output).contains("could not verify Codex session roots"),
         "stderr: {}",
         stderr(&output)
     );

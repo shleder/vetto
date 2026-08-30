@@ -25,8 +25,11 @@ use super::checker;
 use super::conditions::{self, ConditionContext, RawConditions};
 use super::defaults;
 use super::glob_resolve::{self, Vars};
+use super::presets;
+use super::secretscan;
 use super::types::{
-    DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, Tier,
+    CgroupConfig, DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind,
+    ResourceLimits, SeccompNotifyConfig, SeccompProfile, Tier,
 };
 use crate::error::VettoError;
 
@@ -43,15 +46,37 @@ pub struct RawLayer {
     #[serde(default)]
     pub filesystem: Option<RawFilesystem>,
     #[serde(default)]
+    pub secrets: Option<RawSecrets>,
+    #[serde(default)]
     pub display_only_deny: Option<RawDeny>,
     #[serde(default)]
     pub environment: Option<RawEnvironment>,
     #[serde(default)]
     pub network: Option<RawNetwork>,
     #[serde(default)]
+    pub unix_sockets: Option<RawUnixSockets>,
+    #[serde(default)]
+    pub net_ports: Option<RawNetPorts>,
+    #[serde(default)]
     pub conditions: Option<RawConditions>,
     #[serde(default)]
     pub limits: Option<RawLimits>,
+    #[serde(default)]
+    pub seccomp_profile: Option<String>,
+    #[serde(default)]
+    pub seccomp_notify: Option<RawSeccompNotify>,
+    #[serde(default)]
+    pub cgroup: Option<RawCgroup>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+    #[serde(default)]
+    pub io_priority: Option<String>,
+    #[serde(default)]
+    pub dev_allow: Option<RawStringList>,
+    #[serde(default)]
+    pub platform: Option<RawPlatform>,
+    #[serde(default)]
+    pub observability: Option<RawObservability>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -70,6 +95,53 @@ pub struct RawMetadata {
 pub struct RawSecurity {
     #[serde(default)]
     pub immutable: Option<bool>,
+    #[serde(default)]
+    pub system_log: Option<bool>,
+    #[serde(default)]
+    pub auto_deny_secrets: Option<bool>,
+    #[serde(default)]
+    pub git_guard: Option<bool>,
+    #[serde(default)]
+    pub snapshot: Option<bool>,
+    #[serde(default)]
+    pub seccomp_profile: Option<String>,
+    #[serde(default)]
+    pub seccomp_notify: Option<RawSeccompNotify>,
+    #[serde(default)]
+    pub lpac: Option<bool>,
+    #[serde(default)]
+    pub oslog: Option<bool>,
+    #[serde(default)]
+    pub require_signed: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawSeccompNotify {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub default_action: Option<String>,
+    #[serde(default)]
+    pub allow_syscalls: Option<RawStringList>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawPlatform {
+    #[serde(default)]
+    pub oslog: Option<bool>,
+    #[serde(default)]
+    pub lpac: Option<bool>,
+    #[serde(default)]
+    pub io_rate: Option<RawIoRate>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawObservability {
+    #[serde(default)]
+    pub oslog: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -83,6 +155,25 @@ pub struct RawFilesystem {
     pub deny_write: Option<RawStringList>,
     #[serde(default)]
     pub deny_read: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_preset: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_glob: Option<RawStringList>,
+    #[serde(default)]
+    pub ro_mounts: Option<RawStringList>,
+    #[serde(default)]
+    pub tmpfs_tmp: Option<bool>,
+    #[serde(default)]
+    pub dev_allow: Option<RawStringList>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawSecrets {
+    #[serde(default)]
+    pub proxy: Option<RawStringList>,
+    #[serde(default)]
+    pub auto_deny: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -114,6 +205,102 @@ pub struct RawNetwork {
     pub deny: Option<RawStringList>,
     #[serde(default)]
     pub deny_network: Option<RawStringList>,
+    #[serde(default)]
+    pub net_preset: Option<RawStringList>,
+    #[serde(default)]
+    pub net_presets: Option<RawStringList>,
+    #[serde(default)]
+    pub preset: Option<RawStringList>,
+    #[serde(default)]
+    pub presets: Option<RawStringList>,
+    #[serde(default)]
+    pub allow_cidr: Option<RawStringList>,
+    #[serde(default)]
+    pub allow_cidrs: Option<RawStringList>,
+    #[serde(default)]
+    pub net_quota: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub quota: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub net_ports: Option<RawNetPorts>,
+    #[serde(default)]
+    pub allow_tcp_connect: Option<Vec<u16>>,
+    #[serde(default)]
+    pub allow_tcp_bind: Option<Vec<u16>>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RawNetPorts {
+    #[serde(default)]
+    pub allow_tcp_connect: Option<Vec<u16>>,
+    #[serde(default)]
+    pub allow_tcp_bind: Option<Vec<u16>>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RawUnixSockets {
+    #[serde(default)]
+    pub allow: Option<RawStringList>,
+    #[serde(default)]
+    pub deny: Option<RawStringList>,
+}
+
+pub fn expand_net_preset(name: &str) -> Result<Vec<String>> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "npm" => Ok(vec!["registry.npmjs.org".to_string()]),
+        "git" => Ok(vec![
+            "github.com".to_string(),
+            "api.github.com".to_string(),
+            "codeload.github.com".to_string(),
+        ]),
+        "pip" | "pypi" => Ok(vec![
+            "pypi.org".to_string(),
+            "files.pythonhosted.org".to_string(),
+        ]),
+        "huggingface" | "hf" => Ok(vec![
+            "huggingface.co".to_string(),
+            "cdn-lfs.huggingface.co".to_string(),
+        ]),
+        unknown => {
+            bail!("unknown net preset '{unknown}'; known presets: npm, git, pip, huggingface")
+        }
+    }
+}
+
+pub fn parse_quota_bytes(s: &str) -> Result<u64> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        bail!("empty quota string");
+    }
+    let (num_part, multiplier) = if let Some(val) = s.strip_suffix("tb") {
+        (val, 1024 * 1024 * 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("gb") {
+        (val, 1024 * 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("mb") {
+        (val, 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("kb") {
+        (val, 1024u64)
+    } else if let Some(val) = s.strip_suffix('b') {
+        (val, 1u64)
+    } else {
+        (s.as_str(), 1u64)
+    };
+    let count: u64 = num_part
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid quota value '{s}'"))?;
+    Ok(count * multiplier)
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawIoRate {
+    #[serde(default)]
+    pub max_iops: Option<u64>,
+    #[serde(default)]
+    pub max_bandwidth: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -129,22 +316,115 @@ pub struct RawLimits {
     pub open_files: Option<u64>,
     #[serde(default)]
     pub file_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub cgroup: Option<RawCgroup>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+    #[serde(default)]
+    pub io_priority: Option<String>,
+    #[serde(default)]
+    pub io_rate: Option<RawIoRate>,
+    #[serde(default)]
+    pub max_iops: Option<u64>,
+    #[serde(default)]
+    pub max_bandwidth: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawCgroup {
+    #[serde(default)]
+    pub memory_max: Option<RawValueOrString>,
+    #[serde(default)]
+    pub pids_max: Option<RawValueOrString>,
+    #[serde(default)]
+    pub swap_max: Option<RawValueOrString>,
+    #[serde(default)]
+    pub cpu_max: Option<RawValueOrString>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum RawValueOrString {
+    Num(u64),
+    Str(String),
+}
+
+impl RawValueOrString {
+    pub fn to_string_repr(&self) -> String {
+        match self {
+            Self::Num(n) => n.to_string(),
+            Self::Str(s) => s.clone(),
+        }
+    }
 }
 
 impl RawLimits {
     fn to_resource_limits(&self) -> ResourceLimits {
+        let mut io_rate = None;
+        if let Some(rate) = &self.io_rate {
+            let max_bandwidth = rate.max_bandwidth.as_deref().and_then(parse_bandwidth_str);
+            io_rate = Some(crate::policy::types::IoRateLimit {
+                max_iops: rate.max_iops,
+                max_bandwidth,
+            });
+        }
+        if self.max_iops.is_some() || self.max_bandwidth.is_some() {
+            let mut io = io_rate.unwrap_or_default();
+            if let Some(iops) = self.max_iops {
+                io.max_iops = Some(iops);
+            }
+            if let Some(bw_str) = &self.max_bandwidth {
+                if let Some(bw) = parse_bandwidth_str(bw_str) {
+                    io.max_bandwidth = Some(bw);
+                }
+            }
+            io_rate = Some(io);
+        }
         ResourceLimits {
             cpu_seconds: self.cpu_seconds,
             address_space_bytes: self.address_space_bytes,
             processes: self.processes,
             open_files: self.open_files,
             file_size_bytes: self.file_size_bytes,
+            io_rate,
         }
     }
 }
 
+pub fn parse_bandwidth_str(value: &str) -> Option<u64> {
+    let lower = value.trim().to_ascii_lowercase();
+    if let Ok(raw) = lower.parse::<u64>() {
+        return Some(raw);
+    }
+    let (number, mult) = if let Some(n) = lower.strip_suffix("gib") {
+        (n, 1024u64 * 1024 * 1024)
+    } else if let Some(n) = lower.strip_suffix("mib") {
+        (n, 1024u64 * 1024)
+    } else if let Some(n) = lower.strip_suffix("kib") {
+        (n, 1024u64)
+    } else if let Some(n) = lower.strip_suffix("gb") {
+        (n, 1000u64 * 1000 * 1000)
+    } else if let Some(n) = lower.strip_suffix("mb") {
+        (n, 1000u64 * 1000)
+    } else if let Some(n) = lower.strip_suffix("kb") {
+        (n, 1000u64)
+    } else if let Some(n) = lower.strip_suffix('g') {
+        (n, 1000u64 * 1000 * 1000)
+    } else if let Some(n) = lower.strip_suffix('m') {
+        (n, 1000u64 * 1000)
+    } else if let Some(n) = lower.strip_suffix('k') {
+        (n, 1000u64)
+    } else {
+        let n = lower.strip_suffix('b')?;
+        (n, 1u64)
+    };
+    let base: u64 = number.trim().parse().ok()?;
+    base.checked_mul(mult)
+}
+
 /// String or array form for convenient TOML definitions.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum RawStringList {
     One(String),
@@ -176,12 +456,35 @@ pub struct MergedPolicy {
     pub deny_write: Vec<String>,
     pub deny_read: Vec<String>,
     pub deny_paths: Vec<String>,
+    pub deny_preset: Vec<String>,
+    pub deny_glob: Vec<String>,
+    pub ro_mounts: Vec<String>,
     pub pass_through: Vec<String>,
     pub deny_env: Vec<String>,
     pub deny_network: Vec<String>,
+    pub secret_proxies: Vec<String>,
     pub network_mode: Option<String>,
     pub network_allow: Vec<String>,
+    pub allow_cidr: Vec<String>,
+    pub net_quota: std::collections::HashMap<String, u64>,
+    pub net_bind_ports: Vec<u16>,
+    pub net_connect_ports: Vec<u16>,
+    pub allow_unix_sockets: Vec<String>,
+    pub oslog: bool,
+    pub lpac: bool,
     pub is_immutable: bool,
+    pub system_log: bool,
+    pub auto_deny_secrets: bool,
+    pub git_guard: bool,
+    pub snapshot: bool,
+    pub tmpfs_tmp: Option<bool>,
+    pub seccomp_profile: Option<String>,
+    pub seccomp_notify: Option<SeccompNotifyConfig>,
+    pub cgroup: Option<CgroupConfig>,
+    pub cpu_max: Option<String>,
+    pub io_priority: Option<String>,
+    pub dev_allow: Option<Vec<String>>,
+    pub require_signed: bool,
 }
 
 impl MergedPolicy {
@@ -203,6 +506,83 @@ impl MergedPolicy {
         if let Some(sec) = &layer.security {
             if let Some(true) = sec.immutable {
                 self.is_immutable = true;
+            }
+            if let Some(slog) = sec.system_log {
+                self.system_log = slog;
+            }
+            if let Some(true) = sec.auto_deny_secrets {
+                self.auto_deny_secrets = true;
+            }
+            if let Some(true) = sec.git_guard {
+                self.git_guard = true;
+            }
+            if let Some(true) = sec.snapshot {
+                self.snapshot = true;
+            }
+            if let Some(prof) = &sec.seccomp_profile {
+                self.seccomp_profile = Some(prof.clone());
+            }
+            if let Some(notif) = &sec.seccomp_notify {
+                self.seccomp_notify = Some(SeccompNotifyConfig {
+                    enabled: notif.enabled.unwrap_or(true),
+                    default_action: notif.default_action.clone(),
+                    allow_syscalls: notif
+                        .allow_syscalls
+                        .clone()
+                        .map(RawStringList::into_vec)
+                        .unwrap_or_default(),
+                });
+            }
+            if let Some(oslog) = sec.oslog {
+                self.oslog = oslog;
+            }
+            if let Some(lpac) = sec.lpac {
+                self.lpac = lpac;
+            }
+            if let Some(true) = sec.require_signed {
+                self.require_signed = true;
+            }
+        }
+
+        if let Some(prof) = &layer.seccomp_profile {
+            self.seccomp_profile = Some(prof.clone());
+        }
+        if let Some(notif) = &layer.seccomp_notify {
+            self.seccomp_notify = Some(SeccompNotifyConfig {
+                enabled: notif.enabled.unwrap_or(true),
+                default_action: notif.default_action.clone(),
+                allow_syscalls: notif
+                    .allow_syscalls
+                    .clone()
+                    .map(RawStringList::into_vec)
+                    .unwrap_or_default(),
+            });
+        }
+
+        if let Some(plat) = &layer.platform {
+            if let Some(oslog) = plat.oslog {
+                self.oslog = oslog;
+            }
+            if let Some(lpac) = plat.lpac {
+                self.lpac = lpac;
+            }
+            if let Some(io) = &plat.io_rate {
+                let max_bandwidth = io.max_bandwidth.as_deref().and_then(parse_bandwidth_str);
+                let incoming = crate::policy::types::IoRateLimit {
+                    max_iops: io.max_iops,
+                    max_bandwidth,
+                };
+                if let Some(existing) = &mut self.limits.io_rate {
+                    existing.merge_strictest(&incoming);
+                } else {
+                    self.limits.io_rate = Some(incoming);
+                }
+            }
+        }
+
+        if let Some(obs) = &layer.observability {
+            if let Some(oslog) = obs.oslog {
+                self.oslog = oslog;
             }
         }
 
@@ -229,6 +609,34 @@ impl MergedPolicy {
             }
             if let Some(deny_read) = &filesystem.deny_read {
                 self.deny_read.extend(deny_read.clone().into_vec());
+            }
+            if let Some(deny_preset) = &filesystem.deny_preset {
+                self.deny_preset.extend(deny_preset.clone().into_vec());
+            }
+            if let Some(deny_glob) = &filesystem.deny_glob {
+                self.deny_glob.extend(deny_glob.clone().into_vec());
+            }
+            if let Some(ro_mounts) = &filesystem.ro_mounts {
+                self.ro_mounts.extend(ro_mounts.clone().into_vec());
+            }
+            if let Some(tmpfs) = filesystem.tmpfs_tmp {
+                self.tmpfs_tmp = Some(tmpfs);
+            }
+            if let Some(dev_allow) = &filesystem.dev_allow {
+                self.dev_allow = Some(dev_allow.clone().into_vec());
+            }
+        }
+
+        if let Some(dev_allow) = &layer.dev_allow {
+            self.dev_allow = Some(dev_allow.clone().into_vec());
+        }
+
+        if let Some(secrets) = &layer.secrets {
+            if let Some(proxy) = &secrets.proxy {
+                self.secret_proxies.extend(proxy.clone().into_vec());
+            }
+            if let Some(true) = secrets.auto_deny {
+                self.auto_deny_secrets = true;
             }
         }
 
@@ -263,10 +671,93 @@ impl MergedPolicy {
             if let Some(deny_network) = &network.deny_network {
                 self.deny_network.extend(deny_network.clone().into_vec());
             }
+            for presets in [
+                &network.net_preset,
+                &network.net_presets,
+                &network.preset,
+                &network.presets,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                for preset_name in presets.clone().into_vec() {
+                    let domains = expand_net_preset(&preset_name)?;
+                    self.network_allow.extend(domains);
+                }
+            }
+            if let Some(allow_cidr) = &network.allow_cidr {
+                self.allow_cidr.extend(allow_cidr.clone().into_vec());
+            }
+            if let Some(allow_cidrs) = &network.allow_cidrs {
+                self.allow_cidr.extend(allow_cidrs.clone().into_vec());
+            }
+            for quotas in [&network.net_quota, &network.quota].into_iter().flatten() {
+                for (domain, val) in quotas {
+                    let bytes = parse_quota_bytes(val)?;
+                    self.net_quota.insert(domain.clone(), bytes);
+                }
+            }
+            if let Some(ports) = &network.net_ports {
+                if let Some(connect) = &ports.allow_tcp_connect {
+                    self.net_connect_ports.extend(connect);
+                }
+                if let Some(bind) = &ports.allow_tcp_bind {
+                    self.net_bind_ports.extend(bind);
+                }
+            }
+            if let Some(connect) = &network.allow_tcp_connect {
+                self.net_connect_ports.extend(connect);
+            }
+            if let Some(bind) = &network.allow_tcp_bind {
+                self.net_bind_ports.extend(bind);
+            }
+        }
+
+        if let Some(ports) = &layer.net_ports {
+            if let Some(connect) = &ports.allow_tcp_connect {
+                self.net_connect_ports.extend(connect);
+            }
+            if let Some(bind) = &ports.allow_tcp_bind {
+                self.net_bind_ports.extend(bind);
+            }
+        }
+
+        if let Some(unix_socks) = &layer.unix_sockets {
+            if let Some(allow) = &unix_socks.allow {
+                self.allow_unix_sockets.extend(allow.clone().into_vec());
+            }
         }
 
         if let Some(limits) = &layer.limits {
             self.limits.merge_strictest(&limits.to_resource_limits());
+            if let Some(cg) = &limits.cgroup {
+                self.cgroup = Some(CgroupConfig {
+                    memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
+                    pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
+                    swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
+                    cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
+                });
+            }
+            if let Some(cpu) = &limits.cpu_max {
+                self.cpu_max = Some(cpu.clone());
+            }
+            if let Some(ioprio) = &limits.io_priority {
+                self.io_priority = Some(ioprio.clone());
+            }
+        }
+        if let Some(cg) = &layer.cgroup {
+            self.cgroup = Some(CgroupConfig {
+                memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
+                pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
+                swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
+                cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
+            });
+        }
+        if let Some(cpu) = &layer.cpu_max {
+            self.cpu_max = Some(cpu.clone());
+        }
+        if let Some(ioprio) = &layer.io_priority {
+            self.io_priority = Some(ioprio.clone());
         }
 
         Ok(())
@@ -278,10 +769,20 @@ impl MergedPolicy {
         deduplicate_strings(&mut self.deny_write);
         deduplicate_strings(&mut self.deny_read);
         deduplicate_strings(&mut self.deny_paths);
+        deduplicate_strings(&mut self.deny_preset);
+        deduplicate_strings(&mut self.deny_glob);
+        deduplicate_strings(&mut self.ro_mounts);
+        deduplicate_strings(&mut self.secret_proxies);
         deduplicate_strings(&mut self.pass_through);
         deduplicate_strings(&mut self.deny_env);
         deduplicate_strings(&mut self.deny_network);
         deduplicate_strings(&mut self.network_allow);
+        deduplicate_strings(&mut self.allow_cidr);
+        deduplicate_strings(&mut self.allow_unix_sockets);
+        self.net_bind_ports.sort_unstable();
+        self.net_bind_ports.dedup();
+        self.net_connect_ports.sort_unstable();
+        self.net_connect_ports.dedup();
         deduplicate_strings(&mut self.metadata.extends);
     }
 }
@@ -294,18 +795,26 @@ pub struct PolicyOverrides {
     pub deny_write: Vec<String>,
     pub deny_read: Vec<String>,
     pub display_only_deny: Vec<String>,
+    pub deny_glob: Vec<String>,
+    pub ro_mounts: Vec<String>,
     pub pass_through: Vec<String>,
     pub deny_env: Vec<String>,
     pub deny_network: Vec<String>,
+    pub oslog: Option<bool>,
+    pub lpac: Option<bool>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub limits: Option<ResourceLimits>,
+    pub git_guard: Option<bool>,
+    pub snapshot: Option<bool>,
+    pub auto_deny_secrets: Option<bool>,
 }
 
 /// Context for the 7-tier layered policy loader.
 #[derive(Debug, Clone)]
 pub struct PolicyLoadOptions {
     pub agent: Option<String>,
+    pub preset: Option<crate::policy::presets::Preset>,
     pub branch: Option<String>,
     pub git_tag: Option<String>,
     pub project_policy: Option<PathBuf>,
@@ -316,6 +825,7 @@ pub struct PolicyLoadOptions {
     pub include_project_policy: bool,
     pub include_fragments: bool,
     pub include_local_override: bool,
+    pub require_signed: bool,
     pub overrides: PolicyOverrides,
 }
 
@@ -323,6 +833,7 @@ impl Default for PolicyLoadOptions {
     fn default() -> Self {
         Self {
             agent: None,
+            preset: None,
             branch: None,
             git_tag: None,
             project_policy: None,
@@ -333,6 +844,7 @@ impl Default for PolicyLoadOptions {
             include_project_policy: true,
             include_fragments: true,
             include_local_override: true,
+            require_signed: false,
             overrides: PolicyOverrides::default(),
         }
     }
@@ -346,12 +858,26 @@ pub struct LayeredPolicyLoader {
     pub load_user_policy: bool,
     pub load_fragments: bool,
     pub load_local_override: bool,
+    pub require_signed: bool,
 }
 
 impl Default for LayeredPolicyLoader {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn read_layer_file(path: &Path, require_signed: bool) -> Result<String> {
+    if require_signed {
+        super::crypto::verify_policy_file(path, None, None).with_context(|| {
+            format!(
+                "policy file '{}' failed signature verification (require_signed is active)",
+                path.display()
+            )
+        })?;
+    }
+    std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read policy file {}", path.display()))
 }
 
 impl LayeredPolicyLoader {
@@ -363,6 +889,7 @@ impl LayeredPolicyLoader {
             load_user_policy: true,
             load_fragments: true,
             load_local_override: true,
+            require_signed: false,
         }
     }
 
@@ -434,7 +961,8 @@ impl LayeredPolicyLoader {
                             }
                         }
                     }
-                    if let Ok(text) = std::fs::read_to_string(&path) {
+                    let req_signed = options.require_signed || self.require_signed;
+                    if let Ok(text) = read_layer_file(&path, req_signed) {
                         let label = format!("system:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
                         merge_layer(
@@ -461,7 +989,9 @@ impl LayeredPolicyLoader {
                 .or_else(|| default_user_policy_path(home));
             if let Some(path) = user_path {
                 if path.is_file() {
-                    if let Ok(text) = std::fs::read_to_string(&path) {
+                    let req_signed =
+                        merged.require_signed || options.require_signed || self.require_signed;
+                    if let Ok(text) = read_layer_file(&path, req_signed) {
                         let label = format!("user:{}", path.display());
                         let layer = parse_layer(&text, &label)?;
                         merge_layer(
@@ -507,6 +1037,22 @@ impl LayeredPolicyLoader {
         }
 
         // -------------------------------------------------------------------
+        // Tier 3b: Security Preset (paranoid, balanced, yolo)
+        // -------------------------------------------------------------------
+        if let Some(preset) = options.preset {
+            let layer = crate::policy::presets::preset_layer(preset, options.agent.as_deref());
+            let label = format!("preset:{}", preset.as_str());
+            merge_layer(
+                &layer,
+                &label,
+                &context,
+                &mut stack,
+                &mut merged,
+                PolicySourceKind::Preset,
+            )?;
+        }
+
+        // -------------------------------------------------------------------
         // Tier 4: Agent Preset
         // -------------------------------------------------------------------
         let agent_path = match options.agent.as_deref() {
@@ -533,7 +1079,7 @@ impl LayeredPolicyLoader {
         }
 
         // -------------------------------------------------------------------
-        // Tier 5: Repository Policy (.vetto/policy.toml or vetto.toml) + Fragments
+        // Tier 5: Repository Policy (policy.toml, .vetto/policy.toml, or vetto.toml) + Fragments
         // -------------------------------------------------------------------
         let mut applied_project_path = None;
         if options.include_project_policy {
@@ -541,9 +1087,12 @@ impl LayeredPolicyLoader {
                 Some(path) => (Some(path.clone()), true),
                 None => {
                     let dot_vetto_policy = project.join(".vetto/policy.toml");
+                    let policy_toml = project.join("policy.toml");
                     let vetto_toml = project.join("vetto.toml");
                     if is_usable_file(&dot_vetto_policy) {
                         (Some(dot_vetto_policy), false)
+                    } else if is_usable_file(&policy_toml) {
+                        (Some(policy_toml), false)
                     } else if is_usable_file(&vetto_toml) {
                         (Some(vetto_toml), false)
                     } else {
@@ -562,9 +1111,9 @@ impl LayeredPolicyLoader {
                         path.display()
                     );
                 }
-                let text = std::fs::read_to_string(&path).with_context(|| {
-                    format!("failed to read project policy file {}", path.display())
-                })?;
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                let text = read_layer_file(&path, req_signed)?;
                 let label = path.display().to_string();
                 let layer = parse_layer(&text, &label)?;
                 merge_layer(
@@ -600,7 +1149,9 @@ impl LayeredPolicyLoader {
                     // Sort deterministically alphabetically
                     fragment_files.sort();
                     for frag_path in fragment_files {
-                        if let Ok(text) = std::fs::read_to_string(&frag_path) {
+                        let req_signed =
+                            merged.require_signed || options.require_signed || self.require_signed;
+                        if let Ok(text) = read_layer_file(&frag_path, req_signed) {
                             let label = frag_path.display().to_string();
                             let layer = parse_layer(&text, &label)?;
                             merge_layer(
@@ -631,7 +1182,9 @@ impl LayeredPolicyLoader {
                 None
             };
             if let Some(path) = local_path {
-                if let Ok(text) = std::fs::read_to_string(&path) {
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                if let Ok(text) = read_layer_file(&path, req_signed) {
                     let label = format!("override:{}", path.display());
                     let layer = parse_layer(&text, &label)?;
                     merge_layer(
@@ -655,8 +1208,9 @@ impl LayeredPolicyLoader {
                 .and_then(|project_path| same_file_path(project_path, path))
                 .unwrap_or(false);
             if !duplicate_project {
-                let text = std::fs::read_to_string(path)
-                    .with_context(|| format!("failed to read policy file {}", path.display()))?;
+                let req_signed =
+                    merged.require_signed || options.require_signed || self.require_signed;
+                let text = read_layer_file(path, req_signed)?;
                 let label = format!("cli:{}", path.display());
                 let layer = parse_layer(&text, &label)?;
                 merge_layer(
@@ -712,13 +1266,25 @@ fn default_system_policy_path() -> Option<PathBuf> {
 }
 
 fn default_user_policy_path(home: &Path) -> Option<PathBuf> {
+    let dot_vetto_config = home.join(".vetto/config.toml");
+    if is_usable_file(&dot_vetto_config) {
+        return Some(dot_vetto_config);
+    }
+    let dot_vetto_policy = home.join(".vetto/policy.toml");
+    if is_usable_file(&dot_vetto_policy) {
+        return Some(dot_vetto_policy);
+    }
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let xdg_path = PathBuf::from(xdg).join("vetto/policy.toml");
-        if xdg_path.exists() {
+        if is_usable_file(&xdg_path) {
             return Some(xdg_path);
         }
     }
-    Some(home.join(".config/vetto/policy.toml"))
+    let config_policy = home.join(".config/vetto/policy.toml");
+    if is_usable_file(&config_policy) {
+        return Some(config_policy);
+    }
+    Some(config_policy)
 }
 
 /// Load a policy either from a built-in profile name or a custom TOML path,
@@ -854,9 +1420,21 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     merged
         .deny_paths
         .extend(overrides.display_only_deny.clone());
+    merged.deny_glob.extend(overrides.deny_glob.clone());
+    merged.ro_mounts.extend(overrides.ro_mounts.clone());
     merged.pass_through.extend(overrides.pass_through.clone());
     merged.deny_env.extend(overrides.deny_env.clone());
     merged.deny_network.extend(overrides.deny_network.clone());
+
+    if let Some(true) = overrides.git_guard {
+        merged.git_guard = true;
+    }
+    if let Some(true) = overrides.snapshot {
+        merged.snapshot = true;
+    }
+    if let Some(true) = overrides.auto_deny_secrets {
+        merged.auto_deny_secrets = true;
+    }
 
     if let Some(name) = &overrides.name {
         if !name.is_empty() {
@@ -868,6 +1446,12 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     }
     if let Some(limits) = &overrides.limits {
         merged.limits.merge_strictest(limits);
+    }
+    if let Some(oslog) = overrides.oslog {
+        merged.oslog = oslog;
+    }
+    if let Some(lpac) = overrides.lpac {
+        merged.lpac = lpac;
     }
     Ok(())
 }
@@ -888,18 +1472,39 @@ fn build_policy(
     let mut allow_read_resolved = resolve_list(&merged.allow_read, &vars, agent)?;
     let deny_write_resolved = resolve_list(&merged.deny_write, &vars, agent)?;
     let deny_read_resolved = resolve_list(&merged.deny_read, &vars, agent)?;
+    let ro_mounts_resolved = resolve_list(&merged.ro_mounts, &vars, agent)?;
+
+    for ro in &ro_mounts_resolved {
+        if !allow_read_resolved.contains(ro) {
+            allow_read_resolved.push(ro.clone());
+        }
+    }
 
     let mut deny_resolved = Vec::new();
     let mut deny_set = BTreeSet::new();
 
-    // Accumulate all deny sources: deny_paths, deny_read, deny_write
-    let all_deny_entries: Vec<String> = merged
+    // Accumulate all deny sources: deny_paths, deny_read, deny_write, deny_preset, deny_glob
+    let mut all_deny_entries: Vec<String> = merged
         .deny_paths
         .iter()
         .chain(merged.deny_read.iter())
         .chain(merged.deny_write.iter())
         .cloned()
         .collect();
+
+    for preset_name in &merged.deny_preset {
+        if let Some(paths) = presets::resolve_preset(preset_name) {
+            for p in paths {
+                all_deny_entries.push((*p).to_string());
+            }
+        } else {
+            warnings.push(format!("unknown deny_preset '{preset_name}'"));
+        }
+    }
+
+    for glob_pat in &merged.deny_glob {
+        all_deny_entries.push(glob_pat.clone());
+    }
 
     for entry in &all_deny_entries {
         for path in resolve_list(std::slice::from_ref(entry), &vars, agent)? {
@@ -910,6 +1515,22 @@ fn build_policy(
                         is_dir: meta.is_dir(),
                     });
                 }
+            }
+        }
+    }
+
+    if merged.auto_deny_secrets {
+        let scan_result =
+            secretscan::scan_directory(project, &secretscan::SecretScanOptions::default());
+        if scan_result.timed_out {
+            warnings.push("auto_deny_secrets scan timed out; partial scan completed".to_string());
+        }
+        for secret_path in scan_result.unique_paths() {
+            if deny_set.insert(secret_path.clone()) {
+                deny_resolved.push(DenyEntry {
+                    path: secret_path,
+                    is_dir: false,
+                });
             }
         }
     }
@@ -943,6 +1564,19 @@ fn build_policy(
         )?;
     }
 
+    if !merged.allow_unix_sockets.is_empty() {
+        if let Ok(unix_paths) = resolve_list(&merged.allow_unix_sockets, &vars, agent) {
+            for up in unix_paths {
+                if !allow_read_resolved.contains(&up) {
+                    allow_read_resolved.push(up.clone());
+                }
+                if !allow_write_resolved.contains(&up) {
+                    allow_write_resolved.push(up);
+                }
+            }
+        }
+    }
+
     allow_write_resolved.sort();
     allow_write_resolved.dedup();
     allow_read_resolved.sort();
@@ -959,6 +1593,14 @@ fn build_policy(
         metadata.name.clone()
     };
 
+    let seccomp_profile = match merged.seccomp_profile.as_deref() {
+        Some(name) => match SeccompProfile::parse(name) {
+            Some(prof) => prof,
+            None => bail!("unknown seccomp_profile '{name}'; known profiles: default, agent-min"),
+        },
+        None => SeccompProfile::Default,
+    };
+
     let mut policy = Policy {
         name,
         metadata,
@@ -973,7 +1615,27 @@ fn build_policy(
             deny: normalize_env_patterns(merged.deny_env.clone()),
         },
         deny_network: !merged.deny_network.is_empty(),
+        allow_cidr: merged.allow_cidr.clone(),
+        net_quota: merged.net_quota.clone(),
+        net_bind_ports: merged.net_bind_ports.clone(),
+        net_connect_ports: merged.net_connect_ports.clone(),
+        allow_unix_sockets: merged.allow_unix_sockets.clone(),
+        seccomp_profile,
+        seccomp_notify: merged.seccomp_notify.clone(),
+        cgroup: merged.cgroup.clone(),
+        cpu_max: merged.cpu_max.clone(),
+        io_priority: merged.io_priority.clone(),
+        dev_allow: merged.dev_allow.clone(),
+        oslog: merged.oslog,
+        lpac: merged.lpac,
         is_immutable: merged.is_immutable,
+        system_log: merged.system_log,
+        auto_deny_secrets: merged.auto_deny_secrets,
+        secret_proxies: merged.secret_proxies.clone(),
+        ro_mounts: ro_mounts_resolved,
+        git_guard: merged.git_guard,
+        snapshot: merged.snapshot,
+        tmpfs_tmp: merged.tmpfs_tmp.unwrap_or(true),
         warnings,
     };
     checker::check(&mut policy);
@@ -1388,6 +2050,7 @@ deny = ["SECRET_*"]
         let sec_layer = RawLayer {
             security: Some(RawSecurity {
                 immutable: Some(true),
+                ..Default::default()
             }),
             ..RawLayer::default()
         };
@@ -1404,6 +2067,142 @@ deny = ["SECRET_*"]
         let err = apply_overrides(&mut merged, &overrides)
             .expect_err("lockdown must reject CLI write additions");
         assert!(err.to_string().contains("enterprise lockdown"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn network_presets_expand_correctly() {
+        assert_eq!(
+            expand_net_preset("npm").unwrap(),
+            vec!["registry.npmjs.org".to_string()]
+        );
+        let git_domains = expand_net_preset("git").unwrap();
+        assert!(git_domains.contains(&"github.com".to_string()));
+        assert!(git_domains.contains(&"api.github.com".to_string()));
+        assert!(git_domains.contains(&"codeload.github.com".to_string()));
+
+        let pip_domains = expand_net_preset("pip").unwrap();
+        assert!(pip_domains.contains(&"pypi.org".to_string()));
+        assert!(pip_domains.contains(&"files.pythonhosted.org".to_string()));
+
+        let hf_domains = expand_net_preset("huggingface").unwrap();
+        assert!(hf_domains.contains(&"huggingface.co".to_string()));
+        assert!(hf_domains.contains(&"cdn-lfs.huggingface.co".to_string()));
+
+        assert!(expand_net_preset("unknown-preset").is_err());
+    }
+
+    #[test]
+    fn parse_quota_bytes_handles_units() {
+        assert_eq!(parse_quota_bytes("1024").unwrap(), 1024);
+        assert_eq!(parse_quota_bytes("1024b").unwrap(), 1024);
+        assert_eq!(parse_quota_bytes("500kb").unwrap(), 500 * 1024);
+        assert_eq!(parse_quota_bytes("100mb").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_quota_bytes("1gb").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(
+            parse_quota_bytes("2tb").unwrap(),
+            2 * 1024 * 1024 * 1024 * 1024
+        );
+        assert!(parse_quota_bytes("invalid").is_err());
+    }
+
+    #[test]
+    fn network_policy_sections_load_and_resolve() {
+        let root = std::env::temp_dir().join(format!("vetto-policy-net-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let policy_path = root.join("policy.toml");
+        let toml_content = r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["/usr"]
+
+[network]
+net_presets = ["npm", "git"]
+allow_cidr = ["10.0.0.0/8", "192.168.0.0/16"]
+net_quota = { "api.openai.com" = "100mb" }
+allow_tcp_connect = [443, 80]
+allow_tcp_bind = [8080]
+
+[unix_sockets]
+allow = ["$PROJECT/test.sock"]
+"#;
+        std::fs::write(&policy_path, toml_content).unwrap();
+        let loaded = load("net-test", Some(&policy_path), &root, &root, Tier::Full)
+            .expect("network policy should load");
+
+        assert!(loaded.allow_cidr.contains(&"10.0.0.0/8".to_string()));
+        assert_eq!(
+            loaded.net_quota.get("api.openai.com"),
+            Some(&(100 * 1024 * 1024))
+        );
+        assert_eq!(loaded.net_connect_ports, vec![80, 443]);
+        assert_eq!(loaded.net_bind_ports, vec![8080]);
+        assert!(loaded
+            .allow_unix_sockets
+            .contains(&"$PROJECT/test.sock".to_string()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_require_signed_policy_enforcement() {
+        let root = std::env::temp_dir().join(format!("vetto-signed-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let policy_path = root.join("vetto.toml");
+        let content = r#"
+[metadata]
+name = "signed-test"
+
+[filesystem]
+allow_write = ["${PROJECT}"]
+allow_read = ["/usr", "${PROJECT}"]
+"#;
+        std::fs::write(&policy_path, content).unwrap();
+
+        // 1. Loading with require_signed=true when unsigned must fail
+        let mut loader = LayeredPolicyLoader::new();
+        loader.require_signed = true;
+        let options = PolicyLoadOptions {
+            require_signed: true,
+            ..Default::default()
+        };
+
+        let err = loader.load(
+            "default",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+            &options,
+        );
+        assert!(
+            err.is_err(),
+            "unsigned policy must fail when require_signed=true"
+        );
+
+        // 2. Sign policy
+        use ed25519_dalek::Signer;
+        let keys_dir = root.join(".vetto");
+        let (signing_key, verifying_key) =
+            crate::policy::crypto::ensure_signing_keypair(&keys_dir).unwrap();
+        let sig = signing_key.sign(content.as_bytes());
+        let sig_text = crate::policy::crypto::create_signature_file_content(&sig, &verifying_key);
+        std::fs::write(root.join("vetto.toml.sig"), sig_text).unwrap();
+
+        // 3. Now it should succeed
+        let loaded = loader.load(
+            "default",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+            &options,
+        );
+        assert!(loaded.is_ok(), "signed policy must load successfully");
 
         let _ = std::fs::remove_dir_all(root);
     }

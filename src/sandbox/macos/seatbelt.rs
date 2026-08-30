@@ -59,7 +59,7 @@ pub fn generate_sbpl_template_and_params(
     // libSystem init perform local XPC over unix sockets, and without it the
     // process either fails execve with EPERM or aborts silently after exec.
     match net {
-        NetMode::Off | NetMode::Allowlist(_) | NetMode::Strict(_) => {
+        NetMode::Off | NetMode::Allowlist(_) | NetMode::Strict(_) | NetMode::Ask => {
             sb.push_str("(deny network*)\n");
             sb.push_str("(allow network-outbound (remote unix-socket))\n");
         }
@@ -192,10 +192,93 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SbplFragmentStatus {
+    Broken,
+    Ok,
+}
+
+impl SbplFragmentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Broken => "broken (Apple regression)",
+            Self::Ok => "ok",
+        }
+    }
+
+    pub fn parse_from_output(success: bool, output: &str) -> Self {
+        if success && output.trim() == "sbpl-probe-ok" {
+            Self::Ok
+        } else {
+            Self::Broken
+        }
+    }
+}
+
+/// Dynamic microprobe that tests whether fragmented SBPL read-isolation
+/// profiles trigger Apple's dyld/libSystem SIGABRT regression on this macOS build.
+pub fn probe_sbpl_read_fragment() -> SbplFragmentStatus {
+    #[cfg(target_os = "macos")]
+    {
+        let temp_dir = std::env::temp_dir();
+        let probe_file = temp_dir.join(format!("vetto-sbpl-probe-{}.txt", std::process::id()));
+        if std::fs::write(&probe_file, "sbpl-probe-ok").is_err() {
+            return SbplFragmentStatus::Broken;
+        }
+
+        let probe_path_str = probe_file.to_string_lossy();
+        let profile = format!(
+            "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* (literal \"{probe_path_str}\"))\n(allow file-read* (subpath \"/bin\"))\n(allow file-read* (subpath \"/usr\"))\n(allow file-read* (subpath \"/lib\"))\n(allow file-read* (subpath \"/System\"))\n"
+        );
+
+        let output = std::process::Command::new("/usr/bin/sandbox-exec")
+            .arg("-p")
+            .arg(profile)
+            .arg("/bin/cat")
+            .arg(&probe_file)
+            .output();
+
+        let _ = std::fs::remove_file(&probe_file);
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                SbplFragmentStatus::parse_from_output(out.status.success(), &stdout)
+            }
+            Err(_) => SbplFragmentStatus::Broken,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        SbplFragmentStatus::Broken
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn sbpl_fragment_status_parsing() {
+        assert_eq!(
+            SbplFragmentStatus::parse_from_output(true, "sbpl-probe-ok\n"),
+            SbplFragmentStatus::Ok
+        );
+        assert_eq!(
+            SbplFragmentStatus::parse_from_output(false, "sbpl-probe-ok\n"),
+            SbplFragmentStatus::Broken
+        );
+        assert_eq!(
+            SbplFragmentStatus::parse_from_output(true, "something else"),
+            SbplFragmentStatus::Broken
+        );
+        assert_eq!(
+            SbplFragmentStatus::Broken.as_str(),
+            "broken (Apple regression)"
+        );
+        assert_eq!(SbplFragmentStatus::Ok.as_str(), "ok");
+    }
 
     #[test]
     fn template_generation_contains_expected_params() {

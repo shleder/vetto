@@ -24,7 +24,7 @@ use anyhow::{bail, Result};
 
 use super::types::{Policy, ResourceLimits};
 
-const VALID_KEYS: &str = "cpu, as, procs, nofile, fsize";
+const VALID_KEYS: &str = "cpu, as, procs, nofile, fsize, max_iops, max_bandwidth";
 
 const BYTE_SUFFIX_DOC: &str =
     "byte values accept a plain integer or an integer with a case-insensitive \
@@ -37,6 +37,8 @@ enum LimitKey {
     Processes,
     OpenFiles,
     FileSize,
+    MaxIops,
+    MaxBandwidth,
 }
 
 impl LimitKey {
@@ -47,12 +49,17 @@ impl LimitKey {
             "procs" => Some(Self::Processes),
             "nofile" => Some(Self::OpenFiles),
             "fsize" => Some(Self::FileSize),
+            "max_iops" | "iops" => Some(Self::MaxIops),
+            "max_bandwidth" | "bandwidth" | "max_bw" | "bw" => Some(Self::MaxBandwidth),
             _ => None,
         }
     }
 
     fn is_bytes(&self) -> bool {
-        matches!(self, Self::AddressSpace | Self::FileSize)
+        matches!(
+            self,
+            Self::AddressSpace | Self::FileSize | Self::MaxBandwidth
+        )
     }
 
     /// Merge one parsed pair strictest-wins into the running set: the smaller
@@ -67,6 +74,14 @@ impl LimitKey {
             Self::Processes => limits.processes = strictest(limits.processes, value),
             Self::OpenFiles => limits.open_files = strictest(limits.open_files, value),
             Self::FileSize => limits.file_size_bytes = strictest(limits.file_size_bytes, value),
+            Self::MaxIops => {
+                let io = limits.io_rate.get_or_insert_with(Default::default);
+                io.max_iops = strictest(io.max_iops, value);
+            }
+            Self::MaxBandwidth => {
+                let io = limits.io_rate.get_or_insert_with(Default::default);
+                io.max_bandwidth = strictest(io.max_bandwidth, value);
+            }
         }
     }
 }
@@ -151,12 +166,20 @@ fn parse_byte_value(value: &str, pair: &str) -> Result<u64> {
         (number, 1024u64 * 1024)
     } else if let Some(number) = lower.strip_suffix("gib") {
         (number, 1024u64 * 1024 * 1024)
+    } else if let Some(number) = lower.strip_suffix("gb") {
+        (number, 1000u64 * 1000 * 1000)
+    } else if let Some(number) = lower.strip_suffix("mb") {
+        (number, 1000u64 * 1000)
+    } else if let Some(number) = lower.strip_suffix("kb") {
+        (number, 1000u64)
     } else if let Some(number) = lower.strip_suffix('k') {
         (number, 1000u64)
     } else if let Some(number) = lower.strip_suffix('m') {
         (number, 1000u64 * 1000)
     } else if let Some(number) = lower.strip_suffix('g') {
         (number, 1000u64 * 1000 * 1000)
+    } else if let Some(number) = lower.strip_suffix('b') {
+        (number, 1u64)
     } else {
         bail!("invalid --limits value '{value}' in pair '{pair}': {BYTE_SUFFIX_DOC}")
     };
@@ -223,11 +246,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_io_rate_limits() {
+        let limits = parse_spec("max_iops=1000,max_bandwidth=50mb").expect("io_rate");
+        let io = limits.io_rate.expect("io_rate present");
+        assert_eq!(io.max_iops, Some(1000));
+        assert_eq!(io.max_bandwidth, Some(50_000_000));
+
+        let limits = parse_spec("iops=500,bandwidth=100mib").expect("short keys");
+        let io = limits.io_rate.expect("io_rate present");
+        assert_eq!(io.max_iops, Some(500));
+        assert_eq!(io.max_bandwidth, Some(100 * 1024 * 1024));
+    }
+
+    #[test]
     fn unknown_key_error_names_pair_and_valid_keys() {
-        let err = parse_spec("bandwidth=10").expect_err("unknown key");
+        let err = parse_spec("invalid_key=10").expect_err("unknown key");
         let text = err.to_string();
         assert!(text.contains("unknown"), "{text}");
-        assert!(text.contains("bandwidth"), "{text}");
+        assert!(text.contains("invalid_key"), "{text}");
         assert!(text.contains("nofile"), "{text}");
     }
 

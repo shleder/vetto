@@ -3,6 +3,115 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.6] — 2026-08-30
+
+### Added
+
+- Zero-config auto-detection (`vetto` without arguments): inspects workspace project markers and PATH executables to auto-detect the active AI agent, applies agent-tailored allowlists and secure defaults, and launches supervision.
+- Interactive first-run wizard (`vetto init --wizard`): 3-step interactive setup generating a commented `policy.toml` tailored to project ecosystem (Rust, Node, Python, Go, Java, Ruby, PHP).
+- Security presets (`--preset paranoid|balanced|yolo`): instant baseline security profiles with tailored network access and secret masking rules.
+- Agent network allowlists: out-of-the-box domain allowlists for Claude, Codex, Gemini, Aider, OpenCode, Cursor, Copilot, and Cline.
+- Actionable remediation hints on blocked attempts: TUI and events surface concrete policy modifications when file access or network requests are denied.
+- Path permission inspection (`vetto policy explain --why <path>`): inspects path permissions (WRITABLE, READ_ONLY, DENIED, BLOCKED) and provides exact TOML remediation instructions (supports text and `--json`).
+- Shadow mode (`--shadow`, `RunConfig.shadow`): evaluates policy boundaries in log-only mode ("would deny") during preflight verification.
+- Diagnostic remediation (`vetto doctor --fix`): prints concrete fix commands and sysctl configurations for missing kernel primitives (Landlock LSM, unprivileged userns, seccomp, audit feed).
+- External policy importer (`vetto policy import --from claude|codex`): parses Claude settings JSON or Codex config TOML and generates compatible `policy.toml`.
+- 3-tier configuration hierarchy: `~/.vetto/config.toml` (global defaults) -> `./policy.toml` / `.vetto/policy.toml` (project policy) -> CLI flags (strictest wins).
+- Shell completions and man pages (`vetto completions <shell>`, `vetto man`): native shell completions for Bash, Zsh, Fish, PowerShell, Elvish and man page generation via `clap_mangen`.
+- `vetto --version --json` emitting machine-readable version, fast tier determination, and git commit hash.
+- Stable deterministic exit codes mapped across all session termination paths and documented in `docs/exit-codes.md`.
+- Global `--quiet` (`-q`) and `--verbose` (`-v`) logging flags across CLI commands.
+- Optional system-level journal logging (`system_log = true` / `--system-log`) for Linux journald, Windows EventLog, and macOS logger.
+- `vetto shell-env` command and PS1 prompt integration exporting session indicators (`VETTO_SANDBOX=1`).
+- `vetto status` listing active supervised sessions and cleaning up stale process metadata.
+- Official standalone curl installer `scripts/install.sh` with SHA256 checksum verification and `docs/INSTALL.md`.
+- Automated session timeout computation (`--timeout auto`) via p95 duration history with 5-minute floor.
+- Persistent workspace profiles (`vetto profile save/list/rm`) and direct execution (`vetto <profile>`).
+- Latency and bottleneck diagnostic breakdown with actionable optimization hints (`vetto why-slow <session>`).
+- Release CycloneDX SBOM generation script (`scripts/gen-sbom.sh`) and specification in `docs/SBOM.md`.
+- Landlock ABI diagnostic feature hints in `vetto doctor` for kernels supporting newer LSM features.
+- Conventional commit changelog generator `scripts/gen-changelog.py` for automated release notes.
+- `vetto policy show --effective` for rendering resolved effective policy rules and resource ceilings.
+- **Release Train Workflow** (`.github/workflows/release-train.yml`): automated CI release pipeline with dry-run on `main` push, manual dispatch release (bump patch/minor/major, channel stable/alpha), SLSA Level 3 provenance attestations (`actions/attest-build-provenance`), multi-target binary matrix compilation, npm packaging and publishing.
+- **Version Banner & Update Notification**: Non-blocking async check against npm registry (`https://registry.npmjs.org/@shledery/vetto/latest` or `@shledery/vetto/alpha`) with 24-hour cache in `~/.vetto/cache/version.json` and 2-second timeout. Displayed on session start and in `vetto doctor`.
+- **Self-Upgrade Subcommand** (`vetto upgrade`): Self-update mechanism with automatic installation method detection (npm vs cargo vs binary) supporting `--check`, `--dry-run`, and `--channel <stable|alpha>`.
+- **Release Channels**: Support for `stable` and `alpha` channels via npm dist-tags and user config (`channel = "alpha"` in `~/.vetto/config.toml`).
+- **Compatibility Matrix**: Comprehensive documentation (`docs/compat.md`) and generator script (`scripts/gen-compat.py`) mapping AI agents, platforms, and isolation tiers.
+- **Nightly E2E Agent Suite** (`.github/workflows/e2e-agents.yml`): Nightly multi-agent (Claude Code, OpenAI Codex, Gemini) verification workflow across Linux and macOS runners with honest skip when API credentials are unset.
+- **Public Red-Team Security Reports** (`.github/workflows/redteam.yml`, `scripts/redteam-stub.sh`, `docs/redteam-latest.md`): Automated adversarial attack evaluation and published badge report.
+- **Optional Privacy-Preserving Telemetry**: Strictly opt-in (`telemetry = false` default) aggregate block category counters via `~/.vetto/config.toml` with complete transparency in `docs/telemetry.md`.
+- **Interactive Tour Subcommand** (`vetto tour`): 5-step guided onboarding scenario demonstrating doctor diagnostics, secret masking, shadow mode, policy tailoring, and boundary verification.
+- **Vulnerability Management & CVE Process**: Response SLA (48h acknowledgment), RFC 9116 `.well-known/security.txt`, supported versions table in `SECURITY.md`, and disclosure workflow in `docs/security/cve-process.md`.
+- **SLSA Provenance Verification**: Build provenance attestations and verification documentation in `docs/security/slsa-provenance.md`.
+- **Tier 2 Network Suite (Features 13–24)**:
+  - Ecosystem network presets (`net_presets = ["npm", "git", "pip", "huggingface"]`) expanding common package registries and APIs.
+  - Wildcard domain rules (`*.example.com`) strictly covering subdomains only without matching the base domain.
+  - CIDR network rules (`allow_cidr = ["10.0.0.0/8"]`) validated against pinned IP addresses.
+  - `--net=ask` interactive confirmation mode with session caching and fail-closed non-TTY fallback.
+  - DNS resolution and egress connection logging with byte counts in JSONL events and session reports.
+  - DoH/DoT blocking for top providers and DoT port 853 in allowlist/off modes.
+  - Per-domain transfer quotas (`net_quota = { "api.openai.com" = "100mb" }`) with byte counting and connection teardown.
+  - Landlock TCP port access control rules (`net_ports = { allow_tcp_connect = [...], allow_tcp_bind = [...] }`) on Landlock ABI 4+.
+  - Upstream `HTTP_PROXY` and `HTTPS_PROXY` broker routing with `NO_PROXY` bypass without leaking variables to the sandboxed child.
+  - Unix domain socket access policies (`unix_sockets = { allow = [...] }`).
+  - Full IPv6 (AAAA) resolution and connection support with pinned address discipline.
+  - Aggregated session network summary emitted in notices and report statistics.
+- **Tier 3 Files & Secrets Suite (Features 25–36)**:
+  - Auto secret scan (`vetto scan-secrets [path]` command and `auto_deny_secrets = true` policy option) detecting and denying credential patterns at startup with bounded limits.
+  - Out-of-process credential broker (`secrets.proxy = [...]`) injecting auth headers for allowlisted domains and stripping sensitive credentials from the child.
+  - Built-in deny presets (`deny_preset = ["ssh", "aws", "gcp", "kube", "docker", "gnupg", "git", "npm", "cargo", "claude", "codex"]`).
+  - Glob denial patterns (`--deny-glob` CLI flag and `deny_glob = ["**/*.pem"]`).
+  - Read-only cache mounts (`ro_mounts = ["~/.npm", "~/.cache/pip"]`) mounted `MS_RDONLY` in mount namespace.
+  - Diff reporting with in-memory baseline manifest and summary diff calculation at completion.
+  - Git branch protection (`git_guard = true`) and hook/shim interception blocking destructive operations (`git push --force*`, `git push --delete`).
+  - Snapshot and rollback (`snapshot = true` and `vetto rollback <session>`).
+  - `/proc` and `/sys` masking and `/tmp` private tmpfs isolation (`tmpfs_tmp = true`).
+  - Live session event watch mode (`vetto watch <session-pid/log-path>`).
+  - Filesystem I/O metrics tracking bytes read/written and operation counts.
+- **Tier 4 Observability Suite (Features 37–48)**:
+  - Live TUI dashboard event panel: `--tui=full` augmented with real-time categorized counters (files, network, blocked access, processes).
+  - `vetto events <session>` subcommand for tailing and filtering JSONL session logs with `--filter deny|net|files|exec`, `--follow` streaming tail, and table/JSON formats.
+  - OpenTelemetry session tracing behind optional `telemetry` feature flag: session root span (`vetto.session`) and span-events for security/observation telemetry with `--otel-endpoint`.
+  - `vetto audit` subcommand and persistent session indexing to `~/.vetto/history.jsonl` with `--since`, `--agent`, `--limit`, and substring search.
+  - Desktop notifications on security violations via `--notify` / `notify = true` (Linux `notify-send`, macOS `osascript`, Windows PowerShell toast) via non-blocking subprocesses.
+  - `vetto digest` subcommand for daily audit summaries (sessions, duration, blocked counts, top agents and policies).
+  - `vetto diff-sessions <id1> <id2>` subcommand for comparing two session reports (metric deltas, new and resolved violations, network changes).
+  - Standalone inline SVG category histogram in HTML audit reports visualizing event distribution across categories with zero external dependencies.
+  - `vetto replay <session>` subcommand for chronological sandbox event playback with `--speed` multiplier.
+- **Tier 5 Linux Kernel Hardening Suite (Features 49–60)**:
+  - Seccomp profile configuration (`seccomp_profile = "agent-min"`) blocking exotic and legacy syscalls (personality, syslog, chroot, raw I/O, clock tampering, fanotify) for hardened agent containment.
+  - Seccomp user-notify supervisor framework with default-deny policy handling and blocked attempt event auditing.
+  - cgroup v2 transient lifecycle and resource quota management (`cgroup = { memory_max = "2g", pids_max = 512, swap_max = "0" }`) with RAII cleanup on process teardown.
+  - CPU quota (`cpu_max = "50%"`) and I/O scheduling priority (`io_priority = "idle"`) limits applied via `SYS_ioprio_set` and cgroup v2 `cpu.max`.
+  - Restricted device node masking in mount namespaces (`dev_allow` allowlist support with default masking for dangerous `/dev` hardware and memory nodes).
+  - Tier downgrade guarantee and downgrade test matrix (Tier FULL -> FS-ONLY -> SECCOMP -> fail-closed).
+  - `vetto redteam` subcommand and test battery evaluating 8 kernel containment and breakout attack vectors with text summary and `--json` output.
+  - Seccomp-only micro-tier (`VETTO_FORCE_TIER=seccomp` / `Tier::Seccomp`) for legacy Linux environments lacking Landlock, with loud warnings.
+  - Host environment detection (devcontainer, Docker, Podman, WSL2, native) reported in `vetto doctor`.
+  - GitHub Actions CI matrix updated for tier branches with fallback and redteam verification jobs.
+- **Tier 6 macOS & Windows Deep Hardening Suite (Features 61–72)**:
+  - SBPL regression tracking (`probe_sbpl_read_fragment()`) detecting dynamic linker SIGABRT regressions with fragmented read rules on macOS; surfaced in `vetto doctor` under `sbpl-read-fragment`.
+  - macOS unified log sink (`sandbox::logger::oslog::OsLogSink`) streaming policy denials, warnings, and sandbox lifecycle events to macOS unified log (`/usr/bin/logger -t vetto`) via `--oslog` or `oslog = true` in policy.
+  - macOS `.pkg` installer packaging and notarization script (`packaging/macos/build_pkg.sh`) and guide (`packaging/macos/README.md`) for signed `.pkg` distribution, Apple notarytool submission, and stapling.
+  - Windows Less Privileged AppContainer / LPAC isolation via `--lpac` / `lpac = true` and capability probing in `vetto doctor`.
+  - Windows Job Object IO rate control (`max_iops` and `max_bandwidth` resource limit controls backed by `JOB_OBJECT_IO_RATE_CONTROL_INFORMATION`).
+  - Windows Authenticode digital signing script (`packaging/windows/sign.ps1`) and guide (`packaging/windows/README.md`) for automated SHA-256 / RFC 3161 Authenticode binary signing in release pipelines.
+  - Windows Sandbox VM backend opt-in (`--backend win-sandbox`) with `mapped_read_write` folder support in `windows_sandbox.rs` and capability-gated launch.
+  - Cross-platform policy parity test suite (`tests/integration/policy_parity.rs`) and full OS Parity Guarantee Matrix in `docs/platform-backends.md`.
+- **Tier 7 Ecosystem Integration Suite (Features 73–84)**:
+  - `vetto-action` (Composite GitHub Action): Daemon-less GitHub Action installing precompiled binary or npm package with zero user-side Rust compilation overhead, supporting `policy`, `net`, and `command` inputs with SARIF output.
+  - Model Context Protocol (MCP) Server: `vetto mcp` stdio JSON-RPC 2.0 server exposing the `run_sandboxed` tool for LLM clients (Claude Desktop, Cursor, Zed) to execute sandboxed tasks.
+  - One-liner Agent Plugins: `vetto plugin install claude-code` and `vetto plugin install opencode` with non-destructive JSON deep merge and automatic timestamped backups (`.bak.<timestamp>`).
+  - VS Code Extension: Minimal extension in `vscode/` adding the `Vetto: Run Task Sandboxed` command to run workspace `tasks.json` tasks inside the sandbox.
+  - Package Publishing Recipes: Homebrew tap bootstrap script and formula in `packaging/homebrew/`, Arch Linux AUR `PKGBUILD` and `.SRCINFO` in `packaging/aur/`, and `[package.metadata.binstall]` metadata in `Cargo.toml`.
+  - Multiplexer Daemon & Session Registry: `vetto daemon start/status/stop` with session registry and mandatory `SO_PEERCRED` / `getpeereid` peer credentials verification on Unix domain sockets.
+  - Loopback REST API: HTTP API bound strictly to `127.0.0.1` (`POST /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}`) authenticated via secret Bearer token (`~/.vetto/daemon/token`).
+  - Remote Execution (`vetto serve` & `vetto --remote`): Remote execution over SSH port forwarding with dedicated instructions and CLI client.
+  - Policy Cryptographic Signing (Ed25519): `vetto policy sign` and `vetto policy verify` with Ed25519 keys (`~/.vetto/signing.key`), plus `[security] require_signed = true` loader enforcement.
+  - Community Policy Registry: 7 battle-tested policies (`python-dev`, `node-dev`, `rust-dev`, `java-dev`, `data-science`, `read-only-audit`, `yolo-web`) and `vetto policy use <name>` CLI command.
+  - Docker Hybrid Integration: Multi-stage `Dockerfile.vetto` and detailed double-sandbox defense-in-depth documentation (`docs/integrations/docker-in-vetto.md`).
+  - Kubernetes Manifests: `k8s/deployment.yaml`, `k8s/daemonset.yaml`, `k8s/vetto-sidecar.yaml`, and documentation of Landlock seccomp compatibility.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added

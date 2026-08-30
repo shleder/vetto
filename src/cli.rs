@@ -1,6 +1,9 @@
 pub mod git_hook;
 pub mod hook;
+pub mod plugin;
 pub mod shell_env;
+pub mod status;
+pub mod why_slow;
 
 pub use hook::{HookCommand, HookScope, ShellType};
 
@@ -29,6 +32,8 @@ Examples:
   vetto rescue diagnose sessions/2026/08/23/session.jsonl
   vetto rescue snapshot session.jsonl --output ./recovery/session.jsonl
   vetto report compare session-a.json session-b.json
+  vetto tour
+  vetto upgrade --check
   vetto completions bash";
 
 /// vetto - daemon-less sandbox + security layer for AI coding agents.
@@ -39,23 +44,44 @@ pub struct Cli {
     #[arg(long, default_value = "default", value_name = "NAME")]
     pub profile: String,
 
+    /// Base security preset: paranoid | balanced | yolo
+    #[arg(long, value_name = "PRESET")]
+    pub preset: Option<String>,
+
     /// Explicit policy TOML layer applied after the profile and project policy
     #[arg(long, value_name = "PATH")]
     pub policy: Option<String>,
 
     /// Network mode: off | allowlist:<domain,domain,...> |
     /// strict:<domain:port,domain:port,...>
-    #[arg(long, value_name = "MODE", default_value = "off")]
-    pub net: String,
+    #[arg(long, value_name = "MODE")]
+    pub net: Option<String>,
 
     /// UI mode: statusline | full | none
     #[arg(long, value_name = "MODE", default_value = "statusline")]
     pub tui: String,
 
+    /// Explicit sandbox backend: auto | process | win-sandbox
+    #[arg(long, value_name = "BACKEND")]
+    pub backend: Option<String>,
+
+    /// Emit events to macOS unified log (os_log / logger)
+    #[arg(long)]
+    pub oslog: bool,
+
+    /// Run Windows AppContainer in Less Privileged AppContainer (LPAC) mode
+    #[arg(long)]
+    pub lpac: bool,
+
     /// Attach a best-effort blocked-attempt observation tap (Linux).
     /// Observation ONLY — Landlock remains the sole enforcer.
     #[arg(long)]
     pub observe_seccomp: bool,
+
+    /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
+    /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
+    #[arg(long)]
+    pub shadow: bool,
 
     /// Append every session event as JSON lines to PATH
     #[arg(long, value_name = "PATH")]
@@ -106,6 +132,14 @@ pub struct Cli {
     #[arg(long)]
     pub git_ssh: bool,
 
+    /// Desktop notifications on security violations (blocked path access, network escape).
+    #[arg(long)]
+    pub notify: bool,
+
+    /// OpenTelemetry OTLP endpoint for session span export.
+    #[arg(long, value_name = "URL")]
+    pub otel_endpoint: Option<String>,
+
     /// Kill the sandboxed session after DURATION without the agent finishing
     /// (e.g. 90s, 30m, 2h). Enforced with --tui=none (CI mode); other TUI
     /// modes warn and ignore it.
@@ -131,9 +165,17 @@ pub struct Cli {
     #[arg(long)]
     pub ci: bool,
 
+    /// Suppress diagnostic and non-essential progress messages on stderr
+    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
     /// Verbose diagnostics on stderr
-    #[arg(short = 'v', long)]
+    #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
+
+    /// Forward session events to system journal (journald, EventLog, syslog)
+    #[arg(long)]
+    pub system_log: bool,
 
     /// Select an agent preset, or provide NAME=PROGRAM entries with --multi.
     #[arg(long = "agent", value_name = "NAME", action = clap::ArgAction::Append)]
@@ -146,6 +188,26 @@ pub struct Cli {
     /// Multi-agent TOML manifest for the compatibility frontend.
     #[arg(long = "manifest", value_name = "PATH")]
     pub multi_manifest: Option<PathBuf>,
+
+    /// Additional glob patterns to resolve and deny (e.g. "**/*.pem").
+    #[arg(long = "deny-glob", value_name = "PATTERN", action = clap::ArgAction::Append)]
+    pub deny_glob: Vec<String>,
+
+    /// Enforce Git branch protection (refuse write on main/master) and block destructive git pushes.
+    #[arg(long = "git-guard")]
+    pub git_guard: bool,
+
+    /// Take a project snapshot before session starts and enable rollback.
+    #[arg(long = "snapshot")]
+    pub snapshot: bool,
+
+    /// Automatically scan project for secrets at session start and deny them.
+    #[arg(long = "auto-deny-secrets")]
+    pub auto_deny_secrets: bool,
+
+    /// Target remote daemon API endpoint URL (e.g. http://127.0.0.1:54321)
+    #[arg(long, value_name = "URL")]
+    pub remote: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -166,12 +228,18 @@ pub enum Command {
         /// Probe a known agent executable with a bounded --version command.
         #[arg(long = "check-agent", value_name = "NAME")]
         check_agent: Option<String>,
+        /// Show concrete remediation commands and steps for missing sandbox primitives.
+        #[arg(long)]
+        fix: bool,
     },
-    /// Analyze project ecosystem and generate a tailored vetto.toml policy
+    /// Analyze project ecosystem and generate a tailored policy.toml policy
     Init {
-        /// Overwrite existing vetto.toml if present
+        /// Overwrite existing policy if present
         #[arg(long, short = 'f')]
         force: bool,
+        /// Interactive first-run setup wizard
+        #[arg(long)]
+        wizard: bool,
     },
     /// List built-in policy profiles
     Profiles,
@@ -179,6 +247,24 @@ pub enum Command {
     Hook {
         #[command(subcommand)]
         command: HookCommand,
+    },
+    /// Manage agent integration plugins (Claude Code, OpenCode)
+    Plugin {
+        #[command(subcommand)]
+        command: plugin::PluginCommand,
+    },
+    /// Run as a Model Context Protocol (MCP) JSON-RPC stdio server
+    Mcp,
+    /// Manage background session multiplexer daemon and session registry
+    Daemon {
+        #[command(subcommand)]
+        command: crate::daemon::DaemonCommand,
+    },
+    /// Run multiplexer daemon in foreground with SSH remote instructions
+    Serve {
+        /// Loopback HTTP port for REST API (default: 54321)
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
+        port: u16,
     },
     /// Fast native shim dispatcher for intercepted toolchain binaries
     Shim {
@@ -233,6 +319,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run red-team sandbox containment and kernel isolation attack battery.
+    Redteam {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain the effective policy or lint it for dangerous configurations.
     Policy {
         #[command(subcommand)]
@@ -243,6 +335,165 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Generate man page to stdout.
+    Man,
+    /// Print environment variable export lines for shell integration and PS1.
+    #[command(name = "shell-env")]
+    ShellEnv {
+        /// Session ID to export.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Sandbox tier to export.
+        #[arg(long)]
+        tier: Option<String>,
+        /// Profile name to export.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List active sandboxed sessions and cleanup stale metadata.
+    Status {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage persistent workspace profiles (cwd, agent, policy).
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
+    /// Diagnostic latency breakdown and optimization hints for a session.
+    #[command(name = "why-slow")]
+    WhySlow {
+        /// Session identifier or report path.
+        session: String,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Self-upgrade vetto via npm or cargo based on installation method
+    Upgrade {
+        /// Channel to upgrade from (stable or alpha)
+        #[arg(long, value_name = "CHANNEL")]
+        channel: Option<String>,
+        /// Check for updates without applying
+        #[arg(long)]
+        check: bool,
+        /// Simulate upgrade command without running
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Interactive 5-step onboarding walkthrough
+    Tour {
+        /// Run all tour steps non-interactively without waiting for keypresses
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// Scan project directory for exposed secrets and credentials
+    ScanSecrets {
+        /// Target directory or file to scan (defaults to current directory)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+        /// Maximum file size to scan in bytes (default: 1MB)
+        #[arg(long, value_name = "BYTES")]
+        max_size: Option<u64>,
+        /// Maximum number of files to scan (default: 5000)
+        #[arg(long, value_name = "COUNT")]
+        max_files: Option<usize>,
+    },
+    /// Live-tail session events from JSONL log with optional path filtering
+    Watch {
+        /// Session PID or path to JSONL log file
+        #[arg(value_name = "SESSION_OR_LOG")]
+        target: String,
+        /// Optional path filter
+        #[arg(long, value_name = "PATTERN")]
+        path: Option<String>,
+        /// Emit raw JSON lines instead of formatted output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore project files from a previously created session snapshot
+    Rollback {
+        /// Session ID or path to snapshot archive
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Optional restore target directory override
+        #[arg(long, value_name = "TARGET")]
+        target: Option<PathBuf>,
+    },
+    /// Tail and filter JSONL session event logs.
+    Events {
+        /// Path to session JSONL log file or session identifier
+        #[arg(value_name = "SESSION")]
+        session: PathBuf,
+        /// Filter events by category (deny, net, files, exec, notice) or substring
+        #[arg(long, value_name = "FILTER")]
+        filter: Option<String>,
+        /// Continuously follow the log for new events (streaming tail)
+        #[arg(short = 'f', long)]
+        follow: bool,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
+        /// Format output as a column table
+        #[arg(long)]
+        table: bool,
+    },
+    /// Query and inspect session audit history (~/.vetto/history.jsonl).
+    Audit {
+        /// Filter sessions since duration (e.g. 24h, 7d, 30m, YYYY-MM-DD)
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// Filter by agent preset or name
+        #[arg(long, value_name = "NAME")]
+        agent: Option<String>,
+        /// Limit the maximum number of history entries displayed
+        #[arg(long, value_name = "COUNT")]
+        limit: Option<usize>,
+        /// Optional substring search in policy path, profile, agent, or session ID
+        #[arg(value_name = "QUERY")]
+        query: Option<String>,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate an aggregated daily audit digest from session history.
+    Digest {
+        /// Window duration to aggregate (e.g. 24h, 7d, 30m; default 24h)
+        #[arg(long, value_name = "DURATION", default_value = "24h")]
+        since: String,
+        /// Emit machine-readable JSON summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare two session JSON audit reports (metric deltas and violation diffs).
+    #[command(name = "diff-sessions")]
+    DiffSessions {
+        /// Base session JSON report or identifier
+        #[arg(value_name = "SESSION1")]
+        session1: PathBuf,
+        /// Target session JSON report or identifier
+        #[arg(value_name = "SESSION2")]
+        session2: PathBuf,
+        /// Emit machine-readable JSON diff
+        #[arg(long)]
+        json: bool,
+    },
+    /// Chronologically replay sandbox observation and security events from a session log.
+    Replay {
+        /// Path to session JSONL log file or session identifier
+        #[arg(value_name = "SESSION")]
+        session: PathBuf,
+        /// Playback speed multiplier (e.g. 1.0 for real-time, 2.0 for 2x; default instant)
+        #[arg(long, value_name = "FACTOR")]
+        speed: Option<f64>,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]
     SshProxy {
@@ -251,6 +502,9 @@ pub enum Command {
         /// Port token supplied by OpenSSH (%p).
         port: u16,
     },
+    /// Stored workspace profile invocation by name.
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[derive(Subcommand, Debug)]
@@ -261,6 +515,18 @@ pub enum PolicyCommand {
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
+        /// Explain why a specific path is allowed, denied, or writable.
+        #[arg(long = "why", value_name = "PATH")]
+        why: Option<PathBuf>,
+    },
+    /// Show the resolved effective policy.
+    Show {
+        /// Print effective resolved policy.
+        #[arg(long)]
+        effective: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Check the resolved policy for dangerous configurations. Exits
     /// non-zero with --strict when any finding is reported.
@@ -268,6 +534,82 @@ pub enum PolicyCommand {
         /// Exit non-zero when any finding is reported.
         #[arg(long)]
         strict: bool,
+    },
+    /// Import permissions from external agent configurations (e.g. claude, codex)
+    Import {
+        /// Source agent configuration format: claude | codex
+        #[arg(long, value_name = "AGENT")]
+        from: String,
+        /// Path to source configuration file (defaults to ~/.claude/settings.json or ~/.codex/config.toml)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Output path for generated policy (default: ./policy.toml)
+        #[arg(long, short = 'o', value_name = "PATH", default_value = "policy.toml")]
+        output: PathBuf,
+    },
+    /// Cryptographically sign a policy file using Ed25519
+    Sign {
+        /// Policy file to sign
+        file: PathBuf,
+        /// Custom private signing key path (default: ~/.vetto/signing.key)
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// Custom signature output path (default: <file>.sig)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Verify the cryptographic Ed25519 signature of a policy file
+    Verify {
+        /// Policy file to verify
+        file: PathBuf,
+        /// Signature file path (default: <file>.sig)
+        #[arg(long)]
+        sig: Option<PathBuf>,
+        /// Public key file path (default: ~/.vetto/signing.pub)
+        #[arg(long)]
+        key: Option<PathBuf>,
+    },
+    /// Adopt a community policy into the current project
+    Use {
+        /// Community policy name (e.g. python-dev, node-dev, rust-dev)
+        name: String,
+        /// Overwrite existing vetto.toml
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// List available community policies
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProfileCommand {
+    /// Save current working directory and settings as a named workspace profile.
+    Save {
+        /// Name of the profile.
+        name: String,
+        /// Agent command or preset.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Explicit policy path.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+        /// Network mode.
+        #[arg(long)]
+        net: Option<String>,
+        /// Built-in profile layer name.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List all saved workspace profiles.
+    List {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a saved workspace profile.
+    Rm {
+        /// Name of the profile to remove.
+        name: String,
     },
 }
 
@@ -338,6 +680,14 @@ pub enum RescueCommand {
 pub fn print_completions(shell: Shell) -> anyhow::Result<()> {
     let mut command = Cli::command();
     clap_complete::generate(shell, &mut command, "vetto", &mut std::io::stdout());
+    Ok(())
+}
+
+/// Render man page to stdout without starting a sandbox session.
+pub fn print_man() -> anyhow::Result<()> {
+    let command = Cli::command();
+    let man = clap_mangen::Man::new(command);
+    man.render(&mut std::io::stdout())?;
     Ok(())
 }
 
@@ -498,6 +848,242 @@ mod tests {
                 },
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn man_generator_renders_valid_troff_manpage() {
+        let command = Cli::command();
+        let man = clap_mangen::Man::new(command);
+        let mut buffer = Vec::new();
+        man.render(&mut buffer).expect("render man page");
+        let rendered = String::from_utf8_lossy(&buffer);
+        assert!(rendered.contains(".TH vetto"));
+        assert!(rendered.contains("NAME"));
+        assert!(rendered.contains("SYNOPSIS"));
+    }
+
+    #[test]
+    fn parses_preset_and_shadow_flags() {
+        let cli = Cli::try_parse_from(["vetto", "--preset", "paranoid", "--shadow", "--", "node"])
+            .expect("preset and shadow flags");
+        assert_eq!(cli.preset.as_deref(), Some("paranoid"));
+        assert!(cli.shadow);
+    }
+
+    #[test]
+    fn doctor_fix_subcommand_parses() {
+        let cli = Cli::try_parse_from(["vetto", "doctor", "--fix"]).expect("doctor fix parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Doctor { fix: true, .. })
+        ));
+    }
+
+    #[test]
+    fn upgrade_subcommand_parses_channel_and_flags() {
+        let cli = Cli::try_parse_from(["vetto", "upgrade", "--channel", "alpha", "--check"])
+            .expect("upgrade parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Upgrade {
+                channel: Some(ref ch),
+                check: true,
+                dry_run: false,
+            }) if ch == "alpha"
+        ));
+    }
+
+    #[test]
+    fn init_wizard_subcommand_parses() {
+        let cli = Cli::try_parse_from(["vetto", "init", "--wizard"]).expect("init wizard parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Init { wizard: true, .. })
+        ));
+    }
+
+    #[test]
+    fn policy_explain_why_parses() {
+        let cli = Cli::try_parse_from(["vetto", "policy", "explain", "--why", "src/main.rs"])
+            .expect("policy explain why parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Explain { why: Some(ref path), .. }
+            }) if path == &PathBuf::from("src/main.rs")
+        ));
+    }
+
+    #[test]
+    fn policy_import_parses() {
+        let cli = Cli::try_parse_from([
+            "vetto",
+            "policy",
+            "import",
+            "--from",
+            "claude",
+            "-o",
+            "my-policy.toml",
+        ])
+        .expect("policy import parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Import { ref from, ref output, .. }
+            }) if from == "claude" && output == &PathBuf::from("my-policy.toml")
+        ));
+    }
+
+    #[test]
+    fn tour_subcommand_parses_non_interactive_flag() {
+        let cli =
+            Cli::try_parse_from(["vetto", "tour", "--non-interactive"]).expect("tour parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tour {
+                non_interactive: true,
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_observability_subcommands() {
+        let events_cli = Cli::try_parse_from([
+            "vetto",
+            "events",
+            "session.jsonl",
+            "--filter",
+            "deny",
+            "--follow",
+        ])
+        .expect("events parsing");
+        assert!(matches!(
+            events_cli.command,
+            Some(Command::Events {
+                ref session,
+                ref filter,
+                follow: true,
+                ..
+            }) if session == &PathBuf::from("session.jsonl") && filter.as_deref() == Some("deny")
+        ));
+
+        let audit_cli = Cli::try_parse_from([
+            "vetto",
+            "audit",
+            "--since",
+            "24h",
+            "--agent",
+            "codex",
+            "--limit",
+            "10",
+            "search_term",
+        ])
+        .expect("audit parsing");
+        assert!(matches!(
+            audit_cli.command,
+            Some(Command::Audit {
+                ref since,
+                ref agent,
+                limit: Some(10),
+                ref query,
+                ..
+            }) if since.as_deref() == Some("24h") && agent.as_deref() == Some("codex") && query.as_deref() == Some("search_term")
+        ));
+
+        let digest_cli = Cli::try_parse_from(["vetto", "digest", "--since", "7d", "--json"])
+            .expect("digest parsing");
+        assert!(matches!(
+            digest_cli.command,
+            Some(Command::Digest {
+                ref since,
+                json: true,
+            }) if since == "7d"
+        ));
+
+        let diff_cli =
+            Cli::try_parse_from(["vetto", "diff-sessions", "s1.json", "s2.json", "--json"])
+                .expect("diff-sessions parsing");
+        assert!(matches!(
+            diff_cli.command,
+            Some(Command::DiffSessions {
+                ref session1,
+                ref session2,
+                json: true,
+            }) if session1 == &PathBuf::from("s1.json") && session2 == &PathBuf::from("s2.json")
+        ));
+
+        let replay_cli =
+            Cli::try_parse_from(["vetto", "replay", "session.jsonl", "--speed", "1.5"])
+                .expect("replay parsing");
+        assert!(matches!(
+            replay_cli.command,
+            Some(Command::Replay {
+                ref session,
+                speed: Some(1.5),
+                ..
+            }) if session == &PathBuf::from("session.jsonl")
+        ));
+    }
+
+    #[test]
+    fn tier7_subcommands_parse_correctly() {
+        let mcp = Cli::try_parse_from(["vetto", "mcp"]).expect("mcp syntax");
+        assert!(matches!(mcp.command, Some(Command::Mcp)));
+
+        let plugin_install =
+            Cli::try_parse_from(["vetto", "plugin", "install", "claude-code", "--force"])
+                .expect("plugin install syntax");
+        assert!(matches!(
+            plugin_install.command,
+            Some(Command::Plugin {
+                command: plugin::PluginCommand::Install {
+                    ref target,
+                    force: true
+                }
+            }) if target == "claude-code"
+        ));
+
+        let daemon_start = Cli::try_parse_from([
+            "vetto",
+            "daemon",
+            "start",
+            "--port",
+            "54321",
+            "--foreground",
+        ])
+        .expect("daemon start syntax");
+        assert!(matches!(
+            daemon_start.command,
+            Some(Command::Daemon {
+                command: crate::daemon::DaemonCommand::Start {
+                    port: 54321,
+                    foreground: true,
+                    ..
+                }
+            })
+        ));
+
+        let serve =
+            Cli::try_parse_from(["vetto", "serve", "--port", "8080"]).expect("serve syntax");
+        assert!(matches!(serve.command, Some(Command::Serve { port: 8080 })));
+
+        let policy_sign = Cli::try_parse_from(["vetto", "policy", "sign", "vetto.toml"])
+            .expect("policy sign syntax");
+        assert!(matches!(
+            policy_sign.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Sign { ref file, .. }
+            }) if file == &PathBuf::from("vetto.toml")
+        ));
+
+        let policy_use = Cli::try_parse_from(["vetto", "policy", "use", "python-dev"])
+            .expect("policy use syntax");
+        assert!(matches!(
+            policy_use.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Use { ref name, force: false }
+            }) if name == "python-dev"
         ));
     }
 }

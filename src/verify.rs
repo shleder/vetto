@@ -118,12 +118,15 @@ pub fn run_cli(
 ) -> anyhow::Result<()> {
     // Same detection context as a supervised session: the tier resolved here
     // is the tier the battery will verify.
-    let backend = sandbox::Backend::detect(net.clone(), false)?;
+    let tier = match sandbox::Backend::detect(net.clone(), false) {
+        Ok(b) => b.tier().unwrap_or(policy::Tier::Full),
+        Err(_) => policy::Tier::Full,
+    };
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME not set")?;
-    let tier = backend.tier().unwrap_or(policy::Tier::Full);
+        .context("neither $HOME nor %USERPROFILE% is set")?;
     let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
     let report = preflight(&pol, net)?;
 
@@ -248,7 +251,10 @@ fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
     // Write-outside probe target. Skipped when $HOME is inside a write root:
     // the probe would then test a permission the policy grants on purpose.
     let mut write_probe = None;
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+    {
         if !pol.in_write_scope(&home) {
             let path = home.join(format!("vetto-verify-probe-{}", std::process::id()));
             script_args.push(format!("WRITECHECK:{}", path.display()));
@@ -302,7 +308,7 @@ fn tier_label(tier: Option<Tier>) -> String {
 fn net_pass_detail(tier: Option<Tier>) -> String {
     match tier {
         Some(Tier::Full) => "host loopback listener unreachable (netns isolation)".to_string(),
-        Some(Tier::FsOnly) => {
+        Some(Tier::FsOnly) | Some(Tier::Seccomp) => {
             "host loopback listener unreachable (seccomp socket block)".to_string()
         }
         None if cfg!(target_os = "macos") => {

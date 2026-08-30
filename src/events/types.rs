@@ -46,6 +46,28 @@ pub enum Event {
         port: u16,
         allowed: bool,
     },
+    /// DNS resolution recorded by the network broker.
+    DnsResolved {
+        ts: DateTime<Utc>,
+        host: String,
+        ips: Vec<String>,
+    },
+    /// Established network connection with transfer counts.
+    NetEgress {
+        ts: DateTime<Utc>,
+        host: String,
+        ip: String,
+        port: u16,
+        bytes_tx: u64,
+        bytes_rx: u64,
+    },
+    /// Network transfer quota exceeded for a domain.
+    NetQuotaExceeded {
+        ts: DateTime<Utc>,
+        host: String,
+        limit_bytes: u64,
+        used_bytes: u64,
+    },
     /// A secret path was masked with a mount overlay (Tier FULL).
     SecretMasked { ts: DateTime<Utc>, path: String },
     /// Honest-notice text surfaced to statusline/doctor/reports.
@@ -75,6 +97,9 @@ impl Event {
             | Event::ExecObserved { ts, .. }
             | Event::BlockedAttempt { ts, .. }
             | Event::NetRequest { ts, .. }
+            | Event::DnsResolved { ts, .. }
+            | Event::NetEgress { ts, .. }
+            | Event::NetQuotaExceeded { ts, .. }
             | Event::SecretMasked { ts, .. }
             | Event::Notice { ts, .. }
             | Event::SessionTimeout { ts }
@@ -89,6 +114,9 @@ impl Event {
             Event::ExecObserved { .. } => "exec_observed",
             Event::BlockedAttempt { .. } => "blocked_attempt",
             Event::NetRequest { .. } => "net_request",
+            Event::DnsResolved { .. } => "dns_resolved",
+            Event::NetEgress { .. } => "net_egress",
+            Event::NetQuotaExceeded { .. } => "net_quota_exceeded",
             Event::SecretMasked { .. } => "secret_masked",
             Event::Notice { .. } => "notice",
             Event::SessionTimeout { .. } => "session_timeout",
@@ -121,8 +149,64 @@ impl Event {
             _ => None,
         }
     }
+
+    /// Returns remediation hint for blocked filesystem attempts and denied network requests.
+    pub fn hint(&self) -> Option<String> {
+        match self {
+            Event::BlockedAttempt { path, .. } => Some(format!(
+                "to allow: add `read = \"{path}\"` (or net domain) to policy.toml"
+            )),
+            Event::NetRequest {
+                host,
+                allowed: false,
+                ..
+            } => Some(format!(
+                "to allow: add `allow = [\"{host}\"]` (or net domain) to policy.toml"
+            )),
+            _ => None,
+        }
+    }
 }
 
 pub fn now() -> DateTime<Utc> {
     Utc::now()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_hint_provides_remediation_for_blocked_attempts() {
+        let blocked_file = Event::BlockedAttempt {
+            ts: now(),
+            pid: 1234,
+            comm: "agent".into(),
+            path: "~/.aws/credentials".into(),
+            source: "landlock".into(),
+        };
+        assert_eq!(
+            blocked_file.hint().unwrap(),
+            "to allow: add `read = \"~/.aws/credentials\"` (or net domain) to policy.toml"
+        );
+
+        let blocked_net = Event::NetRequest {
+            ts: now(),
+            host: "api.custom.com".into(),
+            port: 443,
+            allowed: false,
+        };
+        assert_eq!(
+            blocked_net.hint().unwrap(),
+            "to allow: add `allow = [\"api.custom.com\"]` (or net domain) to policy.toml"
+        );
+
+        let allowed_net = Event::NetRequest {
+            ts: now(),
+            host: "api.custom.com".into(),
+            port: 443,
+            allowed: true,
+        };
+        assert!(allowed_net.hint().is_none());
+    }
 }

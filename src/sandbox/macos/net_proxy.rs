@@ -102,6 +102,7 @@ impl BrokerPolicy {
                     bail!("host {host:?}:{port} is not in the strict broker policy");
                 }
             }
+            NetMode::Ask => {}
         }
         Ok(PinnedConnection { host, port, addr })
     }

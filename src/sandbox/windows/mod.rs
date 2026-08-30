@@ -273,6 +273,7 @@ pub struct WindowsCapabilities {
     pub restricted_token: bool,
     pub low_integrity_token: bool,
     pub appcontainer_api: bool,
+    pub lpac_api: bool,
     pub experimental_create_process_in_sandbox: bool,
     pub experimental_create_process_as_user_in_sandbox: bool,
     pub filesystem_policy: bool,
@@ -296,11 +297,12 @@ impl WindowsCapabilities {
 
     pub fn summary(&self) -> String {
         format!(
-            "windows job-kill={}, restricted-token={}, low-integrity={}, appcontainer-api={}, experimental-process-sandbox={}, experimental-as-user={}, fs-policy={}, network-policy={}, privileged-network-backend={}, admin-required={}",
+            "windows job-kill={}, restricted-token={}, low-integrity={}, appcontainer-api={}, lpac-api={}, experimental-process-sandbox={}, experimental-as-user={}, fs-policy={}, network-policy={}, privileged-network-backend={}, admin-required={}",
             yn(self.job_object_kill_on_close),
             yn(self.restricted_token),
             yn(self.low_integrity_token),
             yn(self.appcontainer_api),
+            yn(self.lpac_api),
             yn(self.experimental_create_process_in_sandbox),
             yn(self.experimental_create_process_as_user_in_sandbox),
             yn(self.filesystem_policy),
@@ -358,6 +360,7 @@ pub fn probe() -> WindowsCapabilities {
     let job = probe_job_object();
     let (restricted, low) = probe_restricted_token();
     let appcontainer = probe_appcontainer_api();
+    let lpac_api = appcontainer::probe_lpac();
     let experimental = experimental_create_process_in_sandbox().is_some();
     let experimental_as_user = experimental_create_process_as_user_in_sandbox().is_some();
     let mut notes = vec![
@@ -396,6 +399,7 @@ pub fn probe() -> WindowsCapabilities {
         restricted_token: restricted,
         low_integrity_token: low,
         appcontainer_api: appcontainer,
+        lpac_api,
         experimental_create_process_in_sandbox: experimental,
         experimental_create_process_as_user_in_sandbox: experimental_as_user,
         filesystem_policy: experimental,
@@ -735,6 +739,29 @@ fn create_kill_on_close_job(limits: &ResourceLimits) -> Result<OwnedHandle> {
         let error = anyhow!("SetInformationJobObject failed: {}", last_error());
         close_handle(job);
         return Err(error);
+    }
+    // Optional IO rate limits from the policy (Feature 60).
+    if let Some(io_rate) = &limits.io_rate {
+        if io_rate.max_iops.is_some() || io_rate.max_bandwidth.is_some() {
+            let mut io_info = job_object::JobObjectIoRateControlInformation {
+                max_iops: io_rate.max_iops.map(|v| v as i64).unwrap_or(0),
+                max_bandwidth: io_rate.max_bandwidth.map(|v| v as i64).unwrap_or(0),
+                reservation_iops: 0,
+                volume_name: null(),
+                base_io_size: 0,
+                control_flags: 0,
+            };
+            // Best-effort: on older Windows versions where IO rate control is unsupported,
+            // SetInformationJobObject returns FALSE. We do not fail the entire job creation.
+            unsafe {
+                SetInformationJobObject(
+                    job,
+                    job_object::JOB_OBJECT_IO_RATE_CONTROL_INFORMATION,
+                    (&mut io_info as *mut job_object::JobObjectIoRateControlInformation).cast(),
+                    size_of::<job_object::JobObjectIoRateControlInformation>() as Dword,
+                );
+            }
+        }
     }
     // SAFETY: successful CreateJobObjectW returned an owned handle.
     Ok(unsafe { OwnedHandle::from_raw_handle(job.cast()) })

@@ -1,0 +1,37 @@
+# Multi-stage Dockerfile for running AI agents under Vetto double-sandbox confinement
+FROM rust:1.75-bullseye AS builder
+
+WORKDIR /build
+COPY . .
+RUN cargo build --release --locked
+
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Vetto binary from builder
+COPY --from=builder /build/target/release/vetto /usr/local/bin/vetto
+RUN chmod 755 /usr/local/bin/vetto
+
+# Setup unprivileged agent user
+RUN useradd -m -u 1000 -s /bin/bash agent
+WORKDIR /workspace
+RUN chown -R agent:agent /workspace
+
+USER agent
+ENV USER=agent
+ENV HOME=/home/agent
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Entrypoint runs commands wrapped in Vetto CI mode
+ENTRYPOINT ["vetto", "--ci", "--profile", "strict", "--"]
+CMD ["bash"]

@@ -10,11 +10,21 @@ who can modify the operator's files, or a malicious vetto binary.
 See [docs/threat-model.md](docs/threat-model.md) for the attack-by-attack
 analysis.
 
-## Reporting a vulnerability
+## Supported versions
 
-Use GitHub's private vulnerability-reporting flow for this repository
-(Security → Report a vulnerability). No security email address is advertised
-until such an address is actually configured and monitored.
+| Version | Supported | Notes |
+|---|---|---|
+| `0.2.x` | ✅ Yes | Current active release branch |
+| `< 0.2.0` | ❌ No | Early preview builds; please upgrade to `0.2.x` |
+
+## Reporting a vulnerability and response SLA
+
+- **Reporting Channel**: Use GitHub's private vulnerability-reporting flow (Security → Report a vulnerability) or consult [.well-known/security.txt](.well-known/security.txt).
+- **Response SLA**:
+  - **48 hours**: Initial acknowledgment of report receipt.
+  - **7 days**: Triage, reproduction, and initial severity / CVSS assessment.
+  - **30 days**: Coordinated disclosure window with patch release and CVE assignment.
+- Detailed procedures and severity guidelines are documented in [docs/security/cve-process.md](docs/security/cve-process.md).
 
 Include the vetto revision, OS/kernel, detected tier, policy, shortest safe
 reproducer and whether the result is an enforcement bypass or only a missing

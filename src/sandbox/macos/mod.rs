@@ -58,6 +58,9 @@ impl MacosSandbox {
         if matches!(self.net, NetMode::Strict(_)) {
             bail!("--net=strict requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
         }
+        if matches!(self.net, NetMode::Ask) {
+            bail!("--net=ask requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+        }
 
         let (err_r, err_w) = pipe2()?;
         let err_w_raw = err_w.as_raw_fd();

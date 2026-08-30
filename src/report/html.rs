@@ -78,6 +78,8 @@ pub fn render(stats: &SessionStats) -> String {
         suspicious.push_str("</table>\n");
     }
 
+    let histogram_svg = super::svg::render_category_histogram_svg(stats);
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -111,6 +113,9 @@ pub fn render(stats: &SessionStats) -> String {
   <span>exit: <b>{exit}</b></span>
   <span>duration: <b>{dur}s</b></span>
 </p>
+
+<h2>Event category distribution</h2>
+{histogram}
 
 <h2>Event counts</h2>
 <table>
@@ -147,6 +152,7 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
         profile = html_escape(&clean(&stats.profile)),
         exit = stats.exit_code,
         dur = stats.duration_secs,
+        histogram = histogram_svg,
         rows = rows,
         reads = stats.file_reads,
         writes = stats.file_writes,

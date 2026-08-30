@@ -1,6 +1,6 @@
 [package]
 name = "vetto"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 rust-version = "1.75"
 description = "Daemon-less sandbox + security layer for AI coding agents (Landlock/Seatbelt, TUI statusline, post-session audit reports)"
@@ -11,6 +11,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [features]
 default = []
+telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 [[bin]]
 name = "vetto"
@@ -21,18 +22,32 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_mangen = "0.2"
 crossterm = "0.27"
 glob = "0.3"
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"], optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
 ratatui = "0.26"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std", "rand_core"] }
+rand_core = { version = "0.6", features = ["std"] }
 sha2 = "0.10"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/vetto-{ target }.tar.gz"
+bin-dir = "vetto"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

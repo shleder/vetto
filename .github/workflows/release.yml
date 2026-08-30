@@ -119,6 +119,27 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --locked --release --target ${{ matrix.target }}
 
+      - name: Sign Windows binary (Authenticode)
+        if: runner.os == 'Windows'
+        env:
+          SIGNING_CERT_PFX: ${{ secrets.SIGNING_CERT_PFX }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          ./packaging/windows/sign.ps1 -TargetPath "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+
+      - name: Build macOS installer package (.pkg)
+        if: runner.os == 'macOS'
+        env:
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          DEVELOPER_ID_INSTALLER: ${{ secrets.DEVELOPER_ID_INSTALLER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          ./packaging/macos/build_pkg.sh "${RELEASE_TAG#v}" "${{ matrix.target }}" || true
+
       - name: Package release archive
         if: runner.os != 'Windows'
         shell: bash

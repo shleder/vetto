@@ -1,11 +1,16 @@
 pub mod checker;
+pub mod community;
 pub mod conditions;
+pub mod crypto;
 pub mod defaults;
 pub mod explain;
 pub mod glob_resolve;
+pub mod import;
 pub mod limits_spec;
 pub mod lint;
 pub mod loader;
+pub mod presets;
+pub mod secretscan;
 pub mod types;
 
 pub use conditions::{ConditionContext, RawConditions};
@@ -14,6 +19,6 @@ pub use loader::{
     PolicyOverrides,
 };
 pub use types::{
-    DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits,
-    SubtractiveRules, Tier,
+    CgroupConfig, DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind,
+    ResourceLimits, SeccompNotifyConfig, SeccompProfile, SubtractiveRules, Tier,
 };

@@ -93,7 +93,11 @@ fn init_writes_starter_policy() {
     let proj = TempProject::new("init");
     let out = run_vetto_in(proj.path(), &["init"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    let toml = proj.path().join("vetto.toml");
+    let toml = if proj.path().join("policy.toml").exists() {
+        proj.path().join("policy.toml")
+    } else {
+        proj.path().join("vetto.toml")
+    };
     assert!(toml.exists());
     let body = std::fs::read_to_string(&toml).unwrap();
     assert!(body.contains("allow_write"));

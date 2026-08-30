@@ -1,0 +1,7 @@
+# RFC 9116 Security Contact Information for vetto
+Contact: https://github.com/shleder/vetto/security/advisories/new
+Expires: 2027-12-31T23:59:59.000Z
+Preferred-Languages: en, ru
+Canonical: https://raw.githubusercontent.com/shleder/vetto/main/.well-known/security.txt
+Policy: https://github.com/shleder/vetto/blob/main/SECURITY.md
+Acknowledgments: https://github.com/shleder/vetto/blob/main/docs/security/cve-process.md

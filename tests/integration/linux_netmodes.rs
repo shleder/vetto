@@ -253,3 +253,76 @@ fn allowlist_permits_listed_domain_only() {
         stdout(&denied)
     );
 }
+
+#[test]
+fn wildcard_domain_allowlist_permits_subdomains_and_denies_base_domain() {
+    if detected_tier().as_deref() != Some("full") {
+        eprintln!("SKIP: allowlist needs full tier");
+        return;
+    }
+    if !tool_available("curl") {
+        eprintln!("SKIP: curl not installed");
+        return;
+    }
+    let proj = TempProject::new("wildcard-net");
+
+    // Base domain of wildcard is denied
+    let denied_base = run_vetto_in(
+        proj.path(),
+        &[
+            "--tui=none",
+            "--net=allowlist:*.example.com",
+            "--",
+            "curl",
+            "-sS",
+            "-m",
+            "5",
+            "https://example.com",
+        ],
+    );
+    assert!(
+        !denied_base.status.success(),
+        "wildcard base domain must not be permitted: {}",
+        stdout(&denied_base)
+    );
+}
+
+#[test]
+fn policy_net_presets_load_and_permit_traffic() {
+    if detected_tier().as_deref() != Some("full") {
+        eprintln!("SKIP: needs full tier");
+        return;
+    }
+    let proj = TempProject::new("net-presets");
+    let policy_toml = r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["/usr", "/etc"]
+
+[network]
+net_presets = ["npm", "git"]
+allow_cidr = ["10.0.0.0/8"]
+net_quota = { "github.com" = "100mb" }
+"#;
+    std::fs::write(proj.path().join("policy.toml"), policy_toml).unwrap();
+
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--tui=none",
+            "--policy",
+            proj.path().join("policy.toml").to_str().unwrap(),
+            "--profile",
+            "custom:test",
+            "--",
+            "echo",
+            "preset-policy-loaded-ok",
+        ],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("preset-policy-loaded-ok"),
+        "stdout: {text}; stderr: {}",
+        stderr(&out)
+    );
+}

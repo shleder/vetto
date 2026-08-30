@@ -77,6 +77,7 @@ pub struct Capabilities {
     pub create_appcontainer_profile: bool,
     pub derive_appcontainer_sid: bool,
     pub delete_appcontainer_profile: bool,
+    pub lpac_api: bool,
     pub note: &'static str,
 }
 
@@ -448,6 +449,19 @@ pub fn cleanup_orphan_profiles(prefix: &str) {
     }
 }
 
+/// Probe whether LPAC (Less Privileged AppContainer) SID and API are available.
+pub fn probe_lpac() -> bool {
+    let sid_str = wide("S-1-15-2-2").unwrap();
+    let mut sid: Sid = null_mut();
+    let ok = unsafe { ConvertStringSidToSidW(sid_str.as_ptr(), &mut sid) };
+    if ok != 0 && !sid.is_null() {
+        unsafe { LocalFree(sid) };
+        true
+    } else {
+        false
+    }
+}
+
 /// Probe AppContainer capabilities on this host.
 pub fn probe() -> Capabilities {
     Capabilities {
@@ -455,6 +469,7 @@ pub fn probe() -> Capabilities {
         create_appcontainer_profile: true,
         derive_appcontainer_sid: true,
         delete_appcontainer_profile: true,
+        lpac_api: probe_lpac(),
         note: "native Win32 AppContainer profile and DACL management verified",
     }
 }

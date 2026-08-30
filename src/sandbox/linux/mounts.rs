@@ -17,6 +17,8 @@ use crate::error::{VettoError, VettoResult};
 const MS_REC: libc::c_ulong = 0x4000;
 const MS_PRIVATE: libc::c_ulong = 0x04_0000;
 const MS_BIND: libc::c_ulong = 0x1000;
+const MS_RDONLY: libc::c_ulong = 0x1;
+const MS_REMOUNT: libc::c_ulong = 0x20;
 const MS_NOSUID: libc::c_ulong = 0x2;
 const MS_NODEV: libc::c_ulong = 0x4;
 const MS_NOEXEC: libc::c_ulong = 0x8;
@@ -281,12 +283,181 @@ pub fn mask_path(path: &Path, is_dir: bool) -> VettoResult<bool> {
     Ok(true)
 }
 
+/// Mask restricted and dangerous device nodes inside the mount namespace.
+/// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
+/// If `dev_allow` is None, default dangerous device nodes are masked.
+pub fn mask_restricted_devices(dev_allow: Option<&[String]>) -> VettoResult<()> {
+    let dev_dir = Path::new("/dev");
+    if !dev_dir.exists() || !dev_dir.is_dir() {
+        return Ok(());
+    }
+
+    if let Some(allowed_list) = dev_allow {
+        let mut allowed_set: std::collections::HashSet<String> = allowed_list
+            .iter()
+            .map(|s| {
+                s.trim_start_matches("/dev/")
+                    .trim_start_matches('/')
+                    .to_string()
+            })
+            .collect();
+        allowed_set.insert("null".into());
+        allowed_set.insert("zero".into());
+        allowed_set.insert("full".into());
+        allowed_set.insert("random".into());
+        allowed_set.insert("urandom".into());
+        allowed_set.insert("tty".into());
+        allowed_set.insert("pts".into());
+        allowed_set.insert("shm".into());
+        allowed_set.insert("fd".into());
+        allowed_set.insert("stdin".into());
+        allowed_set.insert("stdout".into());
+        allowed_set.insert("stderr".into());
+
+        if let Ok(entries) = std::fs::read_dir(dev_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !allowed_set.contains(&name) {
+                    let path = entry.path();
+                    let is_dir = path.is_dir();
+                    let _ = mask_path(&path, is_dir);
+                }
+            }
+        }
+    } else {
+        let dangerous_devs = [
+            "/dev/kmsg",
+            "/dev/mem",
+            "/dev/kmem",
+            "/dev/port",
+            "/dev/core",
+            "/dev/dri",
+            "/dev/snd",
+            "/dev/input",
+            "/dev/kvm",
+            "/dev/vhost-net",
+            "/dev/vhost-vsock",
+            "/dev/autofs",
+            "/dev/btrfs-control",
+            "/dev/loop-control",
+            "/dev/mapper/control",
+            "/dev/rtc0",
+            "/dev/hpet",
+        ];
+        for d in dangerous_devs {
+            let path = Path::new(d);
+            if path.exists() {
+                let is_dir = path.is_dir();
+                let _ = mask_path(path, is_dir);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Blackhole DNS inside allowlist mode: the child must never resolve on its
 /// own; the broker resolves remotely instead.
 pub fn blackhole_resolv_conf() -> VettoResult<()> {
     let p = Path::new("/etc/resolv.conf");
     if p.exists() {
         bind_devnull(p)?;
+    }
+    Ok(())
+}
+
+/// Remount /sys as read-only inside the mount namespace.
+pub fn remount_sys_readonly() -> VettoResult<()> {
+    let target = Path::new("/sys");
+    if !target.exists() || !target.is_dir() {
+        return Ok(());
+    }
+    let dst = cstr(target)?;
+    // SAFETY: bind mount /sys over itself first, then remount read-only.
+    unsafe {
+        libc::mount(
+            dst.as_ptr(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND | MS_REC,
+            std::ptr::null(),
+        );
+        if libc::mount(
+            std::ptr::null(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_REC,
+            std::ptr::null(),
+        ) != 0
+        {
+            return Err(VettoError::Mount(format!(
+                "remount /sys read-only: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Mask host information and sensitive debugging endpoints in /proc.
+/// Masked paths:
+///   /proc/kcore (physical memory image)
+///   /proc/kallsyms (kernel symbol table)
+///   /proc/sysrq-trigger (kernel magic sysrq)
+///   /proc/sched_debug (scheduler debug info)
+///   /proc/slabinfo (kernel slab cache allocation)
+///   /proc/acpi (ACPI tables)
+///   /proc/asound (sound card state)
+pub fn mask_sensitive_proc_paths() -> VettoResult<()> {
+    let sensitive_files = [
+        "/proc/kcore",
+        "/proc/kallsyms",
+        "/proc/sysrq-trigger",
+        "/proc/sched_debug",
+        "/proc/slabinfo",
+    ];
+    for p in sensitive_files {
+        let path = Path::new(p);
+        if path.exists() {
+            let _ = bind_devnull(path);
+        }
+    }
+
+    let sensitive_dirs = ["/proc/acpi", "/proc/asound"];
+    for p in sensitive_dirs {
+        let path = Path::new(p);
+        if path.exists() && path.is_dir() {
+            let _ = empty_tmpfs(path);
+        }
+    }
+    Ok(())
+}
+
+/// Mount specified cache paths as read-only binds inside the mount namespace.
+pub fn mount_ro_caches(ro_mounts: &[std::path::PathBuf]) -> VettoResult<()> {
+    for path in ro_mounts {
+        if path.exists() {
+            let dst = cstr(path)?;
+            // SAFETY: bind mount and remount read-only
+            unsafe {
+                if libc::mount(
+                    dst.as_ptr(),
+                    dst.as_ptr(),
+                    std::ptr::null(),
+                    MS_BIND | MS_REC,
+                    std::ptr::null(),
+                ) == 0
+                {
+                    let _ = libc::mount(
+                        std::ptr::null(),
+                        dst.as_ptr(),
+                        std::ptr::null(),
+                        MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC,
+                        std::ptr::null(),
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
