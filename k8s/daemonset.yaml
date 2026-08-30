@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vetto-node-daemon
+  namespace: kube-system
+  labels:
+    app: vetto-node-daemon
+spec:
+  selector:
+    matchLabels:
+      app: vetto-node-daemon
+  template:
+    metadata:
+      labels:
+        app: vetto-node-daemon
+    spec:
+      hostPID: false
+      hostNetwork: false
+      containers:
+        - name: vetto-server
+          image: ghcr.io/shleder/vetto:0.2.5
+          command: ["vetto", "daemon", "start", "--socket", "/var/run/vetto/vetto.sock", "--foreground"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            runAsNonRoot: false
+            seccompProfile:
+              type: Unconfined
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/run/vetto
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/run/vetto
+            type: DirectoryOrCreate

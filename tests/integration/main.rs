@@ -8,6 +8,7 @@
 mod common;
 
 mod cli_reporting;
+mod ecosystem_tier7;
 #[cfg(target_os = "linux")]
 mod env_stripping;
 mod git_hooks;

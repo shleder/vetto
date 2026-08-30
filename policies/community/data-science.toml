@@ -1,0 +1,58 @@
+[metadata]
+name = "data-science"
+description = "Community policy tailored for Data Science and ML workloads (Jupyter, PyTorch, Pandas, HuggingFace)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${HOME}/.cache/huggingface",
+    "${HOME}/.cache/torch",
+    "${HOME}/.jupyter",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}/.local",
+    "${HOME}/.conda",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+    "${HOME}/.kaggle/kaggle.json",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "download.pytorch.org",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "CUDA_VISIBLE_DEVICES",
+    "TORCH_HOME",
+    "HF_HOME",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

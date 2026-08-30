@@ -1,0 +1,56 @@
+[metadata]
+name = "yolo-web"
+description = "Web development policy with broad outbound network access for frontend/backend agent workflows"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "registry.npmjs.org",
+    "github.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "crates.io",
+    "static.crates.io",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "NODE_ENV",
+    "PORT",
+    "HOST",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

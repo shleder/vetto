@@ -1,5 +1,7 @@
 pub mod checker;
+pub mod community;
 pub mod conditions;
+pub mod crypto;
 pub mod defaults;
 pub mod explain;
 pub mod glob_resolve;

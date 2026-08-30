@@ -10,15 +10,18 @@ pub mod bench_support;
 pub mod classifier;
 pub mod cli;
 pub mod config;
+pub mod daemon;
 pub mod doctor;
 pub mod error;
 pub mod events;
 pub mod init;
 pub mod logger;
+pub mod mcp;
 pub mod multi;
 pub mod policy;
 #[cfg(unix)]
 pub mod pty;
+pub mod remote;
 pub mod report;
 pub mod rescue;
 pub mod sandbox;

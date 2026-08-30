@@ -1,0 +1,54 @@
+[metadata]
+name = "python-dev"
+description = "Community policy tailored for Python development (uv, poetry, pip, virtualenv)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${HOME}/.cache/pip",
+    "${HOME}/.cache/uv",
+    "${HOME}/.cache/pypoetry",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}/.cache",
+    "${HOME}/.local",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "pypi.org",
+    "files.pythonhosted.org",
+    "github.com",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

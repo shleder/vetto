@@ -1,0 +1,57 @@
+[metadata]
+name = "java-dev"
+description = "Community policy tailored for Java / JVM development (Maven, Gradle)"
+
+[filesystem]
+allow_write = [
+    "${PROJECT}",
+    "${HOME}/.m2/repository",
+    "${HOME}/.gradle/caches",
+    "${HOME}/.gradle/wrapper",
+    "${TMPDIR}",
+    "/tmp",
+]
+allow_read = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/etc",
+    "${PROJECT}",
+    "${HOME}/.m2",
+    "${HOME}/.gradle",
+]
+deny_write = [
+    "${PROJECT}/.git",
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+]
+deny_read = [
+    "${HOME}/.ssh/id_*",
+    "${HOME}/.aws/credentials",
+    "${HOME}/.gnupg/secring.gpg",
+    "${HOME}/.m2/settings-security.xml",
+]
+
+[network]
+mode = "allowlist"
+allowlist = [
+    "repo.maven.apache.org",
+    "plugins.gradle.org",
+    "services.gradle.org",
+    "github.com",
+]
+
+[environment]
+pass_through = [
+    "PATH",
+    "JAVA_HOME",
+    "GRADLE_USER_HOME",
+    "M2_HOME",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+]

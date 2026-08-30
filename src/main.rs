@@ -20,7 +20,9 @@ use clap::Parser;
 use vetto::config::NetMode;
 use vetto::config::{RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
-use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox, shim};
+use vetto::{
+    cli, daemon, events, logger, mcp, multi, policy, remote, report, rescue, sandbox, shim,
+};
 #[cfg(unix)]
 use vetto::{pty, tui};
 
@@ -33,6 +35,15 @@ fn main() -> Result<()> {
 
     let args = cli::Cli::parse();
     logger::init(args.verbose);
+
+    if let Some(remote_url) = &args.remote {
+        return remote::run_remote_client(
+            remote_url,
+            args.agent.clone(),
+            args.policy.clone(),
+            Some(args.net.clone()),
+        );
+    }
 
     if args.multi {
         if args.command.is_some() {
@@ -57,6 +68,10 @@ fn main() -> Result<()> {
         Some(cli::Command::Init { force }) => init(*force),
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
+        Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
+        Some(cli::Command::Mcp) => mcp::run_stdio_server(),
+        Some(cli::Command::Daemon { command }) => daemon::run_cli(command),
+        Some(cli::Command::Serve { port }) => remote::run_serve(*port),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
         Some(cli::Command::Multi {
             manifest,
@@ -102,6 +117,41 @@ fn main() -> Result<()> {
                 &args.profile,
                 args.policy.as_deref().map(PathBuf::from).as_deref(),
             ),
+            cli::PolicyCommand::Sign { file, key, out } => {
+                let sig_path =
+                    policy::crypto::sign_policy_file(file, key.as_deref(), out.as_deref())?;
+                println!(
+                    "Successfully signed policy file {} -> {}",
+                    file.display(),
+                    sig_path.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::Verify { file, sig, key } => {
+                policy::crypto::verify_policy_file(file, sig.as_deref(), key.as_deref())?;
+                println!(
+                    "Policy cryptographic verification SUCCESS for {}",
+                    file.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::Use { name, force } => {
+                let project = std::env::current_dir().context("getcwd")?;
+                let path = policy::community::install_community_policy(name, &project, *force)?;
+                println!(
+                    "Installed community policy '{}' into {}",
+                    name,
+                    path.display()
+                );
+                Ok(())
+            }
+            cli::PolicyCommand::List => {
+                println!("Available community policies in registry:");
+                for (name, desc) in policy::community::list_community_policies() {
+                    println!("  {:16} {}", name, desc);
+                }
+                Ok(())
+            }
         },
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
         Some(cli::Command::SshProxy { host, port }) => {

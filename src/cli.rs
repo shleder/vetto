@@ -1,5 +1,6 @@
 pub mod git_hook;
 pub mod hook;
+pub mod plugin;
 pub mod shell_env;
 
 pub use hook::{HookCommand, HookScope, ShellType};
@@ -147,6 +148,10 @@ pub struct Cli {
     #[arg(long = "manifest", value_name = "PATH")]
     pub multi_manifest: Option<PathBuf>,
 
+    /// Target remote daemon API endpoint URL (e.g. http://127.0.0.1:54321)
+    #[arg(long, value_name = "URL")]
+    pub remote: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -179,6 +184,24 @@ pub enum Command {
     Hook {
         #[command(subcommand)]
         command: HookCommand,
+    },
+    /// Manage agent integration plugins (Claude Code, OpenCode)
+    Plugin {
+        #[command(subcommand)]
+        command: plugin::PluginCommand,
+    },
+    /// Run as a Model Context Protocol (MCP) JSON-RPC stdio server
+    Mcp,
+    /// Manage background session multiplexer daemon and session registry
+    Daemon {
+        #[command(subcommand)]
+        command: crate::daemon::DaemonCommand,
+    },
+    /// Run multiplexer daemon in foreground with SSH remote instructions
+    Serve {
+        /// Loopback HTTP port for REST API (default: 54321)
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
+        port: u16,
     },
     /// Fast native shim dispatcher for intercepted toolchain binaries
     Shim {
@@ -269,6 +292,38 @@ pub enum PolicyCommand {
         #[arg(long)]
         strict: bool,
     },
+    /// Cryptographically sign a policy file using Ed25519
+    Sign {
+        /// Policy file to sign
+        file: PathBuf,
+        /// Custom private signing key path (default: ~/.vetto/signing.key)
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// Custom signature output path (default: <file>.sig)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Verify the cryptographic Ed25519 signature of a policy file
+    Verify {
+        /// Policy file to verify
+        file: PathBuf,
+        /// Signature file path (default: <file>.sig)
+        #[arg(long)]
+        sig: Option<PathBuf>,
+        /// Public key file path (default: ~/.vetto/signing.pub)
+        #[arg(long)]
+        key: Option<PathBuf>,
+    },
+    /// Adopt a community policy into the current project
+    Use {
+        /// Community policy name (e.g. python-dev, node-dev, rust-dev)
+        name: String,
+        /// Overwrite existing vetto.toml
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// List available community policies
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -498,6 +553,67 @@ mod tests {
                 },
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn tier7_subcommands_parse_correctly() {
+        let mcp = Cli::try_parse_from(["vetto", "mcp"]).expect("mcp syntax");
+        assert!(matches!(mcp.command, Some(Command::Mcp)));
+
+        let plugin_install =
+            Cli::try_parse_from(["vetto", "plugin", "install", "claude-code", "--force"])
+                .expect("plugin install syntax");
+        assert!(matches!(
+            plugin_install.command,
+            Some(Command::Plugin {
+                command: plugin::PluginCommand::Install {
+                    ref target,
+                    force: true
+                }
+            }) if target == "claude-code"
+        ));
+
+        let daemon_start = Cli::try_parse_from([
+            "vetto",
+            "daemon",
+            "start",
+            "--port",
+            "54321",
+            "--foreground",
+        ])
+        .expect("daemon start syntax");
+        assert!(matches!(
+            daemon_start.command,
+            Some(Command::Daemon {
+                command: crate::daemon::DaemonCommand::Start {
+                    port: 54321,
+                    foreground: true,
+                    ..
+                }
+            })
+        ));
+
+        let serve =
+            Cli::try_parse_from(["vetto", "serve", "--port", "8080"]).expect("serve syntax");
+        assert!(matches!(serve.command, Some(Command::Serve { port: 8080 })));
+
+        let policy_sign = Cli::try_parse_from(["vetto", "policy", "sign", "vetto.toml"])
+            .expect("policy sign syntax");
+        assert!(matches!(
+            policy_sign.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Sign { ref file, .. }
+            }) if file == &PathBuf::from("vetto.toml")
+        ));
+
+        let policy_use = Cli::try_parse_from(["vetto", "policy", "use", "python-dev"])
+            .expect("policy use syntax");
+        assert!(matches!(
+            policy_use.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Use { ref name, force: false }
+            }) if name == "python-dev"
         ));
     }
 }

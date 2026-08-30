@@ -1,0 +1,51 @@
+# Vetto Sidecar Pattern for Agent Pods
+# Provides an isolated sandboxing sidecar service communicating over shared volume Unix socket
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-with-vetto-sidecar
+  labels:
+    app: agent-worker
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+    # 1. Main LLM Agent / Orchestrator container
+    - name: agent-orchestrator
+      image: ghcr.io/shleder/agent-runner:latest
+      command: ["python", "main.py"]
+      env:
+        - name: VETTO_REMOTE
+          value: "unix:///var/run/vetto/vetto.sock"
+      volumeMounts:
+        - name: shared-socket
+          mountPath: /var/run/vetto
+        - name: workspace
+          mountPath: /workspace
+
+    # 2. Vetto Sandboxed Execution Sidecar
+    - name: vetto-sidecar
+      image: ghcr.io/shleder/vetto:0.2.5
+      command: ["vetto", "daemon", "start", "--socket", "/var/run/vetto/vetto.sock", "--foreground"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        seccompProfile:
+          type: Unconfined # Required for Landlock inside container
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: shared-socket
+          mountPath: /var/run/vetto
+        - name: workspace
+          mountPath: /workspace
+
+  volumes:
+    - name: shared-socket
+      emptyDir: {}
+    - name: workspace
+      emptyDir: {}
