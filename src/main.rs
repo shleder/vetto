@@ -154,6 +154,15 @@ fn run() -> Result<()> {
             cli::ProfileCommand::Rm { name } => profile::remove_profile(name),
         },
         Some(cli::Command::WhySlow { session, json }) => cli::why_slow::run_cli(session, *json),
+        Some(cli::Command::Allow {
+            target,
+            read_only,
+            net,
+            global,
+        }) => vetto::policy::edit::run_allow(target, *read_only, *net, *global),
+        Some(cli::Command::Deny { target, global }) => {
+            vetto::policy::edit::run_deny(target, *global)
+        }
         Some(cli::Command::Multi {
             manifest,
             agents,

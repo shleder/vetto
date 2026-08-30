@@ -3,6 +3,7 @@ pub mod community;
 pub mod conditions;
 pub mod crypto;
 pub mod defaults;
+pub mod edit;
 pub mod explain;
 pub mod glob_resolve;
 pub mod import;

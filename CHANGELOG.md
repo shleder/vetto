@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- One-command policy editing: `vetto allow` (path or `--net` domain, `--read-only`, `--global`) and `vetto deny` write the grant into the project or user-global policy preserving comments and formatting; blocked-attempt and denied-network hints now point at the exact command instead of a nonexistent TOML key.
+
 ## [0.2.7] — 2026-08-30
 
 ### Added

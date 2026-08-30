@@ -219,6 +219,30 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Grant the agent access to a path or network domain (writes policy)
+    Allow {
+        /// Filesystem path, or network domain with --net
+        #[arg(value_name = "PATH|DOMAIN")]
+        target: String,
+        /// Filesystem only: read-only grant (default is read + write)
+        #[arg(long)]
+        read_only: bool,
+        /// Treat TARGET as a network domain instead of a path
+        #[arg(long)]
+        net: bool,
+        /// Edit ~/.vetto/config.toml instead of the project policy
+        #[arg(long)]
+        global: bool,
+    },
+    /// Explicitly deny reads of a path (secret masking) in the policy
+    Deny {
+        /// Filesystem path to mask, e.g. ~/.aws/credentials
+        #[arg(value_name = "PATH")]
+        target: String,
+        /// Edit ~/.vetto/config.toml instead of the project policy
+        #[arg(long)]
+        global: bool,
+    },
     /// Diagnose platform support: tiers, landlock ABI, userns, seccomp, audit feed
     Doctor {
         /// Additionally verify that every display_only_deny path is truly

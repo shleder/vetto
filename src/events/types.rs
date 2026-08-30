@@ -154,14 +154,14 @@ impl Event {
     pub fn hint(&self) -> Option<String> {
         match self {
             Event::BlockedAttempt { path, .. } => Some(format!(
-                "to allow: add `read = \"{path}\"` (or net domain) to policy.toml"
+                "to allow: run `vetto allow {path}` (read+write into project policy)"
             )),
             Event::NetRequest {
                 host,
                 allowed: false,
                 ..
             } => Some(format!(
-                "to allow: add `allow = [\"{host}\"]` (or net domain) to policy.toml"
+                "to allow: run `vetto allow --net {host}` (domain into project policy)"
             )),
             _ => None,
         }
@@ -187,7 +187,7 @@ mod tests {
         };
         assert_eq!(
             blocked_file.hint().unwrap(),
-            "to allow: add `read = \"~/.aws/credentials\"` (or net domain) to policy.toml"
+            "to allow: run `vetto allow ~/.aws/credentials` (read+write into project policy)"
         );
 
         let blocked_net = Event::NetRequest {
@@ -198,7 +198,7 @@ mod tests {
         };
         assert_eq!(
             blocked_net.hint().unwrap(),
-            "to allow: add `allow = [\"api.custom.com\"]` (or net domain) to policy.toml"
+            "to allow: run `vetto allow --net api.custom.com` (domain into project policy)"
         );
 
         let allowed_net = Event::NetRequest {

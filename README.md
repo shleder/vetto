@@ -331,6 +331,18 @@ Policies can be signed: `vetto policy sign` produces an Ed25519 signature and
 `vetto watch` / `vetto events` / `vetto audit` stream policy-relevant
 observations live.
 
+You do not have to hand-edit TOML for the common cases. When something is
+blocked, the hint tells you the exact command; running it writes the grant
+into the project policy (comments preserved) and the next session gets it:
+
+```bash
+vetto allow ./vendor          # read + write access to a path
+vetto allow --read-only /usr/share/doc   # read-only grant
+vetto allow --net registry.npmjs.org     # network domain (allowlist mode)
+vetto deny ~/.aws/credentials             # mask reads of a secret path
+vetto allow --global $HOME/.cargo/bin     # user-global layer instead of project
+```
+
 ## Reports
 
 Events go to an in-process bus and, optionally, to disk: JSONL plus
