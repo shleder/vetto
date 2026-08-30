@@ -3,11 +3,11 @@ use std::process::{Command, Stdio};
 
 use serde_json::json;
 
-use crate::common::cargo_bin;
+use super::common::vetto_bin;
 
 #[test]
 fn test_mcp_server_stdio_protocol() {
-    let mut child = Command::new(cargo_bin("vetto"))
+    let mut child = Command::new(vetto_bin())
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -78,7 +78,7 @@ allow_read = ["/usr", "${PROJECT}"]
     std::fs::write(&key_path, key_hex).unwrap();
 
     // 1. Sign policy
-    let sign_status = Command::new(cargo_bin("vetto"))
+    let sign_status = Command::new(vetto_bin())
         .arg("policy")
         .arg("sign")
         .arg(&policy_path)
@@ -92,7 +92,7 @@ allow_read = ["/usr", "${PROJECT}"]
     assert!(sig_path.exists(), "signature file must be created");
 
     // 2. Verify valid signature
-    let verify_status = Command::new(cargo_bin("vetto"))
+    let verify_status = Command::new(vetto_bin())
         .arg("policy")
         .arg("verify")
         .arg(&policy_path)
@@ -104,7 +104,7 @@ allow_read = ["/usr", "${PROJECT}"]
 
     // 3. Tamper with policy and verify failure
     std::fs::write(&policy_path, "tampered content").unwrap();
-    let verify_tampered = Command::new(cargo_bin("vetto"))
+    let verify_tampered = Command::new(vetto_bin())
         .arg("policy")
         .arg("verify")
         .arg(&policy_path)
@@ -126,7 +126,7 @@ fn test_policy_use_community_registry_cli() {
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 
-    let status = Command::new(cargo_bin("vetto"))
+    let status = Command::new(vetto_bin())
         .current_dir(&temp_dir)
         .arg("policy")
         .arg("use")
@@ -150,7 +150,7 @@ fn test_plugin_install_cli() {
     std::fs::create_dir_all(&temp_home).unwrap();
 
     // Run plugin install claude-code with custom HOME
-    let status = Command::new(cargo_bin("vetto"))
+    let status = Command::new(vetto_bin())
         .env("HOME", &temp_home)
         .arg("plugin")
         .arg("install")
