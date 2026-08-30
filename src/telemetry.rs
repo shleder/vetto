@@ -59,7 +59,7 @@ mod inner {
             ]);
 
             let provider = SdkTracerProvider::builder()
-                .with_batch_exporter(exporter)
+                .with_simple_exporter(exporter)
                 .with_resource(resource)
                 .build();
 
