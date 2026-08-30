@@ -1438,7 +1438,6 @@ name = "vetto"
 version = "0.2.4"
 dependencies = [
  "anyhow",
- "block2",
  "chrono",
  "clap",
  "clap_complete",

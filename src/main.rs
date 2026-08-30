@@ -422,10 +422,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 message: reason,
             });
         }
-        bus.publish(Event::Notice {
-            ts: events::types::now(),
-            message: sandbox::macos::endpoint_security::status().to_string(),
-        });
     }
 
     install_sigint_forwarder(root_pid, tier);
@@ -825,7 +821,6 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
             yn(sandbox::macos::MacosSandbox::seatbelt_available())
         );
         println!("  note: sandbox-exec is deprecated by Apple; platform risk accepted");
-        println!("  note: {}", sandbox::macos::endpoint_security::status());
         if probe_deny {
             doctor_probe()?;
         }

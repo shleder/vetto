@@ -332,16 +332,16 @@ These are properties of the current implementation, not planned work:
   cleanup gap.
 - macOS relies on `libsandbox` SBPL profiles — the same mechanism the
   deprecated `sandbox-exec` binary drives — so treat that surface as
-  Apple-deprecated. **Read isolation is not enforced on current macOS**: the
-  bisect matrix showed that multi-clause `(deny default)` profiles with
-  fragmented read allowlists abort every exec'd binary with a silent SIGABRT,
-  so the working macOS profile keeps reads broad and enforces write
-  isolation, net=off (no IP traffic) and trailing `display_only_deny` secret
-  denies — which the broad read allow currently outruns. Secret reads on
-  macOS are therefore not isolated yet; narrowing reads without breaking
-  process startup is the top roadmap item. A forked kqueue watchdog kills the
-  agent when vetto itself is `SIGKILL`ed; it is best-effort and reports its
-  own failure if it cannot arm.
+  Apple-deprecated. **Read isolation is not enforced on current macOS, and
+  cannot be**: the bisect matrix proved that ANY fragment-scoped
+  `(allow file-read* (subpath "..."))` clause — even a single one, even with
+  every other clause removed — aborts the exec'd binary with a silent
+  SIGABRT on current macOS, while the blanket `(allow file-read* (subpath
+  "/"))` runs fine. That is an Apple-side SBPL regression, not a vetto bug;
+  the macOS tier therefore enforces write isolation, net=off (no IP traffic)
+  and broad reads, and read isolation returns when Apple fixes the platform.
+  A forked kqueue watchdog kills the agent when vetto itself is `SIGKILL`ed;
+  it is best-effort and reports its own failure if it cannot arm.
 - Windows fails before process creation when the experimental sandbox API is
   unavailable, and refuses the launch when a secret path overlaps a granted
   read root (the SandboxSpec contract cannot subtract a subpath). There is no

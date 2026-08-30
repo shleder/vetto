@@ -28,7 +28,6 @@
 
 pub mod audit_reader;
 pub mod debug_guard;
-pub mod ebpf_redirect;
 pub mod landlock;
 pub mod limits;
 pub mod mounts;
