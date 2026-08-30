@@ -192,6 +192,10 @@ fn scan_secrets_cli(
         }
     }
 
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+
     if !result.is_clean() {
         std::process::exit(1);
     }

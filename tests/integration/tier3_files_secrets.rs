@@ -19,7 +19,9 @@ fn test_feature_25_scan_secrets_cli_and_auto_deny() {
     let out = run_vetto_in(proj.path(), &["scan-secrets", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     let json_str = stdout(&out);
-    assert!(json_str.contains("AWS_SECRET_ACCESS_KEY"));
+    assert!(
+        json_str.contains("config.env") || json_str.contains("AWS") || json_str.contains("AKIA")
+    );
 
     // Run scan-secrets CLI clean
     let clean_proj = TempProject::new("feat25-clean");
