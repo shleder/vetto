@@ -72,10 +72,10 @@ pub fn render_category_histogram_svg(stats: &SessionStats) -> String {
     let total_height = header_height + bar_height + 20 + (categories.len() * row_height) + 20;
 
     let mut svg = format!(
-        r#"<svg viewBox="0 0 {width} {total_height}" width="100%" height="{total_height}" xmlns="http://www.w3.org/2000/svg" style="background:#141a20;border-radius:6px;border:1px solid #263238;font-family:ui-monospace,Menlo,Consolas,monospace;">
+        r##"<svg viewBox="0 0 {width} {total_height}" width="100%" height="{total_height}" xmlns="http://www.w3.org/2000/svg" style="background:#141a20;border-radius:6px;border:1px solid #263238;font-family:ui-monospace,Menlo,Consolas,monospace;">
 <text x="16" y="26" fill="#80cbc4" font-size="14" font-weight="bold">Session Event Distribution by Category</text>
 <text x="{}" y="26" fill="#78909c" font-size="12" text-anchor="end">total events: {}</text>
-"#,
+"##,
         width - 16,
         total_events
     );
@@ -86,8 +86,8 @@ pub fn render_category_histogram_svg(stats: &SessionStats) -> String {
     let overview_w = width - 32;
 
     svg.push_str(&format!(
-        r#"<rect x="{overview_x}" y="{overview_y}" width="{overview_w}" height="{bar_height}" fill="#1c242c" rx="4"/>
-"#
+        r##"<rect x="{overview_x}" y="{overview_y}" width="{overview_w}" height="{bar_height}" fill="#1c242c" rx="4"/>
+"##
     ));
 
     if total_events > 0 {
