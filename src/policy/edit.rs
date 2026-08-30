@@ -5,7 +5,7 @@
 //! Created files get a short header so the layer stays self-documenting.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const PROJECT_HEADER: &str = r#"# vetto project policy.
 # This file is merged over the built-in profile and agent preset; CLI flags win.
@@ -30,15 +30,14 @@ impl Grant {
         match self {
             Grant::Net => ("network", "allow"),
             Grant::Deny => ("display_only_deny", "paths"),
-            Grant::FsReadWrite | Grant::FsRead => {
-                if read_only && self == Grant::FsReadWrite {
-                    ("filesystem", "allow_read")
-                } else if self == Grant::FsRead {
+            Grant::FsReadWrite => {
+                if read_only {
                     ("filesystem", "allow_read")
                 } else {
                     ("filesystem", "allow_write")
                 }
             }
+            Grant::FsRead => ("filesystem", "allow_read"),
         }
     }
 
@@ -159,16 +158,21 @@ pub fn run_allow(target: &str, read_only: bool, net: bool, global: bool) -> Resu
         grant.describe(),
         path.display()
     );
-    match grant {
-        Grant::Deny => println!("vetto: the path is masked from the next session (reads denied)"),
-        _ => println!("vetto: the grant applies to the next session"),
-    }
+    println!("vetto: the grant applies to the next session");
     Ok(())
 }
 
 /// CLI entry point for `vetto deny`.
 pub fn run_deny(target: &str, global: bool) -> Result<()> {
-    run_allow(target, false, false, global)
+    let grant = Grant::Deny;
+    let path = apply(grant, target, global)?;
+    println!(
+        "vetto: `{target}` denied ({}), policy file: {}",
+        grant.describe(),
+        path.display()
+    );
+    println!("vetto: the path is masked from the next session (reads denied)");
+    Ok(())
 }
 
 #[cfg(test)]
