@@ -14,7 +14,7 @@ mod inner {
     use opentelemetry::trace::{Span, Status, Tracer, TracerProvider};
     use opentelemetry::KeyValue;
     use opentelemetry_otlp::WithExportConfig;
-    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 

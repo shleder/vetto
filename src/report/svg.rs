@@ -128,17 +128,18 @@ pub fn render_category_histogram_svg(stats: &SessionStats) -> String {
 
         // Category label
         svg.push_str(&format!(
-            r#"<text x="36" y="{}" fill="#cfd8dc" font-size="12">{}</text>
-        "#,
-            y + 14, c.label
+            r##"<text x="36" y="{}" fill="#cfd8dc" font-size="12">{}</text>
+        "##,
+            y + 14,
+            c.label
         ));
 
         // Background track
         let track_x = 180;
         let track_w = width - track_x - 140;
         svg.push_str(&format!(
-            r#"<rect x="{track_x}" y="{}" width="{track_w}" height="14" fill="#1c242c" rx="3"/>
-        "#,
+            r##"<rect x="{track_x}" y="{}" width="{track_w}" height="14" fill="#1c242c" rx="3"/>
+        "##,
             y + 3
         ));
 
@@ -156,8 +157,8 @@ pub fn render_category_histogram_svg(stats: &SessionStats) -> String {
 
         // Count and percentage text
         svg.push_str(&format!(
-            r#"<text x="{}" y="{}" fill="#90a4ae" font-size="11" text-anchor="end">{:>6} ({:>5.1}%)</text>
-"#,
+            r##"<text x="{}" y="{}" fill="#90a4ae" font-size="11" text-anchor="end">{:>6} ({:>5.1}%)</text>
+"##,
             width - 16, y + 14, c.count, pct
         ));
     }

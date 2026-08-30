@@ -156,6 +156,7 @@ fn format_duration(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[test]
     fn digest_correctly_aggregates_session_stats() {
