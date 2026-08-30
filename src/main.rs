@@ -424,14 +424,24 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         &user_config.channel,
     );
 
-    // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend_opt = sandbox::Backend::detect_with_backend(
+    let backend_res = sandbox::Backend::detect_with_backend(
         cfg.net.clone(),
         cfg.observe_seccomp,
         cfg.backend.as_deref(),
-    )
-    .ok();
-    let tier = backend_opt.as_ref().and_then(|b| b.tier());
+    );
+    let (backend_opt, tier) = match backend_res {
+        Ok(b) => {
+            let t = b.tier();
+            (Some(Box::new(b)), t)
+        }
+        Err(e) => {
+            if cfg.dry_run && cfg.backend.as_deref().unwrap_or("auto") == "auto" {
+                (None, Some(policy::Tier::Full))
+            } else {
+                return Err(e);
+            }
+        }
+    };
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
@@ -538,7 +548,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     let backend = match backend_opt {
-        Some(b) => Box::new(b),
+        Some(b) => b,
         None => Box::new(sandbox::Backend::detect_with_backend(
             cfg.net.clone(),
             cfg.observe_seccomp,
