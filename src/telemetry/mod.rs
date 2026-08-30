@@ -7,6 +7,9 @@
 //! 4. NEVER transmits file paths, domain names, commands, arguments, secrets, environment variables,
 //!    IP addresses, hostnames, or user identifiers.
 
+pub mod otel;
+pub use otel::{spawn_telemetry_subscriber, TelemetrySession};
+
 use std::process::{Command, Stdio};
 use std::time::Duration;
 

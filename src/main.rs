@@ -154,6 +154,37 @@ fn run() -> Result<()> {
         Some(cli::Command::Report {
             command: cli::ReportCommand::Compare { session1, session2 },
         }) => report::compare_reports(session1, session2),
+        Some(cli::Command::Events {
+            session,
+            filter,
+            follow,
+            json,
+            table: _,
+        }) => events::run_events(session, filter.as_deref(), *follow, *json),
+        Some(cli::Command::Audit {
+            since,
+            agent,
+            limit,
+            query,
+            json,
+        }) => vetto::audit::run_audit(
+            since.as_deref(),
+            agent.as_deref(),
+            *limit,
+            query.as_deref(),
+            *json,
+        ),
+        Some(cli::Command::Digest { since, json }) => vetto::audit::run_digest(Some(since), *json),
+        Some(cli::Command::DiffSessions {
+            session1,
+            session2,
+            json,
+        }) => report::run_diff_sessions(session1, session2, *json),
+        Some(cli::Command::Replay {
+            session,
+            speed,
+            json,
+        }) => events::run_replay(session, *speed, *json),
         Some(cli::Command::Rescue {
             adapter,
             root,
@@ -429,7 +460,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
     }
 
-    let initial_manifest = report::diff::ProjectManifest::capture(&project);
+    let initial_manifest = report::diff_project::ProjectManifest::capture(&project);
     let session_id = format!(
         "{}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
@@ -691,6 +722,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         logger::jsonl::JsonlSink::spawn(&bus, path.clone());
     }
     let stats = report::stats::StatsCollector::spawn(&bus);
+
+    let otel_session = std::sync::Arc::new(vetto::telemetry::TelemetrySession::start(
+        cfg.otel_endpoint.as_deref(),
+        &format!("session-{root_pid}"),
+        tier_label(tier),
+        &cfg.net.label(),
+        &pol.name,
+    )?);
+    vetto::telemetry::spawn_telemetry_subscriber(&bus, otel_session.clone());
+
+    if cfg.notify {
+        vetto::notify::DesktopNotifier::spawn(&bus, true);
+    }
     bus.publish(Event::SessionStarted {
         ts: events::types::now(),
         pid: root_pid,
@@ -882,7 +926,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let snap = stats.snapshot();
     let _ = vetto::telemetry::send_session_telemetry(&snap, tier_label(tier));
-    let diff = report::diff::ProjectDiff::compute(&initial_manifest, &project);
+    let diff = report::diff_project::ProjectDiff::compute(&initial_manifest, &project);
     if !diff.is_empty() {
         bus.publish(Event::Notice {
             ts: events::types::now(),
@@ -1000,6 +1044,27 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             if timed_out { ", TIMEOUT" } else { "" },
         );
     }
+
+    otel_session.finish(code);
+
+    let history_record = vetto::audit::AuditRecord {
+        ts: events::types::now(),
+        session_id: format!("session-{root_pid}"),
+        agent: cfg
+            .agent_preset
+            .clone()
+            .unwrap_or_else(|| cfg.agent.first().cloned().unwrap_or_default()),
+        profile: pol.name.clone(),
+        policy_path: cfg.policy_path.as_ref().map(|p| p.display().to_string()),
+        exit_code: code,
+        duration_secs,
+        tier: tier_label(tier).to_string(),
+        net_mode: cfg.net.label(),
+        blocked_count: blocked_total,
+        events_total: snap.events_total,
+        report_path: None,
+    };
+    let _ = vetto::audit::record_session_history(&history_record);
 
     std::process::exit(code);
 }

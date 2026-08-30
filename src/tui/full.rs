@@ -342,12 +342,17 @@ fn render_events(f: &mut ratatui::Frame, state: &AppState, area: Rect) {
         };
         Row::new(vec![event.kind().to_string(), app::describe(event)]).style(style)
     });
+    let counters = state.aggregator.counters;
     let table = Table::new(rows, vec![Constraint::Length(16), Constraint::Min(10)]).block(
         Block::default().borders(Borders::ALL).title(format!(
-            " events [{}] {}/{} ",
+            " live events [{}] {}/{} (files:{} net:{} blocked:{} exec:{}) ",
             state.filter.label(),
             end.saturating_sub(start),
-            events.len()
+            events.len(),
+            counters.files_total,
+            counters.net_total,
+            counters.blocked_total,
+            counters.procs_exec,
         )),
     );
     f.render_widget(table, area);
