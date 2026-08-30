@@ -205,6 +205,22 @@ fn run() -> Result<()> {
                 bail!("the SSH proxy helper is available on Linux only")
             }
         }
+        Some(cli::Command::External(ext_args)) => {
+            if let Some(prof_name) = ext_args.first() {
+                let storage = profile::ProfileStorage::new()?;
+                let prof = storage.load(prof_name)?;
+                let mut cfg = RunConfig::from_cli(&args)?;
+                cfg.agent = prof.agent;
+                cfg.net = vetto::config::parse_net_mode(&prof.net)?;
+                if cfg.policy_path.is_none() {
+                    cfg.policy_path = prof.policy_path;
+                }
+                let _ = std::env::set_current_dir(&prof.cwd);
+                supervise(cfg)
+            } else {
+                bail!("no command provided");
+            }
+        }
         None => {
             let mut cfg = RunConfig::from_cli(&args)?;
             if cfg.agent.is_empty() && args.profile != "default" {
@@ -215,6 +231,7 @@ fn run() -> Result<()> {
                         if cfg.policy_path.is_none() {
                             cfg.policy_path = prof.policy_path;
                         }
+                        let _ = std::env::set_current_dir(&prof.cwd);
                     }
                 }
             }
@@ -233,17 +250,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend = Box::new(sandbox::Backend::detect(
-        cfg.net.clone(),
-        cfg.observe_seccomp,
-    )?);
-    let tier = backend.tier();
-    tracing::debug!("backend: {}", backend.describe());
+    let backend_opt = sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp).ok();
+    let tier = backend_opt.as_ref().and_then(|b| b.tier());
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve policy variables")?;
+        .context(
+            "neither $HOME nor %USERPROFILE% is set; vetto needs it to resolve policy variables",
+        )?;
 
     let tier_for_policy = match tier {
         Some(t) => t,
@@ -301,6 +317,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if cfg.dry_run {
         return dry_run(&cfg, &pol, &agent_cmd, tier_label(tier));
     }
+
+    let backend = match backend_opt {
+        Some(b) => Box::new(b),
+        None => Box::new(sandbox::Backend::detect(
+            cfg.net.clone(),
+            cfg.observe_seccomp,
+        )?),
+    };
+    tracing::debug!("backend: {}", backend.describe());
 
     if cfg.net.uses_relay() && tier == Some(policy::Tier::FsOnly) {
         bail!(
@@ -1067,8 +1092,9 @@ fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME not set")?;
+        .context("neither $HOME nor %USERPROFILE% is set")?;
     let tier = sandbox::Backend::detect(NetMode::Off, false)?
         .tier()
         .unwrap_or(policy::Tier::Full);

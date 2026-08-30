@@ -137,8 +137,9 @@ pub fn run_cli(
     let manifest = manifest_from_cli_inputs(manifest_path, repeated_agents, legacy_command)?;
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve multi-agent policy variables")?;
+        .context("neither $HOME nor %USERPROFILE% is set; vetto needs it to resolve multi-agent policy variables")?;
     let runtime = runtime::MultiRuntime::launch(manifest, project, home)?;
     let code = crate::tui::full::run_multi(runtime);
     Ok(code)

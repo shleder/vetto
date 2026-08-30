@@ -142,7 +142,7 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        // On Windows, try opening process handle with PROCESS_QUERY_LIMITED_INFORMATION
+        let _ = pid;
         true
     }
     #[cfg(not(any(unix, windows)))]

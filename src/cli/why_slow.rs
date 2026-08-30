@@ -41,6 +41,25 @@ pub fn find_session_source(session_query: &str) -> Result<PathBuf> {
         }
     }
 
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home_vetto = PathBuf::from(home).join(".vetto");
+        let run_info = home_vetto.join("run").join(session_query).join("info.json");
+        if run_info.exists() {
+            return Ok(run_info);
+        }
+        let global_reports = home_vetto.join("reports");
+        if global_reports.exists() {
+            if let Ok(entries) = fs::read_dir(global_reports) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.to_string_lossy().contains(session_query) {
+                        return Ok(p);
+                    }
+                }
+            }
+        }
+    }
+
     bail!("session or report file matching '{session_query}' not found");
 }
 

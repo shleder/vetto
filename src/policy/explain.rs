@@ -17,13 +17,16 @@ use super::types::{Policy, Tier};
 /// Detect the tier, load the effective policy and print it as text or JSON.
 pub fn run_cli(json: bool, profile: &str, policy_path: Option<&Path>, net: &NetMode) -> Result<()> {
     // Same detect semantics as a real session: fail-closed when no tier exists.
-    let backend = Backend::detect(net.clone(), false)?;
-    let tier = backend.tier();
+    let backend = Backend::detect(net.clone(), false).ok();
+    let tier = backend.as_ref().and_then(|b| b.tier());
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve policy variables")?;
+        .context(
+            "neither $HOME nor %USERPROFILE% is set; vetto needs it to resolve policy variables",
+        )?;
 
     let options = PolicyLoadOptions {
         agent: None,

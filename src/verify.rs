@@ -121,8 +121,9 @@ pub fn run_cli(
     let backend = sandbox::Backend::detect(net.clone(), false)?;
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME not set")?;
+        .context("neither $HOME nor %USERPROFILE% is set")?;
     let tier = backend.tier().unwrap_or(policy::Tier::Full);
     let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
     let report = preflight(&pol, net)?;
@@ -248,7 +249,10 @@ fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
     // Write-outside probe target. Skipped when $HOME is inside a write root:
     // the probe would then test a permission the policy grants on purpose.
     let mut write_probe = None;
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+    {
         if !pol.in_write_scope(&home) {
             let path = home.join(format!("vetto-verify-probe-{}", std::process::id()));
             script_args.push(format!("WRITECHECK:{}", path.display()));

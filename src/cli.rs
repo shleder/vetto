@@ -292,6 +292,9 @@ pub enum Command {
         /// Port token supplied by OpenSSH (%p).
         port: u16,
     },
+    /// Stored workspace profile invocation by name.
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[derive(Subcommand, Debug)]

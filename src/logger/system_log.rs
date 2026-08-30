@@ -3,27 +3,22 @@
 //! Opt-in via `system_log = true` in config/policy or `--system-log`.
 //! Any error in system logging is handled fail-open and never crashes or aborts the session.
 
-use std::sync::Arc;
-use tokio::sync::broadcast::Receiver;
-
 use crate::events::{Event, EventBus};
 
 pub struct SystemLogSink;
 
 impl SystemLogSink {
-    /// Spawn background task forwarding events to system journal.
+    /// Spawn background thread forwarding events to system journal.
     pub fn spawn(bus: &EventBus) {
         let mut rx = bus.subscribe();
-        tokio::spawn(async move {
-            run_listener(&mut rx).await;
-        });
-    }
-}
-
-async fn run_listener(rx: &mut Receiver<Arc<Event>>) {
-    while let Ok(event) = rx.recv().await {
-        let line = format_event_for_system_log(&event);
-        log_to_system(&line);
+        let _ = std::thread::Builder::new()
+            .name("vetto-syslog".into())
+            .spawn(move || {
+                while let Ok(event) = rx.blocking_recv() {
+                    let line = format_event_for_system_log(&event);
+                    log_to_system(&line);
+                }
+            });
     }
 }
 
