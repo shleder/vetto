@@ -4,7 +4,6 @@ on:
   schedule:
     # Run weekly on Monday at 04:00 UTC
     - cron: "0 4 * * 1"
-  pull_request:
   workflow_dispatch:
 
 env:
