@@ -376,7 +376,18 @@ fn run() -> Result<()> {
             }
             if cfg.agent.is_empty() && !profile_loaded {
                 let project = std::env::current_dir().context("getcwd")?;
-                let detected = vetto::onboard::detect_agent(&project)?;
+                let detected = match vetto::onboard::detect_agent(&project) {
+                    Ok(detected) => detected,
+                    Err(e) => bail!(
+                        "no AI agent detected in {} ({e})\n\n\
+                         Get started:\n  \
+                         1. `vetto doctor` — see what this kernel can enforce\n  \
+                         2. `vetto tour` — guided introduction\n  \
+                         3. `vetto -- <command>` — sandbox any binary, e.g. `vetto -- python agent.py`\n\n\
+                         Docs: https://shleder.github.io/vetto/",
+                        project.display()
+                    ),
+                };
                 eprintln!(
                     "vetto: zero-config auto-detected agent '{}' ({})",
                     detected.name, detected.reason

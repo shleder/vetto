@@ -52,9 +52,13 @@ Trust nothing, including the detection — verify the boundary first:
 
 ```bash
 vetto doctor                 # what can this kernel enforce?
+vetto tour                   # guided introduction to everything else
 vetto verify                 # can anything leak through the default boundary?
 vetto --verify -- claude     # verify the resolved policy, then start the agent
 ```
+
+No agent in this directory? `vetto` still tells you where to go — it prints
+the doctor / tour / arbitrary-binary starting steps instead of a bare error.
 
 ## Install
 
