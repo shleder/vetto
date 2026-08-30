@@ -2166,8 +2166,10 @@ allow_read = ["/usr", "${PROJECT}"]
         // 1. Loading with require_signed=true when unsigned must fail
         let mut loader = LayeredPolicyLoader::new();
         loader.require_signed = true;
-        let mut options = PolicyLoadOptions::default();
-        options.require_signed = true;
+        let options = PolicyLoadOptions {
+            require_signed: true,
+            ..Default::default()
+        };
 
         let err = loader.load(
             "default",

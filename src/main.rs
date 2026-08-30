@@ -87,7 +87,7 @@ fn run() -> Result<()> {
             remote_url,
             args.agent.clone(),
             args.policy.clone(),
-            Some(args.net.clone()),
+            args.net.clone(),
         );
     }
 
@@ -749,7 +749,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
-    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
