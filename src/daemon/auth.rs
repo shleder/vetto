@@ -7,7 +7,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+#[cfg(unix)]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use rand_core::{OsRng, RngCore};
 
 pub const TOKEN_FILENAME: &str = "token";

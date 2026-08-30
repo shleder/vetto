@@ -1,16 +1,25 @@
 //! Unix Domain Socket multiplexer listener with mandatory SO_PEERCRED / getpeereid auth.
 
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::thread;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use serde_json::json;
 
+#[cfg(unix)]
 use super::auth;
-use super::registry::{SessionRegistry, StartSessionRequest};
+#[cfg(unix)]
+use super::registry::SessionRegistry;
+use super::registry::StartSessionRequest;
 
 pub const SOCKET_FILENAME: &str = "vetto.sock";
 

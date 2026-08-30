@@ -117,6 +117,7 @@ pub fn start_daemon(custom_socket: Option<&Path>, port: u16, foreground: bool) -
         }
     }
 
+    #[cfg(unix)]
     Ok(())
 }
 
