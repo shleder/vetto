@@ -1,6 +1,8 @@
 pub mod git_hook;
 pub mod hook;
 pub mod shell_env;
+pub mod status;
+pub mod why_slow;
 
 pub use hook::{HookCommand, HookScope, ShellType};
 

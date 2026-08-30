@@ -681,7 +681,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         &history::SessionHistoryRecord {
             agent: agent_name,
             duration_secs,
-            ts: events::types::now(),
+            ts: events::types::now().to_rfc3339(),
             exit_code,
         },
     );

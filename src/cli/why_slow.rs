@@ -90,10 +90,7 @@ fn extract_from_json(json: &serde_json::Value, path: &Path) -> Result<TimingBrea
         .unwrap_or(1);
 
     let total_ms = duration_secs * 1000;
-    let setup_ms = json
-        .get("setup_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(25);
+    let setup_ms = json.get("setup_ms").and_then(|v| v.as_u64()).unwrap_or(25);
     let teardown_ms = json
         .get("teardown_ms")
         .and_then(|v| v.as_u64())
