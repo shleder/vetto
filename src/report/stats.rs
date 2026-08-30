@@ -30,6 +30,28 @@ pub struct NetRecord {
     pub allowed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct DnsRecord {
+    pub host: String,
+    pub ips: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct EgressRecord {
+    pub host: String,
+    pub ip: String,
+    pub port: u16,
+    pub bytes_tx: u64,
+    pub bytes_rx: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct DomainStats {
+    pub requests: u64,
+    pub bytes_tx: u64,
+    pub bytes_rx: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SuspiciousRecord {
     pub category: String,
@@ -55,6 +77,9 @@ pub struct SessionStats {
     pub file_writes: u64,
     pub blocked_attempts: Vec<BlockedRecord>,
     pub net_requests: Vec<NetRecord>,
+    pub dns_resolutions: Vec<DnsRecord>,
+    pub egress_connections: Vec<EgressRecord>,
+    pub network_summary: BTreeMap<String, DomainStats>,
     /// Best-effort audit hints. These records never affect enforcement.
     pub suspicious_signals: Vec<SuspiciousRecord>,
     pub notices: Vec<String>,
@@ -215,6 +240,54 @@ fn ingest(inner: &mut Inner, ev: Event) {
                     port,
                     allowed,
                 });
+            }
+        }
+        Event::DnsResolved { host, ips, .. } => {
+            *st.op_counts
+                .entry(crate::classifier::Operation::Net.label().to_string())
+                .or_insert(0) += 1;
+            if st.dns_resolutions.len() < 500 {
+                st.dns_resolutions.push(DnsRecord { host, ips });
+            }
+        }
+        Event::NetEgress {
+            host,
+            ip,
+            port,
+            bytes_tx,
+            bytes_rx,
+            ..
+        } => {
+            *st.op_counts
+                .entry(crate::classifier::Operation::Net.label().to_string())
+                .or_insert(0) += 1;
+            let summary = st.network_summary.entry(host.clone()).or_default();
+            summary.requests += 1;
+            summary.bytes_tx += bytes_tx;
+            summary.bytes_rx += bytes_rx;
+            if st.egress_connections.len() < 500 {
+                st.egress_connections.push(EgressRecord {
+                    host,
+                    ip,
+                    port,
+                    bytes_tx,
+                    bytes_rx,
+                });
+            }
+        }
+        Event::NetQuotaExceeded {
+            host,
+            limit_bytes,
+            used_bytes,
+            ..
+        } => {
+            *st.op_counts
+                .entry(crate::classifier::Operation::Net.label().to_string())
+                .or_insert(0) += 1;
+            let msg =
+                format!("network quota exceeded for {host}: {used_bytes}/{limit_bytes} bytes");
+            if st.notices.len() < 100 {
+                st.notices.push(msg);
             }
         }
         Event::Notice { message, .. } => {
