@@ -99,11 +99,16 @@ fn presets_dry_run_reflects_preset_configuration() {
     let project = TempProject::new("presets-dryrun");
     write_file(&project.path().join("src/main.rs"), "fn main() {}\n");
 
+    let agent_cmd: &[&str] = if cfg!(windows) {
+        &["cmd", "/c", "echo", "test"]
+    } else {
+        &["echo", "test"]
+    };
+
     for preset in ["paranoid", "balanced", "yolo"] {
-        let out = run_vetto_in(
-            project.path(),
-            &["--dry-run", "--preset", preset, "--", "echo", "test"],
-        );
+        let mut args = vec!["--dry-run", "--preset", preset, "--"];
+        args.extend_from_slice(agent_cmd);
+        let out = run_vetto_in(project.path(), &args);
         assert!(
             out.status.success(),
             "dry-run with preset {preset} must succeed"
@@ -116,10 +121,15 @@ fn presets_dry_run_reflects_preset_configuration() {
 #[test]
 fn shadow_mode_dry_run_reflects_shadow_flag() {
     let project = TempProject::new("shadow-dryrun");
-    let out = run_vetto_in(
-        project.path(),
-        &["--dry-run", "--shadow", "--", "echo", "test"],
-    );
+    let agent_cmd: &[&str] = if cfg!(windows) {
+        &["cmd", "/c", "echo", "test"]
+    } else {
+        &["echo", "test"]
+    };
+
+    let mut args = vec!["--dry-run", "--shadow", "--"];
+    args.extend_from_slice(agent_cmd);
+    let out = run_vetto_in(project.path(), &args);
     assert!(out.status.success(), "dry-run with --shadow must succeed");
     let text = stdout(&out);
     assert!(text.contains("shadow: enabled (policy layer only)"));

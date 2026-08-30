@@ -162,12 +162,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend = Box::new(sandbox::Backend::detect(
-        cfg.net.clone(),
-        cfg.observe_seccomp,
-    )?);
-    let tier = backend.tier();
-    tracing::debug!("backend: {}", backend.describe());
+    let backend_opt = sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp).ok();
+    let tier = backend_opt.as_ref().and_then(|b| b.tier());
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
@@ -234,6 +230,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if cfg.dry_run {
         return dry_run(&cfg, &pol, &agent_cmd, tier_label(tier));
     }
+
+    let backend = match backend_opt {
+        Some(b) => Box::new(b),
+        None => Box::new(sandbox::Backend::detect(
+            cfg.net.clone(),
+            cfg.observe_seccomp,
+        )?),
+    };
+    tracing::debug!("backend: {}", backend.describe());
 
     if cfg.net.uses_relay() && tier == Some(policy::Tier::FsOnly) {
         bail!(
@@ -618,6 +623,9 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
     match tier {
         Some(policy::Tier::Full) => policy::Tier::Full.label(),
         Some(policy::Tier::FsOnly) => policy::Tier::FsOnly.label(),
+        #[cfg(target_os = "windows")]
+        _ => "windows-sandbox",
+        #[cfg(not(target_os = "windows"))]
         None => "macos-seatbelt",
     }
 }
