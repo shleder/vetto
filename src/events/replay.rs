@@ -12,7 +12,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 
 use super::tail::resolve_session_path;
 use super::types::{Event, FileAccess};

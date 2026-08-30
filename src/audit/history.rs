@@ -4,7 +4,7 @@
 //! The `vetto audit` subcommand displays this history with filtering and search.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
