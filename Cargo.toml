@@ -1,6 +1,6 @@
 [package]
 name = "vetto"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 rust-version = "1.75"
 description = "Daemon-less sandbox + security layer for AI coding agents (Landlock/Seatbelt, TUI statusline, post-session audit reports)"

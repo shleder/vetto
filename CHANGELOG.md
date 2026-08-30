@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.7] — 2026-08-30
+
+### Added
+
+- Friendly first-run onboarding: when `vetto` is launched without arguments and no AI agent is detected, it prints concrete starting steps (`vetto doctor`, `vetto tour`, sandboxing any binary via `vetto -- <command>`) and a docs link instead of a bare error.
+- crates.io distribution channel: `cargo install vetto`; the release train now publishes npm and crates.io from a single run.
+- `first-run` issue template and GitHub Discussions for first-run reports.
+
+### Changed
+
+- README rewritten around the zero-config quick start and the real 0.2.6 command surface; landing page fixed (npm package name typo, sandbox-first headline, first-run line).
+
 ## [0.2.6] — 2026-08-30
 
 ### Added
