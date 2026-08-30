@@ -714,7 +714,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             vetto::config::NetMode::Strict(rules) => {
                 rules.iter().map(|r| r.domain.clone()).collect()
             }
-            vetto::config::NetMode::Off => Vec::new(),
+            vetto::config::NetMode::Off | vetto::config::NetMode::Ask => Vec::new(),
         };
         let broker_config = vetto::cred_broker::CredBrokerConfig {
             proxy_secrets: pol.secret_proxies.clone(),
