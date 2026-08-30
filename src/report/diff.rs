@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::clean;
+pub use super::diff_project::{ProjectDiff, ProjectManifest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricDelta {
