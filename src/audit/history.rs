@@ -188,7 +188,7 @@ pub fn run_audit(
 
     let mut filtered = filter_records(&records, cutoff, agent, query);
     // Sort reverse chronological
-    filtered.sort_by(|a, b| b.ts.cmp(&a.ts));
+    filtered.sort_by_key(|a| std::cmp::Reverse(a.ts));
 
     if let Some(lim) = limit {
         filtered.truncate(lim);

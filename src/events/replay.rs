@@ -64,10 +64,7 @@ pub fn run_replay(session_arg: &Path, speed: Option<f64>, json_output: bool) -> 
             }
         );
         println!("NOTE: Replaying sandbox security & observation telemetry, not terminal input.\n");
-        println!(
-            "{:<12}  {:<8}  {:<16}  {}",
-            "OFFSET", "DELTA", "EVENT", "DETAILS"
-        );
+        println!("{:<12}  {:<8}  {:<16}  DETAILS", "OFFSET", "DELTA", "EVENT");
         println!("{:-<12}  {:-<8}  {:-<16}  {:-<40}", "", "", "", "");
     }
 

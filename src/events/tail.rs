@@ -239,8 +239,8 @@ pub fn run_events(
                         } else {
                             if !printed_header {
                                 println!(
-                                    "{:<10}  {:<16}  {:<10}  {}",
-                                    "TIME", "EVENT", "TARGET/PID", "DETAILS"
+                                    "{:<10}  {:<16}  {:<10}  DETAILS",
+                                    "TIME", "EVENT", "TARGET/PID"
                                 );
                                 println!("{:-<10}  {:-<16}  {:-<10}  {:-<30}", "", "", "", "");
                                 printed_header = true;
