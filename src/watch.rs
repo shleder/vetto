@@ -91,6 +91,29 @@ pub fn format_event(event: &Event) -> String {
             let status = if *allowed { "ALLOWED" } else { "DENIED" };
             format!("[{ts}] NET_REQUEST     host={host}:{port} status={status}")
         }
+        Event::DnsResolved { host, ips, .. } => {
+            format!("[{ts}] DNS_RESOLVED   host={host} ips={:?}", ips)
+        }
+        Event::NetEgress {
+            host,
+            ip,
+            port,
+            bytes_tx,
+            bytes_rx,
+            ..
+        } => {
+            format!("[{ts}] NET_EGRESS     host={host} ip={ip}:{port} tx={bytes_tx} rx={bytes_rx}")
+        }
+        Event::NetQuotaExceeded {
+            host,
+            limit_bytes,
+            used_bytes,
+            ..
+        } => {
+            format!(
+                "[{ts}] NET_QUOTA      host={host} exceeded limit={limit_bytes} used={used_bytes}"
+            )
+        }
         Event::SecretMasked { path, .. } => {
             format!("[{ts}] SECRET_MASKED   path={path}")
         }
