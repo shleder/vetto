@@ -209,6 +209,12 @@ fn run() -> Result<()> {
         },
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
         Some(cli::Command::Man) => cli::print_man(),
+        Some(cli::Command::Upgrade {
+            channel,
+            check,
+            dry_run,
+        }) => vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run),
+        Some(cli::Command::Tour { non_interactive }) => vetto::tour::run_tour(*non_interactive),
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]
             {
@@ -280,6 +286,12 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if cfg.agent.is_empty() {
         bail!("no agent command provided; usage: vetto [OPTIONS] -- <command> [args...]");
     }
+
+    let user_config = vetto::version::load_user_config().unwrap_or_default();
+    vetto::version::print_banner_if_update_available(
+        env!("CARGO_PKG_VERSION"),
+        &user_config.channel,
+    );
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
     let backend_opt = sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp).ok();
@@ -485,6 +497,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
+    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
@@ -697,6 +710,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(100)); // let sinks drain
 
     let snap = stats.snapshot();
+    let _ = vetto::telemetry::send_session_telemetry(&snap, tier_label(tier));
     if !cfg.report_formats.is_empty() {
         let report_options = report::ReportOptions {
             report_dir: cfg.report_dir.clone(),
@@ -1031,6 +1045,12 @@ fn install_sigint_forwarder(_root_pid: u32, _tier: Option<policy::Tier>) {}
 
 fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
+    let user_config = vetto::version::load_user_config().unwrap_or_default();
+    if let Some(notice) =
+        vetto::version::check_version(env!("CARGO_PKG_VERSION"), &user_config.channel, false)
+    {
+        println!("update available:        {}", notice.banner_message());
+    }
     #[cfg(target_os = "linux")]
     {
         let p = sandbox::linux::probe();

@@ -41,5 +41,6 @@ mod policy_tools;
 mod rescue;
 mod secret_masking;
 mod shim_interception;
+mod tier8_release;
 mod tier9_friction;
 mod windows_enforcement;

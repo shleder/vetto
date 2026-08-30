@@ -118,13 +118,15 @@ pub fn run_cli(
 ) -> anyhow::Result<()> {
     // Same detection context as a supervised session: the tier resolved here
     // is the tier the battery will verify.
-    let backend = sandbox::Backend::detect(net.clone(), false)?;
+    let tier = match sandbox::Backend::detect(net.clone(), false) {
+        Ok(b) => b.tier().unwrap_or(policy::Tier::Full),
+        Err(_) => policy::Tier::Full,
+    };
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("neither $HOME nor %USERPROFILE% is set")?;
-    let tier = backend.tier().unwrap_or(policy::Tier::Full);
     let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
     let report = preflight(&pol, net)?;
 

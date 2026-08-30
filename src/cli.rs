@@ -31,6 +31,8 @@ Examples:
   vetto rescue diagnose sessions/2026/08/23/session.jsonl
   vetto rescue snapshot session.jsonl --output ./recovery/session.jsonl
   vetto report compare session-a.json session-b.json
+  vetto tour
+  vetto upgrade --check
   vetto completions bash";
 
 /// vetto - daemon-less sandbox + security layer for AI coding agents.
@@ -302,6 +304,24 @@ pub enum Command {
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Self-upgrade vetto via npm or cargo based on installation method
+    Upgrade {
+        /// Channel to upgrade from (stable or alpha)
+        #[arg(long, value_name = "CHANNEL")]
+        channel: Option<String>,
+        /// Check for updates without applying
+        #[arg(long)]
+        check: bool,
+        /// Simulate upgrade command without running
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Interactive 5-step onboarding walkthrough
+    Tour {
+        /// Run all tour steps non-interactively without waiting for keypresses
+        #[arg(long)]
+        non_interactive: bool,
     },
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]
@@ -658,6 +678,20 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_subcommand_parses_channel_and_flags() {
+        let cli = Cli::try_parse_from(["vetto", "upgrade", "--channel", "alpha", "--check"])
+            .expect("upgrade parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Upgrade {
+                channel: Some(ref ch),
+                check: true,
+                dry_run: false,
+            }) if ch == "alpha"
+        ));
+    }
+
+    #[test]
     fn init_wizard_subcommand_parses() {
         let cli = Cli::try_parse_from(["vetto", "init", "--wizard"]).expect("init wizard parsing");
         assert!(matches!(
@@ -695,6 +729,18 @@ mod tests {
             Some(Command::Policy {
                 command: PolicyCommand::Import { ref from, ref output, .. }
             }) if from == "claude" && output == &PathBuf::from("my-policy.toml")
+        ));
+    }
+
+    #[test]
+    fn tour_subcommand_parses_non_interactive_flag() {
+        let cli =
+            Cli::try_parse_from(["vetto", "tour", "--non-interactive"]).expect("tour parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tour {
+                non_interactive: true,
+            })
         ));
     }
 }
