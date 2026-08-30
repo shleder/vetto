@@ -129,15 +129,27 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend = Box::new(sandbox::Backend::detect(
-        cfg.net.clone(),
-        cfg.observe_seccomp,
-    )?);
-    let tier = backend.tier();
-    tracing::debug!("backend: {}", backend.describe());
+    let backend_res = sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp);
+    let (backend, tier) = match backend_res {
+        Ok(b) => {
+            let t = b.tier();
+            (Some(Box::new(b)), t)
+        }
+        Err(e) => {
+            if cfg.dry_run {
+                (None, Some(policy::Tier::Full))
+            } else {
+                return Err(e);
+            }
+        }
+    };
+    if let Some(ref b) = backend {
+        tracing::debug!("backend: {}", b.describe());
+    }
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("$HOME is not set; vetto needs it to resolve policy variables")?;
 
@@ -307,6 +319,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
+    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
@@ -910,6 +923,7 @@ fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("$HOME not set")?;
     let tier = sandbox::Backend::detect(NetMode::Off, false)?

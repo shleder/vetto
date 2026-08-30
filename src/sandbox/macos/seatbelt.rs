@@ -59,7 +59,7 @@ pub fn generate_sbpl_template_and_params(
     // libSystem init perform local XPC over unix sockets, and without it the
     // process either fails execve with EPERM or aborts silently after exec.
     match net {
-        NetMode::Off | NetMode::Allowlist(_) | NetMode::Strict(_) => {
+        NetMode::Off | NetMode::Allowlist(_) | NetMode::Strict(_) | NetMode::Ask => {
             sb.push_str("(deny network*)\n");
             sb.push_str("(allow network-outbound (remote unix-socket))\n");
         }
