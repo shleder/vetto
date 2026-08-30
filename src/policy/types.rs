@@ -182,6 +182,16 @@ pub struct Policy {
     /// enforcement additionally depends on the CLI `--net` mode, which lives
     /// outside the policy: this field only records policy-layer intent.
     pub deny_network: bool,
+    /// CIDR subnets allowed for network connections.
+    pub allow_cidr: Vec<String>,
+    /// Per-domain byte quotas (in bytes).
+    pub net_quota: std::collections::HashMap<String, u64>,
+    /// TCP ports allowed for binding in Landlock (ABI >= 4).
+    pub net_bind_ports: Vec<u16>,
+    /// TCP ports allowed for connecting in Landlock (ABI >= 4).
+    pub net_connect_ports: Vec<u16>,
+    /// Allowed unix domain socket paths / patterns.
+    pub allow_unix_sockets: Vec<String>,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
@@ -201,6 +211,11 @@ impl Default for Policy {
             deny_resolved: Vec::new(),
             environment: EnvironmentPolicy::default(),
             deny_network: false,
+            allow_cidr: Vec::new(),
+            net_quota: std::collections::HashMap::new(),
+            net_bind_ports: Vec::new(),
+            net_connect_ports: Vec::new(),
+            allow_unix_sockets: Vec::new(),
             is_immutable: false,
             warnings: Vec::new(),
         }

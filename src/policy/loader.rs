@@ -49,6 +49,10 @@ pub struct RawLayer {
     #[serde(default)]
     pub network: Option<RawNetwork>,
     #[serde(default)]
+    pub unix_sockets: Option<RawUnixSockets>,
+    #[serde(default)]
+    pub net_ports: Option<RawNetPorts>,
+    #[serde(default)]
     pub conditions: Option<RawConditions>,
     #[serde(default)]
     pub limits: Option<RawLimits>,
@@ -114,6 +118,93 @@ pub struct RawNetwork {
     pub deny: Option<RawStringList>,
     #[serde(default)]
     pub deny_network: Option<RawStringList>,
+    #[serde(default)]
+    pub net_preset: Option<RawStringList>,
+    #[serde(default)]
+    pub net_presets: Option<RawStringList>,
+    #[serde(default)]
+    pub preset: Option<RawStringList>,
+    #[serde(default)]
+    pub presets: Option<RawStringList>,
+    #[serde(default)]
+    pub allow_cidr: Option<RawStringList>,
+    #[serde(default)]
+    pub allow_cidrs: Option<RawStringList>,
+    #[serde(default)]
+    pub net_quota: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub quota: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub net_ports: Option<RawNetPorts>,
+    #[serde(default)]
+    pub allow_tcp_connect: Option<Vec<u16>>,
+    #[serde(default)]
+    pub allow_tcp_bind: Option<Vec<u16>>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RawNetPorts {
+    #[serde(default)]
+    pub allow_tcp_connect: Option<Vec<u16>>,
+    #[serde(default)]
+    pub allow_tcp_bind: Option<Vec<u16>>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RawUnixSockets {
+    #[serde(default)]
+    pub allow: Option<RawStringList>,
+    #[serde(default)]
+    pub deny: Option<RawStringList>,
+}
+
+pub fn expand_net_preset(name: &str) -> Result<Vec<String>> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "npm" => Ok(vec!["registry.npmjs.org".to_string()]),
+        "git" => Ok(vec![
+            "github.com".to_string(),
+            "api.github.com".to_string(),
+            "codeload.github.com".to_string(),
+        ]),
+        "pip" | "pypi" => Ok(vec![
+            "pypi.org".to_string(),
+            "files.pythonhosted.org".to_string(),
+        ]),
+        "huggingface" | "hf" => Ok(vec![
+            "huggingface.co".to_string(),
+            "cdn-lfs.huggingface.co".to_string(),
+        ]),
+        unknown => {
+            bail!("unknown net preset '{unknown}'; known presets: npm, git, pip, huggingface")
+        }
+    }
+}
+
+pub fn parse_quota_bytes(s: &str) -> Result<u64> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        bail!("empty quota string");
+    }
+    let (num_part, multiplier) = if let Some(val) = s.strip_suffix("tb") {
+        (val, 1024 * 1024 * 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("gb") {
+        (val, 1024 * 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("mb") {
+        (val, 1024 * 1024u64)
+    } else if let Some(val) = s.strip_suffix("kb") {
+        (val, 1024u64)
+    } else if let Some(val) = s.strip_suffix('b') {
+        (val, 1u64)
+    } else {
+        (s.as_str(), 1u64)
+    };
+    let count: u64 = num_part
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid quota value '{s}'"))?;
+    Ok(count * multiplier)
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -181,6 +272,11 @@ pub struct MergedPolicy {
     pub deny_network: Vec<String>,
     pub network_mode: Option<String>,
     pub network_allow: Vec<String>,
+    pub allow_cidr: Vec<String>,
+    pub net_quota: std::collections::HashMap<String, u64>,
+    pub net_bind_ports: Vec<u16>,
+    pub net_connect_ports: Vec<u16>,
+    pub allow_unix_sockets: Vec<String>,
     pub is_immutable: bool,
 }
 
@@ -263,6 +359,62 @@ impl MergedPolicy {
             if let Some(deny_network) = &network.deny_network {
                 self.deny_network.extend(deny_network.clone().into_vec());
             }
+            for preset_opt in [
+                &network.net_preset,
+                &network.net_presets,
+                &network.preset,
+                &network.presets,
+            ] {
+                if let Some(presets) = preset_opt {
+                    for preset_name in presets.clone().into_vec() {
+                        let domains = expand_net_preset(&preset_name)?;
+                        self.network_allow.extend(domains);
+                    }
+                }
+            }
+            if let Some(allow_cidr) = &network.allow_cidr {
+                self.allow_cidr.extend(allow_cidr.clone().into_vec());
+            }
+            if let Some(allow_cidrs) = &network.allow_cidrs {
+                self.allow_cidr.extend(allow_cidrs.clone().into_vec());
+            }
+            for quota_opt in [&network.net_quota, &network.quota] {
+                if let Some(quotas) = quota_opt {
+                    for (domain, val) in quotas {
+                        let bytes = parse_quota_bytes(val)?;
+                        self.net_quota.insert(domain.clone(), bytes);
+                    }
+                }
+            }
+            if let Some(ports) = &network.net_ports {
+                if let Some(connect) = &ports.allow_tcp_connect {
+                    self.net_connect_ports.extend(connect);
+                }
+                if let Some(bind) = &ports.allow_tcp_bind {
+                    self.net_bind_ports.extend(bind);
+                }
+            }
+            if let Some(connect) = &network.allow_tcp_connect {
+                self.net_connect_ports.extend(connect);
+            }
+            if let Some(bind) = &network.allow_tcp_bind {
+                self.net_bind_ports.extend(bind);
+            }
+        }
+
+        if let Some(ports) = &layer.net_ports {
+            if let Some(connect) = &ports.allow_tcp_connect {
+                self.net_connect_ports.extend(connect);
+            }
+            if let Some(bind) = &ports.allow_tcp_bind {
+                self.net_bind_ports.extend(bind);
+            }
+        }
+
+        if let Some(unix_socks) = &layer.unix_sockets {
+            if let Some(allow) = &unix_socks.allow {
+                self.allow_unix_sockets.extend(allow.clone().into_vec());
+            }
         }
 
         if let Some(limits) = &layer.limits {
@@ -282,6 +434,12 @@ impl MergedPolicy {
         deduplicate_strings(&mut self.deny_env);
         deduplicate_strings(&mut self.deny_network);
         deduplicate_strings(&mut self.network_allow);
+        deduplicate_strings(&mut self.allow_cidr);
+        deduplicate_strings(&mut self.allow_unix_sockets);
+        self.net_bind_ports.sort_unstable();
+        self.net_bind_ports.dedup();
+        self.net_connect_ports.sort_unstable();
+        self.net_connect_ports.dedup();
         deduplicate_strings(&mut self.metadata.extends);
     }
 }
@@ -943,6 +1101,19 @@ fn build_policy(
         )?;
     }
 
+    if !merged.allow_unix_sockets.is_empty() {
+        if let Ok(unix_paths) = resolve_list(&merged.allow_unix_sockets, &vars, agent) {
+            for up in unix_paths {
+                if !allow_read_resolved.contains(&up) {
+                    allow_read_resolved.push(up.clone());
+                }
+                if !allow_write_resolved.contains(&up) {
+                    allow_write_resolved.push(up);
+                }
+            }
+        }
+    }
+
     allow_write_resolved.sort();
     allow_write_resolved.dedup();
     allow_read_resolved.sort();
@@ -973,6 +1144,11 @@ fn build_policy(
             deny: normalize_env_patterns(merged.deny_env.clone()),
         },
         deny_network: !merged.deny_network.is_empty(),
+        allow_cidr: merged.allow_cidr.clone(),
+        net_quota: merged.net_quota.clone(),
+        net_bind_ports: merged.net_bind_ports.clone(),
+        net_connect_ports: merged.net_connect_ports.clone(),
+        allow_unix_sockets: merged.allow_unix_sockets.clone(),
         is_immutable: merged.is_immutable,
         warnings,
     };
@@ -1404,6 +1580,81 @@ deny = ["SECRET_*"]
         let err = apply_overrides(&mut merged, &overrides)
             .expect_err("lockdown must reject CLI write additions");
         assert!(err.to_string().contains("enterprise lockdown"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn network_presets_expand_correctly() {
+        assert_eq!(
+            expand_net_preset("npm").unwrap(),
+            vec!["registry.npmjs.org".to_string()]
+        );
+        let git_domains = expand_net_preset("git").unwrap();
+        assert!(git_domains.contains(&"github.com".to_string()));
+        assert!(git_domains.contains(&"api.github.com".to_string()));
+        assert!(git_domains.contains(&"codeload.github.com".to_string()));
+
+        let pip_domains = expand_net_preset("pip").unwrap();
+        assert!(pip_domains.contains(&"pypi.org".to_string()));
+        assert!(pip_domains.contains(&"files.pythonhosted.org".to_string()));
+
+        let hf_domains = expand_net_preset("huggingface").unwrap();
+        assert!(hf_domains.contains(&"huggingface.co".to_string()));
+        assert!(hf_domains.contains(&"cdn-lfs.huggingface.co".to_string()));
+
+        assert!(expand_net_preset("unknown-preset").is_err());
+    }
+
+    #[test]
+    fn parse_quota_bytes_handles_units() {
+        assert_eq!(parse_quota_bytes("1024").unwrap(), 1024);
+        assert_eq!(parse_quota_bytes("1024b").unwrap(), 1024);
+        assert_eq!(parse_quota_bytes("500kb").unwrap(), 500 * 1024);
+        assert_eq!(parse_quota_bytes("100mb").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_quota_bytes("1gb").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(
+            parse_quota_bytes("2tb").unwrap(),
+            2 * 1024 * 1024 * 1024 * 1024
+        );
+        assert!(parse_quota_bytes("invalid").is_err());
+    }
+
+    #[test]
+    fn network_policy_sections_load_and_resolve() {
+        let root = std::env::temp_dir().join(format!("vetto-policy-net-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let policy_path = root.join("policy.toml");
+        let toml_content = r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["/usr"]
+
+[network]
+net_presets = ["npm", "git"]
+allow_cidr = ["10.0.0.0/8", "192.168.0.0/16"]
+net_quota = { "api.openai.com" = "100mb" }
+allow_tcp_connect = [443, 80]
+allow_tcp_bind = [8080]
+
+[unix_sockets]
+allow = ["$PROJECT/test.sock"]
+"#;
+        std::fs::write(&policy_path, toml_content).unwrap();
+        let loaded = load("net-test", Some(&policy_path), &root, &root, Tier::Full)
+            .expect("network policy should load");
+
+        assert!(loaded.allow_cidr.contains(&"10.0.0.0/8".to_string()));
+        assert_eq!(
+            loaded.net_quota.get("api.openai.com"),
+            Some(&(100 * 1024 * 1024))
+        );
+        assert_eq!(loaded.net_connect_ports, vec![80, 443]);
+        assert_eq!(loaded.net_bind_ports, vec![8080]);
+        assert!(loaded
+            .allow_unix_sockets
+            .contains(&"$PROJECT/test.sock".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
     }
