@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- Live TUI dashboard event panel: `--tui=full` augmented with real-time categorized
+  counters (files, network, blocked access, processes) and decoupled aggregation logic.
+- `vetto events <session>` subcommand for tailing and filtering JSONL session logs
+  with `--filter deny|net|files|exec`, `--follow` streaming tail, and table/JSON formats.
+- OpenTelemetry session tracing behind optional `telemetry` feature flag: session
+  root span (`vetto.session`) and span-events for security/observation telemetry
+  with `--otel-endpoint`.
+- `vetto audit` subcommand and persistent session indexing to `~/.vetto/history.jsonl`
+  with `--since`, `--agent`, `--limit`, and substring search.
+- Desktop notifications on security violations via `--notify` / `notify = true`
+  (Linux `notify-send`, macOS `osascript`, Windows PowerShell toast) via non-blocking
+  subprocesses that never interrupt the session on notification errors.
+- `vetto digest` subcommand for daily audit summaries (sessions, duration, blocked
+  counts, top agents and policies).
+- `vetto diff-sessions <id1> <id2>` subcommand for comparing two session reports
+  (metric deltas, new and resolved violations, network changes).
+- Standalone inline SVG category histogram in HTML audit reports visualizing event
+  distribution across categories with zero external dependencies.
+- `vetto replay <session>` subcommand for chronological sandbox event playback with
+  `--speed` multiplier (replaying sandbox observation and enforcement telemetry).
+
 ## [0.2.5] — 2026-08-30
 
 ### Added

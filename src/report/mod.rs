@@ -1,11 +1,15 @@
 //! Post-session audit reports (HTML / Markdown / JSON / SARIF).
 
+pub mod diff;
 pub mod html;
 pub mod json;
 pub mod markdown;
 pub mod sarif;
 pub mod stats;
 pub mod storage;
+pub mod svg;
+
+pub use diff::run_diff_sessions;
 
 use std::fs::File;
 use std::io::{self, Write};

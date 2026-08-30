@@ -84,11 +84,103 @@ impl Default for ActivitySample {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 pub struct NetworkSummary {
     pub total: u64,
     pub allowed: u64,
     pub blocked: u64,
+}
+
+/// Real-time event counts aggregated across observation & security categories (Feature 37).
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+pub struct EventCategoryCounters {
+    pub file_reads: u64,
+    pub file_writes: u64,
+    pub files_total: u64,
+    pub net_allowed: u64,
+    pub net_blocked: u64,
+    pub net_total: u64,
+    pub blocked_files: u64,
+    pub blocked_net: u64,
+    pub blocked_total: u64,
+    pub procs_exec: u64,
+    pub notices: u64,
+    pub suspicious: u64,
+}
+
+/// Dedicated real-time event aggregator decoupled from TUI rendering for independent testing.
+#[derive(Debug, Clone)]
+pub struct LiveEventAggregator {
+    pub counters: EventCategoryCounters,
+    pub recent_events: VecDeque<Event>,
+    pub capacity: usize,
+}
+
+impl LiveEventAggregator {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            counters: EventCategoryCounters::default(),
+            recent_events: VecDeque::with_capacity(capacity.min(RING_CAP)),
+            capacity,
+        }
+    }
+
+    pub fn ingest(&mut self, event: &Event) {
+        if crate::classifier::classify_event(event).is_some() {
+            self.counters.suspicious = self.counters.suspicious.saturating_add(1);
+        }
+
+        match event {
+            Event::FileObserved { access, .. } => {
+                self.counters.files_total = self.counters.files_total.saturating_add(1);
+                match access {
+                    FileAccess::Read => {
+                        self.counters.file_reads = self.counters.file_reads.saturating_add(1)
+                    }
+                    FileAccess::Write => {
+                        self.counters.file_writes = self.counters.file_writes.saturating_add(1)
+                    }
+                    FileAccess::Unknown => {}
+                }
+            }
+            Event::ExecObserved { .. } => {
+                self.counters.procs_exec = self.counters.procs_exec.saturating_add(1);
+            }
+            Event::BlockedAttempt { .. } => {
+                self.counters.blocked_files = self.counters.blocked_files.saturating_add(1);
+                self.counters.blocked_total = self.counters.blocked_total.saturating_add(1);
+            }
+            Event::NetRequest { allowed, .. } => {
+                self.counters.net_total = self.counters.net_total.saturating_add(1);
+                if *allowed {
+                    self.counters.net_allowed = self.counters.net_allowed.saturating_add(1);
+                } else {
+                    self.counters.net_blocked = self.counters.net_blocked.saturating_add(1);
+                    self.counters.blocked_net = self.counters.blocked_net.saturating_add(1);
+                    self.counters.blocked_total = self.counters.blocked_total.saturating_add(1);
+                }
+            }
+            Event::Notice { .. } => {
+                self.counters.notices = self.counters.notices.saturating_add(1);
+            }
+            Event::SecretMasked { .. } => {
+                self.counters.files_total = self.counters.files_total.saturating_add(1);
+            }
+            Event::SessionStarted { .. }
+            | Event::SessionTimeout { .. }
+            | Event::SessionEnded { .. } => {}
+        }
+
+        self.recent_events.push_back(event.clone());
+        while self.recent_events.len() > self.capacity {
+            self.recent_events.pop_front();
+        }
+    }
+
+    pub fn recent(&self, limit: usize) -> Vec<&Event> {
+        let skip = self.recent_events.len().saturating_sub(limit);
+        self.recent_events.iter().skip(skip).collect()
+    }
 }
 
 pub struct AppState {
@@ -96,6 +188,7 @@ pub struct AppState {
     pub net: String,
     pub profile: String,
     pub events: VecDeque<Event>,
+    pub aggregator: LiveEventAggregator,
     pub events_total: u64,
     pub blocked: u64,
     pub files: u64,
@@ -128,6 +221,7 @@ impl AppState {
             net: net.to_string(),
             profile: profile.to_string(),
             events: VecDeque::with_capacity(64),
+            aggregator: LiveEventAggregator::new(RING_CAP),
             events_total: 0,
             blocked: 0,
             files: 0,
@@ -155,6 +249,7 @@ impl AppState {
     }
 
     pub fn ingest(&mut self, ev: Event) {
+        self.aggregator.ingest(&ev);
         self.events_total = self.events_total.saturating_add(1);
         let mut sample = ActivitySample {
             at: ev.ts(),
@@ -522,5 +617,60 @@ mod tests {
 
         std::fs::remove_file(&link).expect("remove export symlink");
         std::fs::remove_dir(&real).expect("remove real export directory");
+    }
+
+    #[test]
+    fn live_aggregator_tracks_typed_counters_and_bounds_recent_events() {
+        let mut agg = LiveEventAggregator::new(5);
+        assert_eq!(agg.counters.files_total, 0);
+
+        agg.ingest(&Event::FileObserved {
+            ts: Utc::now(),
+            pid: 10,
+            comm: "cargo".into(),
+            path: "/tmp/src/lib.rs".into(),
+            access: FileAccess::Read,
+        });
+        agg.ingest(&Event::FileObserved {
+            ts: Utc::now(),
+            pid: 10,
+            comm: "cargo".into(),
+            path: "/tmp/src/main.rs".into(),
+            access: FileAccess::Write,
+        });
+        agg.ingest(&Event::NetRequest {
+            ts: Utc::now(),
+            host: "crates.io".into(),
+            port: 443,
+            allowed: true,
+        });
+        agg.ingest(&Event::NetRequest {
+            ts: Utc::now(),
+            host: "evil.com".into(),
+            port: 443,
+            allowed: false,
+        });
+        agg.ingest(&blocked("/etc/shadow"));
+        agg.ingest(&Event::ExecObserved {
+            ts: Utc::now(),
+            pid: 11,
+            argv: vec!["rustc".into(), "main.rs".into()],
+        });
+
+        let counters = agg.counters;
+        assert_eq!(counters.file_reads, 1);
+        assert_eq!(counters.file_writes, 1);
+        assert_eq!(counters.files_total, 2);
+        assert_eq!(counters.net_allowed, 1);
+        assert_eq!(counters.net_blocked, 1);
+        assert_eq!(counters.net_total, 2);
+        assert_eq!(counters.blocked_files, 1);
+        assert_eq!(counters.blocked_net, 1);
+        assert_eq!(counters.blocked_total, 2);
+        assert_eq!(counters.procs_exec, 1);
+
+        // Ring buffer bounds to capacity 5
+        assert_eq!(agg.recent_events.len(), 5);
+        assert_eq!(agg.recent(3).len(), 3);
     }
 }

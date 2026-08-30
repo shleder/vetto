@@ -106,6 +106,14 @@ pub struct Cli {
     #[arg(long)]
     pub git_ssh: bool,
 
+    /// Desktop notifications on security violations (blocked path access, network escape).
+    #[arg(long)]
+    pub notify: bool,
+
+    /// OpenTelemetry OTLP endpoint for session span export.
+    #[arg(long, value_name = "URL")]
+    pub otel_endpoint: Option<String>,
+
     /// Kill the sandboxed session after DURATION without the agent finishing
     /// (e.g. 90s, 30m, 2h). Enforced with --tui=none (CI mode); other TUI
     /// modes warn and ignore it.
@@ -242,6 +250,76 @@ pub enum Command {
     Completions {
         #[arg(value_enum)]
         shell: Shell,
+    },
+    /// Tail and filter JSONL session event logs.
+    Events {
+        /// Path to session JSONL log file or session identifier
+        #[arg(value_name = "SESSION")]
+        session: PathBuf,
+        /// Filter events by category (deny, net, files, exec, notice) or substring
+        #[arg(long, value_name = "FILTER")]
+        filter: Option<String>,
+        /// Continuously follow the log for new events (streaming tail)
+        #[arg(short = 'f', long)]
+        follow: bool,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
+        /// Format output as a column table
+        #[arg(long)]
+        table: bool,
+    },
+    /// Query and inspect session audit history (~/.vetto/history.jsonl).
+    Audit {
+        /// Filter sessions since duration (e.g. 24h, 7d, 30m, YYYY-MM-DD)
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// Filter by agent preset or name
+        #[arg(long, value_name = "NAME")]
+        agent: Option<String>,
+        /// Limit the maximum number of history entries displayed
+        #[arg(long, value_name = "COUNT")]
+        limit: Option<usize>,
+        /// Optional substring search in policy path, profile, agent, or session ID
+        #[arg(value_name = "QUERY")]
+        query: Option<String>,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate an aggregated daily audit digest from session history.
+    Digest {
+        /// Window duration to aggregate (e.g. 24h, 7d, 30m; default 24h)
+        #[arg(long, value_name = "DURATION", default_value = "24h")]
+        since: String,
+        /// Emit machine-readable JSON summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare two session JSON audit reports (metric deltas and violation diffs).
+    #[command(name = "diff-sessions")]
+    DiffSessions {
+        /// Base session JSON report or identifier
+        #[arg(value_name = "SESSION1")]
+        session1: PathBuf,
+        /// Target session JSON report or identifier
+        #[arg(value_name = "SESSION2")]
+        session2: PathBuf,
+        /// Emit machine-readable JSON diff
+        #[arg(long)]
+        json: bool,
+    },
+    /// Chronologically replay sandbox observation and security events from a session log.
+    Replay {
+        /// Path to session JSONL log file or session identifier
+        #[arg(value_name = "SESSION")]
+        session: PathBuf,
+        /// Playback speed multiplier (e.g. 1.0 for real-time, 2.0 for 2x; default instant)
+        #[arg(long, value_name = "FACTOR")]
+        speed: Option<f64>,
+        /// Emit machine-readable JSON lines
+        #[arg(long)]
+        json: bool,
     },
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]
@@ -498,6 +576,85 @@ mod tests {
                 },
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn parses_observability_subcommands() {
+        let events_cli = Cli::try_parse_from([
+            "vetto",
+            "events",
+            "session.jsonl",
+            "--filter",
+            "deny",
+            "--follow",
+        ])
+        .expect("events parsing");
+        assert!(matches!(
+            events_cli.command,
+            Some(Command::Events {
+                ref session,
+                ref filter,
+                follow: true,
+                ..
+            }) if session == &PathBuf::from("session.jsonl") && filter.as_deref() == Some("deny")
+        ));
+
+        let audit_cli = Cli::try_parse_from([
+            "vetto",
+            "audit",
+            "--since",
+            "24h",
+            "--agent",
+            "codex",
+            "--limit",
+            "10",
+            "search_term",
+        ])
+        .expect("audit parsing");
+        assert!(matches!(
+            audit_cli.command,
+            Some(Command::Audit {
+                ref since,
+                ref agent,
+                limit: Some(10),
+                ref query,
+                ..
+            }) if since.as_deref() == Some("24h") && agent.as_deref() == Some("codex") && query.as_deref() == Some("search_term")
+        ));
+
+        let digest_cli = Cli::try_parse_from(["vetto", "digest", "--since", "7d", "--json"])
+            .expect("digest parsing");
+        assert!(matches!(
+            digest_cli.command,
+            Some(Command::Digest {
+                ref since,
+                json: true,
+            }) if since == "7d"
+        ));
+
+        let diff_cli =
+            Cli::try_parse_from(["vetto", "diff-sessions", "s1.json", "s2.json", "--json"])
+                .expect("diff-sessions parsing");
+        assert!(matches!(
+            diff_cli.command,
+            Some(Command::DiffSessions {
+                ref session1,
+                ref session2,
+                json: true,
+            }) if session1 == &PathBuf::from("s1.json") && session2 == &PathBuf::from("s2.json")
+        ));
+
+        let replay_cli =
+            Cli::try_parse_from(["vetto", "replay", "session.jsonl", "--speed", "1.5"])
+                .expect("replay parsing");
+        assert!(matches!(
+            replay_cli.command,
+            Some(Command::Replay {
+                ref session,
+                speed: Some(1.5),
+                ..
+            }) if session == &PathBuf::from("session.jsonl")
         ));
     }
 }

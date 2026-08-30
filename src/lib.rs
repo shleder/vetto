@@ -5,6 +5,7 @@
 //! boundary lets integration tests, benchmarks, and downstream tooling use
 //! the same policy, sandbox, observation, PTY, and report code as the CLI.
 
+pub mod audit;
 #[doc(hidden)]
 pub mod bench_support;
 pub mod classifier;
@@ -16,6 +17,7 @@ pub mod events;
 pub mod init;
 pub mod logger;
 pub mod multi;
+pub mod notify;
 pub mod policy;
 #[cfg(unix)]
 pub mod pty;
@@ -23,6 +25,7 @@ pub mod report;
 pub mod rescue;
 pub mod sandbox;
 pub mod shim;
+pub mod telemetry;
 #[cfg(unix)]
 pub mod tui;
 pub mod verify;
