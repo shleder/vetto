@@ -24,9 +24,9 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 crossterm = "0.27"
 glob = "0.3"
-opentelemetry = { version = "0.24", optional = true }
-opentelemetry-otlp = { version = "0.24", features = ["grpc-tonic"], optional = true }
-opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"], optional = true }
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"], optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
 ratatui = "0.26"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
