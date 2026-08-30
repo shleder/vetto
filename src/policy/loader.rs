@@ -70,6 +70,8 @@ pub struct RawMetadata {
 pub struct RawSecurity {
     #[serde(default)]
     pub immutable: Option<bool>,
+    #[serde(default)]
+    pub system_log: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -182,6 +184,7 @@ pub struct MergedPolicy {
     pub network_mode: Option<String>,
     pub network_allow: Vec<String>,
     pub is_immutable: bool,
+    pub system_log: bool,
 }
 
 impl MergedPolicy {
@@ -203,6 +206,9 @@ impl MergedPolicy {
         if let Some(sec) = &layer.security {
             if let Some(true) = sec.immutable {
                 self.is_immutable = true;
+            }
+            if let Some(slog) = sec.system_log {
+                self.system_log = slog;
             }
         }
 
@@ -974,6 +980,7 @@ fn build_policy(
         },
         deny_network: !merged.deny_network.is_empty(),
         is_immutable: merged.is_immutable,
+        system_log: merged.system_log,
         warnings,
     };
     checker::check(&mut policy);

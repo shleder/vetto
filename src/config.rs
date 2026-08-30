@@ -78,6 +78,8 @@ pub struct RunConfig {
     pub fail_on_block: Option<u64>,
     pub git_ssh: bool,
     pub session_timeout: Option<std::time::Duration>,
+    pub auto_timeout_requested: bool,
+    pub system_log: bool,
     pub limits_spec: Option<String>,
     pub verify_preflight: bool,
     pub dry_run: bool,
@@ -119,10 +121,21 @@ impl RunConfig {
         if cli.ci && tui == TuiMode::Statusline {
             tui = TuiMode::None;
         }
-        let session_timeout = match &cli.timeout {
+
+        let mut auto_timeout_requested = false;
+        let session_timeout = match cli.timeout.as_deref() {
+            Some("auto") => {
+                auto_timeout_requested = true;
+                let proj = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let agent_name = agent_preset
+                    .as_deref()
+                    .unwrap_or_else(|| cli.agent.first().map(|s| s.as_str()).unwrap_or("default"));
+                crate::history::compute_auto_timeout(&proj, agent_name)
+            }
             Some(raw) => Some(parse_session_timeout(raw)?),
             None => None,
         };
+
         if let Some(spec) = &cli.limits {
             validate_limits_spec(spec)?;
         }
@@ -157,6 +170,8 @@ impl RunConfig {
             fail_on_block: cli.fail_on_block,
             git_ssh: cli.git_ssh,
             session_timeout,
+            auto_timeout_requested,
+            system_log: cli.system_log,
             limits_spec: cli.limits.clone(),
             verify_preflight: cli.verify,
             dry_run: cli.dry_run,

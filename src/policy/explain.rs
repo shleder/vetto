@@ -46,6 +46,18 @@ pub fn run_cli(json: bool, profile: &str, policy_path: Option<&Path>, net: &NetM
     }
 }
 
+/// Print the effective policy for `vetto policy show --effective`.
+pub fn run_show(
+    effective: bool,
+    json: bool,
+    profile: &str,
+    policy_path: Option<&Path>,
+    net: &NetMode,
+) -> Result<()> {
+    let _ = effective;
+    run_cli(json, profile, policy_path, net)
+}
+
 fn tier_label(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::Full) => Tier::Full.label(),

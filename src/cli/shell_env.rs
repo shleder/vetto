@@ -345,6 +345,35 @@ pub fn detect_available_shells(home_dir: &Path) -> Vec<ShellKind> {
     detected
 }
 
+/// Generate environment variable export lines for shell PS1 / prompt integration.
+pub fn emit_shell_env(
+    session_id: Option<&str>,
+    tier: Option<&str>,
+    profile: Option<&str>,
+) -> String {
+    let sid = session_id.unwrap_or("active");
+    let t = tier.unwrap_or("full");
+    let p = profile.unwrap_or("default");
+    format!(
+        "export VETTO_SANDBOX=1\n\
+         export VETTO_SESSION_ID=\"{sid}\"\n\
+         export VETTO_TIER=\"{t}\"\n\
+         export VETTO_PROFILE=\"{p}\"\n\
+         export VETTO_VERSION=\"{}\"\n",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// Print shell environment export lines to stdout.
+pub fn run_shell_env(
+    session_id: Option<&str>,
+    tier: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
+    print!("{}", emit_shell_env(session_id, tier, profile));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

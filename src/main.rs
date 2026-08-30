@@ -20,11 +20,60 @@ use clap::Parser;
 use vetto::config::NetMode;
 use vetto::config::{RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
-use vetto::{cli, events, logger, multi, policy, report, rescue, sandbox, shim};
+use vetto::{
+    cli, events, exit_codes, history, logger, multi, policy, profile, report, rescue, sandbox, shim,
+};
 #[cfg(unix)]
 use vetto::{pty, tui};
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("vetto: error: {err}");
+        let code = exit_codes::map_error_to_exit_code(&err);
+        std::process::exit(code);
+    }
+}
+
+fn fast_tier_detect() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        let p = sandbox::linux::probe();
+        match sandbox::linux::pick_tier(&p) {
+            Ok(t) => t.label(),
+            Err(_) => "none",
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos-seatbelt"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows-sandbox"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        "none"
+    }
+}
+
+fn run() -> Result<()> {
+    let raw_args: Vec<String> = std::env::args().collect();
+    let has_version = raw_args.iter().any(|a| a == "--version" || a == "-V");
+    let has_json = raw_args.iter().any(|a| a == "--json");
+    if has_version && has_json {
+        let commit = option_env!("VETTO_GIT_HASH").unwrap_or("unknown");
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "tier": fast_tier_detect(),
+                "commit": commit,
+            })
+        );
+        return Ok(());
+    }
+
     // Fast path: if invoked via a toolchain shim name (e.g. `node`, `git`), dispatch immediately
     if let Some(binary) = shim::detect_argv0_shim() {
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,7 +81,7 @@ fn main() -> Result<()> {
     }
 
     let args = cli::Cli::parse();
-    logger::init(args.verbose);
+    logger::init_flags(args.quiet, args.verbose);
 
     if args.multi {
         if args.command.is_some() {
@@ -58,6 +107,37 @@ fn main() -> Result<()> {
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
+        Some(cli::Command::ShellEnv {
+            session_id,
+            tier,
+            profile,
+        }) => cli::shell_env::run_shell_env(
+            session_id.as_deref(),
+            tier.as_deref(),
+            profile.as_deref(),
+        ),
+        Some(cli::Command::Status { json }) => cli::status::run_cli(*json),
+        Some(cli::Command::Profile { command }) => match command {
+            cli::ProfileCommand::Save {
+                name,
+                agent,
+                policy,
+                net,
+                profile,
+            } => {
+                let agent_vec = agent.as_ref().map(|a| vec![a.clone()]).unwrap_or_default();
+                profile::save_profile(
+                    name,
+                    agent_vec,
+                    policy.clone(),
+                    net.clone(),
+                    profile.clone(),
+                )
+            }
+            cli::ProfileCommand::List { json } => profile::list_profiles(*json),
+            cli::ProfileCommand::Rm { name } => profile::remove_profile(name),
+        },
+        Some(cli::Command::WhySlow { session, json }) => cli::why_slow::run_cli(session, *json),
         Some(cli::Command::Multi {
             manifest,
             agents,
@@ -97,6 +177,16 @@ fn main() -> Result<()> {
                     &net,
                 )
             }
+            cli::PolicyCommand::Show { effective, json } => {
+                let net = vetto::config::parse_net_mode(&args.net)?;
+                vetto::policy::explain::run_show(
+                    *effective,
+                    *json,
+                    &args.profile,
+                    args.policy.as_deref().map(PathBuf::from).as_deref(),
+                    &net,
+                )
+            }
             cli::PolicyCommand::Lint { strict } => vetto::policy::lint::run_cli(
                 *strict,
                 &args.profile,
@@ -115,7 +205,21 @@ fn main() -> Result<()> {
                 bail!("the SSH proxy helper is available on Linux only")
             }
         }
-        None => supervise(RunConfig::from_cli(&args)?),
+        None => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            if cfg.agent.is_empty() && args.profile != "default" {
+                if let Ok(storage) = profile::ProfileStorage::new() {
+                    if let Ok(prof) = storage.load(&args.profile) {
+                        cfg.agent = prof.agent;
+                        cfg.net = vetto::config::parse_net_mode(&prof.net)?;
+                        if cfg.policy_path.is_none() {
+                            cfg.policy_path = prof.policy_path;
+                        }
+                    }
+                }
+            }
+            supervise(cfg)
+        }
     }
 }
 
@@ -225,10 +329,24 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         None
     };
 
+    let session_id = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+
     let env_extra: HashMap<String, String> = {
+        let mut env_extra = HashMap::new();
+        env_extra.insert("VETTO_SANDBOX".into(), "1".into());
+        env_extra.insert("VETTO_SESSION_ID".into(), session_id.clone());
+        env_extra.insert("VETTO_TIER".into(), tier_label(tier).into());
+        env_extra.insert("VETTO_PROFILE".into(), pol.name.clone());
+        env_extra.insert("VETTO_VERSION".into(), env!("CARGO_PKG_VERSION").into());
+
         #[cfg(target_os = "linux")]
         {
-            let mut env_extra = HashMap::new();
             if cfg.net.uses_relay() {
                 for (k, v) in sandbox::linux::net_relay::build_proxy_env(
                     sandbox::linux::net_relay::RELAY_PORT_BASE,
@@ -244,12 +362,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                     sandbox::linux::net_relay::build_git_ssh_command(&exe),
                 );
             }
-            env_extra
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            HashMap::new()
-        }
+        env_extra
     };
 
     // stdio plumbing, owned by main and closed here after spawn.
@@ -328,6 +442,37 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // ---- Phase 2: threads now allowed -------------------------------------
     let bus = EventBus::new();
     let root_pid = handle.root_pid;
+
+    if let Ok(reg) = cli::status::SessionRegistry::new() {
+        let agent_name = cfg.agent_preset.as_deref().unwrap_or_else(|| &cfg.agent[0]);
+        let _ = reg.register(
+            &session_id,
+            root_pid,
+            agent_name,
+            &pol.name,
+            tier_label(tier),
+            &project,
+        );
+    }
+
+    if cfg.system_log || pol.system_log {
+        logger::system_log::SystemLogSink::spawn(&bus);
+    }
+
+    if cfg.auto_timeout_requested {
+        if let Some(t) = cfg.session_timeout {
+            bus.publish(Event::Notice {
+                ts: events::types::now(),
+                message: format!("auto-timeout selected: {}", format_duration(t)),
+            });
+        } else {
+            bus.publish(Event::Notice {
+                ts: events::types::now(),
+                message: "no past history found for agent; running without timeout".to_string(),
+            });
+        }
+    }
+
     // Subscribe the sinks FIRST so nothing (incl. SessionStarted) is missed.
     let jsonl_path = cfg.jsonl_path.clone();
     if let Some(path) = &jsonl_path {
@@ -499,6 +644,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             eprintln!("vetto: report written: {}", p.display());
         }
     }
+    if let Ok(reg) = cli::status::SessionRegistry::new() {
+        reg.unregister(&session_id);
+    }
+    let agent_name = cfg
+        .agent_preset
+        .clone()
+        .unwrap_or_else(|| cfg.agent[0].clone());
+    let _ = history::append_session_history(
+        &project,
+        &history::SessionHistoryRecord {
+            agent: agent_name,
+            duration_secs,
+            ts: events::types::now(),
+            exit_code,
+        },
+    );
+
     let blocked_file_total: u64 = snap.blocked_attempts.iter().map(|b| b.count).sum();
     let blocked_network_total = snap
         .net_requests
@@ -506,26 +668,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         .filter(|request| !request.allowed)
         .count() as u64;
     let blocked_total = blocked_file_total.saturating_add(blocked_network_total);
-    let mut code = if exit_code < 0 {
-        128 - exit_code
-    } else {
-        exit_code
+
+    let blocked_threshold_reached = match cfg.fail_on_block {
+        Some(threshold) => blocked_total >= threshold,
+        None => false,
     };
-    if timed_out {
-        // Mirror GNU timeout(1): 124 means "we killed it at the deadline".
-        code = 124;
+    if blocked_threshold_reached {
+        eprintln!(
+            "vetto: fail-on-block threshold reached (blocked={} threshold={})",
+            blocked_total,
+            cfg.fail_on_block.unwrap()
+        );
     }
-    if let Some(threshold) = cfg.fail_on_block {
-        if blocked_total >= threshold {
-            eprintln!(
-                "vetto: fail-on-block threshold reached (blocked={} threshold={})",
-                blocked_total, threshold
-            );
-            if code == 0 {
-                code = 1;
-            }
-        }
-    }
+
+    let code = exit_codes::map_session_exit_code(exit_code, timed_out, blocked_threshold_reached);
     if cfg.ci {
         println!(
             "{}",
@@ -809,6 +965,11 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
         match sandbox::linux::pick_tier(&p) {
             Ok(t) => println!("chosen tier:             {}", t.label()),
             Err(e) => println!("chosen tier:             NONE — fail-closed: {e}"),
+        }
+        if let Some(abi) = p.landlock_abi {
+            for hint in sandbox::linux::landlock::abi_feature_hints(abi) {
+                println!("  note: {hint}");
+            }
         }
         if probe_deny {
             doctor_probe()?;

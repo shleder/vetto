@@ -131,9 +131,17 @@ pub struct Cli {
     #[arg(long)]
     pub ci: bool,
 
+    /// Suppress diagnostic and non-essential progress messages on stderr
+    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
     /// Verbose diagnostics on stderr
-    #[arg(short = 'v', long)]
+    #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
+
+    /// Forward session events to system journal (journald, EventLog, syslog)
+    #[arg(long)]
+    pub system_log: bool,
 
     /// Select an agent preset, or provide NAME=PROGRAM entries with --multi.
     #[arg(long = "agent", value_name = "NAME", action = clap::ArgAction::Append)]
@@ -243,6 +251,39 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Print environment variable export lines for shell integration and PS1.
+    #[command(name = "shell-env")]
+    ShellEnv {
+        /// Session ID to export.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Sandbox tier to export.
+        #[arg(long)]
+        tier: Option<String>,
+        /// Profile name to export.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List active sandboxed sessions and cleanup stale metadata.
+    Status {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage persistent workspace profiles (cwd, agent, policy).
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
+    /// Diagnostic latency breakdown and optimization hints for a session.
+    #[command(name = "why-slow")]
+    WhySlow {
+        /// Session identifier or report path.
+        session: String,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]
     SshProxy {
@@ -262,12 +303,53 @@ pub enum PolicyCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Show the resolved effective policy.
+    Show {
+        /// Print effective resolved policy.
+        #[arg(long)]
+        effective: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the resolved policy for dangerous configurations. Exits
     /// non-zero with --strict when any finding is reported.
     Lint {
         /// Exit non-zero when any finding is reported.
         #[arg(long)]
         strict: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProfileCommand {
+    /// Save current working directory and settings as a named workspace profile.
+    Save {
+        /// Name of the profile.
+        name: String,
+        /// Agent command or preset.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Explicit policy path.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+        /// Network mode.
+        #[arg(long)]
+        net: Option<String>,
+        /// Built-in profile layer name.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List all saved workspace profiles.
+    List {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a saved workspace profile.
+    Rm {
+        /// Name of the profile to remove.
+        name: String,
     },
 }
 
