@@ -4,15 +4,17 @@
 //! Secrets listed in `secrets.proxy` are completely stripped from the sandboxed agent's
 //! environment and injected into upstream requests by the host broker only for allowlisted domains.
 
+#[allow(unused_imports)]
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
+#[allow(unused_imports)]
 use crate::events::{Event, EventBus};
 
 /// Configuration for the credential broker.
@@ -136,6 +138,16 @@ pub fn spawn_credential_broker(
         })?;
 
     Ok(handle)
+}
+
+#[cfg(not(unix))]
+pub fn spawn_credential_broker(
+    _socket_path: PathBuf,
+    _config: CredBrokerConfig,
+    _secrets: HashMap<String, String>,
+    _bus: EventBus,
+) -> Result<std::thread::JoinHandle<()>> {
+    bail!("credential broker is only supported on Unix platforms");
 }
 
 #[cfg(unix)]

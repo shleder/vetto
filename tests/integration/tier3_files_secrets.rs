@@ -85,7 +85,7 @@ fn test_feature_30_diff_report() {
     write_file(&file_a, "initial content\n");
 
     let manifest = vetto::report::diff::ProjectManifest::capture(proj.path());
-    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.files.len(), 1);
 
     // Modify file and add new file
     write_file(&file_a, "modified content\n");
@@ -96,7 +96,7 @@ fn test_feature_30_diff_report() {
     assert_eq!(diff.modified.len(), 1);
     assert_eq!(diff.added.len(), 1);
     assert_eq!(diff.deleted.len(), 0);
-    assert!(diff.summary().contains("diff report:"));
+    assert!(diff.summary().contains("agent modified:"));
 }
 
 #[test]
