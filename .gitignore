@@ -3,3 +3,4 @@
 .agents/
 .mimosa/
 vetto-report-*.{html,md,json,sarif}
+all-assets/
