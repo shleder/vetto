@@ -99,6 +99,16 @@ pub fn resolve_auth_header(
     }
 }
 
+/// Inject appropriate credential header into a map.
+pub fn inject_credential_header(
+    secret_name: &str,
+    secret_value: &str,
+    headers: &mut std::collections::BTreeMap<String, String>,
+) {
+    let (name, val) = resolve_auth_header("default", secret_name, secret_value);
+    headers.insert(name, val);
+}
+
 /// Spawns the credential broker thread listening on the specified Unix socket.
 #[cfg(unix)]
 pub fn spawn_credential_broker(
@@ -216,6 +226,7 @@ fn handle_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     #[test]
     fn filters_proxy_secrets_from_env() {

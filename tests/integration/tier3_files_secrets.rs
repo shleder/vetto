@@ -1,7 +1,6 @@
 //! Integration tests for Tier 3: Files and Secrets (Features 25–36).
 
 use std::fs;
-use std::path::Path;
 
 use super::common::*;
 
