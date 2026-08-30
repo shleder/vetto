@@ -49,8 +49,8 @@ pub struct Cli {
 
     /// Network mode: off | allowlist:<domain,domain,...> |
     /// strict:<domain:port,domain:port,...>
-    #[arg(long, value_name = "MODE", default_value = "off")]
-    pub net: String,
+    #[arg(long, value_name = "MODE")]
+    pub net: Option<String>,
 
     /// UI mode: statusline | full | none
     #[arg(long, value_name = "MODE", default_value = "statusline")]

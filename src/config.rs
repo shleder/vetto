@@ -166,13 +166,11 @@ impl RunConfig {
     }
 
     pub fn from_cli_with_global(cli: &Cli, global: &GlobalConfig) -> Result<Self> {
-        let raw_net = if cli.net != "off" {
-            cli.net.as_str()
-        } else if let Some(ref g_net) = global.net {
-            g_net.as_str()
-        } else {
-            "off"
-        };
+        let raw_net = cli
+            .net
+            .as_deref()
+            .or(global.net.as_deref())
+            .unwrap_or("off");
         let net = parse_net_mode(raw_net)?;
 
         let git_ssh = cli.git_ssh || global.git_ssh.unwrap_or(false);

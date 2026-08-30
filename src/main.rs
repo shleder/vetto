@@ -81,7 +81,7 @@ fn main() -> Result<()> {
             command,
         }) => rescue::run_cli(adapter, root.as_deref(), *json, command),
         Some(cli::Command::Verify { json }) => {
-            let net = vetto::config::parse_net_mode(&args.net)?;
+            let net = vetto::config::parse_net_mode(args.net.as_deref().unwrap_or("off"))?;
             vetto::verify::run_cli(
                 *json,
                 &args.profile,
@@ -91,7 +91,7 @@ fn main() -> Result<()> {
         }
         Some(cli::Command::Policy { command }) => match command {
             cli::PolicyCommand::Explain { json, why } => {
-                let net = vetto::config::parse_net_mode(&args.net)?;
+                let net = vetto::config::parse_net_mode(args.net.as_deref().unwrap_or("off"))?;
                 vetto::policy::explain::run_cli(
                     *json,
                     why.as_deref(),
