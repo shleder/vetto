@@ -537,6 +537,9 @@ impl AgentStats {
                 }
             }
             Event::Notice { .. } => self.notices += 1,
+            // Counted into events_total above like every event; multi-agent
+            // rollups have no dedicated timeout field.
+            Event::SessionTimeout { .. } => {}
             Event::SecretMasked { .. } => {}
         }
     }

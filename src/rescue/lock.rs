@@ -71,6 +71,7 @@ impl SessionLockGuard {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(lock_path)
             .with_context(|| format!("open lockfile {}", lock_path.display()))?;
 
@@ -269,6 +270,9 @@ mod win_lock {
     pub const ERROR_LOCK_VIOLATION: u32 = 33;
 
     #[repr(C)]
+    // Mirrors the Win32 `OVERLAPPED` declaration verbatim; the acronym is
+    // the platform's name, not our style choice.
+    #[allow(clippy::upper_case_acronyms)]
     pub struct OVERLAPPED {
         pub internal: usize,
         pub internal_high: usize,
@@ -453,12 +457,9 @@ mod tests {
         let path = temp_lock_path("timeout");
         let guard = SessionLockGuard::try_acquire(&path, 30_000).expect("first lock");
 
-        let handle = std::thread::spawn({
-            let path = path.clone();
-            move || {
-                std::thread::sleep(Duration::from_millis(50));
-                drop(guard);
-            }
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(guard);
         });
 
         let guard2 = SessionLockGuard::acquire_with_timeout(&path, 30_000, Duration::from_secs(2))

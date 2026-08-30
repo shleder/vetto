@@ -106,6 +106,23 @@ pub struct Cli {
     #[arg(long)]
     pub git_ssh: bool,
 
+    /// Kill the sandboxed session after DURATION without the agent finishing
+    /// (e.g. 90s, 30m, 2h). Enforced with --tui=none (CI mode); other TUI
+    /// modes warn and ignore it.
+    #[arg(long, value_name = "DURATION")]
+    pub timeout: Option<String>,
+
+    /// Resource ceilings for the agent process, comma separated:
+    /// cpu=SECONDS, as=BYTES, procs=N, nofile=N, fsize=BYTES. Merged
+    /// strictest-wins with any limits from the policy layers.
+    #[arg(long, value_name = "SPEC")]
+    pub limits: Option<String>,
+
+    /// Run the boundary verification battery against the resolved policy
+    /// before spawning the agent. Any leak aborts the session (fail-closed).
+    #[arg(long)]
+    pub verify: bool,
+
     /// Print resolved policy + tier plan and exit (nothing enforced)
     #[arg(long)]
     pub dry_run: bool,
@@ -208,6 +225,19 @@ pub enum Command {
         #[command(subcommand)]
         command: ReportCommand,
     },
+    /// Verify the sandbox boundary WITHOUT running any agent: secret paths,
+    /// network reachability, and write-outside checks execute inside a
+    /// throwaway sandbox built from the resolved policy.
+    Verify {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain the effective policy or lint it for dangerous configurations.
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
     /// Print shell completion script for the requested shell.
     Completions {
         #[arg(value_enum)]
@@ -220,6 +250,24 @@ pub enum Command {
         host: String,
         /// Port token supplied by OpenSSH (%p).
         port: u16,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PolicyCommand {
+    /// Print the effective policy after all layers merge: tier, network,
+    /// roots, masked secrets, limits, environment.
+    Explain {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check the resolved policy for dangerous configurations. Exits
+    /// non-zero with --strict when any finding is reported.
+    Lint {
+        /// Exit non-zero when any finding is reported.
+        #[arg(long)]
+        strict: bool,
     },
 }
 
@@ -315,8 +363,9 @@ mod tests {
 
     #[test]
     fn hook_subcommand_parses_install_and_status() {
-        let install_cli = Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
-            .expect("hook install parsing");
+        let install_cli =
+            Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
+                .expect("hook install parsing");
         assert!(matches!(
             install_cli.command,
             Some(Command::Hook {
@@ -343,8 +392,9 @@ mod tests {
 
     #[test]
     fn shim_subcommand_parses_binary_and_args() {
-        let cli = Cli::try_parse_from(["vetto", "shim", "node", "--", "index.js", "--port", "3000"])
-            .expect("shim parsing");
+        let cli =
+            Cli::try_parse_from(["vetto", "shim", "node", "--", "index.js", "--port", "3000"])
+                .expect("shim parsing");
         assert!(matches!(
             cli.command,
             Some(Command::Shim {

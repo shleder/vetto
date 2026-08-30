@@ -77,6 +77,9 @@ pub struct RunConfig {
     pub report_max_age_secs: Option<u64>,
     pub fail_on_block: Option<u64>,
     pub git_ssh: bool,
+    pub session_timeout: Option<std::time::Duration>,
+    pub limits_spec: Option<String>,
+    pub verify_preflight: bool,
     pub dry_run: bool,
     pub ci: bool,
     pub agent_preset: Option<String>,
@@ -116,6 +119,13 @@ impl RunConfig {
         if cli.ci && tui == TuiMode::Statusline {
             tui = TuiMode::None;
         }
+        let session_timeout = match &cli.timeout {
+            Some(raw) => Some(parse_session_timeout(raw)?),
+            None => None,
+        };
+        if let Some(spec) = &cli.limits {
+            validate_limits_spec(spec)?;
+        }
 
         let mut report_formats = Vec::new();
         if let Some(fmts) = &cli.report {
@@ -146,6 +156,9 @@ impl RunConfig {
             report_max_age_secs: cli.report_max_age_secs,
             fail_on_block: cli.fail_on_block,
             git_ssh: cli.git_ssh,
+            session_timeout,
+            limits_spec: cli.limits.clone(),
+            verify_preflight: cli.verify,
             dry_run: cli.dry_run,
             ci: cli.ci,
             agent_preset,
@@ -246,6 +259,42 @@ fn parse_tui_mode(s: &str) -> Result<TuiMode> {
     }
 }
 
+/// Parse `--timeout` durations: bare seconds, `90s`, `30m`, `2h`.
+pub fn parse_session_timeout(s: &str) -> Result<std::time::Duration> {
+    let raw = s.trim();
+    let (number, multiplier) = match raw.chars().last() {
+        Some('s') => (&raw[..raw.len() - 1], 1u64),
+        Some('m') => (&raw[..raw.len() - 1], 60),
+        Some('h') => (&raw[..raw.len() - 1], 3600),
+        _ => (raw, 1),
+    };
+    let seconds: u64 = number
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid --timeout '{s}' (expected e.g. 90s, 30m, 2h)"))?;
+    if seconds == 0 {
+        bail!("--timeout must be greater than zero");
+    }
+    Ok(std::time::Duration::from_secs(seconds * multiplier))
+}
+
+/// Coarse syntax check for `--limits`; full parsing happens where the spec
+/// merges into the policy (see `policy::limits_spec`).
+fn validate_limits_spec(spec: &str) -> Result<()> {
+    if spec.trim().is_empty() {
+        bail!("--limits requires at least one key=value pair");
+    }
+    for pair in spec.split(',') {
+        let pair = pair.trim();
+        if pair.split_once('=').map_or(true, |(key, value)| {
+            key.trim().is_empty() || value.trim().is_empty()
+        }) {
+            bail!("invalid --limits entry '{pair}' (expected key=value, e.g. cpu=300,as=4g)");
+        }
+    }
+    Ok(())
+}
+
 /// Auto-detect known agent preset from command invocation if not explicitly specified.
 pub fn detect_agent_preset(command: &[String]) -> Option<String> {
     let first = command.first()?;
@@ -320,6 +369,49 @@ mod tests {
     fn git_ssh_requires_a_relay_network_mode() {
         assert!(config(&["--git-ssh"]).is_err());
         assert!(config(&["--git-ssh", "--net", "allowlist:github.com"]).is_ok());
+    }
+
+    #[test]
+    fn timeout_parses_seconds_minutes_hours_and_rejects_zero() {
+        let cfg = config(&["--timeout", "90s"]).expect("90s");
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(90))
+        );
+        let cfg = config(&["--timeout", "30m"]).expect("30m");
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(1800))
+        );
+        let cfg = config(&["--timeout", "2h"]).expect("2h");
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(7200))
+        );
+        let cfg = config(&["--timeout", "45"]).expect("bare seconds");
+        assert_eq!(
+            cfg.session_timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert!(config(&["--timeout", "0s"]).is_err());
+        assert!(config(&["--timeout", "soon"]).is_err());
+    }
+
+    #[test]
+    fn limits_spec_rejects_empty_or_malformed_pairs() {
+        assert!(config(&["--limits", "cpu=300,as=4g"]).is_ok());
+        assert!(config(&["--limits", ""]).is_err());
+        assert!(config(&["--limits", "cpu"]).is_err());
+        assert!(config(&["--limits", "cpu=,as=4g"]).is_err());
+        assert!(config(&["--limits", "cpu=300,,nofile=1024"]).is_err());
+    }
+
+    #[test]
+    fn verify_flag_reaches_run_config() {
+        let cfg = config(&["--verify", "--", "/bin/true"]).expect("verify flag");
+        assert!(cfg.verify_preflight);
+        let cfg = config(&["--", "/bin/true"]).expect("default");
+        assert!(!cfg.verify_preflight);
     }
 
     #[test]

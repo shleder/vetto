@@ -280,7 +280,10 @@ pub fn run_cli(
                 Ok(())
             }
         }
-        RescueCommand::Repair { session, backup_dir } => {
+        RescueCommand::Repair {
+            session,
+            backup_dir,
+        } => {
             let session = select_session(adapter.as_ref(), &context, session)?;
             let default_backup = context.root.join(".vetto_backups");
             let backup_dir = backup_dir.as_deref().unwrap_or(&default_backup);
@@ -288,7 +291,10 @@ pub fn run_cli(
             if json {
                 print_json(&receipt)
             } else {
-                println!("repair completed for session: {}", report::clean(&receipt.session_key));
+                println!(
+                    "repair completed for session: {}",
+                    report::clean(&receipt.session_key)
+                );
                 println!("original sha256: {}", receipt.original_sha256);
                 println!("repaired sha256: {}", receipt.repaired_sha256);
                 println!("backup archive: {}", receipt.backup_archive_path.display());
@@ -306,7 +312,10 @@ pub fn run_cli(
             } else {
                 println!("rollback completed successfully");
                 println!("session: {}", report::clean(&rollback_receipt.session_key));
-                println!("target path: {}", report::clean(&rollback_receipt.target_path));
+                println!(
+                    "target path: {}",
+                    report::clean(&rollback_receipt.target_path)
+                );
                 println!("restored sha256: {}", rollback_receipt.restored_sha256);
                 Ok(())
             }

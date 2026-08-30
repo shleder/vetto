@@ -57,3 +57,27 @@ fn fail_closed_without_landlock_is_reported() {
         "doctor must always discuss landlock/tier: {out}"
     );
 }
+
+#[test]
+fn fs_only_with_denied_secrets_warns_about_degradation() {
+    if detected_tier().as_deref() != Some("full") {
+        eprintln!("SKIP: needs full tier to override from");
+        return;
+    }
+    ensure_fake_ssh_key();
+    let proj = TempProject::new("fsonly-warn");
+    let out = run_vetto_env_in(
+        proj.path(),
+        &["--dry-run", "--", "sh", "-c", "true"],
+        &[("VETTO_FORCE_TIER", "fs-only")],
+    );
+    let err = stderr(&out);
+    assert!(
+        err.contains("fs-only tier: display_only_deny paths"),
+        "degradation warning must state the masking gap: {err}"
+    );
+    assert!(
+        err.contains("cannot be read back"),
+        "the write-root read-back cost must be stated: {err}"
+    );
+}

@@ -210,23 +210,12 @@ impl BpfInsn {
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SocketDst {
     pub ip: [u8; 16],
     pub port: u16,
     pub family: u16,
     pub _pad: u32,
-}
-
-impl Default for SocketDst {
-    fn default() -> Self {
-        Self {
-            ip: [0; 16],
-            port: 0,
-            family: 0,
-            _pad: 0,
-        }
-    }
 }
 
 impl SocketDst {
@@ -280,7 +269,9 @@ impl CgroupV2Session {
     pub fn create(session_id: &str) -> VettoResult<Self> {
         let base = Path::new("/sys/fs/cgroup");
         if !base.exists() {
-            return Err(VettoError::Sandbox("cgroup v2 is not mounted at /sys/fs/cgroup".into()));
+            return Err(VettoError::Sandbox(
+                "cgroup v2 is not mounted at /sys/fs/cgroup".into(),
+            ));
         }
         let vetto_dir = base.join("vetto");
         if !vetto_dir.exists() {
@@ -292,8 +283,9 @@ impl CgroupV2Session {
             base.join(format!("vetto_session_{session_id}"))
         };
 
-        fs::create_dir_all(&session_dir)
-            .map_err(|e| VettoError::Sandbox(format!("create cgroup {}: {e}", session_dir.display())))?;
+        fs::create_dir_all(&session_dir).map_err(|e| {
+            VettoError::Sandbox(format!("create cgroup {}: {e}", session_dir.display()))
+        })?;
 
         let c_path = std::ffi::CString::new(session_dir.as_os_str().as_encoded_bytes())
             .map_err(|_| VettoError::Sandbox("invalid cgroup path".into()))?;
@@ -322,8 +314,12 @@ impl CgroupV2Session {
     /// Attach PID to this cgroup by writing to `cgroup.procs`.
     pub fn attach_pid(&self, pid: libc::pid_t) -> VettoResult<()> {
         let procs_file = self.path.join("cgroup.procs");
-        fs::write(&procs_file, format!("{pid}\n"))
-            .map_err(|e| VettoError::Sandbox(format!("attach PID {pid} to cgroup {}: {e}", self.path.display())))?;
+        fs::write(&procs_file, format!("{pid}\n")).map_err(|e| {
+            VettoError::Sandbox(format!(
+                "attach PID {pid} to cgroup {}: {e}",
+                self.path.display()
+            ))
+        })?;
         Ok(())
     }
 
@@ -374,7 +370,7 @@ struct MapElemAttr {
 struct ProgLoadAttr {
     prog_type: u32,
     insn_cnt: u32,
-    insns: u64, // pointer to instructions
+    insns: u64,   // pointer to instructions
     license: u64, // pointer to license string
     log_level: u32,
     log_size: u32,
@@ -472,12 +468,7 @@ impl EbpfRedirectManager {
         // Store original port at fp - 16
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET family at fp - 14
-        insns.push(BpfInsn::st_imm(
-            BPF_H,
-            BPF_REG_10,
-            -14,
-            libc::AF_INET as i32,
-        ));
+        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET));
 
         // Get socket cookie: bpf_get_socket_cookie(ctx) -> r0
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));
@@ -567,12 +558,7 @@ impl EbpfRedirectManager {
         ));
         insns.push(BpfInsn::stx_mem(BPF_H, BPF_REG_10, BPF_REG_8, -16));
         // Store AF_INET6 family
-        insns.push(BpfInsn::st_imm(
-            BPF_H,
-            BPF_REG_10,
-            -14,
-            libc::AF_INET6 as i32,
-        ));
+        insns.push(BpfInsn::st_imm(BPF_H, BPF_REG_10, -14, libc::AF_INET6));
 
         // Get socket cookie
         insns.push(BpfInsn::mov64_reg(BPF_REG_1, BPF_REG_6));

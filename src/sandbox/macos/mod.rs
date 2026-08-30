@@ -7,13 +7,19 @@
 //! HONEST LIMITS (also in SECURITY.md):
 //! - Seatbelt denials are invisible to FSEvents (same enforcement-vs-
 //!   visibility gap as Linux); macOS visibility is inherently delayed.
-//! - No PDEATHSIG on macOS: v0.1 kills the agent process group only when
-//!   vetto exits normally. A SIGKILLed vetto may leave orphans (roadmap:
-//!   kqueue EVFILT_PROC watchdog).
-//! - `--net=allowlist` is Linux-only in v0.1.
+//! - A kqueue watchdog (`pdeath_watch`, forked from the parent right after
+//!   the agent child exists) SIGKILLs the agent when vetto dies, closing the
+//!   SIGKILLed-vetto orphan gap. Best-effort: if the fork fails the session
+//!   runs without it (reported on stderr).
+//! - Relay network modes (`allowlist`/`strict`) are Linux-only; macOS
+//!   supports `--net=off` only and rejects the rest before forking.
+//! - Policy rlimits (CPU, address space, processes, open files, file size)
+//!   are applied in the child before exec, matching the Linux tier.
 
 pub mod endpoint_security;
 pub mod fsevents;
+pub mod limits;
+pub mod pdeath_watch;
 pub mod seatbelt;
 
 use std::ffi::CString;
@@ -45,8 +51,13 @@ impl MacosSandbox {
         if !Self::seatbelt_available() {
             bail!("Seatbelt (sandbox_init_with_parameters / sandbox-exec) unavailable; refusing to run unsandboxed (fail-closed)");
         }
+        // Relay modes require the Linux netns + broker stack. Both are
+        // rejected loudly here instead of silently degrading to --net=off.
         if matches!(self.net, NetMode::Allowlist(_)) {
-            bail!("--net=allowlist is Linux-only in v0.1");
+            bail!("--net=allowlist requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
+        }
+        if matches!(self.net, NetMode::Strict(_)) {
+            bail!("--net=strict requires the Linux network-namespace relay and is unavailable on macOS; refusing silently-weaker enforcement (fail-closed)");
         }
 
         let (err_r, err_w) = pipe2()?;
@@ -72,6 +83,16 @@ impl MacosSandbox {
         }
         drop(err_w);
 
+        // The parent-death watchdog must be forked HERE, from the parent —
+        // never inside the child. A second fork in the child poisons
+        // libSystem's fork-safety state, and the CF/ObjC calls inside
+        // `sandbox_init_with_parameters` then abort the agent (silent
+        // SIGABRT, no stderr). The parent has no threads yet, so a fork
+        // here is safe, and the child pid is exactly what the helper needs
+        // to watch. The helper closes every inherited descriptor above 2.
+        // SAFETY: scalar-only getpid.
+        pdeath_watch::spawn(unsafe { libc::getpid() }, pid);
+
         // Same readiness protocol as the Linux chains.
         let mut b = [0u8; 1];
         let n = unsafe { libc::read(err_r.as_raw_fd(), b.as_mut_ptr().cast(), 1) };
@@ -90,7 +111,14 @@ impl MacosSandbox {
         Ok(Spawned {
             handle: SandboxHandle {
                 root_pid: pid as u32,
-                strategy: Some(KillStrategy::ProcessGroup { pid, pgid: pid }),
+                strategy: Some(KillStrategy::ProcessGroup {
+                    pid,
+                    pgid: pid,
+                    // No sub-reaper sweep on macOS: kill(-pgid) semantics
+                    // are unchanged. setsid escapers remain the documented
+                    // macOS gap (no pidns, no PR_SET_CHILD_SUBREAPER use).
+                    sweep: false,
+                }),
             },
             broker_ctrl_fd: None,
             relay_port: None,
@@ -173,6 +201,16 @@ fn dup2_to(fd: RawFd, target: RawFd) -> Result<(), String> {
     }
 }
 
+/// Pre-exec stage tracer, enabled per-session with VETTO_CHILD_TRACE=1.
+/// The child cannot use logging machinery after fork; a raw stderr line is
+/// the only honest breadcrumb trail when a stage dies without a message
+/// (e.g. a silent SIGABRT from a platform library).
+fn child_trace(stage: &str) {
+    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
+        eprintln!("vetto: child stage: {stage}");
+    }
+}
+
 fn child(
     policy: &Policy,
     net: &NetMode,
@@ -181,6 +219,7 @@ fn child(
     err_w: RawFd,
     opts: &SpawnOptions,
 ) -> ! {
+    child_trace("entered");
     let mut keep: Vec<RawFd> = vec![err_w];
     match opts.stdio {
         StdioMode::Pty { slave_fd } => keep.push(slave_fd),
@@ -259,20 +298,87 @@ fn child(
         }
         StdioMode::Inherit => {}
     }
+
+    // Policy rlimits in the child, best-effort on macOS: the kernel refuses
+    // several ceilings (RLIMIT_AS, raising the NPROC hard ceiling) per host
+    // configuration, and failing every session over that would make the
+    // default profile unusable. Enforced values still cannot be raised back
+    // by the agent after exec; refusals are surfaced, not hidden.
+    child_trace("limits-about-to-apply");
+    // Diagnostic kill-switch: isolates the setrlimit calls when bisecting.
+    if std::env::var_os("VETTO_NO_MAC_LIMITS").is_some() {
+        child_trace("limits-skipped-by-env");
+    } else {
+        for refused in limits::apply_before_exec(&policy.limits) {
+            eprintln!("vetto: {refused}");
+        }
+    }
+    child_trace("limits-done");
+
     if let Err(e) = std::env::set_current_dir(&opts.cwd) {
         let _ = e;
         // SAFETY: immediate exit; nothing else to report through.
         unsafe { libc::_exit(117) };
     }
+    child_trace("cwd-set");
 
-    // Apply native Seatbelt sandbox via dynamic C API in memory
-    if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
-        child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
+    // Apply native Seatbelt sandbox via dynamic C API in memory.
+    // VETTO_SEATBELT_MODE is a diagnostic bisect switch (SIGABRT hunt):
+    //   none           — do not sandbox at all (CI-only; never a fallback)
+    //   allow-all      — "(allow default)" profile
+    //   deny-net-only  — everything allowed except the network
+    //   wb-tcpudp      — deny TCP/UDP outbound only (no blanket network*)
+    //   wb-mach        — blanket deny network* + mach-lookup/system-socket
+    //   wb-socket      — blanket deny network* + system-socket allowed
+    match std::env::var_os("VETTO_SEATBELT_MODE")
+        .as_deref()
+        .and_then(|m| m.to_str())
+    {
+        Some("none") => {
+            child_trace("seatbelt-skipped-by-env");
+        }
+        Some(mode @ ("allow-all" | "deny-net-only")) => {
+            let profile = if mode == "allow-all" {
+                "(version 1)\n(allow default)\n"
+            } else {
+                "(version 1)\n(deny network*)\n"
+            };
+            child_trace(&format!("seatbelt-diagnostic-mode: {mode}"));
+            if let Err(err) = seatbelt::apply_seatbelt_raw(profile, &[]) {
+                child_fail(err_w, 120, &format!("apply seatbelt ({mode}): {err}"));
+            }
+        }
+        Some(mode @ ("wb-tcpudp" | "wb-mach" | "wb-socket")) => {
+            let profile = match mode {
+                "wb-tcpudp" => "(version 1)\n(deny network-outbound (remote tcp-port *))\n(deny network-outbound (remote udp-port *))\n",
+                "wb-mach" => "(version 1)\n(deny network*)\n(allow mach-lookup)\n(allow system-socket)\n",
+                _ => "(version 1)\n(deny network*)\n(allow system-socket)\n",
+            };
+            child_trace(&format!("seatbelt-diagnostic-mode: {mode}"));
+            if let Err(err) = seatbelt::apply_seatbelt_raw(profile, &[]) {
+                child_fail(err_w, 120, &format!("apply seatbelt ({mode}): {err}"));
+            }
+        }
+        _ => {
+            if let Err(err) = seatbelt::apply_seatbelt(policy, net) {
+                child_fail(err_w, 120, &format!("apply seatbelt: {err}"));
+            }
+        }
+    }
+    child_trace("seatbelt-applied");
+    if std::env::var_os("VETTO_CHILD_TRACE").is_some() {
+        eprintln!(
+            "vetto: child seatbelt profile:
+{}",
+            seatbelt::generate(policy, net)
+        );
     }
 
+    child_trace("ready-about-to-send");
     // Tell the parent we are ready, then execve agent binary directly.
     // SAFETY: raw write of one byte.
     let _ = unsafe { libc::write(err_w, b"R".as_ptr().cast(), 1) };
+    child_trace("ready-sent");
     close_all_except(&[0, 1, 2]);
 
     let prog = match agent.first() {
@@ -286,7 +392,10 @@ fn child(
 
     // SAFETY: execve with NUL-terminated vectors built above.
     unsafe { libc::execve(prog.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
-    // SAFETY: execve failed; nothing more to say.
+    child_trace("execve-returned");
+    // SAFETY: execve failed; surface errno for post-mortem, then exit.
+    let errno = std::io::Error::last_os_error();
+    child_trace(&format!("execve-errno: {errno}"));
     unsafe { libc::_exit(127) }
 }
 

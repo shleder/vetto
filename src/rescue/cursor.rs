@@ -8,8 +8,9 @@
 //! - macOS: `~/Library/Application Support/Cursor/User/workspaceStorage/<workspace_id>/state.vscdb`
 //! - Windows: `%APPDATA%\Cursor\User\workspaceStorage\<workspace_id>\state.vscdb`
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,8 +21,6 @@ use std::os::unix::fs::MetadataExt;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
-
-use crate::report;
 
 use super::adapter::RescueAdapter;
 use super::lock::SessionLockGuard;
@@ -54,9 +53,7 @@ impl CursorAdapter {
         #[cfg(target_os = "macos")]
         {
             if let Some(home) = std::env::var_os("HOME") {
-                return Some(
-                    PathBuf::from(home).join("Library/Application Support/Cursor/User"),
-                );
+                return Some(PathBuf::from(home).join("Library/Application Support/Cursor/User"));
             }
         }
         #[cfg(target_os = "windows")]
@@ -99,9 +96,9 @@ impl CursorAdapter {
 
     fn normalized_relative(context: &RescueContext, path: &Path) -> Result<String> {
         let canonical_root = Self::validate_root(context)?;
-        let relative = path.strip_prefix(&canonical_root).with_context(|| {
-            format!("Cursor path {} is outside state root", path.display())
-        })?;
+        let relative = path
+            .strip_prefix(&canonical_root)
+            .with_context(|| format!("Cursor path {} is outside state root", path.display()))?;
         Ok(relative.to_string_lossy().replace('\\', "/"))
     }
 
@@ -385,7 +382,8 @@ impl RescueAdapter for CursorAdapter {
         let mut oversized_records = 0usize;
 
         if file_name.ends_with(".vscdb") || file_name.ends_with(".sqlite") {
-            let conn = safe_fs::open_sqlite_read_only(&context.root, &canonical_path, "state.vscdb")?;
+            let conn =
+                safe_fs::open_sqlite_read_only(&context.root, &canonical_path, "state.vscdb")?;
             let has_item_table: bool = conn
                 .query_row(
                     "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ItemTable'",
@@ -406,18 +404,23 @@ impl RescueAdapter for CursorAdapter {
                     let (key, val) = row?;
                     records += 1;
                     if let Some(raw) = val {
-                        if CURSOR_INTERESTING_KEYS.contains(&key.as_str()) {
-                            if serde_json::from_str::<serde_json::Value>(&raw).is_err() {
-                                malformed_records += 1;
-                                findings.push(format!("TRUNCATED_JSON_PAYLOAD_{key}"));
-                            }
+                        if CURSOR_INTERESTING_KEYS.contains(&key.as_str())
+                            && serde_json::from_str::<serde_json::Value>(&raw).is_err()
+                        {
+                            malformed_records += 1;
+                            findings.push(format!("TRUNCATED_JSON_PAYLOAD_{key}"));
                         }
                     }
                 }
             }
         } else {
             // JSONL chat session
-            let bytes = safe_fs::read_bounded(&context.root, &canonical_path, context.max_session_bytes, "chat jsonl")?;
+            let bytes = safe_fs::read_bounded(
+                &context.root,
+                &canonical_path,
+                context.max_session_bytes,
+                "chat jsonl",
+            )?;
             for line in bytes.split(|b| *b == b'\n') {
                 let mut l = line;
                 if l.ends_with(b"\r") {
@@ -447,7 +450,9 @@ impl RescueAdapter for CursorAdapter {
         };
 
         if malformed_records > 0 {
-            notices.push(format!("{malformed_records} malformed record(s) detected in Cursor state"));
+            notices.push(format!(
+                "{malformed_records} malformed record(s) detected in Cursor state"
+            ));
         }
 
         Ok(SessionView {
@@ -514,8 +519,9 @@ impl RescueAdapter for CursorAdapter {
         backup_dir: &Path,
     ) -> Result<RepairReceipt> {
         let lock_path = context.root.join(".vetto_repair.lock");
-        let _guard = SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
-            .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
+        let _guard =
+            SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
+                .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
 
         let canonical_target = Self::validate_session_path(context, &session.source_path)?;
         let original_bytes = fs::read(&canonical_target)
@@ -553,8 +559,13 @@ impl RescueAdapter for CursorAdapter {
         SqliteWalManager::copy_sqlite_set(&canonical_target, &tmp_path)?;
         let actions = Self::repair_database_in_place(&tmp_path)?;
 
-        fs::rename(&tmp_path, &canonical_target)
-            .with_context(|| format!("atomic rename {} -> {}", tmp_path.display(), canonical_target.display()))?;
+        fs::rename(&tmp_path, &canonical_target).with_context(|| {
+            format!(
+                "atomic rename {} -> {}",
+                tmp_path.display(),
+                canonical_target.display()
+            )
+        })?;
 
         #[cfg(unix)]
         if let Ok(dir_file) = File::open(parent_dir) {
@@ -603,7 +614,8 @@ mod tests {
         let truncated = r#"{"composerData":{"text":"hello world"#;
         let (repaired, modified) = CursorAdapter::repair_json_string(truncated);
         assert!(modified);
-        let val: serde_json::Value = serde_json::from_str(&repaired).expect("valid json after repair");
+        let val: serde_json::Value =
+            serde_json::from_str(&repaired).expect("valid json after repair");
         assert!(val.is_object());
     }
 
@@ -632,9 +644,14 @@ mod tests {
 
         let view = CursorAdapter.diagnose(&ctx, &sessions[0]).unwrap();
         assert_eq!(view.health, SessionHealth::Warning);
-        assert!(view.findings.iter().any(|f| f.contains("composer.composerData")));
+        assert!(view
+            .findings
+            .iter()
+            .any(|f| f.contains("composer.composerData")));
 
-        let receipt = CursorAdapter.repair(&ctx, &sessions[0], &backup_dir).unwrap();
+        let receipt = CursorAdapter
+            .repair(&ctx, &sessions[0], &backup_dir)
+            .unwrap();
         assert_eq!(receipt.adapter, "cursor");
         assert!(receipt.backup_archive_path.exists());
 

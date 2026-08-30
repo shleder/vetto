@@ -225,7 +225,10 @@ fn ingest(inner: &mut Inner, ev: Event) {
                 st.notices.push(message);
             }
         }
-        Event::ExecObserved { .. } | Event::SecretMasked { .. } => {}
+        // SessionTimeout is a session-level marker: it is counted into
+        // events_total and counts["session_timeout"] above like every event;
+        // it carries no per-operation data of its own.
+        Event::ExecObserved { .. } | Event::SecretMasked { .. } | Event::SessionTimeout { .. } => {}
     }
 }
 

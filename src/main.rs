@@ -6,11 +6,7 @@
 //!   3. Only after a successful spawn: event bus consumers (broker, notifier,
 //!      audit reader, visibility poller, jsonl, stats) and the UI loop.
 
-#![allow(clippy::all)]
-
 use std::collections::HashMap;
-#[cfg(unix)]
-use std::io::Read;
 #[cfg(target_os = "linux")]
 use std::os::fd::IntoRawFd;
 #[cfg(unix)]
@@ -82,6 +78,31 @@ fn main() -> Result<()> {
             json,
             command,
         }) => rescue::run_cli(adapter, root.as_deref(), *json, command),
+        Some(cli::Command::Verify { json }) => {
+            let net = vetto::config::parse_net_mode(&args.net)?;
+            vetto::verify::run_cli(
+                *json,
+                &args.profile,
+                args.policy.as_deref().map(PathBuf::from).as_deref(),
+                &net,
+            )
+        }
+        Some(cli::Command::Policy { command }) => match command {
+            cli::PolicyCommand::Explain { json } => {
+                let net = vetto::config::parse_net_mode(&args.net)?;
+                vetto::policy::explain::run_cli(
+                    *json,
+                    &args.profile,
+                    args.policy.as_deref().map(PathBuf::from).as_deref(),
+                    &net,
+                )
+            }
+            cli::PolicyCommand::Lint { strict } => vetto::policy::lint::run_cli(
+                *strict,
+                &args.profile,
+                args.policy.as_deref().map(PathBuf::from).as_deref(),
+            ),
+        },
         Some(cli::Command::Completions { shell }) => cli::print_completions(*shell),
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]
@@ -137,6 +158,21 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         tier_for_policy,
         &policy_options,
     )?;
+    if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
+        pol.warnings.push(
+            "fs-only tier: display_only_deny paths cannot be masked with mount \
+             overlays here. They are carved out of the read allowlist instead: \
+             directory entry NAMES may stay visible (content stays denied), and \
+             a file created directly at a write root cannot be read back in this \
+             session because read is stripped from write-root rules to keep \
+             carved-out secrets unreadable. Prefer the full tier if either \
+             property matters for this session."
+                .to_string(),
+        );
+    }
+    if let Some(spec) = &cfg.limits_spec {
+        policy::limits_spec::apply_cli(&mut pol, spec)?;
+    }
     use std::io::Write;
     for w in &pol.warnings {
         eprint!("vetto: policy warning: {w}\r\n");
@@ -173,6 +209,21 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if cfg.git_ssh {
         bail!("--git-ssh is available on Linux only");
     }
+
+    // Optional pre-spawn boundary verification. A leak here is a policy or
+    // kernel problem, not an agent problem: fail before the agent starts.
+    let verify_outcome = if cfg.verify_preflight {
+        let report = vetto::verify::preflight(&pol, &cfg.net)?;
+        eprintln!("vetto: verify: {}", report.summary());
+        if report.leaks() > 0 {
+            bail!(
+                "--verify: boundary verification failed; refusing to start the agent (fail-closed)"
+            );
+        }
+        Some(report)
+    } else {
+        None
+    };
 
     let env_extra: HashMap<String, String> = {
         #[cfg(target_os = "linux")]
@@ -307,6 +358,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                           by load-time policy rules, not mount overlays"
                     .to_string(),
             });
+            if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
+                bus.publish(Event::Notice {
+                    ts: events::types::now(),
+                    message: "fs-only tier: denied secret paths are allowlist-carved, \
+                              not masked — entry names may be visible and files created \
+                              directly at a write root cannot be read back this session"
+                        .to_string(),
+                });
+            }
         }
     }
 
@@ -370,37 +430,58 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     install_sigint_forwarder(root_pid, tier);
 
+    if cfg.session_timeout.is_some() && cfg.tui != TuiMode::None {
+        bus.publish(Event::Notice {
+            ts: events::types::now(),
+            message: "--timeout is enforced only with --tui=none; this TUI mode \
+                      owns its own wait loop and ignores it"
+                .to_string(),
+        });
+    }
+
     // ---- Phase 3: run the UI / wait ---------------------------------------
     #[cfg(unix)]
-    let exit_code = match cfg.tui {
+    let (exit_code, timed_out) = match cfg.tui {
         TuiMode::Statusline => {
             let master = pty_master.expect("statusline wires a pty");
-            tui::statusline::run(
-                &bus,
-                &master,
-                handle,
-                tier_label(tier),
-                &cfg.net.label(),
-                &pol.name,
+            (
+                tui::statusline::run(
+                    &bus,
+                    &master,
+                    handle,
+                    tier_label(tier),
+                    &cfg.net.label(),
+                    &pol.name,
+                ),
+                false,
             )
         }
         TuiMode::Full => {
             let out = stdout_r.expect("full mode wires stdout pipe");
             let err = stderr_r.expect("full mode wires stderr pipe");
-            tui::full::run(
-                &bus,
-                out,
-                err,
-                handle,
-                tier_label(tier),
-                &cfg.net.label(),
-                &pol.name,
+            (
+                tui::full::run(
+                    &bus,
+                    out,
+                    err,
+                    handle,
+                    tier_label(tier),
+                    &cfg.net.label(),
+                    &pol.name,
+                ),
+                false,
             )
         }
-        TuiMode::None => handle.wait(),
+        TuiMode::None => match cfg.session_timeout {
+            Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+            None => (handle.wait(), false),
+        },
     };
     #[cfg(windows)]
-    let exit_code = handle.wait();
+    let (exit_code, timed_out) = match cfg.session_timeout {
+        Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+        None => (handle.wait(), false),
+    };
 
     let duration_secs = started.elapsed().as_secs();
     bus.publish(Event::SessionEnded {
@@ -434,6 +515,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     } else {
         exit_code
     };
+    if timed_out {
+        // Mirror GNU timeout(1): 124 means "we killed it at the deadline".
+        code = 124;
+    }
     if let Some(threshold) = cfg.fail_on_block {
         if blocked_total >= threshold {
             eprintln!(
@@ -460,18 +545,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                     "blocked_file_attempts": blocked_file_total,
                     "network_denied": blocked_network_total,
                     "events_total": snap.events_total,
+                    "verify": verify_outcome
+                        .map(|report| report.status().to_string())
+                        .unwrap_or_else(|| "off".to_string()),
+                    "timed_out": timed_out,
                     "sanitizer": "BEST-EFFORT",
                 }
             })
         );
     } else {
         eprintln!(
-            "vetto: agent exited {} after {}s (blocked={}, events={}, tier={})",
+            "vetto: agent exited {} after {}s (blocked={}, events={}, tier={}{})",
             exit_code,
             duration_secs,
             blocked_total,
             snap.events_total,
             tier_label(tier),
+            if timed_out { ", TIMEOUT" } else { "" },
         );
     }
 
@@ -483,6 +573,47 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
         Some(policy::Tier::Full) => policy::Tier::Full.label(),
         Some(policy::Tier::FsOnly) => policy::Tier::FsOnly.label(),
         None => "macos-seatbelt",
+    }
+}
+
+/// Wait for the sandboxed session with a hard deadline. Returns the child
+/// exit code plus a flag telling whether vetto tore the sandbox down at the
+/// deadline (exit code 124 mirrors GNU timeout(1)). Teardown goes through
+/// `SandboxHandle::terminate`, so every platform reuses its own kill strategy.
+fn wait_with_timeout(
+    handle: &mut sandbox::SandboxHandle,
+    bus: &EventBus,
+    limit: std::time::Duration,
+) -> (i32, bool) {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if let Some(code) = handle.try_wait() {
+            return (code, false);
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!(
+                "vetto: session timeout ({}) reached; terminating the sandbox",
+                format_duration(limit)
+            );
+            bus.publish(Event::SessionTimeout {
+                ts: events::types::now(),
+            });
+            handle.terminate();
+            let code = handle.wait();
+            return (code, true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn format_duration(limit: std::time::Duration) -> String {
+    let secs = limit.as_secs();
+    if secs % 3600 == 0 && secs >= 3600 {
+        format!("{}h", secs / 3600)
+    } else if secs % 60 == 0 && secs >= 60 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
     }
 }
 
@@ -773,73 +904,33 @@ fn doctor_agent_check(agent: &str) -> Result<()> {
 }
 
 /// Build a throwaway sandbox around a probe script and verify every
-/// display_only_deny path is truly unreachable from inside.
+/// display_only_deny path is truly unreachable from inside. The spawn
+/// machinery lives in `doctor::probe`; this prints the per-path verdicts.
 #[cfg(unix)]
 fn doctor_probe() -> Result<()> {
     println!("probe: building throwaway sandbox with the default profile...");
-    let backend = Box::new(sandbox::Backend::detect(NetMode::Off, false)?);
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("$HOME not set")?;
-    let tier = backend.tier().unwrap_or(policy::Tier::Full);
+    let tier = sandbox::Backend::detect(NetMode::Off, false)?
+        .tier()
+        .unwrap_or(policy::Tier::Full);
     let pol = policy::loader::load("default", None, &project, &home, tier)?;
     if pol.deny_resolved.is_empty() {
         println!("probe: no deny paths resolve on this machine (nothing to verify)");
         return Ok(());
     }
 
-    // The probe script reports, per path: directory contents readable or
-    // denied; file byte count or unreadable. FS-ONLY may expose directory
-    // entry names because Landlock is an access-control mechanism, not a
-    // visibility overlay, so the security property checked here is that no
-    // file content under a denied directory can be read. FULL still masks the
-    // whole directory. Overlaid files appear EMPTY (0 bytes).
-    let script = "for p in \"$@\"; do if [ -d \"$p\" ]; then leak=0; \
-                  for f in \"$p\"/* \"$p\"/.[!.]* \"$p\"/..?*; do \
-                  [ -f \"$f\" ] || continue; \
-                  if dd if=\"$f\" of=/dev/null bs=1 count=1 >/dev/null 2>&1; then leak=1; break; fi; done; \
-                  if [ \"$leak\" -eq 0 ]; then echo \"D|$p|contents-denied\"; \
-                  else echo \"D|$p|content-readable\"; fi; \
-                  else n=$(wc -c <\"$p\" 2>/dev/null) || { echo \"F|$p|unreadable\"; continue; }; \
-                  echo \"F|$p|$n\"; fi; done";
-
-    let mut agent_cmd = vec![
-        "/bin/sh".to_string(),
-        "-c".to_string(),
-        script.to_string(),
-        "vetto-probe".to_string(),
-    ];
-    for d in &pol.deny_resolved {
-        agent_cmd.push(d.path.display().to_string());
-    }
-
-    let (out_r, out_w) = pipe2()?;
-    let (err_r, err_w) = pipe2()?;
-    let opts = sandbox::SpawnOptions {
-        stdio: sandbox::StdioMode::Captured {
-            stdout_w: out_w.as_raw_fd(),
-            stderr_w: err_w.as_raw_fd(),
-        },
-        agent_cmd,
-        cwd: project.clone(),
-        env_extra: HashMap::new(),
-    };
-    let sandbox::Spawned { mut handle, .. } = backend.spawn(&pol, opts)?;
-    drop(out_w);
-    drop(err_w);
-
-    // Consume the OwnedFds into Files (taking ownership, no double close).
-    let mut output = String::new();
-    let mut f: std::fs::File = out_r.into();
-    let _ = f.read_to_string(&mut output);
-    let mut eout = String::new();
-    let mut ef: std::fs::File = err_r.into();
-    let _ = ef.read_to_string(&mut eout);
-    let _code = handle.wait();
+    let script_args: Vec<String> = pol
+        .deny_resolved
+        .iter()
+        .map(|d| d.path.display().to_string())
+        .collect();
+    let output = vetto::doctor::run_probe_script(&pol, &project, script_args)?;
 
     let mut failures = 0usize;
-    for line in output.lines() {
+    for line in output.stdout.lines() {
         let mut parts = line.splitn(3, '|');
         let (kind, path, verdict) = match (parts.next(), parts.next(), parts.next()) {
             (Some(k), Some(p), Some(v)) => (k, p, v),
@@ -872,8 +963,8 @@ fn doctor_probe() -> Result<()> {
             _ => {}
         }
     }
-    if !eout.trim().is_empty() {
-        println!("  (probe stderr: {})", eout.trim());
+    if !output.stderr.trim().is_empty() {
+        println!("  (probe stderr: {})", output.stderr.trim());
     }
     if failures == 0 {
         println!(

@@ -45,6 +45,7 @@ pub fn apply_before_exec(limits: &ResourceLimits) -> VettoResult<()> {
     apply_one(libc::RLIMIT_AS, limits.address_space_bytes)?;
     apply_one(libc::RLIMIT_NPROC, limits.processes)?;
     apply_one(libc::RLIMIT_NOFILE, limits.open_files)?;
+    apply_one(libc::RLIMIT_FSIZE, limits.file_size_bytes)?;
     Ok(())
 }
 
@@ -76,17 +77,19 @@ mod tests {
     }
 
     #[test]
-    fn policy_fields_map_to_all_four_resources() {
+    fn policy_fields_map_to_all_five_resources() {
         let limits = ResourceLimits {
             cpu_seconds: Some(60),
             address_space_bytes: Some(64 * 1024 * 1024),
             processes: Some(32),
             open_files: Some(128),
+            file_size_bytes: Some(1024 * 1024),
         };
         assert_eq!(limits.cpu_seconds, Some(60));
         assert_eq!(limits.address_space_bytes, Some(64 * 1024 * 1024));
         assert_eq!(limits.processes, Some(32));
         assert_eq!(limits.open_files, Some(128));
+        assert_eq!(limits.file_size_bytes, Some(1024 * 1024));
     }
 
     #[test]

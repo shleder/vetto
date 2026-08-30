@@ -23,9 +23,7 @@ use crate::config::NetMode;
 use crate::events::Event;
 use crate::events::EventBus;
 use crate::multi::isolation::IsolationBarrier;
-use crate::multi::{
-    AgentSpec, DebugPortConfig, Manifest, MultiAggregator, MultiEventStream, VirtualPortPool,
-};
+use crate::multi::{AgentSpec, Manifest, MultiAggregator, MultiEventStream, VirtualPortPool};
 #[cfg(unix)]
 use crate::policy;
 use crate::report::stats::StatsCollector;

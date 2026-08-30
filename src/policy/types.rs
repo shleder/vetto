@@ -1,8 +1,8 @@
 //! Policy representation after load-time resolution.
 
+use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 /// Linux capability tier the policy was loaded for (affects masking strategy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +99,8 @@ pub struct ResourceLimits {
     pub address_space_bytes: Option<u64>,
     pub processes: Option<u64>,
     pub open_files: Option<u64>,
+    /// RLIMIT_FSIZE: maximum size of files the agent may create.
+    pub file_size_bytes: Option<u64>,
 }
 
 impl ResourceLimits {
@@ -107,6 +109,7 @@ impl ResourceLimits {
         self.address_space_bytes = strictest(self.address_space_bytes, other.address_space_bytes);
         self.processes = strictest(self.processes, other.processes);
         self.open_files = strictest(self.open_files, other.open_files);
+        self.file_size_bytes = strictest(self.file_size_bytes, other.file_size_bytes);
     }
 }
 
@@ -175,6 +178,10 @@ pub struct Policy {
     pub deny_resolved: Vec<DenyEntry>,
     /// Environment allowlist applied immediately before agent execve.
     pub environment: EnvironmentPolicy,
+    /// True when a policy layer denies direct network access. Session-level
+    /// enforcement additionally depends on the CLI `--net` mode, which lives
+    /// outside the policy: this field only records policy-layer intent.
+    pub deny_network: bool,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
@@ -193,6 +200,7 @@ impl Default for Policy {
             deny_read: Vec::new(),
             deny_resolved: Vec::new(),
             environment: EnvironmentPolicy::default(),
+            deny_network: false,
             is_immutable: false,
             warnings: Vec::new(),
         }
@@ -212,7 +220,11 @@ impl Policy {
 
     /// Is `path` inside any write root? (lexical prefix check, best-effort)
     pub fn in_write_scope(&self, path: &Path) -> bool {
-        if self.deny_write.iter().any(|denied| path.starts_with(denied)) {
+        if self
+            .deny_write
+            .iter()
+            .any(|denied| path.starts_with(denied))
+        {
             return false;
         }
         self.allow_write.iter().any(|root| path.starts_with(root))

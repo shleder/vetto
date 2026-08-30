@@ -57,14 +57,18 @@ criterion = "0.5"
 name = "performance"
 harness = false
 
+[[bench]]
+name = "e2e_spawn"
+harness = false
+
 [profile.release]
 lto = true
 strip = true
 
 [lints.rust]
-warnings = "allow"
+# Unwired capability/library surfaces (eBPF redirect, Endpoint Security,
+# minifilter, restricted token) are dead code by design and stay allowed.
 dead_code = "allow"
-unused = "allow"
 
 [lints.clippy]
-all = { level = "allow", priority = -1 }
+all = { level = "deny", priority = -1 }

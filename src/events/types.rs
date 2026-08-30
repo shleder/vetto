@@ -50,6 +50,8 @@ pub enum Event {
     SecretMasked { ts: DateTime<Utc>, path: String },
     /// Honest-notice text surfaced to statusline/doctor/reports.
     Notice { ts: DateTime<Utc>, message: String },
+    /// The session exceeded `--timeout` and vetto tore the sandbox down.
+    SessionTimeout { ts: DateTime<Utc> },
     SessionEnded {
         ts: DateTime<Utc>,
         exit_code: i32,
@@ -75,6 +77,7 @@ impl Event {
             | Event::NetRequest { ts, .. }
             | Event::SecretMasked { ts, .. }
             | Event::Notice { ts, .. }
+            | Event::SessionTimeout { ts }
             | Event::SessionEnded { ts, .. } => *ts,
         }
     }
@@ -88,6 +91,7 @@ impl Event {
             Event::NetRequest { .. } => "net_request",
             Event::SecretMasked { .. } => "secret_masked",
             Event::Notice { .. } => "notice",
+            Event::SessionTimeout { .. } => "session_timeout",
             Event::SessionEnded { .. } => "session_ended",
         }
     }

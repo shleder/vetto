@@ -682,7 +682,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&path);
 
         for abi in [1, 2, 3, 4, 5, 6] {
-            let prepared = prepare_ruleset_for_abi(abi, &[path.clone()], &[], false);
+            let prepared = prepare_ruleset_for_abi(abi, std::slice::from_ref(&path), &[], false);
             assert_eq!(prepared.abi(), abi);
             assert!(!prepared.is_empty());
         }

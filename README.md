@@ -62,18 +62,18 @@ trusted boundary you bet your machine on.
 
 **What is currently weaker than the rest — known and not hidden:**
 
-- **CI lint gates are soft.** Crate-level lints allow all warnings
-  (`Cargo.toml`), so the `clippy -D warnings` CI step cannot fail on crate
-  code, and `cargo fmt --check` is non-blocking.
-- **Windows sandbox enforcement has no integration-test coverage.** Its tests
-  only assert that `doctor` prints capability text. The backend fails closed,
-  and it is labelled experimental for a reason.
+- **CI lint gates no longer rubber-stamp the code** (fmt blocks, clippy denies
+  warnings, llvm-cov publishes coverage), but the coverage **threshold is not
+  set yet** — the number gets pinned only after a real baseline exists.
+- **Windows sandbox enforcement has thin test coverage.** Enforcement tests
+  exist but every non-Windows machine only ever runs their inert placeholders.
+  The backend fails closed, and it is labelled experimental for a reason.
 - **Two large subsystems are dead code**: a Linux eBPF redirect path (~900
   lines) and a macOS Endpoint Security deny-capable engine. Neither is wired
   into a session; the README of no version should be read as claiming they are.
-- **macOS `--net=strict` currently behaves exactly like `--net=off`.**
-- `docs/tutorials/` are outlines, not finished tutorials. There is no coverage
-  measurement in CI, and no performance-overhead figures anywhere.
+- `docs/tutorials/` are outlines, not finished tutorials. There are no
+  performance-overhead figures yet (the e2e spawn benchmark lands with the
+  first CI perf run).
 
 **What a kernel sandbox is not:** it is not a VM or a container runtime. A
 sufficiently severe kernel exploit escapes namespaces and Landlock. vetto
@@ -122,6 +122,30 @@ observation only.
 byte by byte from inside it, that every resolved `display_only_deny` path is
 actually unreachable.
 
+## Verify the boundary without an agent
+
+`vetto verify` runs the same kind of checks as `doctor --probe` plus two more:
+a loopback-connect attempt against a host listener (a sandbox that can reach
+your host services fails loudly) and a write attempt outside every write root.
+It prints a verdict table (or `--json`) and exits non-zero on any leak.
+
+`--verify` on a normal session runs this battery against the *resolved* policy
+first and refuses to start the agent on any leak:
+
+```bash
+vetto verify            # standalone battery, no agent runs
+vetto --verify -- claude -p "fix the failing test"
+```
+
+`vetto policy explain` prints the effective merged policy — tier, network
+mode, roots, masked secrets, limits, environment — and `vetto policy lint`
+flags dangerous configurations such as a write root covering `$HOME`:
+
+```bash
+vetto policy explain --json
+vetto policy lint --strict
+```
+
 ## Run an agent
 
 ```bash
@@ -148,6 +172,9 @@ Useful flags (`vetto --help` is the authority):
 | `--report <fmts>` | Post-session reports: `html,md,json,sarif` |
 | `--jsonl <path>` | Append every session event as JSON lines |
 | `--fail-on-block [n]` | Exit non-zero after `n` observed blocked attempts (default 1) |
+| `--timeout <dur>` | Kill the session at the deadline, exit 124 (e.g. `90s`, `30m`; enforced with `--tui=none`) |
+| `--limits <spec>` | Resource ceilings: `cpu=,as=,procs=,nofile=,fsize=` (strictest-wins with policy) |
+| `--verify` | Run the boundary battery before spawning the agent; refuse to start on any leak |
 | `--dry-run` | Print the resolved policy and tier plan; enforce nothing |
 | `--ci` | Non-interactive: implies `--tui=none` and a JSON summary on stdout |
 | `--observe-seccomp` | Attach a best-effort blocked-attempt tap (Linux, observation only) |
@@ -170,7 +197,8 @@ Platform truth:
   (anti-rebinding).
 - Linux `fs-only`: relay modes are rejected. `off` is enforced by a
   socket-family seccomp filter.
-- macOS: `allowlist` is rejected; `strict` currently behaves the same as `off`.
+- macOS: `off` only — both relay modes (`allowlist`, `strict`) are rejected
+  before spawn with an explicit reason.
 - Windows: `off` only.
 - `--git-ssh` is Linux-only.
 
@@ -282,7 +310,7 @@ wrapped without prefixing every command by hand.
 | :--- | :--- | :--- | :--- |
 | Linux x86_64 / aarch64 | `full` | Landlock, user/mount/PID/net/IPC namespaces, seccomp-BPF | Most complete backend |
 | Linux without unprivileged userns | `fs-only` | Landlock, seccomp-BPF | No mount/PID/net namespace; no relay modes; see read-back cost below |
-| macOS (Intel / Apple Silicon) | Seatbelt | `libsandbox` SBPL profiles (`sandbox_init_with_parameters`), FSEvents | `--net=off` only (see Network); Endpoint Security code exists but is not wired in |
+| macOS (Intel / Apple Silicon) | Seatbelt | `libsandbox` SBPL profiles, write isolation + net=off | Reads are NOT isolated on current macOS (known SBPL limitation — see Known limits); secret deny rules are best-effort |
 | Windows 11 x64 | Experimental | `processmodel.dll` sandbox API, AppContainer, low integrity, Job Object | `--net=off` only; inherited stdio, so use `--tui=none`; no integration-test coverage of enforcement |
 
 ## Known limits
@@ -297,18 +325,27 @@ These are properties of the current implementation, not planned work:
 - `fs-only` has no mount namespace. To keep carved-out secrets unreadable, read
   permission is stripped from write-root rules, and the honest cost is that a
   file created **directly at a write root** (outside enumerated clean
-  subdirectories) cannot be read back in the same session. It also has no PID
+  subdirectories) cannot be read back in the same session, and directory entry
+  names under denied paths stay visible. vetto prints this degradation warning
+  at session start whenever the policy has deny paths. It also has no PID
   namespace: a deliberately `setsid()`-detached grandchild is a documented
   cleanup gap.
 - macOS relies on `libsandbox` SBPL profiles — the same mechanism the
   deprecated `sandbox-exec` binary drives — so treat that surface as
-  Apple-deprecated. FSEvents reports coarse directory changes, never reads or
-  denials. There is no `PDEATHSIG` equivalent: if vetto is `SIGKILL`ed, the
-  agent keeps running.
+  Apple-deprecated. **Read isolation is not enforced on current macOS**: the
+  bisect matrix showed that multi-clause `(deny default)` profiles with
+  fragmented read allowlists abort every exec'd binary with a silent SIGABRT,
+  so the working macOS profile keeps reads broad and enforces write
+  isolation, net=off (no IP traffic) and trailing `display_only_deny` secret
+  denies — which the broad read allow currently outruns. Secret reads on
+  macOS are therefore not isolated yet; narrowing reads without breaking
+  process startup is the top roadmap item. A forked kqueue watchdog kills the
+  agent when vetto itself is `SIGKILL`ed; it is best-effort and reports its
+  own failure if it cannot arm.
 - Windows fails before process creation when the experimental sandbox API is
-  unavailable, and refuses the launch entirely when the policy has deny paths
-  (the SandboxSpec contract has no verified deny field). There is no weaker
-  fallback tier.
+  unavailable, and refuses the launch when a secret path overlaps a granted
+  read root (the SandboxSpec contract cannot subtract a subpath). There is no
+  weaker fallback tier.
 - The multi-agent runtime is Unix-only; Windows rejects a multi-agent launch.
 - No performance overhead figure is guaranteed. See
   [docs/performance.md](docs/performance.md) for the benchmark method; the

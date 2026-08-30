@@ -219,6 +219,9 @@ impl AppState {
                 *self.file_tree.entry(file_tree_key(path)).or_insert(0) += 1;
                 sample.events = 1;
             }
+            // Session-level marker like start/end: it lands in the event ring
+            // via describe() below but drives no counters or samples.
+            Event::SessionTimeout { .. } => {}
         }
         self.last_line = describe(&ev);
         self.events.push_back(ev);
@@ -423,6 +426,7 @@ pub fn describe(ev: &Event) -> String {
         }
         Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),
         Event::Notice { message, .. } => format!("[{t}] {message}"),
+        Event::SessionTimeout { .. } => format!("[{t}] session timeout: sandbox torn down"),
     }
 }
 

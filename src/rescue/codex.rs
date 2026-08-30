@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -729,7 +731,10 @@ impl CodexAdapter {
             // Deduplicate exact consecutive duplicates
             if let Some(ref last) = last_seen_raw_line {
                 if last.as_slice() == line {
-                    if !actions.iter().any(|a| a == "deduplicated_ordinal_boundary_records") {
+                    if !actions
+                        .iter()
+                        .any(|a| a == "deduplicated_ordinal_boundary_records")
+                    {
                         actions.push("deduplicated_ordinal_boundary_records".to_string());
                     }
                     modified = true;
@@ -745,16 +750,27 @@ impl CodexAdapter {
                         if ord_val != current_ordinal {
                             obj.insert("ordinal".to_string(), serde_json::json!(current_ordinal));
                             modified = true;
-                            if !actions.iter().any(|a| a == "resequenced_monotonic_ordinals") {
+                            if !actions
+                                .iter()
+                                .any(|a| a == "resequenced_monotonic_ordinals")
+                            {
                                 actions.push("resequenced_monotonic_ordinals".to_string());
                             }
                         }
-                    } else if let Some(payload) = obj.get_mut("payload").and_then(|p| p.as_object_mut()) {
+                    } else if let Some(payload) =
+                        obj.get_mut("payload").and_then(|p| p.as_object_mut())
+                    {
                         if let Some(ord_val) = payload.get("ordinal").and_then(|v| v.as_u64()) {
                             if ord_val != current_ordinal {
-                                payload.insert("ordinal".to_string(), serde_json::json!(current_ordinal));
+                                payload.insert(
+                                    "ordinal".to_string(),
+                                    serde_json::json!(current_ordinal),
+                                );
                                 modified = true;
-                                if !actions.iter().any(|a| a == "resequenced_monotonic_ordinals") {
+                                if !actions
+                                    .iter()
+                                    .any(|a| a == "resequenced_monotonic_ordinals")
+                                {
                                     actions.push("resequenced_monotonic_ordinals".to_string());
                                 }
                             }
@@ -835,15 +851,15 @@ impl CodexAdapter {
                             updated_at_ms = Some(u as i64);
                         }
                     }
-                } else if kind == "response_item" || kind == "event_msg" {
-                    if first_user_msg.is_none() {
-                        if let Some(payload) = val.get("payload") {
-                            if payload.get("type").and_then(|v| v.as_str()) == Some("message")
-                                && payload.get("role").and_then(|v| v.as_str()) == Some("user")
-                            {
-                                if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
-                                    first_user_msg = Some(content.to_string());
-                                }
+                } else if (kind == "response_item" || kind == "event_msg")
+                    && first_user_msg.is_none()
+                {
+                    if let Some(payload) = val.get("payload") {
+                        if payload.get("type").and_then(|v| v.as_str()) == Some("message")
+                            && payload.get("role").and_then(|v| v.as_str()) == Some("user")
+                        {
+                            if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
+                                first_user_msg = Some(content.to_string());
                             }
                         }
                     }
@@ -901,7 +917,8 @@ impl CodexAdapter {
                 conn.execute(
                     "UPDATE threads SET rollout_path = ?1 WHERE id = ?2",
                     rusqlite::params![relative_path, session_id],
-                ).context("update threads rollout_path")?;
+                )
+                .context("update threads rollout_path")?;
                 actions.push("repaired_thread_rollout_path_mapping".to_string());
             }
         }
@@ -923,7 +940,8 @@ impl CodexAdapter {
                  (session_id, next_rollout_byte_offset, next_rollout_ordinal, boundary_ordinal)
                  VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![session_id, byte_len, ordinal, ordinal],
-            ).context("update thread_history_projection_state")?;
+            )
+            .context("update thread_history_projection_state")?;
             actions.push("reset_wedged_projection_state".to_string());
         }
 
@@ -1118,8 +1136,9 @@ impl RescueAdapter for CodexAdapter {
         backup_dir: &Path,
     ) -> Result<RepairReceipt> {
         let lock_path = context.root.join(".vetto_repair.lock");
-        let _guard = SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
-            .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
+        let _guard =
+            SessionLockGuard::acquire_with_timeout(&lock_path, 30_000, Duration::from_secs(5))
+                .with_context(|| format!("acquire session lock on {}", lock_path.display()))?;
 
         let canonical_target = Self::validate_session_path(context, &session.source_path)?;
         let original_bytes = Self::read_stable(context, &canonical_target)?;
@@ -1168,8 +1187,13 @@ impl RescueAdapter for CodexAdapter {
             .with_context(|| format!("sync tmp repair file {}", tmp_path.display()))?;
         drop(file);
 
-        fs::rename(&tmp_path, &canonical_target)
-            .with_context(|| format!("atomic rename {} -> {}", tmp_path.display(), canonical_target.display()))?;
+        fs::rename(&tmp_path, &canonical_target).with_context(|| {
+            format!(
+                "atomic rename {} -> {}",
+                tmp_path.display(),
+                canonical_target.display()
+            )
+        })?;
 
         #[cfg(unix)]
         if let Ok(dir_file) = File::open(parent_dir) {
@@ -1564,15 +1588,23 @@ mod tests {
     #[test]
     fn resequence_resolves_regression_and_duplicates() {
         let body = concat!(
-            r#"{"ordinal":5,"type":"session_meta","payload":{"id":"s1","title":"Test"}}"#, "\n",
-            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
-            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
-            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+            r#"{"ordinal":5,"type":"session_meta","payload":{"id":"s1","title":"Test"}}"#,
+            "\n",
+            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":10,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
+            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
         );
         let (resequenced, actions, modified) = CodexAdapter::resequence_rollout(body.as_bytes());
         assert!(modified);
-        assert!(actions.iter().any(|a| a.contains("deduplicated_ordinal_boundary")));
-        assert!(actions.iter().any(|a| a.contains("resequenced_monotonic_ordinals")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("deduplicated_ordinal_boundary")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("resequenced_monotonic_ordinals")));
 
         let res_str = String::from_utf8(resequenced).unwrap();
         let lines: Vec<&str> = res_str.trim().split('\n').collect();
@@ -1612,12 +1644,15 @@ mod tests {
                     next_rollout_ordinal INTEGER,
                     boundary_ordinal INTEGER
                  );",
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let body = concat!(
-            r#"{"ordinal":10,"type":"session_meta","payload":{"id":"sess-123","title":"Repaired Session"}}"#, "\n",
-            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#, "\n",
+            r#"{"ordinal":10,"type":"session_meta","payload":{"id":"sess-123","title":"Repaired Session"}}"#,
+            "\n",
+            r#"{"ordinal":2,"type":"event_msg","payload":{"type":"token_count"}}"#,
+            "\n",
         );
         let session_file = session(&root, "rollout-sess-123.jsonl", body.as_bytes());
 
@@ -1625,15 +1660,27 @@ mod tests {
         let sessions = CodexAdapter.discover_sessions(&context).unwrap();
         assert_eq!(sessions.len(), 1);
 
-        let receipt = CodexAdapter.repair(&context, &sessions[0], &backup_dir).expect("codex repair");
+        let receipt = CodexAdapter
+            .repair(&context, &sessions[0], &backup_dir)
+            .expect("codex repair");
         assert_eq!(receipt.adapter, "codex");
-        assert!(receipt.actions_applied.iter().any(|a| a.contains("backfilled_threads_index")));
-        assert!(receipt.actions_applied.iter().any(|a| a.contains("reset_wedged_projection")));
+        assert!(receipt
+            .actions_applied
+            .iter()
+            .any(|a| a.contains("backfilled_threads_index")));
+        assert!(receipt
+            .actions_applied
+            .iter()
+            .any(|a| a.contains("reset_wedged_projection")));
         assert!(receipt.backup_archive_path.exists());
 
         // Verify SQLite threads was backfilled
         let conn = Connection::open(&db_path).unwrap();
-        let title: String = conn.query_row("SELECT title FROM threads WHERE id = 'sess-123'", [], |r| r.get(0)).unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM threads WHERE id = 'sess-123'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(title, "Repaired Session");
 
         // Verify projection state was initialized

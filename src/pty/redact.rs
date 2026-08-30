@@ -1,22 +1,17 @@
 //! Zero-overhead streaming PTY redactor utilizing Aho-Corasick multi-pattern automaton
 //! and 256-byte carry-over lookback buffer across chunk reads.
 
-use std::collections::VecDeque;
 use super::entropy;
+use std::collections::VecDeque;
 
 /// Redaction replacement style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RedactionStyle {
     /// In-place padding with '*' (preserves exact terminal column width for TUIs).
+    #[default]
     PadMask,
     /// Marker string substitution (e.g., "[REDACTED]").
     Marker,
-}
-
-impl Default for RedactionStyle {
-    fn default() -> Self {
-        Self::PadMask
-    }
 }
 
 /// Pattern descriptor for Aho-Corasick automaton.
@@ -45,7 +40,10 @@ impl AcNode {
     }
 
     fn get_next(&self, b: u8) -> Option<usize> {
-        self.next.iter().find(|&&(byte, _)| byte == b).map(|&(_, idx)| idx)
+        self.next
+            .iter()
+            .find(|&&(byte, _)| byte == b)
+            .map(|&(_, idx)| idx)
     }
 
     fn set_next(&mut self, b: u8, idx: usize) {
@@ -146,29 +144,144 @@ impl StreamingRedactor {
 
     pub fn with_style(style: RedactionStyle) -> Self {
         let patterns = vec![
-            PatternInfo { prefix: b"sk-proj-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"sk-ant-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"sk-".to_vec(), min_run_len: 24, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"ghp_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"gho_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"ghu_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"ghs_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"ghr_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"AKIA".to_vec(), min_run_len: 16, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"ASIA".to_vec(), min_run_len: 16, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"xoxb-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"xoxp-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"xoxa-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"xoxs-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"glpat-".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"hf_".to_vec(), min_run_len: 20, is_pem: false, is_bearer: false },
-            PatternInfo { prefix: b"Bearer ".to_vec(), min_run_len: 8, is_pem: false, is_bearer: true },
-            PatternInfo { prefix: b"bearer ".to_vec(), min_run_len: 8, is_pem: false, is_bearer: true },
-            PatternInfo { prefix: b"-----BEGIN PRIVATE KEY-----".to_vec(), min_run_len: 0, is_pem: true, is_bearer: false },
-            PatternInfo { prefix: b"-----BEGIN RSA PRIVATE KEY-----".to_vec(), min_run_len: 0, is_pem: true, is_bearer: false },
-            PatternInfo { prefix: b"-----BEGIN EC PRIVATE KEY-----".to_vec(), min_run_len: 0, is_pem: true, is_bearer: false },
-            PatternInfo { prefix: b"-----BEGIN OPENSSH PRIVATE KEY-----".to_vec(), min_run_len: 0, is_pem: true, is_bearer: false },
-            PatternInfo { prefix: b"-----BEGIN CERTIFICATE-----".to_vec(), min_run_len: 0, is_pem: true, is_bearer: false },
+            PatternInfo {
+                prefix: b"sk-proj-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"sk-ant-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"sk-".to_vec(),
+                min_run_len: 24,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"ghp_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"gho_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"ghu_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"ghs_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"ghr_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"AKIA".to_vec(),
+                min_run_len: 16,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"ASIA".to_vec(),
+                min_run_len: 16,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"xoxb-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"xoxp-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"xoxa-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"xoxs-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"glpat-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"hf_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"Bearer ".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: true,
+            },
+            PatternInfo {
+                prefix: b"bearer ".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: true,
+            },
+            PatternInfo {
+                prefix: b"-----BEGIN PRIVATE KEY-----".to_vec(),
+                min_run_len: 0,
+                is_pem: true,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"-----BEGIN RSA PRIVATE KEY-----".to_vec(),
+                min_run_len: 0,
+                is_pem: true,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"-----BEGIN EC PRIVATE KEY-----".to_vec(),
+                min_run_len: 0,
+                is_pem: true,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"-----BEGIN OPENSSH PRIVATE KEY-----".to_vec(),
+                min_run_len: 0,
+                is_pem: true,
+                is_bearer: false,
+            },
+            PatternInfo {
+                prefix: b"-----BEGIN CERTIFICATE-----".to_vec(),
+                min_run_len: 0,
+                is_pem: true,
+                is_bearer: false,
+            },
         ];
         Self {
             automaton: AhoCorasick::new(patterns),
@@ -222,7 +335,11 @@ impl StreamingRedactor {
                         token_end += 1;
                     }
                     if token_end - match_start >= pat.min_run_len {
-                        redacted_spans.push((match_start + pat.prefix.len(), token_end, pattern_idx));
+                        redacted_spans.push((
+                            match_start + pat.prefix.len(),
+                            token_end,
+                            pattern_idx,
+                        ));
                     }
                 }
             }
@@ -310,7 +427,9 @@ fn is_token_char(b: u8) -> bool {
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]

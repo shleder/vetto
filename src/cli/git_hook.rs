@@ -90,14 +90,14 @@ fi
 }
 
 /// Installs Git hooks and configures Git `core.hooksPath`.
-pub fn install_git_hooks(
-    global: bool,
-    base_dir: Option<&Path>,
-    _force: bool,
-) -> Result<PathBuf> {
+pub fn install_git_hooks(global: bool, base_dir: Option<&Path>, _force: bool) -> Result<PathBuf> {
     let hooks_dir = get_git_hooks_dir(global, base_dir)?;
-    fs::create_dir_all(&hooks_dir)
-        .with_context(|| format!("failed to create git hooks directory {}", hooks_dir.display()))?;
+    fs::create_dir_all(&hooks_dir).with_context(|| {
+        format!(
+            "failed to create git hooks directory {}",
+            hooks_dir.display()
+        )
+    })?;
 
     #[cfg(unix)]
     {

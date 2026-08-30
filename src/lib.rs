@@ -5,8 +5,6 @@
 //! boundary lets integration tests, benchmarks, and downstream tooling use
 //! the same policy, sandbox, observation, PTY, and report code as the CLI.
 
-#![allow(clippy::all)]
-
 #[doc(hidden)]
 pub mod bench_support;
 pub mod classifier;
@@ -27,3 +25,4 @@ pub mod sandbox;
 pub mod shim;
 #[cfg(unix)]
 pub mod tui;
+pub mod verify;

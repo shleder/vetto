@@ -308,7 +308,7 @@ impl DaclOverrideGuard {
 
         let mode = if is_deny { DENY_ACCESS } else { GRANT_ACCESS };
 
-        let mut explicit = ExplicitAccessW {
+        let explicit = ExplicitAccessW {
             grf_access_permissions: access_mask,
             grf_access_mode: mode,
             grf_inheritance: CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE,
