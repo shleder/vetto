@@ -3,8 +3,10 @@
 //! or sandbox setup.
 
 pub mod agent_check;
+pub mod fix;
 
 pub use agent_check::{probe, probe_agent, AgentCheck, ProbeStatus};
+pub use fix::{print_fixes, DoctorFix};
 
 // The probe spawn machinery is unix-only (Captured stdio contract).
 #[cfg(unix)]

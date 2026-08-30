@@ -3,9 +3,11 @@ pub mod conditions;
 pub mod defaults;
 pub mod explain;
 pub mod glob_resolve;
+pub mod import;
 pub mod limits_spec;
 pub mod lint;
 pub mod loader;
+pub mod presets;
 pub mod types;
 
 pub use conditions::{ConditionContext, RawConditions};

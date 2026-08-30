@@ -411,7 +411,9 @@ pub fn describe(ev: &Event) -> String {
         }
         Event::BlockedAttempt {
             comm, path, source, ..
-        } => format!("[{t}] BLOCKED [{source}] {comm} -> {path}"),
+        } => format!(
+            "[{t}] BLOCKED [{source}] {comm} -> {path} (to allow: add `read = \"{path}\"` (or net domain) to policy.toml)"
+        ),
         Event::NetRequest {
             host,
             port,
@@ -421,7 +423,9 @@ pub fn describe(ev: &Event) -> String {
             if *allowed {
                 format!("[{t}] net allow {host}:{port}")
             } else {
-                format!("[{t}] net DENY {host}:{port}")
+                format!(
+                    "[{t}] net DENY {host}:{port} (to allow: add `allow = [\"{host}\"]` (or net domain) to policy.toml)"
+                )
             }
         }
         Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),

@@ -49,8 +49,11 @@ pub fn run_cli(strict: bool, profile: &str, policy_path: Option<&Path>) -> Resul
 
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .context("$HOME is not set; vetto needs it to resolve policy variables")?;
+        .context(
+            "neither $HOME nor %USERPROFILE% is set; vetto needs it to resolve policy variables",
+        )?;
 
     let options = PolicyLoadOptions {
         agent: None,

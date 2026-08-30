@@ -39,14 +39,18 @@ pub struct Cli {
     #[arg(long, default_value = "default", value_name = "NAME")]
     pub profile: String,
 
+    /// Base security preset: paranoid | balanced | yolo
+    #[arg(long, value_name = "PRESET")]
+    pub preset: Option<String>,
+
     /// Explicit policy TOML layer applied after the profile and project policy
     #[arg(long, value_name = "PATH")]
     pub policy: Option<String>,
 
     /// Network mode: off | allowlist:<domain,domain,...> |
     /// strict:<domain:port,domain:port,...>
-    #[arg(long, value_name = "MODE", default_value = "off")]
-    pub net: String,
+    #[arg(long, value_name = "MODE")]
+    pub net: Option<String>,
 
     /// UI mode: statusline | full | none
     #[arg(long, value_name = "MODE", default_value = "statusline")]
@@ -56,6 +60,11 @@ pub struct Cli {
     /// Observation ONLY — Landlock remains the sole enforcer.
     #[arg(long)]
     pub observe_seccomp: bool,
+
+    /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
+    /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
+    #[arg(long)]
+    pub shadow: bool,
 
     /// Append every session event as JSON lines to PATH
     #[arg(long, value_name = "PATH")]
@@ -166,12 +175,18 @@ pub enum Command {
         /// Probe a known agent executable with a bounded --version command.
         #[arg(long = "check-agent", value_name = "NAME")]
         check_agent: Option<String>,
+        /// Show concrete remediation commands and steps for missing sandbox primitives.
+        #[arg(long)]
+        fix: bool,
     },
-    /// Analyze project ecosystem and generate a tailored vetto.toml policy
+    /// Analyze project ecosystem and generate a tailored policy.toml policy
     Init {
-        /// Overwrite existing vetto.toml if present
+        /// Overwrite existing policy if present
         #[arg(long, short = 'f')]
         force: bool,
+        /// Interactive first-run setup wizard
+        #[arg(long)]
+        wizard: bool,
     },
     /// List built-in policy profiles
     Profiles,
@@ -243,6 +258,8 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Generate man page to stdout.
+    Man,
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]
     SshProxy {
@@ -261,6 +278,9 @@ pub enum PolicyCommand {
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
+        /// Explain why a specific path is allowed, denied, or writable.
+        #[arg(long = "why", value_name = "PATH")]
+        why: Option<PathBuf>,
     },
     /// Check the resolved policy for dangerous configurations. Exits
     /// non-zero with --strict when any finding is reported.
@@ -268,6 +288,18 @@ pub enum PolicyCommand {
         /// Exit non-zero when any finding is reported.
         #[arg(long)]
         strict: bool,
+    },
+    /// Import permissions from external agent configurations (e.g. claude, codex)
+    Import {
+        /// Source agent configuration format: claude | codex
+        #[arg(long, value_name = "AGENT")]
+        from: String,
+        /// Path to source configuration file (defaults to ~/.claude/settings.json or ~/.codex/config.toml)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Output path for generated policy (default: ./policy.toml)
+        #[arg(long, short = 'o', value_name = "PATH", default_value = "policy.toml")]
+        output: PathBuf,
     },
 }
 
@@ -338,6 +370,14 @@ pub enum RescueCommand {
 pub fn print_completions(shell: Shell) -> anyhow::Result<()> {
     let mut command = Cli::command();
     clap_complete::generate(shell, &mut command, "vetto", &mut std::io::stdout());
+    Ok(())
+}
+
+/// Render man page to stdout without starting a sandbox session.
+pub fn print_man() -> anyhow::Result<()> {
+    let command = Cli::command();
+    let man = clap_mangen::Man::new(command);
+    man.render(&mut std::io::stdout())?;
     Ok(())
 }
 
@@ -498,6 +538,76 @@ mod tests {
                 },
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn man_generator_renders_valid_troff_manpage() {
+        let command = Cli::command();
+        let man = clap_mangen::Man::new(command);
+        let mut buffer = Vec::new();
+        man.render(&mut buffer).expect("render man page");
+        let rendered = String::from_utf8_lossy(&buffer);
+        assert!(rendered.contains(".TH vetto"));
+        assert!(rendered.contains("NAME"));
+        assert!(rendered.contains("SYNOPSIS"));
+    }
+
+    #[test]
+    fn parses_preset_and_shadow_flags() {
+        let cli = Cli::try_parse_from(["vetto", "--preset", "paranoid", "--shadow", "--", "node"])
+            .expect("preset and shadow flags");
+        assert_eq!(cli.preset.as_deref(), Some("paranoid"));
+        assert!(cli.shadow);
+    }
+
+    #[test]
+    fn doctor_fix_subcommand_parses() {
+        let cli = Cli::try_parse_from(["vetto", "doctor", "--fix"]).expect("doctor fix parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Doctor { fix: true, .. })
+        ));
+    }
+
+    #[test]
+    fn init_wizard_subcommand_parses() {
+        let cli = Cli::try_parse_from(["vetto", "init", "--wizard"]).expect("init wizard parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Init { wizard: true, .. })
+        ));
+    }
+
+    #[test]
+    fn policy_explain_why_parses() {
+        let cli = Cli::try_parse_from(["vetto", "policy", "explain", "--why", "src/main.rs"])
+            .expect("policy explain why parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Explain { why: Some(ref path), .. }
+            }) if path == &PathBuf::from("src/main.rs")
+        ));
+    }
+
+    #[test]
+    fn policy_import_parses() {
+        let cli = Cli::try_parse_from([
+            "vetto",
+            "policy",
+            "import",
+            "--from",
+            "claude",
+            "-o",
+            "my-policy.toml",
+        ])
+        .expect("policy import parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Import { ref from, ref output, .. }
+            }) if from == "claude" && output == &PathBuf::from("my-policy.toml")
         ));
     }
 }
