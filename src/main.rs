@@ -181,7 +181,7 @@ fn run() -> Result<()> {
                 )
             }
             cli::PolicyCommand::Show { effective, json } => {
-                let net = vetto::config::parse_net_mode(&args.net)?;
+                let net = vetto::config::parse_net_mode(args.net.as_deref().unwrap_or("off"))?;
                 vetto::policy::explain::run_show(
                     *effective,
                     *json,
