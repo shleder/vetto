@@ -171,13 +171,13 @@ pub struct RawLimits {
 #[serde(deny_unknown_fields)]
 pub struct RawCgroup {
     #[serde(default)]
-    pub memory_max: Option<String>,
+    pub memory_max: Option<RawValueOrString>,
     #[serde(default)]
     pub pids_max: Option<RawValueOrString>,
     #[serde(default)]
-    pub swap_max: Option<String>,
+    pub swap_max: Option<RawValueOrString>,
     #[serde(default)]
-    pub cpu_max: Option<String>,
+    pub cpu_max: Option<RawValueOrString>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -375,10 +375,10 @@ impl MergedPolicy {
             self.limits.merge_strictest(&limits.to_resource_limits());
             if let Some(cg) = &limits.cgroup {
                 self.cgroup = Some(CgroupConfig {
-                    memory_max: cg.memory_max.clone(),
+                    memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
                     pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
-                    swap_max: cg.swap_max.clone(),
-                    cpu_max: cg.cpu_max.clone(),
+                    swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
+                    cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
                 });
             }
             if let Some(cpu) = &limits.cpu_max {
@@ -390,10 +390,10 @@ impl MergedPolicy {
         }
         if let Some(cg) = &layer.cgroup {
             self.cgroup = Some(CgroupConfig {
-                memory_max: cg.memory_max.clone(),
+                memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
                 pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
-                swap_max: cg.swap_max.clone(),
-                cpu_max: cg.cpu_max.clone(),
+                swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
+                cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
             });
         }
         if let Some(cpu) = &layer.cpu_max {

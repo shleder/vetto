@@ -1182,14 +1182,20 @@ fn spawn_full(
         None => None,
     };
 
-    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
-        let _ = cg.add_process(pid as u32);
-    }
+    let cgroup_handle =
+        match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+            Ok(Some(cg)) => {
+                let _ = cg.add_process(pid as u32);
+                Some(cg)
+            }
+            _ => None,
+        };
 
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::PidNsPipe(alive_w)),
+            _cgroup: cgroup_handle,
         },
         broker_ctrl_fd: broker_end,
         relay_port,
@@ -1376,9 +1382,14 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     drop(err_w);
     drop(notif_child);
 
-    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
-        let _ = cg.add_process(pid as u32);
-    }
+    let cgroup_handle =
+        match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+            Ok(Some(cg)) => {
+                let _ = cg.add_process(pid as u32);
+                Some(cg)
+            }
+            _ => None,
+        };
 
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
@@ -1419,6 +1430,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
                 pgid: pid,
                 sweep: true,
             }),
+            _cgroup: cgroup_handle,
         },
         broker_ctrl_fd: None,
         relay_port: None,
@@ -1550,9 +1562,14 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
     drop(err_w);
     drop(notif_child);
 
-    if let Ok(Some(cg)) = cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
-        let _ = cg.add_process(pid as u32);
-    }
+    let cgroup_handle =
+        match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+            Ok(Some(cg)) => {
+                let _ = cg.add_process(pid as u32);
+                Some(cg)
+            }
+            _ => None,
+        };
 
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
@@ -1589,6 +1606,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
                 pgid: pid,
                 sweep: true,
             }),
+            _cgroup: cgroup_handle,
         },
         broker_ctrl_fd: None,
         relay_port: None,
