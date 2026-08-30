@@ -10,7 +10,10 @@ fn capability_probe_reports_no_hidden_network_or_filesystem_fallback() {
         .output()
         .expect("vetto doctor");
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("windows") || text.contains("Windows"), "{text}");
+    assert!(
+        text.contains("windows") || text.contains("Windows"),
+        "{text}"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -23,7 +26,10 @@ fn appcontainer_detection_is_capability_only() {
     let text = String::from_utf8_lossy(&out.stdout);
     // Capability reporting must not imply that host firewall rules, DACLs, or
     // drivers were changed. The doctor path only probes APIs.
-    assert!(text.contains("appcontainer") || text.contains("AppContainer"), "{text}");
+    assert!(
+        text.contains("appcontainer") || text.contains("AppContainer"),
+        "{text}"
+    );
 }
 
 #[cfg(not(target_os = "windows"))]

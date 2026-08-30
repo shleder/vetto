@@ -425,7 +425,12 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     );
 
     // ---- Phase 1: single-threaded (forks happen in detect/spawn) ----------
-    let backend_opt = sandbox::Backend::detect(cfg.net.clone(), cfg.observe_seccomp).ok();
+    let backend_opt = sandbox::Backend::detect_with_backend(
+        cfg.net.clone(),
+        cfg.observe_seccomp,
+        cfg.backend.as_deref(),
+    )
+    .ok();
     let tier = backend_opt.as_ref().and_then(|b| b.tier());
 
     let project = std::env::current_dir().context("getcwd")?;
@@ -534,9 +539,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let backend = match backend_opt {
         Some(b) => Box::new(b),
-        None => Box::new(sandbox::Backend::detect(
+        None => Box::new(sandbox::Backend::detect_with_backend(
             cfg.net.clone(),
             cfg.observe_seccomp,
+            cfg.backend.as_deref(),
         )?),
     };
     tracing::debug!("backend: {}", backend.describe());
@@ -683,6 +689,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
 
     let started = std::time::Instant::now();
+    let backend = backend.context("sandbox backend unavailable")?;
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
     #[cfg(unix)]
@@ -739,6 +746,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let jsonl_path = cfg.jsonl_path.clone();
     if let Some(path) = &jsonl_path {
         logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+    }
+    if cfg.oslog || pol.oslog {
+        logger::oslog::OsLogSink::spawn(&bus);
     }
     let stats = report::stats::StatsCollector::spawn(&bus);
 
@@ -1404,6 +1414,8 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             "seatbelt (sandbox-exec): {}",
             yn(sandbox::macos::MacosSandbox::seatbelt_available())
         );
+        let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
+        println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
         println!("  note: sandbox-exec is deprecated by Apple; platform risk accepted");
         if fix {
             vetto::doctor::print_fixes(&[]);
@@ -1432,6 +1444,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             "AppContainer API:        {}",
             yn(capabilities.appcontainer_api)
         );
+        println!("LPAC API:                {}", yn(capabilities.lpac_api));
 
         let optional = sandbox::windows::optional_backend_report();
         println!(

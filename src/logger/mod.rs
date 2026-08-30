@@ -3,9 +3,11 @@
 //! sink with BEST-EFFORT secret redaction.
 
 pub mod jsonl;
+pub mod oslog;
 pub mod sanitizer;
 pub mod system_log;
 
+pub use oslog::OsLogSink;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tracing_subscriber::filter::LevelFilter;
 

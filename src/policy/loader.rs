@@ -73,6 +73,10 @@ pub struct RawLayer {
     pub io_priority: Option<String>,
     #[serde(default)]
     pub dev_allow: Option<RawStringList>,
+    #[serde(default)]
+    pub platform: Option<RawPlatform>,
+    #[serde(default)]
+    pub observability: Option<RawObservability>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -103,6 +107,10 @@ pub struct RawSecurity {
     pub seccomp_profile: Option<String>,
     #[serde(default)]
     pub seccomp_notify: Option<RawSeccompNotify>,
+    #[serde(default)]
+    pub lpac: Option<bool>,
+    #[serde(default)]
+    pub oslog: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -114,6 +122,24 @@ pub struct RawSeccompNotify {
     pub default_action: Option<String>,
     #[serde(default)]
     pub allow_syscalls: Option<RawStringList>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawPlatform {
+    #[serde(default)]
+    pub oslog: Option<bool>,
+    #[serde(default)]
+    pub lpac: Option<bool>,
+    #[serde(default)]
+    pub io_rate: Option<RawIoRate>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawObservability {
+    #[serde(default)]
+    pub oslog: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -268,6 +294,15 @@ pub fn parse_quota_bytes(s: &str) -> Result<u64> {
 
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
+pub struct RawIoRate {
+    #[serde(default)]
+    pub max_iops: Option<u64>,
+    #[serde(default)]
+    pub max_bandwidth: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RawLimits {
     #[serde(default)]
     pub cpu_seconds: Option<u64>,
@@ -285,6 +320,12 @@ pub struct RawLimits {
     pub cpu_max: Option<String>,
     #[serde(default)]
     pub io_priority: Option<String>,
+    #[serde(default)]
+    pub io_rate: Option<RawIoRate>,
+    #[serde(default)]
+    pub max_iops: Option<u64>,
+    #[serde(default)]
+    pub max_bandwidth: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -318,14 +359,66 @@ impl RawValueOrString {
 
 impl RawLimits {
     fn to_resource_limits(&self) -> ResourceLimits {
+        let mut io_rate = None;
+        if let Some(rate) = &self.io_rate {
+            let max_bandwidth = rate.max_bandwidth.as_deref().and_then(parse_bandwidth_str);
+            io_rate = Some(crate::policy::types::IoRateLimit {
+                max_iops: rate.max_iops,
+                max_bandwidth,
+            });
+        }
+        if self.max_iops.is_some() || self.max_bandwidth.is_some() {
+            let mut io = io_rate.unwrap_or_default();
+            if let Some(iops) = self.max_iops {
+                io.max_iops = Some(iops);
+            }
+            if let Some(bw_str) = &self.max_bandwidth {
+                if let Some(bw) = parse_bandwidth_str(bw_str) {
+                    io.max_bandwidth = Some(bw);
+                }
+            }
+            io_rate = Some(io);
+        }
         ResourceLimits {
             cpu_seconds: self.cpu_seconds,
             address_space_bytes: self.address_space_bytes,
             processes: self.processes,
             open_files: self.open_files,
             file_size_bytes: self.file_size_bytes,
+            io_rate,
         }
     }
+}
+
+pub fn parse_bandwidth_str(value: &str) -> Option<u64> {
+    let lower = value.trim().to_ascii_lowercase();
+    if let Ok(raw) = lower.parse::<u64>() {
+        return Some(raw);
+    }
+    let (number, mult) = if let Some(n) = lower.strip_suffix("gib") {
+        (n, 1024u64 * 1024 * 1024)
+    } else if let Some(n) = lower.strip_suffix("mib") {
+        (n, 1024u64 * 1024)
+    } else if let Some(n) = lower.strip_suffix("kib") {
+        (n, 1024u64)
+    } else if let Some(n) = lower.strip_suffix("gb") {
+        (n, 1000u64 * 1000 * 1000)
+    } else if let Some(n) = lower.strip_suffix("mb") {
+        (n, 1000u64 * 1000)
+    } else if let Some(n) = lower.strip_suffix("kb") {
+        (n, 1000u64)
+    } else if let Some(n) = lower.strip_suffix('g') {
+        (n, 1000u64 * 1000 * 1000)
+    } else if let Some(n) = lower.strip_suffix('m') {
+        (n, 1000u64 * 1000)
+    } else if let Some(n) = lower.strip_suffix('k') {
+        (n, 1000u64)
+    } else {
+        let n = lower.strip_suffix('b')?;
+        (n, 1u64)
+    };
+    let base: u64 = number.trim().parse().ok()?;
+    base.checked_mul(mult)
 }
 
 /// String or array form for convenient TOML definitions.
@@ -375,6 +468,8 @@ pub struct MergedPolicy {
     pub net_bind_ports: Vec<u16>,
     pub net_connect_ports: Vec<u16>,
     pub allow_unix_sockets: Vec<String>,
+    pub oslog: bool,
+    pub lpac: bool,
     pub is_immutable: bool,
     pub system_log: bool,
     pub auto_deny_secrets: bool,
@@ -435,6 +530,12 @@ impl MergedPolicy {
                         .unwrap_or_default(),
                 });
             }
+            if let Some(oslog) = sec.oslog {
+                self.oslog = oslog;
+            }
+            if let Some(lpac) = sec.lpac {
+                self.lpac = lpac;
+            }
         }
 
         if let Some(prof) = &layer.seccomp_profile {
@@ -450,6 +551,33 @@ impl MergedPolicy {
                     .map(RawStringList::into_vec)
                     .unwrap_or_default(),
             });
+        }
+
+        if let Some(plat) = &layer.platform {
+            if let Some(oslog) = plat.oslog {
+                self.oslog = oslog;
+            }
+            if let Some(lpac) = plat.lpac {
+                self.lpac = lpac;
+            }
+            if let Some(io) = &plat.io_rate {
+                let max_bandwidth = io.max_bandwidth.as_deref().and_then(parse_bandwidth_str);
+                let incoming = crate::policy::types::IoRateLimit {
+                    max_iops: io.max_iops,
+                    max_bandwidth,
+                };
+                if let Some(existing) = &mut self.limits.io_rate {
+                    existing.merge_strictest(&incoming);
+                } else {
+                    self.limits.io_rate = Some(incoming);
+                }
+            }
+        }
+
+        if let Some(obs) = &layer.observability {
+            if let Some(oslog) = obs.oslog {
+                self.oslog = oslog;
+            }
         }
 
         if let Some(metadata) = &layer.metadata {
@@ -666,6 +794,8 @@ pub struct PolicyOverrides {
     pub pass_through: Vec<String>,
     pub deny_env: Vec<String>,
     pub deny_network: Vec<String>,
+    pub oslog: Option<bool>,
+    pub lpac: Option<bool>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub limits: Option<ResourceLimits>,
@@ -1286,6 +1416,12 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     if let Some(limits) = &overrides.limits {
         merged.limits.merge_strictest(limits);
     }
+    if let Some(oslog) = overrides.oslog {
+        merged.oslog = oslog;
+    }
+    if let Some(lpac) = overrides.lpac {
+        merged.lpac = lpac;
+    }
     Ok(())
 }
 
@@ -1459,6 +1595,8 @@ fn build_policy(
         cpu_max: merged.cpu_max.clone(),
         io_priority: merged.io_priority.clone(),
         dev_allow: merged.dev_allow.clone(),
+        oslog: merged.oslog,
+        lpac: merged.lpac,
         is_immutable: merged.is_immutable,
         system_log: merged.system_log,
         auto_deny_secrets: merged.auto_deny_secrets,

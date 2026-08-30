@@ -143,6 +143,20 @@ pub struct PolicyMetadata {
     pub immutable: bool,
 }
 
+/// Optional IO rate limits for Windows Job Objects and supported platforms.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IoRateLimit {
+    pub max_iops: Option<u64>,
+    pub max_bandwidth: Option<u64>,
+}
+
+impl IoRateLimit {
+    pub fn merge_strictest(&mut self, other: &Self) {
+        self.max_iops = strictest(self.max_iops, other.max_iops);
+        self.max_bandwidth = strictest(self.max_bandwidth, other.max_bandwidth);
+    }
+}
+
 /// Optional per-agent resource ceilings applied immediately before `execve`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceLimits {
@@ -152,6 +166,8 @@ pub struct ResourceLimits {
     pub open_files: Option<u64>,
     /// RLIMIT_FSIZE: maximum size of files the agent may create.
     pub file_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub io_rate: Option<IoRateLimit>,
 }
 
 impl ResourceLimits {
@@ -161,6 +177,11 @@ impl ResourceLimits {
         self.processes = strictest(self.processes, other.processes);
         self.open_files = strictest(self.open_files, other.open_files);
         self.file_size_bytes = strictest(self.file_size_bytes, other.file_size_bytes);
+        match (&mut self.io_rate, &other.io_rate) {
+            (Some(existing), Some(incoming)) => existing.merge_strictest(incoming),
+            (None, Some(incoming)) => self.io_rate = Some(incoming.clone()),
+            _ => {}
+        }
     }
 }
 
@@ -255,6 +276,10 @@ pub struct Policy {
     pub io_priority: Option<String>,
     /// Allowed device nodes in /dev for mount namespace.
     pub dev_allow: Option<Vec<String>>,
+    /// macOS unified log (os_log / logger) opt-in.
+    pub oslog: bool,
+    /// Windows Less Privileged AppContainer (LPAC) mode opt-in.
+    pub lpac: bool,
     /// Whether this policy is in immutable enterprise lockdown mode.
     pub is_immutable: bool,
     /// Whether system-level event logging (journald, EventLog, syslog) is enabled.
@@ -299,6 +324,8 @@ impl Default for Policy {
             cpu_max: None,
             io_priority: None,
             dev_allow: None,
+            oslog: false,
+            lpac: false,
             is_immutable: false,
             system_log: false,
             auto_deny_secrets: false,

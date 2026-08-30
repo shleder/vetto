@@ -60,6 +60,18 @@ pub struct Cli {
     #[arg(long, value_name = "MODE", default_value = "statusline")]
     pub tui: String,
 
+    /// Explicit sandbox backend: auto | process | win-sandbox
+    #[arg(long, value_name = "BACKEND")]
+    pub backend: Option<String>,
+
+    /// Emit events to macOS unified log (os_log / logger)
+    #[arg(long)]
+    pub oslog: bool,
+
+    /// Run Windows AppContainer in Less Privileged AppContainer (LPAC) mode
+    #[arg(long)]
+    pub lpac: bool,
+
     /// Attach a best-effort blocked-attempt observation tap (Linux).
     /// Observation ONLY — Landlock remains the sole enforcer.
     #[arg(long)]
