@@ -850,7 +850,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "linux")]
     {
-        let env_info = doctor::detect_environment();
+        let env_info = vetto::doctor::detect_environment();
         println!("environment:             {}", env_info.summary);
         let p = sandbox::linux::probe();
         println!("kernel:                  {}", p.kernel);
