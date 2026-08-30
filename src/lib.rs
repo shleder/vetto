@@ -16,6 +16,7 @@ pub mod events;
 pub mod init;
 pub mod logger;
 pub mod multi;
+pub mod onboard;
 pub mod policy;
 #[cfg(unix)]
 pub mod pty;
