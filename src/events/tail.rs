@@ -64,10 +64,10 @@ impl EventTailFilter {
                 let kind_match = event.kind().to_ascii_lowercase().contains(&q);
                 let path_match = event
                     .path()
-                    .map_or(false, |p| p.to_ascii_lowercase().contains(&q));
+                    .is_some_and(|p| p.to_ascii_lowercase().contains(&q));
                 let net_match = event
                     .network_target()
-                    .map_or(false, |(h, _, _)| h.to_ascii_lowercase().contains(&q));
+                    .is_some_and(|(h, _, _)| h.to_ascii_lowercase().contains(&q));
                 kind_match || path_match || net_match
             }
         }

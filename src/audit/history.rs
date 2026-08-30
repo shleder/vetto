@@ -32,6 +32,7 @@ pub struct AuditRecord {
 /// Resolves the default global audit history path (~/.vetto/history.jsonl).
 pub fn default_history_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .map(|home| home.join(".vetto").join("history.jsonl"))
 }
