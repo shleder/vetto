@@ -2183,6 +2183,7 @@ allow_read = ["/usr", "${PROJECT}"]
         );
 
         // 2. Sign policy
+        use ed25519_dalek::Signer;
         let keys_dir = root.join(".vetto");
         let (signing_key, verifying_key) =
             crate::policy::crypto::ensure_signing_keypair(&keys_dir).unwrap();

@@ -17,6 +17,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
+use vetto::events::{Event, EventBus};
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
     rescue, sandbox, shim,
