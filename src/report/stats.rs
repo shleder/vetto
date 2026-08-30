@@ -75,6 +75,10 @@ pub struct SessionStats {
     pub op_counts: BTreeMap<String, u64>,
     pub file_reads: u64,
     pub file_writes: u64,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+    pub read_ops: u64,
+    pub write_ops: u64,
     pub blocked_attempts: Vec<BlockedRecord>,
     pub net_requests: Vec<NetRecord>,
     pub dns_resolutions: Vec<DnsRecord>,
@@ -83,6 +87,15 @@ pub struct SessionStats {
     /// Best-effort audit hints. These records never affect enforcement.
     pub suspicious_signals: Vec<SuspiciousRecord>,
     pub notices: Vec<String>,
+}
+
+impl SessionStats {
+    pub fn io_summary(&self) -> String {
+        format!(
+            "read {} bytes ({} ops), written {} bytes ({} ops)",
+            self.bytes_read, self.read_ops, self.bytes_written, self.write_ops
+        )
+    }
 }
 
 #[derive(Default)]
@@ -211,9 +224,18 @@ fn ingest(inner: &mut Inner, ev: Event) {
                 FileAccess::Unknown => crate::classifier::classify_path(path),
             };
             *st.op_counts.entry(op.label().to_string()).or_insert(0) += 1;
+            let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
             match access {
-                FileAccess::Read => st.file_reads += 1,
-                FileAccess::Write => st.file_writes += 1,
+                FileAccess::Read => {
+                    st.file_reads += 1;
+                    st.read_ops += 1;
+                    st.bytes_read += file_size;
+                }
+                FileAccess::Write => {
+                    st.file_writes += 1;
+                    st.write_ops += 1;
+                    st.bytes_written += file_size;
+                }
                 FileAccess::Unknown => {}
             }
         }

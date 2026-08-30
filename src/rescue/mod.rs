@@ -7,6 +7,7 @@ pub mod cursor;
 pub mod lock;
 pub mod rollback;
 pub mod safe_fs;
+pub mod snapshot;
 pub mod types;
 pub mod wal;
 

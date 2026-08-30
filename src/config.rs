@@ -163,6 +163,10 @@ pub struct RunConfig {
     pub dry_run: bool,
     pub ci: bool,
     pub agent_preset: Option<String>,
+    pub deny_glob: Vec<String>,
+    pub git_guard: bool,
+    pub snapshot: bool,
+    pub auto_deny_secrets: bool,
     pub agent: Vec<String>,
 }
 
@@ -318,6 +322,10 @@ impl RunConfig {
             dry_run: cli.dry_run,
             ci: cli.ci,
             agent_preset,
+            deny_glob: cli.deny_glob.clone(),
+            git_guard: cli.git_guard,
+            snapshot: cli.snapshot,
+            auto_deny_secrets: cli.auto_deny_secrets,
             agent: cli.agent.clone(),
         })
     }

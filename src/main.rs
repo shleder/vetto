@@ -215,6 +215,25 @@ fn run() -> Result<()> {
             dry_run,
         }) => vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run),
         Some(cli::Command::Tour { non_interactive }) => vetto::tour::run_tour(*non_interactive),
+        Some(cli::Command::ScanSecrets {
+            path,
+            json,
+            max_size,
+            max_files,
+        }) => scan_secrets_cli(path.as_deref(), *json, *max_size, *max_files),
+        Some(cli::Command::Watch { target, path, json }) => {
+            vetto::watch::run_watch(target, path.as_deref(), *json)
+        }
+        Some(cli::Command::Rollback { session, target }) => {
+            let res = vetto::rescue::snapshot::rollback_snapshot(session, target.as_deref())?;
+            println!(
+                "vetto rollback: successfully restored {} file(s) ({} bytes) to {}",
+                res.files_restored,
+                res.bytes_restored,
+                res.target_dir.display()
+            );
+            Ok(())
+        }
         Some(cli::Command::SshProxy { host, port }) => {
             #[cfg(target_os = "linux")]
             {
@@ -278,6 +297,70 @@ fn run() -> Result<()> {
     }
 }
 
+fn scan_secrets_cli(
+    path: Option<&Path>,
+    json: bool,
+    max_size: Option<u64>,
+    max_files: Option<usize>,
+) -> Result<()> {
+    let target = path.unwrap_or(Path::new("."));
+    let mut options = policy::secretscan::SecretScanOptions::default();
+    if let Some(ms) = max_size {
+        options.max_file_size_bytes = ms;
+    }
+    if let Some(mf) = max_files {
+        options.max_files = mf;
+    }
+
+    let result = if target.is_file() {
+        let findings = policy::secretscan::scan_file(target, options.max_file_size_bytes);
+        let bytes_scanned = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+        policy::secretscan::SecretScanResult {
+            findings,
+            files_scanned: 1,
+            bytes_scanned,
+            timed_out: false,
+        }
+    } else {
+        policy::secretscan::scan_directory(target, &options)
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!(
+            "vetto scan-secrets: scanned {} file(s) ({} bytes)",
+            result.files_scanned, result.bytes_scanned
+        );
+        if result.timed_out {
+            println!("warning: scan hit time or file limit; partial results shown");
+        }
+        if result.is_clean() {
+            println!("clean: no secrets detected");
+        } else {
+            println!("findings ({}):", result.findings.len());
+            for f in &result.findings {
+                println!(
+                    "  - {}:{} [{}] {}",
+                    f.path.display(),
+                    f.line,
+                    f.rule,
+                    f.preview
+                );
+            }
+        }
+    }
+
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+
+    if !result.is_clean() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // supervise: a sandboxed agent session
 // ---------------------------------------------------------------------------
@@ -309,10 +392,22 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         Some(t) => t,
         None => policy::Tier::Full, // macOS: no FS-ONLY enumeration semantics
     };
+    let overrides = policy::loader::PolicyOverrides {
+        deny_glob: cfg.deny_glob.clone(),
+        git_guard: if cfg.git_guard { Some(true) } else { None },
+        snapshot: if cfg.snapshot { Some(true) } else { None },
+        auto_deny_secrets: if cfg.auto_deny_secrets {
+            Some(true)
+        } else {
+            None
+        },
+        ..policy::loader::PolicyOverrides::default()
+    };
     let policy_options = policy::loader::PolicyLoadOptions {
         agent: cfg.agent_preset.clone(),
         preset: cfg.preset,
         include_project_policy: true,
+        overrides,
         ..policy::loader::PolicyLoadOptions::default()
     };
     let mut pol = policy::loader::load_with_options(
@@ -323,6 +418,32 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         tier_for_policy,
         &policy_options,
     )?;
+
+    if (pol.git_guard || cfg.git_guard) && !pol.allow_write.is_empty() {
+        if let Some(branch) = policy::conditions::detect_git_branch(&project) {
+            if branch == "main" || branch == "master" {
+                bail!(
+                    "git_guard: working copy is on branch '{branch}'; refusing to run with write permissions (create a feature branch, e.g. 'git checkout -b feature/...')"
+                );
+            }
+        }
+    }
+
+    let initial_manifest = report::diff::ProjectManifest::capture(&project);
+    let session_id = format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+        std::process::id()
+    );
+    if pol.snapshot || cfg.snapshot {
+        if let Err(e) = rescue::snapshot::create_snapshot(
+            &project,
+            &session_id,
+            rescue::snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
+        ) {
+            eprintln!("vetto: warning: snapshot creation failed: {e}");
+        }
+    }
     if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
         pol.warnings.push(
             "fs-only tier: display_only_deny paths cannot be masked with mount \
@@ -413,14 +534,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             .as_nanos()
     );
 
-    let env_extra: HashMap<String, String> = {
+    let mut env_extra: HashMap<String, String> = {
         let mut env_extra = HashMap::new();
         env_extra.insert("VETTO_SANDBOX".into(), "1".into());
         env_extra.insert("VETTO_SESSION_ID".into(), session_id.clone());
         env_extra.insert("VETTO_TIER".into(), tier_label(tier).into());
         env_extra.insert("VETTO_PROFILE".into(), pol.name.clone());
         env_extra.insert("VETTO_VERSION".into(), env!("CARGO_PKG_VERSION").into());
-
         #[cfg(target_os = "linux")]
         {
             if cfg.net.uses_relay() {
@@ -440,6 +560,22 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             }
         }
         env_extra
+    };
+
+    if pol.git_guard || cfg.git_guard {
+        env_extra.insert("VETTO_GIT_GUARD".into(), "1".into());
+    }
+
+    #[cfg(unix)]
+    let cred_sock = if !pol.secret_proxies.is_empty() {
+        let sock = std::env::temp_dir().join(format!("vetto-cred-{}.sock", std::process::id()));
+        env_extra.insert(
+            "VETTO_CRED_BROKER_SOCK".into(),
+            sock.to_string_lossy().to_string(),
+        );
+        Some(sock)
+    } else {
+        None
     };
 
     // stdio plumbing, owned by main and closed here after spawn.
@@ -562,6 +698,38 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         net_mode: cfg.net.label(),
         profile: pol.name.clone(),
     });
+
+    #[cfg(unix)]
+    let mut _cred_broker_handle = None;
+    #[cfg(unix)]
+    if let Some(sock) = cred_sock {
+        let mut host_secrets = HashMap::new();
+        for key in &pol.secret_proxies {
+            if let Ok(val) = std::env::var(key) {
+                host_secrets.insert(key.clone(), val);
+            }
+        }
+        let allowlist_domains = match &cfg.net {
+            vetto::config::NetMode::Allowlist(d) => d.clone(),
+            vetto::config::NetMode::Strict(rules) => {
+                rules.iter().map(|r| r.domain.clone()).collect()
+            }
+            vetto::config::NetMode::Off => Vec::new(),
+        };
+        let broker_config = vetto::cred_broker::CredBrokerConfig {
+            proxy_secrets: pol.secret_proxies.clone(),
+            allowlist_domains,
+        };
+        match vetto::cred_broker::spawn_credential_broker(
+            sock,
+            broker_config,
+            host_secrets,
+            bus.clone(),
+        ) {
+            Ok(h) => _cred_broker_handle = Some(h),
+            Err(e) => eprintln!("vetto: warning: failed to spawn credential broker: {e}"),
+        }
+    }
 
     match tier {
         Some(policy::Tier::Full) => {
@@ -714,6 +882,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let snap = stats.snapshot();
     let _ = vetto::telemetry::send_session_telemetry(&snap, tier_label(tier));
+    let diff = report::diff::ProjectDiff::compute(&initial_manifest, &project);
+    if !diff.is_empty() {
+        bus.publish(Event::Notice {
+            ts: events::types::now(),
+            message: diff.summary(),
+        });
+        eprintln!("vetto: {}", diff.summary());
+    }
+
+    bus.publish(Event::Notice {
+        ts: events::types::now(),
+        message: format!("I/O summary: {}", snap.io_summary()),
+    });
     if !cfg.report_formats.is_empty() {
         let report_options = report::ReportOptions {
             report_dir: cfg.report_dir.clone(),
@@ -793,6 +974,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                     "blocked_attempts": blocked_total,
                     "blocked_file_attempts": blocked_file_total,
                     "network_denied": blocked_network_total,
+                    "bytes_read": snap.bytes_read,
+                    "bytes_written": snap.bytes_written,
+                    "read_ops": snap.read_ops,
+                    "write_ops": snap.write_ops,
+                    "files_modified": diff.total_changed(),
                     "events_total": snap.events_total,
                     "verify": verify_outcome
                         .map(|report| report.status().to_string())
@@ -804,11 +990,12 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         );
     } else {
         eprintln!(
-            "vetto: agent exited {} after {}s (blocked={}, events={}, tier={}{})",
+            "vetto: agent exited {} after {}s (blocked={}, events={}, I/O: {}, tier={}{})",
             exit_code,
             duration_secs,
             blocked_total,
             snap.events_total,
+            snap.io_summary(),
             tier_label(tier),
             if timed_out { ", TIMEOUT" } else { "" },
         );

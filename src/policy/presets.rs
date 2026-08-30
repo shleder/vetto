@@ -1,17 +1,12 @@
-//! Security presets and agent auto-allowlist definitions.
+//! Security presets, agent auto-allowlist definitions, and predefined deny presets.
 //!
-//! Presets:
+//! Security Presets (Tier 1):
 //! - `paranoid`: everything closed (write only $PROJECT and /tmp, network off, strict secret denies)
 //! - `balanced`: default base (write $PROJECT and /tmp, standard toolchain read, secrets denied, network allowlist by agent)
 //! - `yolo`: wide read/write roots, but secrets STILL denied + network allowlist by agent
 //!
-//! Agent network auto-allowlist:
-//! - claude -> api.anthropic.com
-//! - codex -> api.openai.com, chatgpt.com
-//! - gemini -> generativelanguage.googleapis.com
-//! - aider -> api.openai.com, api.anthropic.com
-//! - opencode -> api.openai.com, api.anthropic.com
-//! - cursor -> api.cursor.com, api2.cursor.sh
+//! Deny Presets (Tier 3):
+//! - `ssh`, `aws`, `gcp`, `kube`, `docker`, `gnupg`, `git`, `npm`, `cargo`, `claude`, `codex`
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -226,6 +221,42 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
     }
 }
 
+/// Resolve a preset name to a slice of path patterns.
+pub fn resolve_preset(name: &str) -> Option<&'static [&'static str]> {
+    match name.to_ascii_lowercase().as_str() {
+        "ssh" => Some(&["$HOME/.ssh"]),
+        "aws" => Some(&["$HOME/.aws"]),
+        "gcp" | "gcloud" => Some(&["$HOME/.config/gcloud"]),
+        "kube" | "kubernetes" => Some(&["$HOME/.kube"]),
+        "docker" => Some(&["$HOME/.docker", "$HOME/.docker/config.json"]),
+        "gnupg" | "gpg" => Some(&["$HOME/.gnupg"]),
+        "git" => Some(&["$HOME/.git-credentials", "$HOME/.netrc"]),
+        "npm" => Some(&["$HOME/.npmrc"]),
+        "cargo" => Some(&["$HOME/.cargo/credentials", "$HOME/.cargo/credentials.toml"]),
+        "claude" => Some(&["$HOME/.claude"]),
+        "codex" => Some(&["$HOME/.codex"]),
+        _ => None,
+    }
+}
+
+/// Known preset names for validation and diagnostics.
+pub const KNOWN_PRESETS: &[&str] = &[
+    "ssh",
+    "aws",
+    "gcp",
+    "gcloud",
+    "kube",
+    "kubernetes",
+    "docker",
+    "gnupg",
+    "gpg",
+    "git",
+    "npm",
+    "cargo",
+    "claude",
+    "codex",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +299,28 @@ mod tests {
         let paths = deny.paths.expect("must have paths").into_vec();
         assert!(paths.iter().any(|p| p.contains(".env")));
         assert!(paths.iter().any(|p| p.contains(".key")));
+    }
+
+    #[test]
+    fn all_known_presets_resolve() {
+        for preset in KNOWN_PRESETS {
+            let resolved = resolve_preset(preset);
+            assert!(resolved.is_some(), "preset '{preset}' failed to resolve");
+            assert!(
+                !resolved.unwrap().is_empty(),
+                "preset '{preset}' resolved to empty list"
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_and_aws_expand_to_home_directories() {
+        assert_eq!(resolve_preset("ssh"), Some(&["$HOME/.ssh"][..]));
+        assert_eq!(resolve_preset("aws"), Some(&["$HOME/.aws"][..]));
+        assert_eq!(resolve_preset("kube"), Some(&["$HOME/.kube"][..]));
+        assert_eq!(
+            resolve_preset("docker"),
+            Some(&["$HOME/.docker", "$HOME/.docker/config.json"][..])
+        );
     }
 }

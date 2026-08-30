@@ -56,6 +56,18 @@ Keep a Changelog; versioning follows SemVer.
   - Unix domain socket access policies (`unix_sockets = { allow = [...] }`).
   - Full IPv6 (AAAA) resolution and connection support with pinned address discipline.
   - Aggregated session network summary emitted in notices and report statistics.
+- **Tier 3 Files & Secrets Suite (Features 25–36)**:
+  - Auto secret scan (`vetto scan-secrets [path]` command and `auto_deny_secrets = true` policy option) detecting and denying credential patterns at startup with bounded limits.
+  - Out-of-process credential broker (`secrets.proxy = [...]`) injecting auth headers for allowlisted domains and stripping sensitive credentials from the child.
+  - Built-in deny presets (`deny_preset = ["ssh", "aws", "gcp", "kube", "docker", "gnupg", "git", "npm", "cargo", "claude", "codex"]`).
+  - Glob denial patterns (`--deny-glob` CLI flag and `deny_glob = ["**/*.pem"]`).
+  - Read-only cache mounts (`ro_mounts = ["~/.npm", "~/.cache/pip"]`) mounted `MS_RDONLY` in mount namespace.
+  - Diff reporting with in-memory baseline manifest and summary diff calculation at completion.
+  - Git branch protection (`git_guard = true`) and hook/shim interception blocking destructive operations (`git push --force*`, `git push --delete`).
+  - Snapshot and rollback (`snapshot = true` and `vetto rollback <session>`).
+  - `/proc` and `/sys` masking and `/tmp` private tmpfs isolation (`tmpfs_tmp = true`).
+  - Live session event watch mode (`vetto watch <session-pid/log-path>`).
+  - Filesystem I/O metrics tracking bytes read/written and operation counts.
 
 ## [0.2.5] — 2026-08-30
 

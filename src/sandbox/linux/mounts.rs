@@ -17,6 +17,8 @@ use crate::error::{VettoError, VettoResult};
 const MS_REC: libc::c_ulong = 0x4000;
 const MS_PRIVATE: libc::c_ulong = 0x04_0000;
 const MS_BIND: libc::c_ulong = 0x1000;
+const MS_RDONLY: libc::c_ulong = 0x1;
+const MS_REMOUNT: libc::c_ulong = 0x20;
 const MS_NOSUID: libc::c_ulong = 0x2;
 const MS_NODEV: libc::c_ulong = 0x4;
 const MS_NOEXEC: libc::c_ulong = 0x8;
@@ -287,6 +289,102 @@ pub fn blackhole_resolv_conf() -> VettoResult<()> {
     let p = Path::new("/etc/resolv.conf");
     if p.exists() {
         bind_devnull(p)?;
+    }
+    Ok(())
+}
+
+/// Remount /sys as read-only inside the mount namespace.
+pub fn remount_sys_readonly() -> VettoResult<()> {
+    let target = Path::new("/sys");
+    if !target.exists() || !target.is_dir() {
+        return Ok(());
+    }
+    let dst = cstr(target)?;
+    // SAFETY: bind mount /sys over itself first, then remount read-only.
+    unsafe {
+        libc::mount(
+            dst.as_ptr(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND | MS_REC,
+            std::ptr::null(),
+        );
+        if libc::mount(
+            std::ptr::null(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_REC,
+            std::ptr::null(),
+        ) != 0
+        {
+            return Err(VettoError::Mount(format!(
+                "remount /sys read-only: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Mask host information and sensitive debugging endpoints in /proc.
+/// Masked paths:
+///   /proc/kcore (physical memory image)
+///   /proc/kallsyms (kernel symbol table)
+///   /proc/sysrq-trigger (kernel magic sysrq)
+///   /proc/sched_debug (scheduler debug info)
+///   /proc/slabinfo (kernel slab cache allocation)
+///   /proc/acpi (ACPI tables)
+///   /proc/asound (sound card state)
+pub fn mask_sensitive_proc_paths() -> VettoResult<()> {
+    let sensitive_files = [
+        "/proc/kcore",
+        "/proc/kallsyms",
+        "/proc/sysrq-trigger",
+        "/proc/sched_debug",
+        "/proc/slabinfo",
+    ];
+    for p in sensitive_files {
+        let path = Path::new(p);
+        if path.exists() {
+            let _ = bind_devnull(path);
+        }
+    }
+
+    let sensitive_dirs = ["/proc/acpi", "/proc/asound"];
+    for p in sensitive_dirs {
+        let path = Path::new(p);
+        if path.exists() && path.is_dir() {
+            let _ = empty_tmpfs(path);
+        }
+    }
+    Ok(())
+}
+
+/// Mount specified cache paths as read-only binds inside the mount namespace.
+pub fn mount_ro_caches(ro_mounts: &[std::path::PathBuf]) -> VettoResult<()> {
+    for path in ro_mounts {
+        if path.exists() {
+            let dst = cstr(path)?;
+            // SAFETY: bind mount and remount read-only
+            unsafe {
+                if libc::mount(
+                    dst.as_ptr(),
+                    dst.as_ptr(),
+                    std::ptr::null(),
+                    MS_BIND | MS_REC,
+                    std::ptr::null(),
+                ) == 0
+                {
+                    let _ = libc::mount(
+                        std::ptr::null(),
+                        dst.as_ptr(),
+                        std::ptr::null(),
+                        MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC,
+                        std::ptr::null(),
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }

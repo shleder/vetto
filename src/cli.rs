@@ -168,6 +168,22 @@ pub struct Cli {
     #[arg(long = "manifest", value_name = "PATH")]
     pub multi_manifest: Option<PathBuf>,
 
+    /// Additional glob patterns to resolve and deny (e.g. "**/*.pem").
+    #[arg(long = "deny-glob", value_name = "PATTERN", action = clap::ArgAction::Append)]
+    pub deny_glob: Vec<String>,
+
+    /// Enforce Git branch protection (refuse write on main/master) and block destructive git pushes.
+    #[arg(long = "git-guard")]
+    pub git_guard: bool,
+
+    /// Take a project snapshot before session starts and enable rollback.
+    #[arg(long = "snapshot")]
+    pub snapshot: bool,
+
+    /// Automatically scan project for secrets at session start and deny them.
+    #[arg(long = "auto-deny-secrets")]
+    pub auto_deny_secrets: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -322,6 +338,42 @@ pub enum Command {
         /// Run all tour steps non-interactively without waiting for keypresses
         #[arg(long)]
         non_interactive: bool,
+    },
+    /// Scan project directory for exposed secrets and credentials
+    ScanSecrets {
+        /// Target directory or file to scan (defaults to current directory)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+        /// Maximum file size to scan in bytes (default: 1MB)
+        #[arg(long, value_name = "BYTES")]
+        max_size: Option<u64>,
+        /// Maximum number of files to scan (default: 5000)
+        #[arg(long, value_name = "COUNT")]
+        max_files: Option<usize>,
+    },
+    /// Live-tail session events from JSONL log with optional path filtering
+    Watch {
+        /// Session PID or path to JSONL log file
+        #[arg(value_name = "SESSION_OR_LOG")]
+        target: String,
+        /// Optional path filter
+        #[arg(long, value_name = "PATTERN")]
+        path: Option<String>,
+        /// Emit raw JSON lines instead of formatted output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore project files from a previously created session snapshot
+    Rollback {
+        /// Session ID or path to snapshot archive
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Optional restore target directory override
+        #[arg(long, value_name = "TARGET")]
+        target: Option<PathBuf>,
     },
     /// Internal SSH ProxyCommand helper; not intended for direct use.
     #[command(name = "ssh-proxy", visible_alias = "__ssh-proxy", hide = true)]

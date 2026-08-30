@@ -642,6 +642,7 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
         std::env::vars_os()
             .filter(|(key, _)| policy.environment.allows(key))
             .collect();
+    crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
     for (k, v) in &opts.env_extra {
         env.insert(
             std::ffi::OsString::from(k.as_str()),
@@ -974,9 +975,16 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     if let Err(e) = mounts::isolate_dev_shm() {
         child_fail(err_w, 115, &format!("isolate /dev/shm: {e}"));
     }
-    if let Err(e) = mounts::isolate_tmp() {
-        child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
+    if policy.tmpfs_tmp {
+        if let Err(e) = mounts::isolate_tmp() {
+            child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
+        }
     }
+    if let Err(e) = mounts::remount_sys_readonly() {
+        child_fail(err_w, 115, &format!("remount /sys read-only: {e}"));
+    }
+    let _ = mounts::mask_sensitive_proc_paths();
+    let _ = mounts::mount_ro_caches(&policy.ro_mounts);
     if let Err(e) = namespaces::unshare(namespaces::CLONE_NEWIPC) {
         child_fail(err_w, 115, &format!("unshare ipc: {e}"));
     }

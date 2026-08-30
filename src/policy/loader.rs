@@ -25,6 +25,8 @@ use super::checker;
 use super::conditions::{self, ConditionContext, RawConditions};
 use super::defaults;
 use super::glob_resolve::{self, Vars};
+use super::presets;
+use super::secretscan;
 use super::types::{
     DenyEntry, EnvironmentPolicy, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, Tier,
 };
@@ -42,6 +44,8 @@ pub struct RawLayer {
     pub security: Option<RawSecurity>,
     #[serde(default)]
     pub filesystem: Option<RawFilesystem>,
+    #[serde(default)]
+    pub secrets: Option<RawSecrets>,
     #[serde(default)]
     pub display_only_deny: Option<RawDeny>,
     #[serde(default)]
@@ -76,6 +80,12 @@ pub struct RawSecurity {
     pub immutable: Option<bool>,
     #[serde(default)]
     pub system_log: Option<bool>,
+    #[serde(default)]
+    pub auto_deny_secrets: Option<bool>,
+    #[serde(default)]
+    pub git_guard: Option<bool>,
+    #[serde(default)]
+    pub snapshot: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -89,6 +99,23 @@ pub struct RawFilesystem {
     pub deny_write: Option<RawStringList>,
     #[serde(default)]
     pub deny_read: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_preset: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_glob: Option<RawStringList>,
+    #[serde(default)]
+    pub ro_mounts: Option<RawStringList>,
+    #[serde(default)]
+    pub tmpfs_tmp: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RawSecrets {
+    #[serde(default)]
+    pub proxy: Option<RawStringList>,
+    #[serde(default)]
+    pub auto_deny: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -269,9 +296,13 @@ pub struct MergedPolicy {
     pub deny_write: Vec<String>,
     pub deny_read: Vec<String>,
     pub deny_paths: Vec<String>,
+    pub deny_preset: Vec<String>,
+    pub deny_glob: Vec<String>,
+    pub ro_mounts: Vec<String>,
     pub pass_through: Vec<String>,
     pub deny_env: Vec<String>,
     pub deny_network: Vec<String>,
+    pub secret_proxies: Vec<String>,
     pub network_mode: Option<String>,
     pub network_allow: Vec<String>,
     pub allow_cidr: Vec<String>,
@@ -281,6 +312,10 @@ pub struct MergedPolicy {
     pub allow_unix_sockets: Vec<String>,
     pub is_immutable: bool,
     pub system_log: bool,
+    pub auto_deny_secrets: bool,
+    pub git_guard: bool,
+    pub snapshot: bool,
+    pub tmpfs_tmp: Option<bool>,
 }
 
 impl MergedPolicy {
@@ -305,6 +340,15 @@ impl MergedPolicy {
             }
             if let Some(slog) = sec.system_log {
                 self.system_log = slog;
+            }
+            if let Some(true) = sec.auto_deny_secrets {
+                self.auto_deny_secrets = true;
+            }
+            if let Some(true) = sec.git_guard {
+                self.git_guard = true;
+            }
+            if let Some(true) = sec.snapshot {
+                self.snapshot = true;
             }
         }
 
@@ -331,6 +375,27 @@ impl MergedPolicy {
             }
             if let Some(deny_read) = &filesystem.deny_read {
                 self.deny_read.extend(deny_read.clone().into_vec());
+            }
+            if let Some(deny_preset) = &filesystem.deny_preset {
+                self.deny_preset.extend(deny_preset.clone().into_vec());
+            }
+            if let Some(deny_glob) = &filesystem.deny_glob {
+                self.deny_glob.extend(deny_glob.clone().into_vec());
+            }
+            if let Some(ro_mounts) = &filesystem.ro_mounts {
+                self.ro_mounts.extend(ro_mounts.clone().into_vec());
+            }
+            if let Some(tmpfs) = filesystem.tmpfs_tmp {
+                self.tmpfs_tmp = Some(tmpfs);
+            }
+        }
+
+        if let Some(secrets) = &layer.secrets {
+            if let Some(proxy) = &secrets.proxy {
+                self.secret_proxies.extend(proxy.clone().into_vec());
+            }
+            if let Some(true) = secrets.auto_deny {
+                self.auto_deny_secrets = true;
             }
         }
 
@@ -435,6 +500,10 @@ impl MergedPolicy {
         deduplicate_strings(&mut self.deny_write);
         deduplicate_strings(&mut self.deny_read);
         deduplicate_strings(&mut self.deny_paths);
+        deduplicate_strings(&mut self.deny_preset);
+        deduplicate_strings(&mut self.deny_glob);
+        deduplicate_strings(&mut self.ro_mounts);
+        deduplicate_strings(&mut self.secret_proxies);
         deduplicate_strings(&mut self.pass_through);
         deduplicate_strings(&mut self.deny_env);
         deduplicate_strings(&mut self.deny_network);
@@ -457,12 +526,17 @@ pub struct PolicyOverrides {
     pub deny_write: Vec<String>,
     pub deny_read: Vec<String>,
     pub display_only_deny: Vec<String>,
+    pub deny_glob: Vec<String>,
+    pub ro_mounts: Vec<String>,
     pub pass_through: Vec<String>,
     pub deny_env: Vec<String>,
     pub deny_network: Vec<String>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub limits: Option<ResourceLimits>,
+    pub git_guard: Option<bool>,
+    pub snapshot: Option<bool>,
+    pub auto_deny_secrets: Option<bool>,
 }
 
 /// Context for the 7-tier layered policy loader.
@@ -1050,9 +1124,21 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     merged
         .deny_paths
         .extend(overrides.display_only_deny.clone());
+    merged.deny_glob.extend(overrides.deny_glob.clone());
+    merged.ro_mounts.extend(overrides.ro_mounts.clone());
     merged.pass_through.extend(overrides.pass_through.clone());
     merged.deny_env.extend(overrides.deny_env.clone());
     merged.deny_network.extend(overrides.deny_network.clone());
+
+    if let Some(true) = overrides.git_guard {
+        merged.git_guard = true;
+    }
+    if let Some(true) = overrides.snapshot {
+        merged.snapshot = true;
+    }
+    if let Some(true) = overrides.auto_deny_secrets {
+        merged.auto_deny_secrets = true;
+    }
 
     if let Some(name) = &overrides.name {
         if !name.is_empty() {
@@ -1084,18 +1170,39 @@ fn build_policy(
     let mut allow_read_resolved = resolve_list(&merged.allow_read, &vars, agent)?;
     let deny_write_resolved = resolve_list(&merged.deny_write, &vars, agent)?;
     let deny_read_resolved = resolve_list(&merged.deny_read, &vars, agent)?;
+    let ro_mounts_resolved = resolve_list(&merged.ro_mounts, &vars, agent)?;
+
+    for ro in &ro_mounts_resolved {
+        if !allow_read_resolved.contains(ro) {
+            allow_read_resolved.push(ro.clone());
+        }
+    }
 
     let mut deny_resolved = Vec::new();
     let mut deny_set = BTreeSet::new();
 
-    // Accumulate all deny sources: deny_paths, deny_read, deny_write
-    let all_deny_entries: Vec<String> = merged
+    // Accumulate all deny sources: deny_paths, deny_read, deny_write, deny_preset, deny_glob
+    let mut all_deny_entries: Vec<String> = merged
         .deny_paths
         .iter()
         .chain(merged.deny_read.iter())
         .chain(merged.deny_write.iter())
         .cloned()
         .collect();
+
+    for preset_name in &merged.deny_preset {
+        if let Some(paths) = presets::resolve_preset(preset_name) {
+            for p in paths {
+                all_deny_entries.push((*p).to_string());
+            }
+        } else {
+            warnings.push(format!("unknown deny_preset '{preset_name}'"));
+        }
+    }
+
+    for glob_pat in &merged.deny_glob {
+        all_deny_entries.push(glob_pat.clone());
+    }
 
     for entry in &all_deny_entries {
         for path in resolve_list(std::slice::from_ref(entry), &vars, agent)? {
@@ -1106,6 +1213,22 @@ fn build_policy(
                         is_dir: meta.is_dir(),
                     });
                 }
+            }
+        }
+    }
+
+    if merged.auto_deny_secrets {
+        let scan_result =
+            secretscan::scan_directory(project, &secretscan::SecretScanOptions::default());
+        if scan_result.timed_out {
+            warnings.push("auto_deny_secrets scan timed out; partial scan completed".to_string());
+        }
+        for secret_path in scan_result.unique_paths() {
+            if deny_set.insert(secret_path.clone()) {
+                deny_resolved.push(DenyEntry {
+                    path: secret_path,
+                    is_dir: false,
+                });
             }
         }
     }
@@ -1189,6 +1312,12 @@ fn build_policy(
         allow_unix_sockets: merged.allow_unix_sockets.clone(),
         is_immutable: merged.is_immutable,
         system_log: merged.system_log,
+        auto_deny_secrets: merged.auto_deny_secrets,
+        secret_proxies: merged.secret_proxies.clone(),
+        ro_mounts: ro_mounts_resolved,
+        git_guard: merged.git_guard,
+        snapshot: merged.snapshot,
+        tmpfs_tmp: merged.tmpfs_tmp.unwrap_or(true),
         warnings,
     };
     checker::check(&mut policy);

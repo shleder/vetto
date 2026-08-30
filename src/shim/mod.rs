@@ -132,10 +132,59 @@ pub fn find_project_root() -> Option<PathBuf> {
     None
 }
 
+/// Checks if git arguments constitute a destructive operation (force push or delete).
+pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
+    if args.is_empty() {
+        return None;
+    }
+    let mut is_push = false;
+    for arg in args {
+        if !arg.starts_with('-') {
+            if arg == "push" {
+                is_push = true;
+            }
+            break;
+        }
+    }
+    if !is_push {
+        return None;
+    }
+
+    for arg in args {
+        if arg == "--force"
+            || arg == "-f"
+            || arg == "--force-with-lease"
+            || arg.starts_with("--force-with-lease=")
+            || arg == "--force-if-includes"
+            || arg == "--delete"
+            || arg == "-d"
+            || (arg.starts_with('+') && arg.contains(':'))
+            || (arg.starts_with(':') && arg.len() > 1)
+        {
+            return Some("destructive git push (force/delete) blocked by vetto git_guard");
+        }
+    }
+
+    None
+}
+
 /// Fast native dispatch entrypoint for shimmed binaries.
 pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
     let real_binary = find_real_binary(binary_name)
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
+
+    // Git guard check: block destructive push
+    if (binary_name == "git" || binary_name.ends_with("/git") || binary_name.ends_with("\\git.exe"))
+        && (is_sandboxed()
+            || env::var("VETTO_GIT_GUARD")
+                .map(|v| v == "1")
+                .unwrap_or(false))
+    {
+        if let Some(reason) = is_destructive_git_push(args) {
+            eprintln!("vetto: {reason}");
+            bail!("{reason}");
+        }
+    }
 
     if is_sandboxed() {
         // Recursion barrier active — execute real binary directly with zero overhead
@@ -258,5 +307,26 @@ mod tests {
             assert!(p.exists());
             assert!(!is_shim_directory(p.parent().unwrap()));
         }
+    }
+
+    #[test]
+    fn detects_destructive_git_push_variants() {
+        assert!(is_destructive_git_push(&["push".into(), "--force".into()]).is_some());
+        assert!(is_destructive_git_push(&["push".into(), "-f".into()]).is_some());
+        assert!(is_destructive_git_push(&["push".into(), "--force-with-lease".into()]).is_some());
+        assert!(is_destructive_git_push(&[
+            "push".into(),
+            "origin".into(),
+            "--delete".into(),
+            "branch".into()
+        ])
+        .is_some());
+        assert!(
+            is_destructive_git_push(&["push".into(), "origin".into(), ":branch".into()]).is_some()
+        );
+        assert!(
+            is_destructive_git_push(&["push".into(), "origin".into(), "main".into()]).is_none()
+        );
+        assert!(is_destructive_git_push(&["status".into()]).is_none());
     }
 }
