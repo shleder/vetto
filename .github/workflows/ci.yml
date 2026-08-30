@@ -41,9 +41,15 @@ jobs:
         # exists; do not invent one.
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
-      - name: Report total coverage percentage
+      - name: Report total coverage percentage and enforce the floor
+        # Baseline measured 2026-08-30: 39.7% (13,514/34,032 lines). The
+        # floor sits below it to absorb runner variance; raise it
+        # deliberately, never lower it silently.
         run: |
           python3 - <<'PY'
+          import sys
+
+          FLOOR = 38.0
           hits = misses = 0
           with open("lcov.info", encoding="utf-8") as fh:
               for line in fh:
@@ -53,7 +59,10 @@ jobs:
                       hits += int(line[3:])
           total = hits + misses
           pct = (hits * 100.0 / total) if total else 0.0
-          print(f"coverage: {hits}/{total} lines = {pct:.1f}%")
+          print(f"coverage: {hits}/{total} lines = {pct:.1f}% (floor {FLOOR}%)")
+          if pct < FLOOR:
+              print(f"coverage {pct:.1f}% fell below the {FLOOR}% floor")
+              sys.exit(1)
           PY
 
       - name: Upload coverage artifact
