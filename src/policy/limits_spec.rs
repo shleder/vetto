@@ -166,12 +166,20 @@ fn parse_byte_value(value: &str, pair: &str) -> Result<u64> {
         (number, 1024u64 * 1024)
     } else if let Some(number) = lower.strip_suffix("gib") {
         (number, 1024u64 * 1024 * 1024)
+    } else if let Some(number) = lower.strip_suffix("gb") {
+        (number, 1000u64 * 1000 * 1000)
+    } else if let Some(number) = lower.strip_suffix("mb") {
+        (number, 1000u64 * 1000)
+    } else if let Some(number) = lower.strip_suffix("kb") {
+        (number, 1000u64)
     } else if let Some(number) = lower.strip_suffix('k') {
         (number, 1000u64)
     } else if let Some(number) = lower.strip_suffix('m') {
         (number, 1000u64 * 1000)
     } else if let Some(number) = lower.strip_suffix('g') {
         (number, 1000u64 * 1000 * 1000)
+    } else if let Some(number) = lower.strip_suffix('b') {
+        (number, 1u64)
     } else {
         bail!("invalid --limits value '{value}' in pair '{pair}': {BYTE_SUFFIX_DOC}")
     };

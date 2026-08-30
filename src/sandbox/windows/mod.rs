@@ -743,7 +743,7 @@ fn create_kill_on_close_job(limits: &ResourceLimits) -> Result<OwnedHandle> {
     // Optional IO rate limits from the policy (Feature 60).
     if let Some(io_rate) = &limits.io_rate {
         if io_rate.max_iops.is_some() || io_rate.max_bandwidth.is_some() {
-            let io_info = job_object::JobObjectIoRateControlInformation {
+            let mut io_info = job_object::JobObjectIoRateControlInformation {
                 max_iops: io_rate.max_iops.map(|v| v as i64).unwrap_or(0),
                 max_bandwidth: io_rate.max_bandwidth.map(|v| v as i64).unwrap_or(0),
                 reservation_iops: 0,
@@ -757,7 +757,7 @@ fn create_kill_on_close_job(limits: &ResourceLimits) -> Result<OwnedHandle> {
                 SetInformationJobObject(
                     job,
                     job_object::JOB_OBJECT_IO_RATE_CONTROL_INFORMATION,
-                    (&io_info as *const job_object::JobObjectIoRateControlInformation).cast(),
+                    (&mut io_info as *mut job_object::JobObjectIoRateControlInformation).cast(),
                     size_of::<job_object::JobObjectIoRateControlInformation>() as Dword,
                 );
             }

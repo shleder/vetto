@@ -4,7 +4,7 @@
 //! write outside denied, secrets masked/isolated where supported, network default-deny,
 //! and resource limits) maintain parity across Linux, macOS, and Windows backends.
 
-use crate::common::{run_vetto_in, stderr, stdout, write_file, TempProject};
+use crate::common::{run_vetto_in, stderr, stdout, TempProject};
 
 #[test]
 fn policy_limits_io_rate_cli_and_flags_parity() {
