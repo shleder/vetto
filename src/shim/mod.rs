@@ -33,7 +33,10 @@ pub fn detect_argv0_shim() -> Option<String> {
     let path = PathBuf::from(arg0);
     let stem = path.file_stem()?.to_string_lossy().to_string();
 
-    if stem == "vetto" || stem == "vetto-shim" || stem == "__vetto" {
+    if stem.eq_ignore_ascii_case("vetto")
+        || stem.eq_ignore_ascii_case("vetto-shim")
+        || stem.eq_ignore_ascii_case("__vetto")
+    {
         None
     } else {
         Some(stem)
