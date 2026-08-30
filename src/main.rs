@@ -140,7 +140,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             (Some(Box::new(b)), t)
         }
         Err(e) => {
-            if cfg.dry_run {
+            if cfg.dry_run && cfg.backend.as_deref().unwrap_or("auto") == "auto" {
                 (None, Some(policy::Tier::Full))
             } else {
                 return Err(e);
