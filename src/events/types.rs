@@ -46,6 +46,28 @@ pub enum Event {
         port: u16,
         allowed: bool,
     },
+    /// DNS resolution recorded by the network broker.
+    DnsResolved {
+        ts: DateTime<Utc>,
+        host: String,
+        ips: Vec<String>,
+    },
+    /// Established network connection with transfer counts.
+    NetEgress {
+        ts: DateTime<Utc>,
+        host: String,
+        ip: String,
+        port: u16,
+        bytes_tx: u64,
+        bytes_rx: u64,
+    },
+    /// Network transfer quota exceeded for a domain.
+    NetQuotaExceeded {
+        ts: DateTime<Utc>,
+        host: String,
+        limit_bytes: u64,
+        used_bytes: u64,
+    },
     /// A secret path was masked with a mount overlay (Tier FULL).
     SecretMasked { ts: DateTime<Utc>, path: String },
     /// Honest-notice text surfaced to statusline/doctor/reports.
@@ -75,6 +97,9 @@ impl Event {
             | Event::ExecObserved { ts, .. }
             | Event::BlockedAttempt { ts, .. }
             | Event::NetRequest { ts, .. }
+            | Event::DnsResolved { ts, .. }
+            | Event::NetEgress { ts, .. }
+            | Event::NetQuotaExceeded { ts, .. }
             | Event::SecretMasked { ts, .. }
             | Event::Notice { ts, .. }
             | Event::SessionTimeout { ts }
@@ -89,6 +114,9 @@ impl Event {
             Event::ExecObserved { .. } => "exec_observed",
             Event::BlockedAttempt { .. } => "blocked_attempt",
             Event::NetRequest { .. } => "net_request",
+            Event::DnsResolved { .. } => "dns_resolved",
+            Event::NetEgress { .. } => "net_egress",
+            Event::NetQuotaExceeded { .. } => "net_quota_exceeded",
             Event::SecretMasked { .. } => "secret_masked",
             Event::Notice { .. } => "notice",
             Event::SessionTimeout { .. } => "session_timeout",

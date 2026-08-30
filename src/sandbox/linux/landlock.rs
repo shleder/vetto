@@ -349,11 +349,15 @@ fn open_path_fd(path: &Path) -> VettoResult<OpenPath> {
 }
 
 /// Create a Landlock ruleset with dynamic ABI negotiation and graceful degradation.
-fn create_ruleset_dynamic(mut abi: u32) -> VettoResult<(OwnedFd, u32)> {
+fn create_ruleset_dynamic(mut abi: u32, has_net_ports: bool) -> VettoResult<(OwnedFd, u32)> {
     loop {
         let attr = LandlockRulesetAttr {
             handled_access_fs: handled_fs_mask(abi),
-            handled_access_net: handled_net_mask(abi),
+            handled_access_net: if has_net_ports {
+                handled_net_mask(abi)
+            } else {
+                0
+            },
             handled_access_scope: handled_scope_mask(abi),
         };
         let size = ruleset_attr_size_for_abi(abi);
@@ -530,7 +534,8 @@ pub fn apply_policy_with_net_ports(
         ));
     };
 
-    let (ruleset, effective_abi) = create_ruleset_dynamic(detected_abi)?;
+    let has_net_ports = !bind_ports.is_empty() || !connect_ports.is_empty();
+    let (ruleset, effective_abi) = create_ruleset_dynamic(detected_abi, has_net_ports)?;
     let prepared =
         prepare_ruleset_for_abi(effective_abi, allow_write, allow_read, strip_read_on_write);
 

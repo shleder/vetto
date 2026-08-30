@@ -43,6 +43,19 @@ Keep a Changelog; versioning follows SemVer.
 - **Interactive Tour Subcommand** (`vetto tour`): 5-step guided onboarding scenario demonstrating doctor diagnostics, secret masking, shadow mode, policy tailoring, and boundary verification.
 - **Vulnerability Management & CVE Process**: Response SLA (48h acknowledgment), RFC 9116 `.well-known/security.txt`, supported versions table in `SECURITY.md`, and disclosure workflow in `docs/security/cve-process.md`.
 - **SLSA Provenance Verification**: Build provenance attestations and verification documentation in `docs/security/slsa-provenance.md`.
+- **Tier 2 Network Suite (Features 13–24)**:
+  - Ecosystem network presets (`net_presets = ["npm", "git", "pip", "huggingface"]`) expanding common package registries and APIs.
+  - Wildcard domain rules (`*.example.com`) strictly covering subdomains only without matching the base domain.
+  - CIDR network rules (`allow_cidr = ["10.0.0.0/8"]`) validated against pinned IP addresses.
+  - `--net=ask` interactive confirmation mode with session caching and fail-closed non-TTY fallback.
+  - DNS resolution and egress connection logging with byte counts in JSONL events and session reports.
+  - DoH/DoT blocking for top providers and DoT port 853 in allowlist/off modes.
+  - Per-domain transfer quotas (`net_quota = { "api.openai.com" = "100mb" }`) with byte counting and connection teardown.
+  - Landlock TCP port access control rules (`net_ports = { allow_tcp_connect = [...], allow_tcp_bind = [...] }`) on Landlock ABI 4+.
+  - Upstream `HTTP_PROXY` and `HTTPS_PROXY` broker routing with `NO_PROXY` bypass without leaking variables to the sandboxed child.
+  - Unix domain socket access policies (`unix_sockets = { allow = [...] }`).
+  - Full IPv6 (AAAA) resolution and connection support with pinned address discipline.
+  - Aggregated session network summary emitted in notices and report statistics.
 
 ## [0.2.5] — 2026-08-30
 

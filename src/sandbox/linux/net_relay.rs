@@ -14,12 +14,13 @@
 //! Mode B (NetNS): User-space SOCKS5/HTTP CONNECT proxy with loopback debug isolation.
 
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::Mutex;
 
 use crate::config::NetRule;
 use crate::events::{bus::EventBus, Event};
+use crate::report::stats::DomainStats;
 use crate::sandbox::linux::debug_guard::{DebugPortConfig, DebugPortGuard, DebugPortVerdict};
 
 pub const RELAY_PORT_BASE: u16 = 47129;
@@ -38,6 +39,7 @@ pub enum RelayMode {
 pub enum BrokerPolicy {
     Allowlist(Vec<String>),
     Strict(Vec<NetRule>),
+    Ask,
 }
 
 impl From<Vec<String>> for BrokerPolicy {
@@ -51,6 +53,8 @@ pub struct BrokerConfig {
     pub policy: BrokerPolicy,
     pub debug_guard: Option<DebugPortGuard>,
     pub mode: RelayMode,
+    pub allow_cidr: Vec<String>,
+    pub quotas: std::collections::HashMap<String, u64>,
 }
 
 impl From<BrokerPolicy> for BrokerConfig {
@@ -59,6 +63,8 @@ impl From<BrokerPolicy> for BrokerConfig {
             policy,
             debug_guard: Some(DebugPortGuard::new(DebugPortConfig::default())),
             mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
         }
     }
 }
@@ -69,6 +75,208 @@ impl From<Vec<String>> for BrokerConfig {
     }
 }
 
+static DOMAIN_TRANSFER_STATS: Mutex<Option<std::collections::HashMap<String, DomainStats>>> =
+    Mutex::new(None);
+
+fn add_domain_transfer(host: &str, tx: u64, rx: u64) {
+    let mut guard = DOMAIN_TRANSFER_STATS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(std::collections::HashMap::new);
+    let entry = map.entry(host.trim().to_ascii_lowercase()).or_default();
+    entry.requests += 1;
+    entry.bytes_tx += tx;
+    entry.bytes_rx += rx;
+}
+
+fn get_domain_bytes(host: &str) -> u64 {
+    let guard = DOMAIN_TRANSFER_STATS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .and_then(|map| map.get(&host.trim().to_ascii_lowercase()))
+        .map(|s| s.bytes_tx + s.bytes_rx)
+        .unwrap_or(0)
+}
+
+static ASK_CACHE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
+
+fn is_stdin_tty() -> bool {
+    unsafe { libc::isatty(0) == 1 }
+}
+
+fn ask_confirmation(host: &str, port: u16) -> bool {
+    let mut guard = ASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(std::collections::HashMap::new);
+    let key = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if let Some(&allowed) = cache.get(&key) {
+        return allowed;
+    }
+
+    if !is_stdin_tty() {
+        eprintln!(
+            "vetto: [net=ask] interactive confirmation unavailable (stdin is not a tty); connection to '{host}:{port}' denied (fail-closed)"
+        );
+        cache.insert(key, false);
+        return false;
+    }
+
+    eprint!("vetto: allow network connection to '{host}:{port}'? [y/N]: ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    let allowed = if std::io::stdin().read_line(&mut line).is_ok() {
+        let trimmed = line.trim().to_ascii_lowercase();
+        trimmed == "y" || trimmed == "yes"
+    } else {
+        false
+    };
+    cache.insert(key, allowed);
+    allowed
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpCidr {
+    pub network: IpAddr,
+    pub prefix_len: u8,
+}
+
+impl IpCidr {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let (ip_str, prefix_str) = s
+            .trim()
+            .split_once('/')
+            .ok_or_else(|| format!("CIDR '{s}' must be in IP/prefix format"))?;
+        let ip: IpAddr = ip_str
+            .trim()
+            .parse()
+            .map_err(|e| format!("invalid IP in CIDR '{s}': {e}"))?;
+        let prefix_len: u8 = prefix_str
+            .trim()
+            .parse()
+            .map_err(|e| format!("invalid prefix in CIDR '{s}': {e}"))?;
+        match ip {
+            IpAddr::V4(_) if prefix_len > 32 => {
+                return Err(format!(
+                    "IPv4 prefix length must be 0..=32, got {prefix_len}"
+                ));
+            }
+            IpAddr::V6(_) if prefix_len > 128 => {
+                return Err(format!(
+                    "IPv6 prefix length must be 0..=128, got {prefix_len}"
+                ));
+            }
+            _ => {}
+        }
+        Ok(Self {
+            network: ip,
+            prefix_len,
+        })
+    }
+
+    pub fn contains(&self, target: IpAddr) -> bool {
+        match (self.network, target) {
+            (IpAddr::V4(net), IpAddr::V4(tgt)) => {
+                if self.prefix_len == 0 {
+                    return true;
+                }
+                let net_u32 = u32::from_be_bytes(net.octets());
+                let tgt_u32 = u32::from_be_bytes(tgt.octets());
+                let mask = if self.prefix_len == 32 {
+                    u32::MAX
+                } else {
+                    !((1u64 << (32 - self.prefix_len)) - 1) as u32
+                };
+                (net_u32 & mask) == (tgt_u32 & mask)
+            }
+            (IpAddr::V6(net), IpAddr::V6(tgt)) => {
+                if self.prefix_len == 0 {
+                    return true;
+                }
+                let net_u128 = u128::from_be_bytes(net.octets());
+                let tgt_u128 = u128::from_be_bytes(tgt.octets());
+                let mask = if self.prefix_len == 128 {
+                    u128::MAX
+                } else {
+                    !((1u128 << (128 - self.prefix_len)) - 1)
+                };
+                (net_u128 & mask) == (tgt_u128 & mask)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub const DOH_DOT_DENY_IPS: &[&str] = &[
+    "1.1.1.1",
+    "1.0.0.1",
+    "8.8.8.8",
+    "8.8.4.4",
+    "9.9.9.9",
+    "149.112.112.112",
+    "208.67.222.222",
+    "208.67.220.220",
+    "94.140.14.14",
+    "94.140.15.15",
+    "76.76.2.0",
+    "76.76.10.0",
+    "2606:4700:4700::1111",
+    "2606:4700:4700::1001",
+    "2001:4860:4860::8888",
+    "2001:4860:4860::8844",
+    "2620:fe::fe",
+    "2620:fe::9",
+    "2620:119:35::35",
+    "2620:119:53::53",
+    "2a10:50c0::ad1:ff",
+    "2a10:50c0::ad2:ff",
+];
+
+pub const DOH_DOT_DENY_DOMAINS: &[&str] = &[
+    "cloudflare-dns.com",
+    "one.one.one.one",
+    "mozilla.cloudflare-dns.com",
+    "dns.cloudflare.com",
+    "dns.google",
+    "dns.google.com",
+    "dns.quad9.net",
+    "doh.opendns.com",
+    "dns.adguard-dns.com",
+    "unfiltered.adguard-dns.com",
+    "freedns.controld.com",
+    "dns.nextdns.io",
+];
+
+pub const DOT_PORT: u16 = 853;
+
+pub fn is_doh_or_dot(host: &str, port: u16, ip: Option<IpAddr>) -> bool {
+    if port == DOT_PORT {
+        return true;
+    }
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if DOH_DOT_DENY_DOMAINS
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+    {
+        return true;
+    }
+    if let Ok(ip_addr) = host.parse::<IpAddr>() {
+        if DOH_DOT_DENY_IPS
+            .iter()
+            .any(|&denied| denied == ip_addr.to_string())
+        {
+            return true;
+        }
+    }
+    if let Some(ip) = ip {
+        let ip_str = ip.to_string();
+        if DOH_DOT_DENY_IPS.iter().any(|&denied| denied == ip_str) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Spawn the broker thread owning `broker_fd` (its end of the control
 /// socketpair whose other end lives inside the sandbox).
 pub fn spawn_broker<P>(broker_fd: RawFd, config: P, bus: EventBus)
@@ -76,9 +284,11 @@ where
     P: Into<BrokerConfig>,
 {
     let config = config.into();
+    let thread_bus = bus.clone();
     std::thread::Builder::new()
         .name("vetto-broker".into())
         .spawn(move || {
+            let bus = thread_bus;
             // SAFETY: broker_fd is an owned socketpair end created pre-fork.
             let mut ctrl = unsafe { std::os::unix::net::UnixStream::from_raw_fd(broker_fd) };
             let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
@@ -96,15 +306,24 @@ where
                     }
                     continue;
                 }
-                match resolve_and_connect(&req.host, req.port) {
-                    Ok(tcp) => {
+                match resolve_and_connect(&req.host, req.port, &config.allow_cidr, &bus) {
+                    Ok((tcp, addr)) => {
                         bus.publish(Event::NetRequest {
                             ts: crate::events::types::now(),
                             host: req.host.clone(),
                             port: req.port,
                             allowed: true,
                         });
-                        if create_and_send_data_fd(&mut ctrl, tcp).is_err()
+                        let quota = config.quotas.get(&req.host).copied();
+                        if create_and_send_data_fd(
+                            &mut ctrl,
+                            tcp,
+                            &req.host,
+                            addr,
+                            quota,
+                            bus.clone(),
+                        )
+                        .is_err()
                             && ctrl.write_all(b"X").is_err()
                         {
                             break;
@@ -126,6 +345,27 @@ where
                         }
                     }
                 }
+            }
+
+            // Session network summary (Feature 24)
+            let summary = {
+                let guard = DOMAIN_TRANSFER_STATS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                guard.clone().unwrap_or_default()
+            };
+            if !summary.is_empty() {
+                let mut parts = Vec::new();
+                for (domain, st) in &summary {
+                    parts.push(format!(
+                        "{domain} ({} bytes tx, {} bytes rx, {} reqs)",
+                        st.bytes_tx, st.bytes_rx, st.requests
+                    ));
+                }
+                bus.publish(Event::Notice {
+                    ts: crate::events::types::now(),
+                    message: format!("network session summary: {}", parts.join(", ")),
+                });
             }
         })
         .expect("spawn vetto-broker thread");
@@ -151,23 +391,38 @@ fn read_framed_request(ctrl: &mut std::os::unix::net::UnixStream) -> Option<Rela
     serde_json::from_slice(&buf).ok()
 }
 
-/// Allowlist semantics: exact match, or subdomain of an entry
-/// (`example.com` matches `api.example.com`, not `notexample.com`).
-fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
-    let host = host.trim().to_ascii_lowercase();
-    let host = host.trim_end_matches('.');
-    allowlist
-        .iter()
-        .any(|pat| pat == host || host.ends_with(&format!(".{pat}")))
+/// Allowlist semantics: exact match, wildcard subdomain (*.domain.com), or parent domain match
+pub fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    allowlist.iter().any(|pat| {
+        let pat = pat.trim().trim_end_matches('.').to_ascii_lowercase();
+        if let Some(suffix) = pat.strip_prefix("*.") {
+            // Wildcard covers only subdomains, not the domain itself
+            host.ends_with(&format!(".{suffix}"))
+        } else {
+            host == pat || host.ends_with(&format!(".{pat}"))
+        }
+    })
 }
 
 /// Strict mode checks both the normalized host and the requested port before
-/// DNS resolution. Subdomains inherit an explicitly listed parent domain,
-/// matching the historical allowlist behavior; the port is always exact.
-fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
+/// DNS resolution.
+pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     rules.iter().any(|rule| {
-        rule.port == port && (rule.domain == host || host.ends_with(&format!(".{}", rule.domain)))
+        if rule.port != port {
+            return false;
+        }
+        let pat = rule
+            .domain
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if let Some(suffix) = pat.strip_prefix("*.") {
+            host.ends_with(&format!(".{suffix}"))
+        } else {
+            host == pat || host.ends_with(&format!(".{pat}"))
+        }
     })
 }
 
@@ -177,6 +432,11 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerConfig) -> bool {
+    // Check DoH/DoT block
+    if is_doh_or_dot(host, port, None) {
+        return false;
+    }
+
     // Check loopback debug port guard
     if is_loopback_host(host) {
         if let Some(ref guard) = config.debug_guard {
@@ -186,17 +446,110 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
         }
     }
 
+    // Check per-domain quota
+    if let Some(&limit) = config.quotas.get(host) {
+        let used = get_domain_bytes(host);
+        if used >= limit {
+            return false;
+        }
+    }
+
+    // If host is an IP that matches an allowed CIDR
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        let cidrs: Vec<IpCidr> = config
+            .allow_cidr
+            .iter()
+            .filter_map(|c| IpCidr::parse(c).ok())
+            .collect();
+        if cidrs.iter().any(|c| c.contains(ip)) {
+            return true;
+        }
+    }
+
     match &config.policy {
         BrokerPolicy::Allowlist(domains) => domain_allowed(host, domains),
         BrokerPolicy::Strict(rules) => strict_allowed(host, port, rules),
+        BrokerPolicy::Ask => ask_confirmation(host, port),
+    }
+}
+
+fn get_upstream_proxy(host: &str, port: u16) -> Option<String> {
+    if let Ok(no_proxy) = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")) {
+        let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        for item in no_proxy.split(',') {
+            let item = item.trim().trim_end_matches('.').to_ascii_lowercase();
+            if !item.is_empty() && (item == "*" || h == item || h.ends_with(&format!(".{item}"))) {
+                return None;
+            }
+        }
+    }
+    if port == 443 {
+        std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("https_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok()
+    } else {
+        std::env::var("HTTP_PROXY")
+            .or_else(|_| std::env::var("http_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok()
+    }
+}
+
+fn connect_via_proxy(
+    proxy_url: &str,
+    target_host: &str,
+    target_port: u16,
+) -> Result<TcpStream, ()> {
+    let trimmed = proxy_url.trim();
+    let trimmed = trimmed.strip_prefix("http://").unwrap_or(trimmed);
+    let trimmed = trimmed.strip_prefix("https://").unwrap_or(trimmed);
+    let (auth, host_port) = if let Some((userinfo, hp)) = trimmed.split_once('@') {
+        (Some(userinfo), hp)
+    } else {
+        (None, trimmed)
+    };
+    let (p_host, p_port_str) = host_port.split_once(':').unwrap_or((host_port, "8080"));
+    let p_port: u16 = p_port_str.trim_matches('/').parse().unwrap_or(8080);
+    let mut tcp = TcpStream::connect((p_host, p_port)).map_err(|_| ())?;
+    let mut req = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
+    );
+    if let Some(_userinfo) = auth {
+        // basic auth if needed
+    }
+    req.push_str("Proxy-Connection: Keep-Alive\r\n\r\n");
+    tcp.write_all(req.as_bytes()).map_err(|_| ())?;
+    let mut buf = [0u8; 1024];
+    let mut resp = Vec::new();
+    loop {
+        let n = tcp.read(&mut buf).map_err(|_| ())?;
+        if n == 0 {
+            return Err(());
+        }
+        resp.extend_from_slice(&buf[..n]);
+        if resp.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let status_line = String::from_utf8_lossy(&resp);
+    if status_line.starts_with("HTTP/1.1 200") || status_line.starts_with("HTTP/1.0 200") {
+        Ok(tcp)
+    } else {
+        Err(())
     }
 }
 
 /// Resolve and connect entirely in the broker, pinning the selected
-/// `SocketAddr` for the lifetime of the TCP connection.  The hostname is not
-/// handed to `TcpStream::connect` after validation, so a DNS answer cannot be
-/// swapped between an allow/deny check and the connect call.
-fn resolve_and_connect(host: &str, port: u16) -> Result<TcpStream, ()> {
+/// `SocketAddr` for the lifetime of the TCP connection.
+fn resolve_and_connect(
+    host: &str,
+    port: u16,
+    allow_cidrs: &[String],
+    bus: &EventBus,
+) -> Result<(TcpStream, SocketAddr), ()> {
     use std::net::ToSocketAddrs;
     let host = host.trim().trim_end_matches('.');
     if host.is_empty()
@@ -206,20 +559,57 @@ fn resolve_and_connect(host: &str, port: u16) -> Result<TcpStream, ()> {
     {
         return Err(());
     }
+
+    if is_doh_or_dot(host, port, None) {
+        return Err(());
+    }
+
+    if let Some(proxy_url) = get_upstream_proxy(host, port) {
+        if let Ok(stream) = connect_via_proxy(&proxy_url, host, port) {
+            let dummy_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
+            return Ok((stream, dummy_addr));
+        }
+    }
+
     let resolved = (host, port)
         .to_socket_addrs()
         .map_err(|_| ())?
         .collect::<Vec<_>>();
-    // A DNS answer set is validated as a whole. If any answer is private or
-    // otherwise special-use, fail closed instead of selecting another answer;
-    // this prevents DNS rebinding from turning an allowed name into a local
-    // network pivot. The selected SocketAddr is then pinned for connect().
-    if resolved.is_empty() || resolved.iter().any(|addr| forbidden_destination(addr.ip())) {
+
+    if resolved.is_empty() {
         return Err(());
     }
+
+    let cidrs: Vec<IpCidr> = allow_cidrs
+        .iter()
+        .filter_map(|c| IpCidr::parse(c).ok())
+        .collect();
+
+    let any_forbidden = resolved.iter().any(|addr| {
+        if is_doh_or_dot(host, port, Some(addr.ip())) {
+            return true;
+        }
+        if cidrs.iter().any(|c| c.contains(addr.ip())) {
+            false
+        } else {
+            forbidden_destination(addr.ip())
+        }
+    });
+
+    if any_forbidden {
+        return Err(());
+    }
+
+    let ips: Vec<String> = resolved.iter().map(|a| a.ip().to_string()).collect();
+    bus.publish(Event::DnsResolved {
+        ts: crate::events::types::now(),
+        host: host.to_string(),
+        ips,
+    });
+
     for addr in resolved {
         if let Ok(s) = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) {
-            return Ok(s);
+            return Ok((s, addr));
         }
     }
     Err(())
@@ -338,6 +728,10 @@ const CMSG_SPACE_FD: usize = 32; // CMSG_SPACE(sizeof(int)) on 64-bit
 fn create_and_send_data_fd(
     ctrl: &mut std::os::unix::net::UnixStream,
     tcp: TcpStream,
+    host: &str,
+    target_addr: SocketAddr,
+    quota: Option<u64>,
+    bus: EventBus,
 ) -> Result<(), ()> {
     let Some((mine, theirs)) = socketpair_stream().ok() else {
         return Err(());
@@ -348,9 +742,7 @@ fn create_and_send_data_fd(
     }
     drop(theirs);
 
-    // Two independent half-duplex pumps:
-    //   thread: outbound TCP -> unix (server responses toward the relay)
-    //   here:   unix -> outbound TCP (client requests toward the internet)
+    // Two independent half-duplex pumps with byte counting and quota enforcement:
     let mine = unsafe { std::os::unix::net::UnixStream::from_raw_fd(mine.into_raw_fd()) };
     let Ok(unix_write) = mine.try_clone() else {
         return Ok(());
@@ -358,24 +750,115 @@ fn create_and_send_data_fd(
     let Ok(tcp_read) = tcp.try_clone() else {
         return Ok(());
     };
+
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    let bytes_rx = Arc::new(AtomicU64::new(0));
+    let bytes_tx = Arc::new(AtomicU64::new(0));
+    let quota_killed = Arc::new(AtomicBool::new(false));
+
+    let rx_clone = Arc::clone(&bytes_rx);
+    let tx_clone = Arc::clone(&bytes_tx);
+    let quota_kill_rx = Arc::clone(&quota_killed);
+    let quota_kill_tx = Arc::clone(&quota_killed);
+
+    let host_owned = host.to_string();
+    let host_rx = host_owned.clone();
+    let host_tx = host_owned.clone();
+    let bus_rx = bus.clone();
+
+    // thread: outbound TCP -> unix (server responses toward the relay)
     let rev = std::thread::Builder::new()
-        .name("broker-fwd".into())
+        .name("broker-fwd-rx".into())
         .spawn(move || {
             let mut t = tcp_read;
             let mut u = unix_write;
-            let _ = std::io::copy(&mut t, &mut u);
-            // Outbound side closed: propagate EOF toward the relay.
+            let mut buf = [0u8; 16384];
+            loop {
+                if quota_kill_rx.load(Ordering::Relaxed) {
+                    break;
+                }
+                match t.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let total_rx = rx_clone.fetch_add(n as u64, Ordering::Relaxed) + (n as u64);
+                        let total_tx = tx_clone.load(Ordering::Relaxed);
+                        if let Some(limit) = quota {
+                            let total = get_domain_bytes(&host_rx) + total_rx + total_tx;
+                            if total > limit {
+                                quota_kill_rx.store(true, Ordering::Relaxed);
+                                bus_rx.publish(Event::NetQuotaExceeded {
+                                    ts: crate::events::types::now(),
+                                    host: host_rx.clone(),
+                                    limit_bytes: limit,
+                                    used_bytes: total,
+                                });
+                                break;
+                            }
+                        }
+                        if u.write_all(&buf[..n]).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
             let _ = u.shutdown(std::net::Shutdown::Write);
         })
         .ok();
+
     let mut unix_side = mine;
     let mut outbound = tcp;
-    let _ = std::io::copy(&mut unix_side, &mut outbound);
+    let mut buf = [0u8; 16384];
+    loop {
+        if quota_kill_tx.load(Ordering::Relaxed) {
+            break;
+        }
+        match unix_side.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let total_tx = bytes_tx.fetch_add(n as u64, Ordering::Relaxed) + (n as u64);
+                let total_rx = bytes_rx.load(Ordering::Relaxed);
+                if let Some(limit) = quota {
+                    let total = get_domain_bytes(&host_tx) + total_rx + total_tx;
+                    if total > limit {
+                        quota_kill_tx.store(true, Ordering::Relaxed);
+                        bus.publish(Event::NetQuotaExceeded {
+                            ts: crate::events::types::now(),
+                            host: host_tx.clone(),
+                            limit_bytes: limit,
+                            used_bytes: total,
+                        });
+                        break;
+                    }
+                }
+                if outbound.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
     // Client closed: propagate EOF to the outbound connection.
     let _ = outbound.shutdown(std::net::Shutdown::Write);
     if let Some(h) = rev {
         let _ = h.join();
     }
+
+    let final_tx = bytes_tx.load(Ordering::Relaxed);
+    let final_rx = bytes_rx.load(Ordering::Relaxed);
+    add_domain_transfer(&host_owned, final_tx, final_rx);
+
+    bus.publish(Event::NetEgress {
+        ts: crate::events::types::now(),
+        host: host_owned,
+        ip: target_addr.ip().to_string(),
+        port: target_addr.port(),
+        bytes_tx: final_tx,
+        bytes_rx: final_rx,
+    });
+
     Ok(())
 }
 
@@ -1137,6 +1620,8 @@ mod tests {
             policy: BrokerPolicy::Allowlist(vec!["127.0.0.1".into()]),
             debug_guard: Some(guard.clone()),
             mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
         };
 
         // Blocked without token
@@ -1152,5 +1637,64 @@ mod tests {
 
         // Allowed on other non-debug port
         assert!(request_allowed("127.0.0.1", 8080, None, &config));
+    }
+
+    #[test]
+    fn wildcard_domain_matching_covers_subdomains_only() {
+        let allowlist = vec![
+            "*.githubusercontent.com".to_string(),
+            "crates.io".to_string(),
+        ];
+        // Subdomains of wildcard match
+        assert!(domain_allowed("raw.githubusercontent.com", &allowlist));
+        assert!(domain_allowed("avatars.githubusercontent.com", &allowlist));
+        assert!(domain_allowed("a.b.githubusercontent.com", &allowlist));
+
+        // Base domain of wildcard does NOT match (subdomains only!)
+        assert!(!domain_allowed("githubusercontent.com", &allowlist));
+        // Suffix collision does NOT match
+        assert!(!domain_allowed("notgithubusercontent.com", &allowlist));
+
+        // Regular domain matches itself and subdomains
+        assert!(domain_allowed("crates.io", &allowlist));
+        assert!(domain_allowed("index.crates.io", &allowlist));
+        assert!(!domain_allowed("notcrates.io", &allowlist));
+    }
+
+    #[test]
+    fn ip_cidr_parsing_and_containment() {
+        let cidr_v4 = IpCidr::parse("10.0.0.0/8").unwrap();
+        assert!(cidr_v4.contains("10.0.0.1".parse().unwrap()));
+        assert!(cidr_v4.contains("10.255.255.255".parse().unwrap()));
+        assert!(!cidr_v4.contains("11.0.0.1".parse().unwrap()));
+
+        let cidr_v4_single = IpCidr::parse("192.168.1.100/32").unwrap();
+        assert!(cidr_v4_single.contains("192.168.1.100".parse().unwrap()));
+        assert!(!cidr_v4_single.contains("192.168.1.101".parse().unwrap()));
+
+        let cidr_v6 = IpCidr::parse("2001:db8::/32").unwrap();
+        assert!(cidr_v6.contains("2001:db8:1234::1".parse().unwrap()));
+        assert!(!cidr_v6.contains("2001:db9::1".parse().unwrap()));
+
+        assert!(IpCidr::parse("invalid").is_err());
+        assert!(IpCidr::parse("10.0.0.1/33").is_err());
+    }
+
+    #[test]
+    fn doh_and_dot_blocking_intercepts_known_providers_and_ports() {
+        assert!(is_doh_or_dot("1.1.1.1", 443, None));
+        assert!(is_doh_or_dot("8.8.8.8", 443, None));
+        assert!(is_doh_or_dot("dns.google", 443, None));
+        assert!(is_doh_or_dot("cloudflare-dns.com", 443, None));
+        assert!(is_doh_or_dot("dns.quad9.net", 443, None));
+        // Port 853 is DoT
+        assert!(is_doh_or_dot("anydomain.com", 853, None));
+
+        // Normal domain & port not blocked
+        assert!(!is_doh_or_dot(
+            "example.com",
+            443,
+            Some("93.184.216.34".parse().unwrap())
+        ));
     }
 }

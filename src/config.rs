@@ -22,6 +22,8 @@ pub enum NetMode {
     /// CONNECT-level domain and exact-port allowlist via the unix-fd bridge
     /// relay. DNS is resolved and validated by the broker before connect.
     Strict(Vec<NetRule>),
+    /// Interactive domain confirmation mode with per-session caching.
+    Ask,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,11 +45,12 @@ impl NetMode {
                     .collect::<Vec<_>>()
                     .join(",")
             ),
+            NetMode::Ask => "ask".into(),
         }
     }
 
     pub fn uses_relay(&self) -> bool {
-        matches!(self, Self::Allowlist(_) | Self::Strict(_))
+        matches!(self, Self::Allowlist(_) | Self::Strict(_) | Self::Ask)
     }
 }
 
@@ -325,6 +328,9 @@ pub fn parse_net_mode(s: &str) -> Result<NetMode> {
     if s == "off" {
         return Ok(NetMode::Off);
     }
+    if s == "ask" {
+        return Ok(NetMode::Ask);
+    }
     if let Some(rest) = s.strip_prefix("allowlist:") {
         let domains: Vec<String> = rest
             .split(',')
@@ -369,7 +375,7 @@ pub fn parse_net_mode(s: &str) -> Result<NetMode> {
         return Ok(NetMode::Strict(rules));
     }
     bail!(
-        "invalid --net mode '{s}' (expected off, allowlist:d1,d2,..., or strict:domain:port,... )"
+        "invalid --net mode '{s}' (expected off, ask, allowlist:d1,d2,..., or strict:domain:port,... )"
     )
 }
 
@@ -384,7 +390,15 @@ fn validate_domain(domain: &str) -> Result<()> {
     if domain.parse::<std::net::IpAddr>().is_ok() {
         bail!("IP literals are not accepted; use a DNS name");
     }
-    for label in domain.split('.') {
+    let check_domain = if let Some(suffix) = domain.strip_prefix("*.") {
+        if suffix.is_empty() {
+            bail!("wildcard domain has no base domain");
+        }
+        suffix
+    } else {
+        domain
+    };
+    for label in check_domain.split('.') {
         if label.is_empty() || label.len() > 63 {
             bail!("domain labels must be 1..63 bytes");
         }
