@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::cli::hook::{get_home_dir, get_shims_dir, HookScope};
 use crate::cli::shell_env;
