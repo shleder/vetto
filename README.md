@@ -63,6 +63,30 @@ vetto disable claude
 `vetto disable <agent>` removes only the agent shim; manage the shell hook
 itself with `vetto hook install` / `vetto hook uninstall`.
 
+## How enable works
+
+`vetto enable <agent>` writes a generated shim for the agent into
+`~/.vetto/shims` and prepends that directory to `$PATH` through a shell hook.
+When you later run the agent exactly like you always did (`claude`, `codex`,
+`gemini`, `aider`, `opencode`, `cursor`), the shim re-execs the real host
+binary under the vetto supervisor with the default policy — the kernel
+sandbox is built before the agent process starts, the same path a manual
+`vetto --` launch takes. There is no shim-only mode: if the sandbox cannot be
+established, the launch fails closed like any other.
+
+- Real-binary resolution excludes vetto shims, and recursion barriers
+  (`VETTO_WRAPPED`, `VETTO_SANDBOXED`, `VETTO_SHIM_ACTIVE`) make tool
+  invocations from inside the sandbox resolve to real host binaries directly,
+  with zero nesting.
+- `vetto enable` refuses to overwrite an existing non-vetto file without
+  `--force`.
+- The effective policy is the standard zero-config layering (built-in
+  profile + detected agent preset + project `vetto.toml`) — enable adds no
+  separate policy engine. Customize with `vetto allow` / `vetto deny` or
+  policy files; grant hints on blocked attempts name the exact command.
+- Check what a wrapped launch will do before trusting it: `vetto status`
+  (wrapped agents + sessions), `vetto policy explain`, `vetto verify`.
+
 Trust nothing, including the detection — verify the boundary first:
 
 ```bash
@@ -102,9 +126,10 @@ npx @shledery/vetto doctor
 Prebuilt archives for every platform are attached to each
 [GitHub release](https://github.com/shleder/vetto/releases) together with
 SHA256 checksums and a CycloneDX SBOM. Other recipes live in
-[`packaging/`](packaging) (Homebrew, Chocolatey, Scoop, AUR, RPM) and
-[`debian/`](debian). They are **source/artifact templates, not published
-channels**.
+[`packaging/`](packaging) (a Homebrew formula template, Chocolatey, Scoop,
+AUR, RPM) and [`debian/`](debian). They are **source/artifact templates, not
+published channels** — Homebrew distribution happens through the live
+[`shleder/tap/vetto`](https://github.com/shleder/homebrew-tap) tap above.
 
 ## Honest status
 
@@ -130,8 +155,8 @@ trusted boundary you bet your machine on.
   enforcement, secrets masking via `display_only_deny`, and optional Ed25519
   policy signatures (`require_signed`).
 - Session reports (HTML/MD/JSON/SARIF + JSONL), `rescue` (codex/claude/cursor),
-  TUI statusline/full, hook shims, shell integration, a session daemon and
-  multi-agent runtime on Unix.
+  TUI statusline/full, transparent `enable`/hook shims, shell integration, a
+  session daemon and multi-agent runtime on Unix.
 - 520+ automated tests; CI runs build + tests + clippy on x86_64/aarch64 Linux
   (aarch64 under QEMU), macOS arm64 (Intel via check), and Windows. Line
   coverage is measured with a pinned 38% floor, and the e2e spawn benchmark
@@ -401,6 +426,9 @@ receipt, and `vetto rescue rollback --receipt <path>` reverses it.
 
 ## Shell, Git hooks and shell integration
 
+`vetto enable` (primary) installs its shims plus the shell hook for you. The
+lower-level machinery it builds on:
+
 ```bash
 vetto hook install --scope global --git
 vetto hook status
@@ -412,8 +440,8 @@ wrapped without prefixing every command by hand. For prompt integration,
 `vetto shell-env` exports sandbox indicators (`VETTO_SANDBOX=1`, tier,
 profile) that your PS1 can consume; `vetto completions <shell>` generates
 native completions (Bash, Zsh, Fish, PowerShell, Elvish) and `vetto man`
-prints the man page. `vetto status` lists active supervised sessions and
-cleans stale metadata.
+prints the man page. `vetto status` lists wrapped agents and active supervised
+sessions and cleans stale metadata.
 
 ## Daemon and multi-agent
 
