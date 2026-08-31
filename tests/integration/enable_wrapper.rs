@@ -40,6 +40,13 @@ fn test_enable_and_disable_lifecycle() {
     std::fs::create_dir_all(&bin_dir).expect("create bin dir");
     let mock_agent = bin_dir.join("claude");
     write_file(&mock_agent, "#!/bin/sh\necho \"claude agent running\"\n");
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("claude.cmd"),
+            "@echo off\r\necho claude agent running\r\n",
+        );
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -121,6 +128,13 @@ fn test_enable_collision_protection() {
     std::fs::create_dir_all(&bin_dir).expect("create bin dir");
     let mock_agent = bin_dir.join("codex");
     write_file(&mock_agent, "#!/bin/sh\necho \"codex host\"\n");
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("codex.cmd"),
+            "@echo off\r\necho codex host\r\n",
+        );
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
