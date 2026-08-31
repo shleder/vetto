@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- Transparent agent sandboxing: `vetto enable <agent>` creates priority PATH shims with multi-layered recursion barriers (`VETTO_WRAPPED`, `VETTO_SANDBOXED`, `VETTO_SHIM_ACTIVE`), allowing developers to launch agents normally (e.g. `claude`, `codex`) under kernel sandbox supervision without manual `vetto run` wrapping.
+- Transparent agent unwrap: `vetto disable <agent>` safely removes the Vetto shim without affecting the host binary.
+- Agent discovery and status: `vetto enable` without arguments lists detected and wrapped agents; `vetto enable --status` and `vetto status` display active agent wrappers and real binary paths.
+- Collision safety: `vetto enable` refuses to overwrite non-Vetto binaries without `--force`.
+
+### Changed
+
+- Reorganized CLI `--help`: prioritized primary workflows (`enable`, `disable`, `allow`, `deny`, `doctor`, `tour`, `status`, `verify`) and hid low-level/internal subcommands.
+- Documentation: updated README Quick Start to the 3-line workflow (install -> `vetto enable claude` -> run `claude` normally) and updated onboarding error hints.
+
 ## [0.2.8] — 2026-08-30
 
 ### Added

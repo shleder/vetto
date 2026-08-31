@@ -116,6 +116,7 @@ pub fn detect_agent(project: &Path) -> Result<DetectedAgent> {
     bail!(
         "could not auto-detect AI agent from project markers or PATH.\n\
          Supported agents: {}\n\
+         To enable transparent sandboxing: vetto enable <agent>\n\
          To run an agent manually: vetto [OPTIONS] -- <command> [args...]\n\
          To configure policy: vetto init --wizard",
         SUPPORTED_AGENTS.join(", ")
