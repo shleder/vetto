@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
-## [Unreleased]
+## [0.2.9] — 2026-08-31
 
 ### Added
 
@@ -15,7 +15,7 @@ Keep a Changelog; versioning follows SemVer.
 ### Changed
 
 - Reorganized CLI `--help`: prioritized primary workflows (`enable`, `disable`, `allow`, `deny`, `doctor`, `tour`, `status`, `verify`) and hid low-level/internal subcommands.
-- Documentation: updated README Quick Start to the 3-line workflow (install -> `vetto enable claude` -> run `claude` normally) and updated onboarding error hints.
+- Documentation: README Quick Start is now the 3-line workflow (install -> `vetto enable claude` -> run `claude` normally); direct `vetto -- <command>` execution documented under Advanced; notes on the PATH hook touching shell rc files; onboarding error hints lead with `vetto enable`; landing page hero updated to the enable workflow.
 
 ## [0.2.8] — 2026-08-30
 
