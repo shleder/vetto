@@ -191,6 +191,22 @@ pub fn run_cli(json: bool) -> Result<()> {
         );
     }
 
+    let wrapped_agents =
+        crate::cli::enable::get_wrapped_agents(crate::cli::hook::HookScope::Global)
+            .unwrap_or_default();
+    if !wrapped_agents.is_empty() {
+        println!();
+        println!("Enabled Agents (vetto enable):");
+        for w in &wrapped_agents {
+            let real_str = w
+                .real_binary
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            println!("  {:<10} -> {} (preset: {})", w.name, real_str, w.preset);
+        }
+    }
+
     Ok(())
 }
 

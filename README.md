@@ -38,14 +38,24 @@ There is no fallback to an unconfined process, anywhere in the code.
 
 ## Quick start
 
-Zero config is the intended path: `vetto` inspects your project markers and
-`PATH`, auto-detects the agent (Claude Code, Codex, Gemini CLI, Aider,
-OpenCode, Cursor, Copilot, Cline, …), applies that agent's preset (allowlists,
-secret masking, network domains) and launches it under a full sandbox:
+Install `vetto`, enable your agent once, and run your agent normally — under the hood it runs inside an OS-level sandbox:
 
-```console
-$ vetto
-vetto: zero-config auto-detected agent 'claude' (found claude executable; project has .claude/)
+```bash
+npm install --global @shledery/vetto   # 1. Install
+vetto enable claude                   # 2. Enable once
+claude                                # 3. Run as usual — now sandboxed!
+```
+
+To see which agents are detected or currently wrapped:
+
+```bash
+vetto enable
+```
+
+To disable sandbox wrapping for an agent:
+
+```bash
+vetto disable claude
 ```
 
 Trust nothing, including the detection — verify the boundary first:
@@ -54,11 +64,7 @@ Trust nothing, including the detection — verify the boundary first:
 vetto doctor                 # what can this kernel enforce?
 vetto tour                   # guided introduction to everything else
 vetto verify                 # can anything leak through the default boundary?
-vetto --verify -- claude     # verify the resolved policy, then start the agent
 ```
-
-No agent in this directory? `vetto` still tells you where to go — it prints
-the doctor / tour / arbitrary-binary starting steps instead of a bare error.
 
 ## Install
 
@@ -193,7 +199,9 @@ vetto policy lint --strict
 vetto policy import --from claude
 ```
 
-## Run an agent
+## Direct / manual execution (Advanced)
+
+While `vetto enable <agent>` is the primary transparent workflow, you can also run arbitrary commands and agents directly under one-off supervision:
 
 ```bash
 # Zero config: detect agent, apply preset, sandbox it

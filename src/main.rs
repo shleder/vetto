@@ -110,6 +110,20 @@ fn run() -> Result<()> {
     }
 
     match &args.command {
+        Some(cli::Command::Enable(enable_args)) => cli::enable::run_enable(enable_args),
+        Some(cli::Command::Disable(disable_args)) => cli::enable::run_disable(disable_args),
+        Some(cli::Command::Run {
+            command,
+            args: run_args,
+        }) => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            if let Some(cmd) = command {
+                let mut full_cmd = vec![cmd.clone()];
+                full_cmd.extend(run_args.clone());
+                cfg.agent = full_cmd;
+            }
+            supervise(cfg)
+        }
         Some(cli::Command::Doctor {
             probe,
             check_agent,
@@ -390,9 +404,10 @@ fn run() -> Result<()> {
                     Err(e) => bail!(
                         "no AI agent detected in {} ({e})\n\n\
                          Get started:\n  \
-                         1. `vetto doctor` — see what this kernel can enforce\n  \
-                         2. `vetto tour` — guided introduction\n  \
-                         3. `vetto -- <command>` — sandbox any binary, e.g. `vetto -- python agent.py`\n\n\
+                         1. `vetto enable` — wrap installed agents (e.g. `vetto enable claude`)\n  \
+                         2. `vetto doctor` — see what this kernel can enforce\n  \
+                         3. `vetto tour` — guided introduction\n  \
+                         4. `vetto -- <command>` — sandbox any binary, e.g. `vetto -- python agent.py`\n\n\
                          Docs: https://shleder.github.io/vetto/",
                         project.display()
                     ),
@@ -1579,6 +1594,13 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     }
     if let Some(agent) = check_agent {
         doctor_agent_check(agent)?;
+    } else {
+        let has_any_agent = vetto::onboard::SUPPORTED_AGENTS
+            .iter()
+            .any(|a| vetto::shim::find_real_binary(a).is_ok());
+        if !has_any_agent {
+            println!("agents in PATH:          none detected (run `vetto enable` to see supported agents)");
+        }
     }
     Ok(())
 }

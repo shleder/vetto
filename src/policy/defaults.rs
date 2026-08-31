@@ -56,6 +56,10 @@ pub const DEFAULT_ENV_PASSTHROUGH: &[&str] = &[
     "NO_COLOR",
     "CI",
     "TERM_PROGRAM",
+    "VETTO_SANDBOXED",
+    "VETTO_SHIM_ACTIVE",
+    "VETTO_WRAPPED",
+    "VETTO_GIT_GUARD",
 ];
 
 pub fn default_env_passthrough() -> Vec<String> {

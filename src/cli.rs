@@ -1,3 +1,4 @@
+pub mod enable;
 pub mod git_hook;
 pub mod hook;
 pub mod plugin;
@@ -5,40 +6,39 @@ pub mod shell_env;
 pub mod status;
 pub mod why_slow;
 
+pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
+const HELP_ABOUT: &str = "\
+1. vetto enable <agent>
+2. Run your agent as usual — it runs in the sandbox under the hood.
+
+Daemon-less sandbox + security layer for AI coding agents.";
+
 const EXAMPLES: &str = "\
 Examples:
-  vetto -- codex exec \"refactor auth module\"
-  vetto -- claude -p \"fix the bug\"
-  vetto --profile strict -- python agent.py
-  vetto --net=allowlist:registry.npmjs.org -- npm install
-  vetto --net=strict:github.com:22 --git-ssh -- git fetch origin
-  vetto --tui=full --observe-seccomp --report html,md,sarif -- make test
-  vetto --agent codex -- codex exec \"refactor auth module\"
-  vetto --multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
-  vetto multi --manifest vetto-agents.toml
-  vetto multi --agent lint=/usr/bin/cargo --agent test=/usr/bin/cargo
-  vetto hook install --scope global --git
-  vetto hook status
+  vetto enable claude
+  vetto enable codex
+  claude
   vetto doctor
-  vetto doctor --probe
-  vetto rescue --json scan --limit 25
-  vetto rescue --json scan --all
-  vetto rescue diagnose sessions/2026/08/23/session.jsonl
-  vetto rescue snapshot session.jsonl --output ./recovery/session.jsonl
-  vetto report compare session-a.json session-b.json
   vetto tour
-  vetto upgrade --check
-  vetto completions bash";
+  vetto status
+  vetto allow ./target
+  vetto deny ~/.aws/credentials
+  vetto -- python agent.py";
 
 /// vetto - daemon-less sandbox + security layer for AI coding agents.
 #[derive(Parser, Debug)]
-#[command(name = "vetto", version, about, after_help = EXAMPLES)]
+#[command(
+    name = "vetto",
+    version,
+    about = HELP_ABOUT,
+    after_help = EXAMPLES
+)]
 pub struct Cli {
     /// Built-in policy profile
     #[arg(long, default_value = "default", value_name = "NAME")]
@@ -219,6 +219,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Enable transparent sandbox wrapper for an AI coding agent (e.g. `vetto enable claude`)
+    Enable(EnableArgs),
+
+    /// Disable transparent sandbox wrapper for an AI coding agent (e.g. `vetto disable claude`)
+    Disable(DisableArgs),
+
     /// Grant the agent access to a path or network domain (writes policy)
     Allow {
         /// Filesystem path, or network domain with --net
@@ -256,7 +262,39 @@ pub enum Command {
         #[arg(long)]
         fix: bool,
     },
+    /// Interactive 5-step onboarding walkthrough
+    Tour {
+        /// Run all tour steps non-interactively without waiting for keypresses
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// List active sandboxed sessions and cleanup stale metadata.
+    Status {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify the sandbox boundary WITHOUT running any agent: secret paths,
+    /// network reachability, and write-outside checks execute inside a
+    /// throwaway sandbox built from the resolved policy.
+    Verify {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run an agent command under the Vetto sandbox supervisor
+    #[command(hide = true)]
+    Run {
+        /// Target agent binary or command
+        #[arg(value_name = "COMMAND")]
+        command: Option<String>,
+
+        /// Arguments passed to the agent
+        #[arg(last = true, value_name = "ARGS")]
+        args: Vec<String>,
+    },
     /// Analyze project ecosystem and generate a tailored policy.toml policy
+    #[command(hide = true)]
     Init {
         /// Overwrite existing policy if present
         #[arg(long, short = 'f')]
@@ -266,31 +304,38 @@ pub enum Command {
         wizard: bool,
     },
     /// List built-in policy profiles
+    #[command(hide = true)]
     Profiles,
     /// Manage transparent developer shims, shell hooks, and Git hook wrappers
+    #[command(hide = true)]
     Hook {
         #[command(subcommand)]
         command: HookCommand,
     },
     /// Manage agent integration plugins (Claude Code, OpenCode)
+    #[command(hide = true)]
     Plugin {
         #[command(subcommand)]
         command: plugin::PluginCommand,
     },
     /// Run as a Model Context Protocol (MCP) JSON-RPC stdio server
+    #[command(hide = true)]
     Mcp,
     /// Manage background session multiplexer daemon and session registry
+    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: crate::daemon::DaemonCommand,
     },
     /// Run multiplexer daemon in foreground with SSH remote instructions
+    #[command(hide = true)]
     Serve {
         /// Loopback HTTP port for REST API (default: 54321)
         #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
         port: u16,
     },
     /// Fast native shim dispatcher for intercepted toolchain binaries
+    #[command(hide = true)]
     Shim {
         /// Target binary name (if not inferred from argv[0])
         #[arg(value_name = "BINARY")]
@@ -301,6 +346,7 @@ pub enum Command {
         args: Vec<String>,
     },
     /// Run named agents concurrently, each in an independent sandbox.
+    #[command(hide = true)]
     Multi {
         /// TOML manifest containing one or more [[agents]] argv definitions.
         #[arg(long, value_name = "PATH", conflicts_with = "agents")]
@@ -315,6 +361,7 @@ pub enum Command {
         command: Vec<String>,
     },
     /// Inspect and copy persisted agent sessions without modifying originals.
+    #[command(hide = true)]
     Rescue {
         /// Recovery adapter: codex, claude or cursor.
         #[arg(long, default_value = "codex", value_name = "ID")]
@@ -331,38 +378,35 @@ pub enum Command {
         command: RescueCommand,
     },
     /// Compare two JSON session reports.
+    #[command(hide = true)]
     Report {
         #[command(subcommand)]
         command: ReportCommand,
     },
-    /// Verify the sandbox boundary WITHOUT running any agent: secret paths,
-    /// network reachability, and write-outside checks execute inside a
-    /// throwaway sandbox built from the resolved policy.
-    Verify {
-        /// Emit machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
     /// Run red-team sandbox containment and kernel isolation attack battery.
+    #[command(hide = true)]
     Redteam {
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
     },
     /// Explain the effective policy or lint it for dangerous configurations.
+    #[command(hide = true)]
     Policy {
         #[command(subcommand)]
         command: PolicyCommand,
     },
     /// Print shell completion script for the requested shell.
+    #[command(hide = true)]
     Completions {
         #[arg(value_enum)]
         shell: Shell,
     },
     /// Generate man page to stdout.
+    #[command(hide = true)]
     Man,
     /// Print environment variable export lines for shell integration and PS1.
-    #[command(name = "shell-env")]
+    #[command(name = "shell-env", hide = true)]
     ShellEnv {
         /// Session ID to export.
         #[arg(long)]
@@ -374,19 +418,14 @@ pub enum Command {
         #[arg(long)]
         profile: Option<String>,
     },
-    /// List active sandboxed sessions and cleanup stale metadata.
-    Status {
-        /// Emit machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
     /// Manage persistent workspace profiles (cwd, agent, policy).
+    #[command(hide = true)]
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
     },
     /// Diagnostic latency breakdown and optimization hints for a session.
-    #[command(name = "why-slow")]
+    #[command(name = "why-slow", hide = true)]
     WhySlow {
         /// Session identifier or report path.
         session: String,
@@ -395,6 +434,7 @@ pub enum Command {
         json: bool,
     },
     /// Self-upgrade vetto via npm or cargo based on installation method
+    #[command(hide = true)]
     Upgrade {
         /// Channel to upgrade from (stable or alpha)
         #[arg(long, value_name = "CHANNEL")]
@@ -406,13 +446,8 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Interactive 5-step onboarding walkthrough
-    Tour {
-        /// Run all tour steps non-interactively without waiting for keypresses
-        #[arg(long)]
-        non_interactive: bool,
-    },
     /// Scan project directory for exposed secrets and credentials
+    #[command(hide = true)]
     ScanSecrets {
         /// Target directory or file to scan (defaults to current directory)
         #[arg(value_name = "PATH")]
@@ -428,6 +463,7 @@ pub enum Command {
         max_files: Option<usize>,
     },
     /// Live-tail session events from JSONL log with optional path filtering
+    #[command(hide = true)]
     Watch {
         /// Session PID or path to JSONL log file
         #[arg(value_name = "SESSION_OR_LOG")]
@@ -440,6 +476,7 @@ pub enum Command {
         json: bool,
     },
     /// Restore project files from a previously created session snapshot
+    #[command(hide = true)]
     Rollback {
         /// Session ID or path to snapshot archive
         #[arg(value_name = "SESSION")]
@@ -449,6 +486,7 @@ pub enum Command {
         target: Option<PathBuf>,
     },
     /// Tail and filter JSONL session event logs.
+    #[command(hide = true)]
     Events {
         /// Path to session JSONL log file or session identifier
         #[arg(value_name = "SESSION")]
@@ -467,6 +505,7 @@ pub enum Command {
         table: bool,
     },
     /// Query and inspect session audit history (~/.vetto/history.jsonl).
+    #[command(hide = true)]
     Audit {
         /// Filter sessions since duration (e.g. 24h, 7d, 30m, YYYY-MM-DD)
         #[arg(long, value_name = "DURATION")]
@@ -485,6 +524,7 @@ pub enum Command {
         json: bool,
     },
     /// Generate an aggregated daily audit digest from session history.
+    #[command(hide = true)]
     Digest {
         /// Window duration to aggregate (e.g. 24h, 7d, 30m; default 24h)
         #[arg(long, value_name = "DURATION", default_value = "24h")]
@@ -494,7 +534,7 @@ pub enum Command {
         json: bool,
     },
     /// Compare two session JSON audit reports (metric deltas and violation diffs).
-    #[command(name = "diff-sessions")]
+    #[command(name = "diff-sessions", hide = true)]
     DiffSessions {
         /// Base session JSON report or identifier
         #[arg(value_name = "SESSION1")]
@@ -507,6 +547,7 @@ pub enum Command {
         json: bool,
     },
     /// Chronologically replay sandbox observation and security events from a session log.
+    #[command(hide = true)]
     Replay {
         /// Path to session JSONL log file or session identifier
         #[arg(value_name = "SESSION")]
