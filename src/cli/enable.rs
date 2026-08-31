@@ -134,7 +134,7 @@ pub fn enable_agent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
     println!("vetto: successfully enabled sandbox wrapper for '{agent}'");
     println!("  real binary : {}", real_bin.display());
     println!("  shim path   : {}", target_shim_path.display());
-    println!("  profile     : balanced (zero-config default)");
+    println!("  profile     : default + agent preset (zero-config)");
     println!("  network     : allowlisted ({net_desc})");
     println!();
     println!("You can now run `{agent}` normally — under the hood it runs in the Vetto sandbox.");
@@ -206,7 +206,10 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
             let real_str = real_bin
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            ("[wrapped]  ", format!("-> {real_str} (preset: balanced)"))
+            (
+                "[wrapped]  ",
+                format!("-> {real_str} (preset: default+agent)"),
+            )
         } else if let Some(p) = real_bin {
             ("[installed]", format!("-> {} (not wrapped)", p.display()))
         } else {
@@ -278,7 +281,7 @@ pub fn get_wrapped_agents(scope: HookScope) -> Result<Vec<WrappedAgentInfo>> {
                 name: agent.to_string(),
                 shim_path,
                 real_binary: real_bin,
-                preset: "balanced",
+                preset: "default+agent",
                 network_allowlist: agent_network_allowlist(agent),
             });
         }

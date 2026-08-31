@@ -58,6 +58,11 @@ To disable sandbox wrapping for an agent:
 vetto disable claude
 ```
 
+`vetto enable` also installs a PATH hook into your shell rc files
+(`~/.bashrc`, `~/.zshrc`, …) so the shims directory wins PATH resolution.
+`vetto disable <agent>` removes only the agent shim; manage the shell hook
+itself with `vetto hook install` / `vetto hook uninstall`.
+
 Trust nothing, including the detection — verify the boundary first:
 
 ```bash
