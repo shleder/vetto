@@ -5,9 +5,11 @@ pub mod plugin;
 pub mod shell_env;
 pub mod status;
 pub mod why_slow;
+pub mod wizard;
 
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
+pub use wizard::WizardArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -293,6 +295,8 @@ pub enum Command {
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
     },
+    /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml
+    Wizard(wizard::WizardArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
     #[command(hide = true)]
     Init {

@@ -141,7 +141,20 @@ fn run() -> Result<()> {
             check_agent,
             fix,
         }) => doctor(*probe, check_agent.as_deref(), *fix),
-        Some(cli::Command::Init { force, wizard }) => init(*force, *wizard),
+        Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
+        Some(cli::Command::Init { force, wizard }) => {
+            if *wizard {
+                cli::wizard::run_wizard_cli(&cli::wizard::WizardArgs {
+                    path: ".".to_string(),
+                    yes: false,
+                    force: *force,
+                    preset: None,
+                    agent: None,
+                })
+            } else {
+                init(*force, *wizard)
+            }
+        }
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
