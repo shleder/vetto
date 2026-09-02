@@ -451,11 +451,25 @@ fn parse_jsonl_log(path: &Path, session_hint: &str) -> Result<SessionAuditDetail
     let file = File::open(path).with_context(|| format!("open log {}", path.display()))?;
     let reader = BufReader::new(file);
 
-    let mut session_id = Path::new(session_hint)
+    let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or(session_hint)
-        .to_string();
+        .unwrap_or(session_hint);
+    let clean = stem
+        .strip_prefix(".vetto-report-")
+        .or_else(|| stem.strip_prefix("vetto-report-"))
+        .unwrap_or(stem);
+    let mut session_id = if clean.starts_with("session-") {
+        clean.to_string()
+    } else if !clean.is_empty() && clean != "latest" {
+        format!("session-{clean}")
+    } else if session_hint.starts_with("session-") {
+        session_hint.to_string()
+    } else if !session_hint.is_empty() && session_hint != "latest" {
+        format!("session-{session_hint}")
+    } else {
+        session_hint.to_string()
+    };
     let mut timestamp = Utc::now();
     let mut command = None;
     let mut agent = "default".to_string();
