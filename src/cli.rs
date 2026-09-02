@@ -890,8 +890,8 @@ mod tests {
 
     #[test]
     fn kill_subcommand_parses_hung_and_pid() {
-        let hung_cli = Cli::try_parse_from(["vetto", "kill", "--hung"])
-            .expect("kill hung parsing");
+        let hung_cli =
+            Cli::try_parse_from(["vetto", "kill", "--hung"]).expect("kill hung parsing");
         assert!(matches!(
             hung_cli.command,
             Some(Command::Kill(KillArgs {
@@ -902,8 +902,7 @@ mod tests {
             }))
         ));
 
-        let pid_cli = Cli::try_parse_from(["vetto", "kill", "12345"])
-            .expect("kill pid parsing");
+        let pid_cli = Cli::try_parse_from(["vetto", "kill", "12345"]).expect("kill pid parsing");
         assert!(matches!(
             pid_cli.command,
             Some(Command::Kill(KillArgs {
@@ -914,8 +913,8 @@ mod tests {
             })) if t == "12345"
         ));
 
-        let force_cli = Cli::try_parse_from(["vetto", "kill", "-9", "54321"])
-            .expect("kill force parsing");
+        let force_cli =
+            Cli::try_parse_from(["vetto", "kill", "-9", "54321"]).expect("kill force parsing");
         assert!(matches!(
             force_cli.command,
             Some(Command::Kill(KillArgs {

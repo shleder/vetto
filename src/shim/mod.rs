@@ -291,9 +291,7 @@ pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
 
 /// Extracts shim control flags (`--allow-destructive-git`, `--no-loop-guard`,
 /// `--timeout <duration>`) and clean args.
-pub fn parse_shim_args(
-    args: &[String],
-) -> (bool, bool, Option<std::time::Duration>, Vec<String>) {
+pub fn parse_shim_args(args: &[String]) -> (bool, bool, Option<std::time::Duration>, Vec<String>) {
     let mut clean = Vec::with_capacity(args.len());
     let mut allow_override = false;
     let mut no_loop_guard = false;
@@ -346,9 +344,7 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
 
     // Git guard check: block destructive git commands
-    if (binary_name == "git"
-        || binary_name.ends_with("/git")
-        || binary_name.ends_with("\\git.exe"))
+    if (binary_name == "git" || binary_name.ends_with("/git") || binary_name.ends_with("\\git.exe"))
         && (is_sandboxed()
             || env::var("VETTO_GIT_GUARD")
                 .map(|v| v == "1")

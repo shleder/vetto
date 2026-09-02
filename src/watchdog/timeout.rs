@@ -87,9 +87,7 @@ pub fn run_with_timeout(
         }
     }
 
-    eprintln!(
-        "[VETTO WATCHDOG] Process exceeded timeout of {timeout:?} and was killed."
-    );
+    eprintln!("[VETTO WATCHDOG] Process exceeded timeout of {timeout:?} and was killed.");
 
     Ok(ExitStatusExt::from_raw(124 << 8))
 }
@@ -120,9 +118,7 @@ pub fn run_with_timeout(
     let _ = child.kill();
     let _ = child.wait();
 
-    eprintln!(
-        "[VETTO WATCHDOG] Process exceeded timeout of {timeout:?} and was killed."
-    );
+    eprintln!("[VETTO WATCHDOG] Process exceeded timeout of {timeout:?} and was killed.");
 
     #[cfg(windows)]
     {
