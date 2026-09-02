@@ -1555,7 +1555,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         );
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
-        println!("  note: sandbox-exec is deprecated by Apple; platform risk accepted");
+        println!("  platform status:       Tier 2 (write isolation + process rlimits + network lockdown)");
+        println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
+        println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
         if fix {
             vetto::doctor::print_fixes(&[]);
         }
@@ -1621,6 +1623,8 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
+        println!("  platform status:       Tier 3 (Job Objects + Restricted Token + LPAC)");
+        println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {
             vetto::doctor::print_fixes(&[]);
         }

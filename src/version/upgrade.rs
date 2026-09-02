@@ -196,11 +196,12 @@ pub fn run_upgrade(channel_opt: Option<&str>, check_only: bool, dry_run: bool) -
                     }
                 }
                 InstallMethod::Binary => {
-                    let target = match (std::env::consts::OS, std::env::consts::ARCH) {
-                        ("macos", "aarch64") => "macos-aarch64",
-                        ("macos", "x86_64") => "macos-x86_64",
-                        ("linux", "aarch64") => "linux-aarch64",
-                        ("linux", "x86_64") => "linux-x86_64",
+                    let (target, ext) = match (std::env::consts::OS, std::env::consts::ARCH) {
+                        ("macos", "aarch64") => ("macos-aarch64", "tar.gz"),
+                        ("macos", "x86_64") => ("macos-x86_64", "tar.gz"),
+                        ("linux", "aarch64") => ("linux-aarch64", "tar.gz"),
+                        ("linux", "x86_64") => ("linux-x86_64", "tar.gz"),
+                        ("windows", "x86_64") => ("windows-x86_64", "zip"),
                         (os, arch) => {
                             println!(
                                 "vetto was installed as a direct binary ({})\n\
@@ -216,7 +217,7 @@ pub fn run_upgrade(channel_opt: Option<&str>, check_only: bool, dry_run: bool) -
                     };
 
                     let archive_url = format!(
-                        "https://github.com/shleder/vetto/releases/download/v{}/vetto-{target}.tar.gz",
+                        "https://github.com/shleder/vetto/releases/download/v{}/vetto-{target}.{ext}",
                         update.latest_version
                     );
 
@@ -229,7 +230,7 @@ pub fn run_upgrade(channel_opt: Option<&str>, check_only: bool, dry_run: bool) -
                     }
 
                     println!("Downloading binary release from: {archive_url}");
-                    perform_atomic_binary_upgrade(&exe_path, &archive_url)?;
+                    perform_atomic_binary_upgrade(&exe_path, &archive_url, ext)?;
                     println!(
                         "Successfully upgraded vetto binary to v{}.",
                         update.latest_version
@@ -245,20 +246,20 @@ pub fn run_upgrade(channel_opt: Option<&str>, check_only: bool, dry_run: bool) -
     }
 }
 
-/// Downloads release tarball and performs atomic replacement of the current executable.
-fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str) -> Result<()> {
+/// Downloads release archive and performs atomic replacement of the current executable.
+fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) -> Result<()> {
     let parent_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
     let temp_dir = tempfile_dir(parent_dir)?;
 
     // Download archive via curl
-    let tar_path = temp_dir.join("vetto.tar.gz");
+    let archive_path = temp_dir.join(format!("vetto_download.{ext}"));
     let status = Command::new("curl")
         .args([
             "-fsSL",
             "-A",
             "vetto-updater",
             "-o",
-            tar_path.to_str().unwrap_or("vetto.tar.gz"),
+            archive_path.to_str().unwrap_or("vetto_download"),
             archive_url,
         ])
         .status()
@@ -270,19 +271,46 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str) -> Result<(
     }
 
     // Extract archive
-    let unpack_status = Command::new("tar")
-        .args([
-            "-xzf",
-            tar_path.to_str().unwrap_or("vetto.tar.gz"),
-            "-C",
-            temp_dir.to_str().unwrap_or("."),
-        ])
-        .status()
-        .context("failed to unpack binary archive via tar")?;
+    let unpack_status = if ext == "zip" {
+        // Built-in tar on Windows 10/11 handles zip, otherwise fall back to powershell
+        let tar_res = Command::new("tar")
+            .args([
+                "-xf",
+                archive_path.to_str().unwrap_or("vetto_download.zip"),
+                "-C",
+                temp_dir.to_str().unwrap_or("."),
+            ])
+            .status();
+        match tar_res {
+            Ok(s) if s.success() => s,
+            _ => Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        archive_path.display(),
+                        temp_dir.display()
+                    ),
+                ])
+                .status()
+                .context("failed to unpack zip archive via tar or powershell")?,
+        }
+    } else {
+        Command::new("tar")
+            .args([
+                "-xzf",
+                archive_path.to_str().unwrap_or("vetto_download.tar.gz"),
+                "-C",
+                temp_dir.to_str().unwrap_or("."),
+            ])
+            .status()
+            .context("failed to unpack binary archive via tar")?
+    };
 
     if !unpack_status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
-        bail!("tar unpack failed with status {unpack_status}");
+        bail!("archive unpack failed with status {unpack_status}");
     }
 
     let extracted_bin = if temp_dir.join("vetto.exe").exists() {
