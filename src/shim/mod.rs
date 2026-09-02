@@ -538,12 +538,10 @@ mod tests {
         assert!(
             is_destructive_git_command(&["push".into(), "origin".into(), ":feat".into()]).is_some()
         );
-        assert!(is_destructive_git_command(&[
-            "push".into(),
-            "origin".into(),
-            "+main:main".into()
-        ])
-        .is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "+main:main".into()])
+                .is_some()
+        );
 
         // Forced branch delete
         assert!(is_destructive_git_command(&["branch".into(), "-D".into(), "feat".into()]).is_some());
@@ -563,7 +561,9 @@ mod tests {
         .is_some());
 
         // Works with explicit `git` prefix as well
-        assert!(is_destructive_git_command(&["git".into(), "reset".into(), "--hard".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["git".into(), "reset".into(), "--hard".into()]).is_some()
+        );
     }
 
     #[test]
@@ -578,8 +578,13 @@ mod tests {
                 .is_none()
         );
         assert!(is_destructive_git_command(&["checkout".into(), "main".into()]).is_none());
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_none());
-        assert!(is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_none()
+        );
+        assert!(
+            is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()])
+                .is_none()
+        );
         assert!(is_destructive_git_command(&["clean".into(), "-n".into()]).is_none());
         assert!(is_destructive_git_command(&["restore".into(), "file.txt".into()]).is_none());
     }

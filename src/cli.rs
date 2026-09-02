@@ -326,9 +326,12 @@ pub enum Command {
         #[command(subcommand)]
         command: plugin::PluginCommand,
     },
-    /// Run as a Model Context Protocol (MCP) JSON-RPC stdio server
+    /// Run or wrap Model Context Protocol (MCP) servers
     #[command(hide = true)]
-    Mcp,
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommand>,
+    },
     /// Manage background session multiplexer daemon and session registry
     #[command(hide = true)]
     Daemon {
@@ -584,6 +587,34 @@ pub enum Command {
     /// Stored workspace profile invocation by name.
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum McpCommand {
+    /// Run as native Vetto MCP JSON-RPC stdio server (default)
+    Serve,
+
+    /// Wrap and sandbox an external third-party MCP server binary
+    Wrap(McpWrapArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct McpWrapArgs {
+    /// Allow read+write access to a path (can be repeated)
+    #[arg(long = "allow", value_name = "PATH")]
+    pub allow: Vec<String>,
+
+    /// Allow read-only access to a path (can be repeated)
+    #[arg(long = "allow-read", value_name = "PATH")]
+    pub allow_read: Vec<String>,
+
+    /// Network egress mode: off (default) | allowlist:<domains> | open
+    #[arg(long, default_value = "off", value_name = "MODE")]
+    pub net: String,
+
+    /// Target MCP server command and arguments; everything after `--`
+    #[arg(last = true, value_name = "COMMAND [ARGS...]")]
+    pub command: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1132,7 +1163,26 @@ mod tests {
     #[test]
     fn tier7_subcommands_parse_correctly() {
         let mcp = Cli::try_parse_from(["vetto", "mcp"]).expect("mcp syntax");
-        assert!(matches!(mcp.command, Some(Command::Mcp)));
+        assert!(matches!(mcp.command, Some(Command::Mcp { command: None })));
+
+        let mcp_serve = Cli::try_parse_from(["vetto", "mcp", "serve"]).expect("mcp serve");
+        assert!(matches!(
+            mcp_serve.command,
+            Some(Command::Mcp {
+                command: Some(McpCommand::Serve)
+            })
+        ));
+
+        let mcp_wrap = Cli::try_parse_from([
+            "vetto", "mcp", "wrap", "--allow", "/tmp", "--", "node", "server.js",
+        ])
+        .expect("mcp wrap");
+        assert!(matches!(
+            mcp_wrap.command,
+            Some(Command::Mcp {
+                command: Some(McpCommand::Wrap(ref args))
+            }) if args.allow == vec!["/tmp"] && args.command == vec!["node", "server.js"]
+        ));
 
         let plugin_install =
             Cli::try_parse_from(["vetto", "plugin", "install", "claude-code", "--force"])

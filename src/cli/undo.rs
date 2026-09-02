@@ -77,9 +77,7 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
     }
 
     if snapshots.is_empty() {
-        bail!(
-            "no snapshots found. Snapshots are created automatically before agent sessions."
-        );
+        bail!("no snapshots found. Snapshots are created automatically before agent sessions.");
     }
 
     let target_snapshot: SnapshotMetadata = if let Some(ref req_id) = args.session_id {

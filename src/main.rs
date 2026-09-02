@@ -159,7 +159,10 @@ fn run() -> Result<()> {
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
-        Some(cli::Command::Mcp) => mcp::run_stdio_server(),
+        Some(cli::Command::Mcp { command }) => match command {
+            None | Some(cli::McpCommand::Serve) => mcp::run_stdio_server(),
+            Some(cli::McpCommand::Wrap(args)) => mcp::run_wrap(args),
+        },
         Some(cli::Command::Daemon { command }) => daemon::run_cli(command),
         Some(cli::Command::Serve { port }) => remote::run_serve(*port),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
