@@ -322,7 +322,7 @@ pub fn rollback_snapshot(
     })
 }
 
-fn write_tar_entry<W: Write>(
+pub fn write_tar_entry<W: Write>(
     writer: &mut W,
     path: &str,
     data: &[u8],
@@ -377,7 +377,7 @@ fn write_tar_entry<W: Write>(
     Ok(())
 }
 
-fn parse_tar_header(header: &[u8; 512]) -> Result<(String, u64)> {
+pub fn parse_tar_header(header: &[u8; 512]) -> Result<(String, u64)> {
     let name_bytes: Vec<u8> = header[..100]
         .iter()
         .take_while(|&&b| b != 0)

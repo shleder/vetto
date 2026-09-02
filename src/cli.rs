@@ -1,3 +1,4 @@
+pub mod diff;
 pub mod enable;
 pub mod git_hook;
 pub mod hook;
@@ -10,6 +11,7 @@ pub mod why_slow;
 pub mod wizard;
 
 pub use crate::watchdog::WatchdogArgs;
+pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
 pub use mask::MaskArgs;
@@ -315,6 +317,8 @@ pub enum Command {
     Wizard(wizard::WizardArgs),
     /// Restore project files from a previous session snapshot (instant rollback)
     Undo(undo::UndoArgs),
+    /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
+    Diff(diff::DiffArgs),
     /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
     Watchdog(WatchdogArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy

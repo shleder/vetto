@@ -145,6 +145,7 @@ fn run() -> Result<()> {
         }) => doctor(*probe, check_agent.as_deref(), *fix),
         Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
         Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
+        Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
         Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
         Some(cli::Command::Init { force, wizard }) => {
             if *wizard {
