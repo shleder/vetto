@@ -27,10 +27,10 @@
 AI coding agents write impressive code, but running them unprompted on your local workstation is terrifying:
 a single hallucination, rogue bash loop, or prompt injection can exfiltrate your `~/.ssh` keys, wipe your home directory (`rm -rf ~`), or leak `.env` secrets.
 
-**VETTO** wraps Claude Code, Codex, Cursor, and Aider in an OS-level kernel sandbox **before the agent process starts**:
-- 🔒 **Zero Credential Theft**: `~/.ssh`, `~/.aws`, `~/.gnupg`, and `.env*` are physically unreadable by the agent.
-- 🛡️ **Zero Destructive Writes**: Agent file modifications are strictly confined to your project root and `/tmp`.
-- ⚡ **Zero Performance Penalty**: **0.002s** startup latency, 0 MB idle RAM, unprivileged execution without Docker.
+**VETTO** wraps Claude Code, Codex, Antigravity, Cursor, and Aider in an OS-level kernel sandbox **before the agent process starts**:
+- **Zero Credential Theft**: `~/.ssh`, `~/.aws`, `~/.gnupg`, and `.env*` are physically unreadable by the agent.
+- **Zero Destructive Writes**: Agent file modifications are strictly confined to your project root and `/tmp`.
+- **Zero Performance Penalty**: **0.002s** startup latency, 0 MB idle RAM, unprivileged execution without Docker.
 
 ---
 
@@ -69,28 +69,43 @@ npx @shledery/vetto doctor
 
 ## Quick Start
 
-Protect your workstation and run agents unattended in seconds:
+Protect your workstation and run any AI coding agent unattended in seconds:
 
 ### 1. Enable Your Agent
 ```bash
-vetto enable claude
-# Or wrap any supported agent:
-# vetto enable codex
-# vetto enable cursor
-# vetto enable aider
+# Wrap any agent of choice (creates transparent zero-overhead shims):
+vetto enable codex         # OpenAI Codex CLI
+vetto enable claude        # Claude Code
+vetto enable antigravity   # Antigravity CLI
+vetto enable cursor        # Cursor Agent
+vetto enable aider         # Aider
 ```
-*Creates a transparent, zero-latency shim at `~/.vetto/shims/claude` and configures shell PATH priority.*
+*Creates transparent, zero-latency shims in `~/.vetto/shims/` and configures shell PATH priority.*
 
 ### 2. Run Completely Unattended
+Launch your agent with full autonomy:
 ```bash
+# OpenAI Codex
+codex exec --full-auto
+
+# Claude Code
 claude --dangerously-skip-permissions
+
+# Antigravity CLI
+antigravity run --autonomous
+
+# Aider
+aider --yes
+
+# Or run any custom binary / agent directly inside vetto:
+vetto -- <agent> [args...]
 ```
 *Files outside the workspace are blocked, host credentials (`~/.ssh`, `~/.aws`, `.env`) are masked, and network egress is locked down to provider APIs.*
 
 To check wrapped status or unwrap at any time:
 ```bash
-vetto enable --status    # Check active shims
-vetto disable claude     # Unwrap agent
+vetto enable --status      # Check all active shims
+vetto disable <agent>      # Unwrap agent (e.g. vetto disable codex)
 ```
 
 ---
@@ -117,10 +132,10 @@ Security tooling frequently makes deceptive cross-platform claims. Vetto is arch
 
 | Operating System | Enforcement Primitives | Read Isolation (`~/.ssh`, `.env`) | Write Isolation (Host/System) | Network Allowlist | Security Tier |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Linux (Native)** | **Landlock ABI (v1–v6)** + **Seccomp-BPF** + **NetNS** | ✅ **100% Kernel Deny** | ✅ **100% Locked to Project** | ✅ **Per-Domain Broker** | **Tier 1 (Complete Boundary)** |
-| **Windows WSL2** | **Linux Landlock via WSL2 Kernel** | ✅ **100% Kernel Deny** | ✅ **100% Locked to Project** | ✅ **Per-Domain Broker** | **Tier 1 (Recommended for Windows)** |
-| **macOS (Darwin)** | **Apple Seatbelt (`libsandbox`)** + **Kqueue** | ⚠️ **Broad Reads (SBPL bug)** | ✅ **100% System Protected** | ✅ **`--net=off` Lockdown** | **Tier 2 (Write Safety & Ceilings)** |
-| **Windows Native** | **Job Objects** + **Restricted Tokens** | ⚠️ **ACL Fallback** | ✅ **Workspace Only** | ⚠️ **Host Firewall Rules** | **Tier 3 (Process Guardrails)** |
+| **Linux (Native)** | **Landlock ABI (v1–v6)** + **Seccomp-BPF** + **NetNS** | **100% Kernel Deny** | **100% Locked to Project** | **Per-Domain Broker** | **Tier 1 (Complete Boundary)** |
+| **Windows WSL2** | **Linux Landlock via WSL2 Kernel** | **100% Kernel Deny** | **100% Locked to Project** | **Per-Domain Broker** | **Tier 1 (Recommended for Windows)** |
+| **macOS (Darwin)** | **Apple Seatbelt (`libsandbox`)** + **Kqueue** | **Broad Reads (SBPL bug)** | **100% System Protected** | **`--net=off` Lockdown** | **Tier 2 (Write Safety & Ceilings)** |
+| **Windows Native** | **Job Objects** + **Restricted Tokens** | **ACL Fallback** | **Workspace Only** | **Host Firewall Rules** | **Tier 3 (Process Guardrails)** |
 
 > **The Honest macOS Disclosure**:
 > Apple has deprecated SBPL (`sandbox-exec`) and deliberately restricts unprivileged file-read denial in modern Darwin kernels. Any tool claiming unprivileged read-masking on macOS without SIP bypass is misleading you.
@@ -203,11 +218,11 @@ vetto --report html,sarif --jsonl session.jsonl -- cargo test
 
 ## What Vetto Deliberately Excludes
 
-- ❌ **No background daemon** — zero idle CPU, zero RAM consumption, no service to stall or crash.
-- ❌ **No root / sudo** — runs completely unprivileged; cannot escalate host permissions.
-- ❌ **No TLS interception** — zero MITM, no custom root certificate authority; moves opaque bytes only.
-- ❌ **No telemetry or tracking** — completely private by default; zero network calls home.
-- ❌ **No Docker dependency** — instant 0.002s startup directly on your native OS kernel.
+- **No background daemon** — zero idle CPU, zero RAM consumption, no service to stall or crash.
+- **No root / sudo** — runs completely unprivileged; cannot escalate host permissions.
+- **No TLS interception** — zero MITM, no custom root certificate authority; moves opaque bytes only.
+- **No telemetry or tracking** — completely private by default; zero network calls home.
+- **No Docker dependency** — instant 0.002s startup directly on your native OS kernel.
 
 ---
 
