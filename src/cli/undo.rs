@@ -47,7 +47,9 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
 
     if args.list {
         if snapshots.is_empty() {
-            println!("no snapshots found. Snapshots are created automatically before agent sessions.");
+            println!(
+                "no snapshots found. Snapshots are created automatically before agent sessions."
+            );
             return Ok(());
         }
 
@@ -75,7 +77,9 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
     }
 
     if snapshots.is_empty() {
-        bail!("no snapshots found. Snapshots are created automatically before agent sessions.");
+        bail!(
+            "no snapshots found. Snapshots are created automatically before agent sessions."
+        );
     }
 
     let target_snapshot: SnapshotMetadata = if let Some(ref req_id) = args.session_id {
@@ -98,7 +102,8 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
                     SnapshotMetadata {
                         session_id: req_id.clone(),
                         created_at: String::new(),
-                        project_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                        project_dir: std::env::current_dir()
+                            .unwrap_or_else(|_| PathBuf::from(".")),
                         archive_file: root.join(req_id).join("snapshot.tar"),
                         file_count: 0,
                         total_size_bytes: 0,

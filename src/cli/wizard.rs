@@ -460,7 +460,10 @@ fn run_wizard_non_interactive_flow(
         target_policy_path.display().to_string()
     };
 
-    writeln!(writer, "✓ Vetto security policy generated at {display_path}")?;
+    writeln!(
+        writer,
+        "✓ Vetto security policy generated at {display_path}"
+    )?;
     writeln!(
         writer,
         "  Preset: {} | Agent: {} | Network: {}",
@@ -709,7 +712,10 @@ pub fn run_wizard_interactive_flow(
         target_policy_path.display().to_string()
     };
 
-    writeln!(writer, "✓ Vetto security policy generated at {display_path}")?;
+    writeln!(
+        writer,
+        "✓ Vetto security policy generated at {display_path}"
+    )?;
     writeln!(
         writer,
         "  Preset: {} | Agent: {} | Network: {}",
@@ -802,7 +808,10 @@ mod tests {
             "paranoid must set network mode to off"
         );
 
-        let fs_layer = layer.filesystem.as_ref().expect("must have filesystem section");
+        let fs_layer = layer
+            .filesystem
+            .as_ref()
+            .expect("must have filesystem section");
         let read_paths = fs_layer
             .allow_read
             .as_ref()
