@@ -1,6 +1,7 @@
 pub mod enable;
 pub mod git_hook;
 pub mod hook;
+pub mod mask;
 pub mod plugin;
 pub mod shell_env;
 pub mod status;
@@ -11,6 +12,7 @@ pub mod wizard;
 pub use crate::watchdog::WatchdogArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
+pub use mask::MaskArgs;
 pub use undo::UndoArgs;
 pub use wizard::WizardArgs;
 
@@ -214,6 +216,14 @@ pub struct Cli {
     #[arg(long, value_name = "URL")]
     pub remote: Option<String>,
 
+    /// Redact secrets in real-time from stdout/stderr streams
+    #[arg(long = "mask-secrets")]
+    pub mask_secrets: bool,
+
+    /// Disable real-time secret redaction
+    #[arg(long = "no-mask-secrets")]
+    pub no_mask_secrets: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -224,6 +234,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Stream stdin to stdout with real-time secret and API key redaction
+    Mask(mask::MaskArgs),
+
     /// Enable transparent sandbox wrapper for an AI coding agent (e.g. `vetto enable claude`)
     Enable(EnableArgs),
 
@@ -894,6 +907,26 @@ mod tests {
                 check_agent: Some(ref agent),
                 ..
             }) if agent == "codex"
+        ));
+    }
+
+    #[test]
+    fn mask_subcommand_parses_style() {
+        let cli_default = Cli::try_parse_from(["vetto", "mask"]).expect("mask default parsing");
+        assert!(matches!(
+            cli_default.command,
+            Some(Command::Mask(MaskArgs {
+                style: mask::MaskStyle::Marker,
+            }))
+        ));
+
+        let cli_pad = Cli::try_parse_from(["vetto", "mask", "--style", "pad"])
+            .expect("mask pad parsing");
+        assert!(matches!(
+            cli_pad.command,
+            Some(Command::Mask(MaskArgs {
+                style: mask::MaskStyle::Pad,
+            }))
         ));
     }
 

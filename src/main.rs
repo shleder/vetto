@@ -22,8 +22,9 @@ use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
     rescue, sandbox, shim, watchdog,
 };
+use vetto::pty;
 #[cfg(unix)]
-use vetto::{pty, tui};
+use vetto::tui;
 
 fn main() {
     if let Err(err) = run() {
@@ -110,6 +111,7 @@ fn run() -> Result<()> {
     }
 
     match &args.command {
+        Some(cli::Command::Mask(mask_args)) => cli::mask::run_mask(mask_args),
         Some(cli::Command::Enable(enable_args)) => cli::enable::run_enable(enable_args),
         Some(cli::Command::Disable(disable_args)) => cli::enable::run_disable(disable_args),
         Some(cli::Command::Run {
@@ -820,7 +822,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             stderr_w = Some(w2);
             stdio
         }
-        TuiMode::None => sandbox::StdioMode::Inherit,
+        TuiMode::None => {
+            if cfg.mask_secrets {
+                let (r1, w1) = pipe2()?;
+                let (r2, w2) = pipe2()?;
+                let stdio = sandbox::StdioMode::Captured {
+                    stdout_w: w1.as_raw_fd(),
+                    stderr_w: w2.as_raw_fd(),
+                };
+                stdout_r = Some(r1);
+                stdout_w = Some(w1);
+                stderr_r = Some(r2);
+                stderr_w = Some(w2);
+                stdio
+            } else {
+                sandbox::StdioMode::Inherit
+            }
+        }
     };
     #[cfg(windows)]
     let stdio = {
@@ -862,6 +880,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // ---- Phase 2: threads now allowed -------------------------------------
     let bus = EventBus::new();
     let root_pid = handle.root_pid;
+
+    #[cfg(unix)]
+    let mut out_reader = None;
+    #[cfg(unix)]
+    let mut err_reader = None;
+    #[cfg(unix)]
+    if cfg.tui == TuiMode::None && cfg.mask_secrets {
+        if let Some(r1) = stdout_r.take() {
+            out_reader = Some(spawn_streaming_redactor(r1, std::io::stdout()));
+        }
+        if let Some(r2) = stderr_r.take() {
+            err_reader = Some(spawn_streaming_redactor(r2, std::io::stderr()));
+        }
+    }
 
     if let Ok(reg) = cli::status::SessionRegistry::new() {
         let agent_name = cfg.agent_preset.as_deref().unwrap_or_else(|| &cfg.agent[0]);
@@ -1127,10 +1159,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 false,
             )
         }
-        TuiMode::None => match cfg.session_timeout {
-            Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
-            None => (handle.wait(), false),
-        },
+        TuiMode::None => {
+            let res = match cfg.session_timeout {
+                Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+                None => (handle.wait(), false),
+            };
+            if let Some(h) = out_reader {
+                let _ = h.join();
+            }
+            if let Some(h) = err_reader {
+                let _ = h.join();
+            }
+            res
+        }
     };
     #[cfg(windows)]
     let (exit_code, timed_out) = match cfg.session_timeout {
@@ -1788,4 +1829,39 @@ fn profiles() -> Result<()> {
         println!("  {name:<12} {desc}");
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_streaming_redactor<W: std::io::Write + Send + 'static>(
+    fd: OwnedFd,
+    mut dest: W,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("vetto-stream-redactor".into())
+        .spawn(move || {
+            use std::io::{Read, Write};
+            let mut file = std::fs::File::from(fd);
+            let mut chunk = [0u8; 8192];
+            let mut redactor = pty::AnsiRedactor::new();
+            loop {
+                match file.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let redacted = redactor.redact_chunk(&chunk[..n]);
+                        if !redacted.is_empty() {
+                            let _ = dest.write_all(&redacted);
+                            let _ = dest.flush();
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            let flushed = redactor.flush();
+            if !flushed.is_empty() {
+                let _ = dest.write_all(&flushed);
+                let _ = dest.flush();
+            }
+        })
+        .expect("spawn stream redactor thread")
 }

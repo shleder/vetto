@@ -108,6 +108,8 @@ pub struct GlobalConfig {
     pub verify: Option<bool>,
     #[serde(default)]
     pub shadow: Option<bool>,
+    #[serde(default)]
+    pub mask_secrets: Option<bool>,
 }
 
 pub fn load_global_config_from_home(home: &Path) -> Option<GlobalConfig> {
@@ -172,6 +174,7 @@ pub struct RunConfig {
     pub git_guard: bool,
     pub snapshot: bool,
     pub auto_deny_secrets: bool,
+    pub mask_secrets: bool,
     pub agent: Vec<String>,
 }
 
@@ -316,6 +319,14 @@ impl RunConfig {
             None => None,
         };
 
+        let mask_secrets = if cli.no_mask_secrets {
+            false
+        } else if cli.mask_secrets {
+            true
+        } else {
+            global.mask_secrets.unwrap_or(true)
+        };
+
         Ok(Self {
             profile,
             preset,
@@ -349,6 +360,7 @@ impl RunConfig {
             git_guard: cli.git_guard,
             snapshot: cli.snapshot,
             auto_deny_secrets: cli.auto_deny_secrets,
+            mask_secrets,
             agent: cli.agent.clone(),
         })
     }
