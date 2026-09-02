@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 460" width="100%" height="auto">
+  <defs>
+    <!-- Background Gradients -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0f141c" />
+      <stop offset="100%" stop-color="#090d13" />
+    </linearGradient>
+    <linearGradient id="header-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1c2128" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+    <linearGradient id="alert-bg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3d1418" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#241014" stop-opacity="0.6" />
+    </linearGradient>
+    <linearGradient id="allow-bg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#102e1c" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#0d2116" stop-opacity="0.6" />
+    </linearGradient>
+
+    <!-- Outer Card Glow / Shadow Filter -->
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="16" in="SourceAlpha" result="blur" />
+      <feOffset dx="0" dy="12" result="offsetblur" />
+      <feFlood flood-color="#000000" flood-opacity="0.55" result="color" />
+      <feComposite in2="offsetblur" operator="in" />
+      <feMerge>
+        <feMergeNode />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13.5px;
+      letter-spacing: -0.15px;
+    }
+    .prompt { fill: #58a6ff; font-weight: 700; }
+    .agent-prompt { fill: #e3b341; font-weight: 700; }
+    .cmd { fill: #f0f6fc; font-weight: 600; }
+    .cmd-flag { fill: #f0883e; }
+    .dim { fill: #8b949e; }
+    .text-main { fill: #c9d1d9; }
+    .target-path { fill: #ff7b72; font-weight: 600; }
+    .good-path { fill: #79c0ff; font-weight: 600; }
+    .tag-installed { fill: #3fb950; font-weight: 600; }
+    .tag-shim { fill: #58a6ff; font-weight: 600; }
+    .tag-active { fill: #d2a8ff; font-weight: 600; }
+    .badge-denied-hdr { fill: #ff7b72; font-weight: 800; letter-spacing: 0.5px; }
+    .badge-denied-bold { fill: #ffa198; font-weight: 700; }
+    .badge-denied-txt { fill: #f0f6fc; }
+    .badge-allow-hdr { fill: #3fb950; font-weight: 800; letter-spacing: 0.5px; }
+    .badge-allow-bold { fill: #7ee787; font-weight: 700; }
+    .badge-allow-txt { fill: #c9d1d9; }
+    .highlight-overhead { fill: #56d364; font-weight: 700; }
+    .highlight-nodocker { fill: #38bdf8; font-weight: 700; }
+    .cursor {
+      fill: #58a6ff;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+  </style>
+
+  <!-- Container Box with Shadow -->
+  <g filter="url(#shadow)">
+    <!-- Terminal Outer Frame -->
+    <rect x="16" y="14" width="848" height="428" rx="12" fill="url(#bg-grad)" stroke="#30363d" stroke-width="1.2" />
+
+    <!-- Terminal Header Bar -->
+    <rect x="16" y="14" width="848" height="38" rx="12" fill="url(#header-grad)" />
+    <!-- Square off bottom corners of header -->
+    <rect x="16" y="40" width="848" height="12" fill="url(#header-grad)" />
+    <line x1="16" y1="52" x2="864" y2="52" stroke="#21262d" stroke-width="1.2" />
+
+    <!-- Window Control Buttons (macOS style) -->
+    <circle cx="38" cy="33" r="6" fill="#ff5f56" stroke="#e0443e" stroke-width="0.8" />
+    <circle cx="58" cy="33" r="6" fill="#ffbd2e" stroke="#dea123" stroke-width="0.8" />
+    <circle cx="78" cy="33" r="6" fill="#27c93f" stroke="#1aab29" stroke-width="0.8" />
+
+    <!-- Terminal Window Title -->
+    <text x="440" y="37" text-anchor="middle" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">
+      vetto-session — claude-code (kernel: landlock-v5 + seccomp)
+    </text>
+
+    <!-- Header Status Indicator -->
+    <g transform="translate(760, 26)">
+      <rect x="0" y="0" width="86" height="15" rx="4" fill="#238636" fill-opacity="0.25" stroke="#2ea043" stroke-width="0.8"/>
+      <circle cx="8" cy="7.5" r="3" fill="#3fb950" />
+      <text x="16" y="11" fill="#3fb950" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" letter-spacing="0.5">FAIL-CLOSED</text>
+    </g>
+
+    <!-- TERMINAL CONTENT -->
+
+    <!-- Line 1: Curl Install -->
+    <g transform="translate(36, 80)">
+      <text class="mono">
+        <tspan class="prompt">$ </tspan>
+        <tspan class="cmd">curl -fsSL https://vetto.dev/install.sh | bash</tspan>
+      </text>
+    </g>
+    <!-- Line 1 Output -->
+    <g transform="translate(52, 102)">
+      <text class="mono">
+        <tspan class="dim">└─ </tspan>
+        <tspan class="tag-installed">[installed v0.2.11]</tspan>
+        <tspan class="dim"> (kernel verified: Landlock ABI 5, seccomp-BPF active)</tspan>
+      </text>
+    </g>
+
+    <!-- Line 2: Vetto Enable -->
+    <g transform="translate(36, 134)">
+      <text class="mono">
+        <tspan class="prompt">$ </tspan>
+        <tspan class="cmd">vetto enable claude</tspan>
+      </text>
+    </g>
+    <!-- Line 2 Output -->
+    <g transform="translate(52, 156)">
+      <text class="mono">
+        <tspan class="dim">└─ </tspan>
+        <tspan class="tag-shim">[✓ Shim installed: ~/.vetto/shims/claude]</tspan>
+        <tspan class="dim"> (zero-config, network: api.anthropic.com)</tspan>
+      </text>
+    </g>
+
+    <!-- Line 3: Claude Command -->
+    <g transform="translate(36, 188)">
+      <text class="mono">
+        <tspan class="prompt">$ </tspan>
+        <tspan class="cmd">claude </tspan>
+        <tspan class="cmd-flag">--dangerously-skip-permissions</tspan>
+      </text>
+    </g>
+    <!-- Line 3 Output -->
+    <g transform="translate(52, 210)">
+      <text class="mono">
+        <tspan class="dim">└─ </tspan>
+        <tspan class="tag-active">[Claude Code active]</tspan>
+        <tspan class="dim"> (supervised under unprivileged kernel boundary)</tspan>
+      </text>
+    </g>
+
+    <!-- Line 4: Agent unauthorized access attempt -->
+    <g transform="translate(36, 244)">
+      <text class="mono">
+        <tspan class="agent-prompt">&gt; </tspan>
+        <tspan class="text-main">Agent attempting unauthorized access to </tspan>
+        <tspan class="target-path">~/.ssh/id_ed25519</tspan>
+      </text>
+    </g>
+
+    <!-- Line 5: VETTO GUARD DENIED BADGE BOX -->
+    <g transform="translate(36, 260)">
+      <rect x="0" y="0" width="808" height="34" rx="6" fill="url(#alert-bg)" stroke="#f85149" stroke-width="1.1" />
+      <!-- Small shield / alert icon circle -->
+      <circle cx="18" cy="17" r="9" fill="#f85149" fill-opacity="0.25" />
+      <text x="18" y="21" text-anchor="middle" font-family="sans-serif" font-size="11">🚫</text>
+      <text x="34" y="22" class="mono">
+        <tspan class="badge-denied-hdr">[VETTO GUARD] </tspan>
+        <tspan class="badge-denied-bold">DENIED: </tspan>
+        <tspan class="badge-denied-txt">Landlock kernel barrier blocked read to ~/.ssh </tspan>
+        <tspan fill="#f85149" font-weight="700">(fail-closed)</tspan>
+      </text>
+    </g>
+
+    <!-- Line 6: Agent modifying workspace -->
+    <g transform="translate(36, 324)">
+      <text class="mono">
+        <tspan class="agent-prompt">&gt; </tspan>
+        <tspan class="text-main">Agent modifying </tspan>
+        <tspan class="good-path">src/main.rs</tspan>
+        <tspan class="text-main"> &amp; running </tspan>
+        <tspan class="good-path">cargo check</tspan>
+      </text>
+    </g>
+
+    <!-- Line 7: VETTO ALLOWED BADGE BOX -->
+    <g transform="translate(36, 340)">
+      <rect x="0" y="0" width="808" height="34" rx="6" fill="url(#allow-bg)" stroke="#2ea043" stroke-width="1.1" />
+      <!-- Small check icon circle -->
+      <circle cx="18" cy="17" r="9" fill="#2ea043" fill-opacity="0.25" />
+      <text x="18" y="21" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#3fb950">✓</text>
+      <text x="34" y="22" class="mono">
+        <tspan class="badge-allow-hdr">[VETTO] </tspan>
+        <tspan class="badge-allow-bold">ALLOWED: </tspan>
+        <tspan class="badge-allow-txt">workspace write permitted | </tspan>
+        <tspan class="highlight-overhead">0.002s overhead</tspan>
+        <tspan class="badge-allow-txt"> | </tspan>
+        <tspan class="highlight-nodocker">Docker NOT required</tspan>
+      </text>
+    </g>
+
+    <!-- Active prompt + blinking cursor -->
+    <g transform="translate(36, 404)">
+      <text class="mono">
+        <tspan class="prompt">$ </tspan>
+        <tspan fill="#8b949e"># Agent running safely unattended...</tspan>
+      </text>
+      <rect x="366" y="-11" width="8" height="15" class="cursor" />
+    </g>
+  </g>
+</svg>
