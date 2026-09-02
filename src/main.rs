@@ -180,6 +180,7 @@ fn run() -> Result<()> {
             profile.as_deref(),
         ),
         Some(cli::Command::Status { json }) => cli::status::run_cli(*json),
+        Some(cli::Command::Kill(kill_args)) => cli::kill::run_cli(kill_args),
         Some(cli::Command::Profile { command }) => match command {
             cli::ProfileCommand::Save {
                 name,

@@ -4,6 +4,8 @@
 //! (e.g. `cargo check`, `npm test`, `pytest`) without workspace changes, preventing
 //! runaway token burn and host CPU exhaustion.
 
+pub mod timeout;
+
 use std::env;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+pub use timeout::{parse_timeout, run_with_timeout};
 
 /// Persistent record of consecutive execution failures for a command in a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

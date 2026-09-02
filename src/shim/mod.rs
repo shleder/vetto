@@ -289,23 +289,53 @@ pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
     None
 }
 
+/// Extracts shim control flags (`--allow-destructive-git`, `--no-loop-guard`,
+/// `--timeout <duration>`) and clean args.
+pub fn parse_shim_args(
+    args: &[String],
+) -> (bool, bool, Option<std::time::Duration>, Vec<String>) {
+    let mut clean = Vec::with_capacity(args.len());
+    let mut allow_override = false;
+    let mut no_loop_guard = false;
+    let mut timeout = env::var("VETTO_COMMAND_TIMEOUT")
+        .ok()
+        .and_then(|v| crate::watchdog::timeout::parse_timeout(&v).ok());
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--allow-destructive-git" {
+            allow_override = true;
+            i += 1;
+        } else if a == "--no-loop-guard" {
+            no_loop_guard = true;
+            i += 1;
+        } else if a == "--timeout" {
+            if i + 1 < args.len() {
+                if let Ok(dur) = crate::watchdog::timeout::parse_timeout(&args[i + 1]) {
+                    timeout = Some(dur);
+                }
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if let Some(raw) = a.strip_prefix("--timeout=") {
+            if let Ok(dur) = crate::watchdog::timeout::parse_timeout(raw) {
+                timeout = Some(dur);
+            }
+            i += 1;
+        } else {
+            clean.push(a.clone());
+            i += 1;
+        }
+    }
+
+    (allow_override, no_loop_guard, timeout, clean)
+}
+
 /// Fast native dispatch entrypoint for shimmed binaries.
 pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
-    let (allow_override, no_loop_guard, clean_args): (bool, bool, Vec<String>) = {
-        let mut clean = Vec::with_capacity(args.len());
-        let mut found_override = false;
-        let mut found_no_loop = false;
-        for a in args {
-            if a == "--allow-destructive-git" {
-                found_override = true;
-            } else if a == "--no-loop-guard" {
-                found_no_loop = true;
-            } else {
-                clean.push(a.clone());
-            }
-        }
-        (found_override, found_no_loop, clean)
-    };
+    let (allow_override, no_loop_guard, configured_timeout, clean_args) = parse_shim_args(args);
 
     let bypass_active = allow_override
         || env::var("VETTO_ALLOW_DESTRUCTIVE_GIT")
@@ -316,7 +346,9 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
 
     // Git guard check: block destructive git commands
-    if (binary_name == "git" || binary_name.ends_with("/git") || binary_name.ends_with("\\git.exe"))
+    if (binary_name == "git"
+        || binary_name.ends_with("/git")
+        || binary_name.ends_with("\\git.exe"))
         && (is_sandboxed()
             || env::var("VETTO_GIT_GUARD")
                 .map(|v| v == "1")
@@ -335,9 +367,16 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
 
     let exit_code = if is_sandboxed() {
         // Recursion barrier active — execute real binary directly with zero overhead
-        let mut child = Command::new(&real_binary).args(&clean_args).spawn()?;
-        let status = child.wait()?;
-        status.code().unwrap_or(1)
+        let mut cmd = Command::new(&real_binary);
+        cmd.args(&clean_args);
+        if let Some(limit) = configured_timeout {
+            let status = crate::watchdog::timeout::run_with_timeout(&mut cmd, limit)?;
+            status.code().unwrap_or(124)
+        } else {
+            let mut child = cmd.spawn()?;
+            let status = child.wait()?;
+            status.code().unwrap_or(1)
+        }
     } else {
         // Not sandboxed yet: execute under Vetto sandbox supervisor
         let vetto_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("vetto"));
@@ -351,9 +390,14 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         supervisor_cmd.arg(&real_binary);
         supervisor_cmd.args(&clean_args);
 
-        let mut child = supervisor_cmd.spawn()?;
-        let status = child.wait()?;
-        status.code().unwrap_or(1)
+        if let Some(limit) = configured_timeout {
+            let status = crate::watchdog::timeout::run_with_timeout(&mut supervisor_cmd, limit)?;
+            status.code().unwrap_or(124)
+        } else {
+            let mut child = supervisor_cmd.spawn()?;
+            let status = child.wait()?;
+            status.code().unwrap_or(1)
+        }
     };
 
     let _ = crate::watchdog::record_after_execution(binary_name, &clean_args, exit_code, None);
@@ -593,5 +637,25 @@ mod tests {
         assert!(is_destructive_git_command(&["clean".into(), "-fd".into()]).is_none());
         assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_none());
         env::remove_var("VETTO_ALLOW_DESTRUCTIVE_GIT");
+    }
+
+    #[test]
+    fn parse_shim_args_timeout_extraction() {
+        let args = vec![
+            "--timeout".to_string(),
+            "45s".to_string(),
+            "status".to_string(),
+            "--no-loop-guard".to_string(),
+        ];
+        let (allow_override, no_loop_guard, timeout, clean) = parse_shim_args(&args);
+        assert!(!allow_override);
+        assert!(no_loop_guard);
+        assert_eq!(timeout, Some(std::time::Duration::from_secs(45)));
+        assert_eq!(clean, vec!["status".to_string()]);
+
+        let args_eq = vec!["--timeout=2m".to_string(), "commit".to_string()];
+        let (_, _, timeout_eq, clean_eq) = parse_shim_args(&args_eq);
+        assert_eq!(timeout_eq, Some(std::time::Duration::from_secs(120)));
+        assert_eq!(clean_eq, vec!["commit".to_string()]);
     }
 }

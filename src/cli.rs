@@ -2,6 +2,7 @@ pub mod diff;
 pub mod enable;
 pub mod git_hook;
 pub mod hook;
+pub mod kill;
 pub mod mask;
 pub mod plugin;
 pub mod shell_env;
@@ -14,6 +15,7 @@ pub use crate::watchdog::WatchdogArgs;
 pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
+pub use kill::KillArgs;
 pub use mask::MaskArgs;
 pub use undo::UndoArgs;
 pub use wizard::WizardArgs;
@@ -294,6 +296,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Terminate a running session or process, or kill hung runaway sessions
+    Kill(kill::KillArgs),
     /// Verify the sandbox boundary WITHOUT running any agent: secret paths,
     /// network reachability, and write-outside checks execute inside a
     /// throwaway sandbox built from the resolved policy.
@@ -881,6 +885,44 @@ mod tests {
                 ref binary,
                 ref args,
             }) if binary.as_deref() == Some("node") && args == &vec!["index.js", "--port", "3000"]
+        ));
+    }
+
+    #[test]
+    fn kill_subcommand_parses_hung_and_pid() {
+        let hung_cli = Cli::try_parse_from(["vetto", "kill", "--hung"])
+            .expect("kill hung parsing");
+        assert!(matches!(
+            hung_cli.command,
+            Some(Command::Kill(KillArgs {
+                hung: true,
+                target: None,
+                force: false,
+                ..
+            }))
+        ));
+
+        let pid_cli = Cli::try_parse_from(["vetto", "kill", "12345"])
+            .expect("kill pid parsing");
+        assert!(matches!(
+            pid_cli.command,
+            Some(Command::Kill(KillArgs {
+                target: Some(ref t),
+                hung: false,
+                force: false,
+                ..
+            })) if t == "12345"
+        ));
+
+        let force_cli = Cli::try_parse_from(["vetto", "kill", "-9", "54321"])
+            .expect("kill force parsing");
+        assert!(matches!(
+            force_cli.command,
+            Some(Command::Kill(KillArgs {
+                target: Some(ref t),
+                force: true,
+                ..
+            })) if t == "54321"
         ));
     }
 
