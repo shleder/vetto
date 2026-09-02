@@ -166,9 +166,7 @@ pub fn find_project_root() -> Option<PathBuf> {
 fn find_git_subcommand(args: &[String]) -> Option<(usize, &str)> {
     let mut i = 0;
     if i < args.len()
-        && (args[i] == "git"
-            || args[i].ends_with("/git")
-            || args[i].ends_with("\\git.exe"))
+        && (args[i] == "git" || args[i].ends_with("/git") || args[i].ends_with("\\git.exe"))
     {
         i += 1;
     }
@@ -483,7 +481,10 @@ mod tests {
     fn detects_destructive_git_commands() {
         // Hard reset
         assert!(is_destructive_git_command(&["reset".into(), "--hard".into()]).is_some());
-        assert!(is_destructive_git_command(&["reset".into(), "--hard".into(), "HEAD~1".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["reset".into(), "--hard".into(), "HEAD~1".into()])
+                .is_some()
+        );
         assert!(is_destructive_git_command(&["reset".into(), "--hard=HEAD~1".into()]).is_some());
 
         // Aggressive clean
@@ -497,28 +498,69 @@ mod tests {
 
         // Discard checkout
         assert!(is_destructive_git_command(&["checkout".into(), ".".into()]).is_some());
-        assert!(is_destructive_git_command(&["checkout".into(), "--".into(), ".".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["checkout".into(), "--".into(), ".".into()]).is_some()
+        );
         assert!(is_destructive_git_command(&["checkout".into(), "-f".into()]).is_some());
         assert!(is_destructive_git_command(&["checkout".into(), "--force".into()]).is_some());
 
         // Discard restore
         assert!(is_destructive_git_command(&["restore".into(), ".".into()]).is_some());
-        assert!(is_destructive_git_command(&["restore".into(), "--worktree".into(), ".".into()]).is_some());
-        assert!(is_destructive_git_command(&["restore".into(), "--staged".into(), ".".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["restore".into(), "--worktree".into(), ".".into()])
+                .is_some()
+        );
+        assert!(
+            is_destructive_git_command(&["restore".into(), "--staged".into(), ".".into()])
+                .is_some()
+        );
 
         // Destructive push
         assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_some());
         assert!(is_destructive_git_command(&["push".into(), "-f".into()]).is_some());
-        assert!(is_destructive_git_command(&["push".into(), "--force-with-lease".into()]).is_some());
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), "--delete".into(), "feat".into()]).is_some());
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), "-d".into(), "feat".into()]).is_some());
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), ":feat".into()]).is_some());
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), "+main:main".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "--force-with-lease".into()]).is_some()
+        );
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "--delete".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "-d".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), ":feat".into()]).is_some()
+        );
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "+main:main".into()
+        ])
+        .is_some());
 
         // Forced branch delete
         assert!(is_destructive_git_command(&["branch".into(), "-D".into(), "feat".into()]).is_some());
-        assert!(is_destructive_git_command(&["branch".into(), "--delete".into(), "--force".into(), "feat".into()]).is_some());
-        assert!(is_destructive_git_command(&["branch".into(), "-d".into(), "-f".into(), "feat".into()]).is_some());
+        assert!(is_destructive_git_command(&[
+            "branch".into(),
+            "--delete".into(),
+            "--force".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(is_destructive_git_command(&[
+            "branch".into(),
+            "-d".into(),
+            "-f".into(),
+            "feat".into()
+        ])
+        .is_some());
 
         // Works with explicit `git` prefix as well
         assert!(is_destructive_git_command(&["git".into(), "reset".into(), "--hard".into()]).is_some());
@@ -527,9 +569,14 @@ mod tests {
     #[test]
     fn allows_safe_git_commands() {
         assert!(is_destructive_git_command(&["status".into()]).is_none());
-        assert!(is_destructive_git_command(&["commit".into(), "-m".into(), "msg".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["commit".into(), "-m".into(), "msg".into()]).is_none()
+        );
         assert!(is_destructive_git_command(&["diff".into()]).is_none());
-        assert!(is_destructive_git_command(&["checkout".into(), "-b".into(), "new-branch".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["checkout".into(), "-b".into(), "new-branch".into()])
+                .is_none()
+        );
         assert!(is_destructive_git_command(&["checkout".into(), "main".into()]).is_none());
         assert!(is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_none());
         assert!(is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()]).is_none());

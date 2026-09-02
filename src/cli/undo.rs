@@ -102,8 +102,7 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
                     SnapshotMetadata {
                         session_id: req_id.clone(),
                         created_at: String::new(),
-                        project_dir: std::env::current_dir()
-                            .unwrap_or_else(|_| PathBuf::from(".")),
+                        project_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
                         archive_file: root.join(req_id).join("snapshot.tar"),
                         file_count: 0,
                         total_size_bytes: 0,
@@ -231,12 +230,9 @@ mod tests {
         fs::write(&file_b, "original content b").unwrap();
 
         let session_id = format!("test-sess-restore-{}", std::process::id());
-        let meta = snapshot::create_snapshot(
-            &proj_dir,
-            &session_id,
-            snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
-        )
-        .expect("create snapshot");
+        let meta =
+            snapshot::create_snapshot(&proj_dir, &session_id, snapshot::DEFAULT_MAX_SNAPSHOT_SIZE)
+                .expect("create snapshot");
         assert_eq!(meta.file_count, 2);
 
         // Modify files
@@ -277,12 +273,9 @@ mod tests {
         fs::write(&file_a, "original content a").unwrap();
 
         let session_id = format!("test-sess-dryrun-{}", std::process::id());
-        let _meta = snapshot::create_snapshot(
-            &proj_dir,
-            &session_id,
-            snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
-        )
-        .expect("create snapshot");
+        let _meta =
+            snapshot::create_snapshot(&proj_dir, &session_id, snapshot::DEFAULT_MAX_SNAPSHOT_SIZE)
+                .expect("create snapshot");
 
         // Modify file
         fs::write(&file_a, "modified content a").unwrap();
