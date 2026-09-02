@@ -41,3 +41,4 @@ pub mod tui;
 pub mod verify;
 pub mod version;
 pub mod watch;
+pub mod watchdog;

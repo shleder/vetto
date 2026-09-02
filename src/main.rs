@@ -20,7 +20,7 @@ use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
-    rescue, sandbox, shim,
+    rescue, sandbox, shim, watchdog,
 };
 #[cfg(unix)]
 use vetto::{pty, tui};
@@ -143,6 +143,7 @@ fn run() -> Result<()> {
         }) => doctor(*probe, check_agent.as_deref(), *fix),
         Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
         Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
+        Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
         Some(cli::Command::Init { force, wizard }) => {
             if *wizard {
                 cli::wizard::run_wizard_cli(&cli::wizard::WizardArgs {

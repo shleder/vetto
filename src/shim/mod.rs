@@ -291,17 +291,20 @@ pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
 
 /// Fast native dispatch entrypoint for shimmed binaries.
 pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
-    let (allow_override, clean_args): (bool, Vec<String>) = {
+    let (allow_override, no_loop_guard, clean_args): (bool, bool, Vec<String>) = {
         let mut clean = Vec::with_capacity(args.len());
         let mut found_override = false;
+        let mut found_no_loop = false;
         for a in args {
             if a == "--allow-destructive-git" {
                 found_override = true;
+            } else if a == "--no-loop-guard" {
+                found_no_loop = true;
             } else {
                 clean.push(a.clone());
             }
         }
-        (found_override, clean)
+        (found_override, found_no_loop, clean)
     };
 
     let bypass_active = allow_override
@@ -326,51 +329,35 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         }
     }
 
-    if is_sandboxed() {
+    if !no_loop_guard {
+        crate::watchdog::check_before_execution(binary_name, &clean_args, None)?;
+    }
+
+    let exit_code = if is_sandboxed() {
         // Recursion barrier active — execute real binary directly with zero overhead
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            let err = Command::new(&real_binary).args(&clean_args).exec();
-            bail!(
-                "failed to exec real binary {}: {err}",
-                real_binary.display()
-            );
-        }
+        let mut child = Command::new(&real_binary).args(&clean_args).spawn()?;
+        let status = child.wait()?;
+        status.code().unwrap_or(1)
+    } else {
+        // Not sandboxed yet: execute under Vetto sandbox supervisor
+        let vetto_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("vetto"));
 
-        #[cfg(not(unix))]
-        {
-            let mut child = Command::new(&real_binary).args(&clean_args).spawn()?;
-            let status = child.wait()?;
-            return Ok(status.code().unwrap_or(1));
-        }
-    }
+        let mut supervisor_cmd = Command::new(vetto_exe);
+        supervisor_cmd.env(ENV_VETTO_SANDBOXED, "1");
+        supervisor_cmd.env(ENV_VETTO_SHIM_ACTIVE, "1");
+        supervisor_cmd.env(ENV_VETTO_WRAPPED, "1");
 
-    // Not sandboxed yet: execute under Vetto sandbox supervisor
-    let vetto_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("vetto"));
+        supervisor_cmd.arg("--");
+        supervisor_cmd.arg(&real_binary);
+        supervisor_cmd.args(&clean_args);
 
-    let mut supervisor_cmd = Command::new(vetto_exe);
-    supervisor_cmd.env(ENV_VETTO_SANDBOXED, "1");
-    supervisor_cmd.env(ENV_VETTO_SHIM_ACTIVE, "1");
-    supervisor_cmd.env(ENV_VETTO_WRAPPED, "1");
-
-    supervisor_cmd.arg("--");
-    supervisor_cmd.arg(&real_binary);
-    supervisor_cmd.args(&clean_args);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = supervisor_cmd.exec();
-        bail!("failed to exec vetto supervisor: {err}");
-    }
-
-    #[cfg(not(unix))]
-    {
         let mut child = supervisor_cmd.spawn()?;
         let status = child.wait()?;
-        Ok(status.code().unwrap_or(1))
-    }
+        status.code().unwrap_or(1)
+    };
+
+    let _ = crate::watchdog::record_after_execution(binary_name, &clean_args, exit_code, None);
+    Ok(exit_code)
 }
 
 /// Entrypoint for the `vetto shim` subcommand.

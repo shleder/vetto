@@ -12,6 +12,7 @@ pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
 pub use undo::UndoArgs;
 pub use wizard::WizardArgs;
+pub use crate::watchdog::WatchdogArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -301,6 +302,8 @@ pub enum Command {
     Wizard(wizard::WizardArgs),
     /// Restore project files from a previous session snapshot (instant rollback)
     Undo(undo::UndoArgs),
+    /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
+    Watchdog(WatchdogArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
     #[command(hide = true)]
     Init {
