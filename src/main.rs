@@ -211,12 +211,16 @@ fn run() -> Result<()> {
             table: _,
         }) => events::run_events(session, filter.as_deref(), *follow, *json),
         Some(cli::Command::Audit {
+            session_id,
+            latest,
             since,
             agent,
             limit,
             query,
             json,
-        }) => vetto::audit::run_audit(
+        }) => vetto::audit::run_audit_command(
+            session_id.as_deref(),
+            *latest,
             since.as_deref(),
             agent.as_deref(),
             *limit,
@@ -858,9 +862,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // Subscribe the sinks FIRST so nothing (incl. SessionStarted) is missed.
+    let default_log_path = home
+        .join(".vetto")
+        .join("logs")
+        .join(format!("session-{root_pid}.jsonl"));
+    if let Some(parent) = default_log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    logger::jsonl::JsonlSink::spawn(&bus, default_log_path.clone());
+
     let jsonl_path = cfg.jsonl_path.clone();
     if let Some(path) = &jsonl_path {
-        logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+        if path != &default_log_path {
+            logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+        }
     }
     if cfg.oslog || pol.oslog {
         logger::oslog::OsLogSink::spawn(&bus);
@@ -1114,6 +1129,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         ts: events::types::now(),
         message: format!("I/O summary: {}", snap.io_summary()),
     });
+    let mut primary_report = None;
     if !cfg.report_formats.is_empty() {
         let report_options = report::ReportOptions {
             report_dir: cfg.report_dir.clone(),
@@ -1123,6 +1139,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         };
         for p in report::write_reports_with_options(&snap, &cfg.report_formats, &report_options)? {
             eprintln!("vetto: report written: {}", p.display());
+            if primary_report.is_none() {
+                primary_report = Some(p);
+            }
         }
     }
     if let Ok(reg) = cli::status::SessionRegistry::new() {
@@ -1229,6 +1248,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             .agent_preset
             .clone()
             .unwrap_or_else(|| cfg.agent.first().cloned().unwrap_or_default()),
+        command: Some(cfg.agent.join(" ")),
         profile: pol.name.clone(),
         policy_path: cfg.policy_path.as_ref().map(|p| p.display().to_string()),
         exit_code: code,
@@ -1237,7 +1257,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         net_mode: cfg.net.label(),
         blocked_count: blocked_total,
         events_total: snap.events_total,
-        report_path: None,
+        report_path: primary_report.as_ref().map(|p| p.display().to_string()),
+        log_path: Some(default_log_path.display().to_string()),
     };
     let _ = vetto::audit::record_session_history(&history_record);
 
@@ -1480,7 +1501,10 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     if let Some(notice) =
         vetto::version::check_version(env!("CARGO_PKG_VERSION"), &user_config.channel, false)
     {
-        println!("update available:        {}", notice.banner_message());
+        println!(
+            "update available:        {} -> {} (run 'vetto upgrade')",
+            notice.current_version, notice.latest_version
+        );
     }
     #[cfg(target_os = "linux")]
     {
