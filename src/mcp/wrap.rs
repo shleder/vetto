@@ -55,8 +55,7 @@ pub fn parse_wrap_net(net: &str) -> Result<NetMode> {
 
 /// Synthesizes an isolated sandbox policy and network configuration for wrapping an MCP server.
 pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
-    let mut allow_write: Vec<PathBuf> =
-        vec![PathBuf::from("/tmp"), PathBuf::from("/dev/null")];
+    let mut allow_write: Vec<PathBuf> = vec![PathBuf::from("/tmp"), PathBuf::from("/dev/null")];
     #[cfg(windows)]
     {
         if let Ok(temp) = std::env::var("TEMP") {
@@ -198,20 +197,14 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
                 crate::sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
             }
             NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask,
-            NetMode::Off => {
-                crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new())
-            }
+            NetMode::Off => crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
         };
         let mut broker_config =
             crate::sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
         broker_config.allow_cidr = policy.allow_cidr.clone();
         broker_config.quotas = policy.net_quota.clone();
         let bus = crate::events::EventBus::new();
-        crate::sandbox::linux::net_relay::spawn_broker(
-            fd.into_raw_fd(),
-            broker_config,
-            bus,
-        );
+        crate::sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus);
     }
 
     let exit_code = handle.wait();
@@ -254,9 +247,13 @@ mod tests {
 
         assert!(policy.allow_write.contains(&PathBuf::from("/tmp")));
         assert!(policy.allow_write.contains(&PathBuf::from("/dev/null")));
-        assert!(policy.allow_write.contains(&PathBuf::from("/workspace/project")));
+        assert!(policy
+            .allow_write
+            .contains(&PathBuf::from("/workspace/project")));
 
-        assert!(policy.allow_read.contains(&PathBuf::from("/workspace/project")));
+        assert!(policy
+            .allow_read
+            .contains(&PathBuf::from("/workspace/project")));
         assert!(policy.allow_read.contains(&PathBuf::from("/opt/data")));
         assert!(policy.allow_read.contains(&PathBuf::from("/usr")));
         assert!(policy.allow_read.contains(&PathBuf::from("/lib")));

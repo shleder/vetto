@@ -544,7 +544,9 @@ mod tests {
         );
 
         // Forced branch delete
-        assert!(is_destructive_git_command(&["branch".into(), "-D".into(), "feat".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["branch".into(), "-D".into(), "feat".into()]).is_some()
+        );
         assert!(is_destructive_git_command(&[
             "branch".into(),
             "--delete".into(),

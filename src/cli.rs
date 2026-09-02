@@ -1174,7 +1174,14 @@ mod tests {
         ));
 
         let mcp_wrap = Cli::try_parse_from([
-            "vetto", "mcp", "wrap", "--allow", "/tmp", "--", "node", "server.js",
+            "vetto",
+            "mcp",
+            "wrap",
+            "--allow",
+            "/tmp",
+            "--",
+            "node",
+            "server.js",
         ])
         .expect("mcp wrap");
         assert!(matches!(
