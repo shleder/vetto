@@ -202,7 +202,9 @@ pub fn check_before_execution(
     args: &[String],
     project_dir: Option<&Path>,
 ) -> Result<()> {
-    if env::var("VETTO_ALLOW_LOOP").map(|v| v == "1").unwrap_or(false)
+    if env::var("VETTO_ALLOW_LOOP")
+        .map(|v| v == "1")
+        .unwrap_or(false)
         || args.iter().any(|a| a == "--no-loop-guard")
     {
         return Ok(());
@@ -515,7 +517,10 @@ mod tests {
         assert_eq!(state.consecutive_failures, 4);
 
         let res = check_before_execution("cargo", &args, Some(&temp_proj));
-        assert!(res.is_err(), "watchdog should trigger loop detection after 4 failures");
+        assert!(
+            res.is_err(),
+            "watchdog should trigger loop detection after 4 failures"
+        );
         let err_msg = res.unwrap_err().to_string();
         assert!(
             err_msg.contains("Autonomous execution loop detected")
@@ -609,7 +614,10 @@ mod tests {
 
         record_after_execution("cargo", &args, 1, Some(&temp_proj)).unwrap();
         let res = check_before_execution("cargo", &args, Some(&temp_proj));
-        assert!(res.is_err(), "threshold of 2 should trigger loop detection on 2nd failure");
+        assert!(
+            res.is_err(),
+            "threshold of 2 should trigger loop detection on 2nd failure"
+        );
 
         cleanup_test_dirs(&temp_wd, &temp_proj);
     }

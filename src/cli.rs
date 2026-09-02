@@ -8,11 +8,11 @@ pub mod undo;
 pub mod why_slow;
 pub mod wizard;
 
+pub use crate::watchdog::WatchdogArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
 pub use undo::UndoArgs;
 pub use wizard::WizardArgs;
-pub use crate::watchdog::WatchdogArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
