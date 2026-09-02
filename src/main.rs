@@ -1839,7 +1839,7 @@ fn spawn_streaming_redactor<W: std::io::Write + Send + 'static>(
     std::thread::Builder::new()
         .name("vetto-stream-redactor".into())
         .spawn(move || {
-            use std::io::{Read, Write};
+            use std::io::Read;
             let mut file = std::fs::File::from(fd);
             let mut chunk = [0u8; 8192];
             let mut redactor = pty::AnsiRedactor::new();
