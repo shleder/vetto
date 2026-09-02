@@ -1513,7 +1513,7 @@ fn build_policy(
     for entry in &all_deny_entries {
         for path in resolve_list(std::slice::from_ref(entry), &vars, agent)? {
             if let Some(agent_dir) = agent {
-                if &path == agent_dir {
+                if path == agent_dir {
                     continue;
                 }
             }
