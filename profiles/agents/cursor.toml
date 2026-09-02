@@ -8,7 +8,7 @@ allow_read = ["$AGENT/cache", "$AGENT/logs"]
 [display_only_deny]
 paths = [
     "$AGENT/User/globalStorage",
-    "$AGENT/User/settings.json",
     "$AGENT/*.sock",
     "$AGENT/*.ipc",
 ]
+

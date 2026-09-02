@@ -1,6 +1,6 @@
 [metadata]
-name = "codex"
-description = "Safe compatibility roots for the Codex CLI."
+name = "gemini"
+description = "Safe compatibility roots for Gemini CLI."
 
 [filesystem]
 allow_write = ["$AGENT"]
@@ -8,15 +8,15 @@ allow_read = ["$AGENT"]
 
 [environment]
 pass_through = [
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "CODEX_*",
+    "GEMINI_API_KEY",
+    "GEMINI_BASE_URL",
+    "GEMINI_*",
+    "GOOGLE_API_KEY",
 ]
 
 [display_only_deny]
 paths = [
     "$AGENT/auth.json",
-    "$AGENT/app_server.sock",
     "$AGENT/*.sock",
+    "$AGENT/*.ipc",
 ]
-

@@ -1,14 +1,22 @@
 [metadata]
 name = "claude"
-description = "Safe read-only compatibility roots for Claude Code."
+description = "Safe compatibility roots for Claude Code."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_write = ["$AGENT"]
+allow_read = ["$HOME/.claude.json", "$AGENT"]
+
+[environment]
+pass_through = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_*",
+]
 
 [display_only_deny]
 paths = [
     "$AGENT/.credentials.json",
-    "$AGENT/settings.json",
     "$AGENT/*.sock",
     "$AGENT/*.ipc",
 ]
+

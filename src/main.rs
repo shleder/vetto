@@ -121,9 +121,21 @@ fn run() -> Result<()> {
                 let mut full_cmd = vec![cmd.clone()];
                 full_cmd.extend(run_args.clone());
                 cfg.agent = full_cmd;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = vetto::config::detect_agent_preset(&cfg.agent);
+                }
+                if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
+                    if let Some(ref agent) = cfg.agent_preset {
+                        let domains = policy::presets::agent_network_allowlist(agent);
+                        if !domains.is_empty() {
+                            cfg.net = NetMode::Allowlist(domains);
+                        }
+                    }
+                }
             }
             supervise(cfg)
         }
+
         Some(cli::Command::Doctor {
             probe,
             check_agent,
