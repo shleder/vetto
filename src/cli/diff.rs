@@ -770,7 +770,7 @@ fn parse_jsonl_telemetry(path: &Path, telemetry: &mut SecurityTelemetry) {
     };
     let reader = BufReader::new(file);
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -918,7 +918,7 @@ fn parse_json_report_telemetry(path: &Path, telemetry: &mut SecurityTelemetry) {
 
 fn is_binary(bytes: &[u8]) -> bool {
     let probe_len = bytes.len().min(8192);
-    if bytes[..probe_len].iter().any(|&b| b == 0) {
+    if bytes[..probe_len].contains(&0) {
         return true;
     }
     std::str::from_utf8(bytes).is_err()
@@ -1042,12 +1042,12 @@ fn compute_diff_ops<'a>(old_lines: &[&'a str], new_lines: &[&'a str]) -> Vec<Dif
     let mut middle_ops = Vec::new();
 
     if len_a == 0 {
-        for line in b {
-            middle_ops.push(DiffOp::Insert(*line));
+        for &line in b {
+            middle_ops.push(DiffOp::Insert(line));
         }
     } else if len_b == 0 {
-        for line in a {
-            middle_ops.push(DiffOp::Delete(*line));
+        for &line in a {
+            middle_ops.push(DiffOp::Delete(line));
         }
     } else {
         let max_edits = len_a + len_b;
@@ -1125,22 +1125,22 @@ fn compute_diff_ops<'a>(old_lines: &[&'a str], new_lines: &[&'a str]) -> Vec<Dif
             }
             middle_ops.reverse();
         } else {
-            for line in a {
-                middle_ops.push(DiffOp::Delete(*line));
+            for &line in a {
+                middle_ops.push(DiffOp::Delete(line));
             }
-            for line in b {
-                middle_ops.push(DiffOp::Insert(*line));
+            for &line in b {
+                middle_ops.push(DiffOp::Insert(line));
             }
         }
     }
 
     let mut ops = Vec::with_capacity(n + m);
-    for line in &old_lines[..prefix_len] {
-        ops.push(DiffOp::Equal(*line));
+    for &line in &old_lines[..prefix_len] {
+        ops.push(DiffOp::Equal(line));
     }
     ops.extend(middle_ops);
-    for line in &old_lines[n - suffix_len..] {
-        ops.push(DiffOp::Equal(*line));
+    for &line in &old_lines[n - suffix_len..] {
+        ops.push(DiffOp::Equal(line));
     }
 
     ops
@@ -1198,13 +1198,13 @@ fn render_hunks(ops: &[DiffOp]) -> (String, String) {
             .filter(|op| matches!(op, DiffOp::Equal(_) | DiffOp::Insert(_)))
             .count();
 
-        let _ = write!(
+        let _ = writeln!(
             color_out,
-            "\x1b[36m@@ -{old_start},{old_count} +{new_start},{new_count} @@\x1b[0m\n"
+            "\x1b[36m@@ -{old_start},{old_count} +{new_start},{new_count} @@\x1b[0m"
         );
-        let _ = write!(
+        let _ = writeln!(
             plain_out,
-            "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@"
         );
 
         for op in &ops[h_start..h_end] {
