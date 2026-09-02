@@ -34,30 +34,19 @@ a single hallucination, rogue bash loop, or prompt injection can exfiltrate your
 
 ---
 
-## One-Line Install
+## Installation
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash
-```
+Install via your preferred package manager:
 
-<details>
-<summary><b>Alternative package managers (npm, Homebrew, npx)</b></summary>
+| Method | Command | Requirements |
+| :--- | :--- | :--- |
+| **⚡ Standalone (Zero Deps)** | `curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh \| bash` | Linux, macOS, WSL2 |
+| **📦 npm** | `npm install --global @shledery/vetto` | Node.js (Linux, macOS, Windows) |
+| **🦀 Cargo (crates.io)** | `cargo install vetto --locked` | Rust toolchain (Linux, macOS, Windows) |
+| **🍺 Homebrew** | `brew install shleder/tap/vetto` | macOS, Linux |
+| **🚀 One-off execution** | `npx @shledery/vetto doctor` | Node.js (instant run) |
 
-- **Via npm** (bundled native binaries for Linux x86_64/aarch64, macOS, Windows):
-  ```bash
-  npm install --global @shledery/vetto
-  ```
-- **Via Homebrew** (macOS and Linux, prebuilt binaries):
-  ```bash
-  brew install shleder/tap/vetto
-  ```
-- **Run without installing**:
-  ```bash
-  npx @shledery/vetto doctor
-  ```
-
-Prebuilt archives for every architecture with SHA256 checksums and CycloneDX SBOMs are available on [GitHub Releases](https://github.com/shleder/vetto/releases).
-</details>
+*Prebuilt standalone binaries for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) with SHA256 checksums are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
 
 ---
 
@@ -142,6 +131,7 @@ Vetto natively integrates with modern AI coding workflows:
 | **Cline** | [Cline Integration Guide](docs/integrations/cline.md)<br/>VS Code extension terminal task isolation, zero-config shims | `vetto hook install` |
 | **Aider** | [Aider Integration Guide](docs/integrations/aider.md)<br/>Zero-config network allowlists, git protection, automated tests | `vetto enable aider` |
 | **OpenCode &amp; Codex** | [OpenCode Guide](docs/integrations/opencode.md) · [Agents Reference](docs/agents.md)<br/>CLI runners, subagent supervision, and model sandboxing | `vetto enable codex` |
+| **Claude Desktop &amp; Codex Desktop** | [Desktop Integration Guide](docs/integrations/desktop.md)<br/>Native MCP server (`vetto mcp`), terminal shims, sandboxed subtools | `vetto mcp` · `vetto enable` |
 
 ---
 
