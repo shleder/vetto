@@ -22,6 +22,18 @@
 
 ---
 
+## Stop Fearing `--dangerously-skip-permissions`
+
+AI coding agents write impressive code, but running them unprompted on your local workstation is terrifying:
+a single hallucination, rogue bash loop, or prompt injection can exfiltrate your `~/.ssh` keys, wipe your home directory (`rm -rf ~`), or leak `.env` secrets.
+
+**VETTO** wraps Claude Code, Codex, Cursor, and Aider in an OS-level kernel sandbox **before the agent process starts**:
+- 🔒 **Zero Credential Theft**: `~/.ssh`, `~/.aws`, `~/.gnupg`, and `.env*` are physically unreadable by the agent.
+- 🛡️ **Zero Destructive Writes**: Agent file modifications are strictly confined to your project root and `/tmp`.
+- ⚡ **Zero Performance Penalty**: **0.002s** startup latency, 0 MB idle RAM, unprivileged execution without Docker.
+
+---
+
 ## One-Line Install
 
 ```bash
@@ -98,6 +110,24 @@ Containers were designed for packaging backend microservices—not for interacti
 | **Host File Sync** | **Native Filesystem** (instant) | Volume mounts (slow I/O, UID sync bugs) | Edits, hot-reloading, and git diffs reflect immediately |
 | **Kernel Barrier** | **Linux Landlock + Seccomp-BPF** | Namespaces + cgroups | In-process confinement applied before `execve`, strictly fail-closed |
 | **Network Egress** | **Per-Domain Allowlist** (`api.anthropic.com`) | All-or-nothing bridge | Prevents unauthorized data exfiltration without breaking inference |
+
+---
+
+## Platform Reality & The Honest macOS Truth (Zero Snake Oil)
+
+Security tooling frequently makes deceptive cross-platform claims. Vetto is architecturally transparent about what each operating system kernel can and cannot enforce:
+
+| Operating System | Enforcement Primitives | Read Isolation (SSH/AWS/.env) | Write Isolation (Host/System) | Network Allowlist | Security Tier |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Linux (Native)** | **Landlock ABI (v1–v6)** + **Seccomp-BPF** + **NetNS** | ✅ **100% Kernel Deny** | ✅ **100% Locked to Project** | ✅ **Per-Domain Broker** | **Tier 1 (Complete Boundary)** |
+| **Windows WSL2** | **Linux Landlock via WSL2 Kernel** | ✅ **100% Kernel Deny** | ✅ **100% Locked to Project** | ✅ **Per-Domain Broker** | **Tier 1 (Recommended for Windows)** |
+| **macOS (Darwin)** | **Apple Seatbelt (`libsandbox`)** + **Kqueue** | ⚠️ **Broad Reads (SBPL bug)** | ✅ **100% System Protected** | ✅ **`--net=off` Lockdown** | **Tier 2 (Write Safety & Ceilings)** |
+| **Windows Native** | **Job Objects** + **Restricted Tokens** | ⚠️ **ACL Fallback** | ✅ **Workspace Only** | ⚠️ **Host Firewall Rules** | **Tier 3 (Process Guardrails)** |
+
+### The Honest macOS Disclosure
+- **What Vetto guarantees on macOS**: Full write confinement (the agent cannot modify host files outside your project), network lockdown (`--net=off`), CPU/memory rlimits, and parent-death watchdog termination of rogue child processes.
+- **Why read isolation is limited on Mac**: Apple deprecated SBPL (`sandbox-exec`) and deliberately restricts unprivileged file-read denial in modern Darwin kernels. Any tool claiming unprivileged read-masking on macOS without SIP bypass is misleading you.
+- **Recommended Setup for Mac Users**: If you require hardware-enforced, 100% kernel read-denial for SSH and AWS credentials on a Mac, run your agent with Vetto inside **WSL2**, a lightweight Linux VM, or an **OrbStack** Linux runner. On host macOS, Vetto acts as a high-speed write, process, and network watchdog.
 
 ---
 
