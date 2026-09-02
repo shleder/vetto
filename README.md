@@ -36,17 +36,34 @@ a single hallucination, rogue bash loop, or prompt injection can exfiltrate your
 
 ## Installation
 
-Install via your preferred package manager:
+Choose your preferred installation method:
 
-| Method | Command | Requirements |
-| :--- | :--- | :--- |
-| **⚡ Standalone (Zero Deps)** | `curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh \| bash` | Linux, macOS, WSL2 |
-| **📦 npm** | `npm install --global @shledery/vetto` | Node.js (Linux, macOS, Windows) |
-| **🦀 Cargo (crates.io)** | `cargo install vetto --locked` | Rust toolchain (Linux, macOS, Windows) |
-| **🍺 Homebrew** | `brew install shleder/tap/vetto` | macOS, Linux |
-| **🚀 One-off execution** | `npx @shledery/vetto doctor` | Node.js (instant run) |
+```bash
+# Standalone POSIX script (Linux, macOS, WSL2 — zero dependencies)
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash
+```
 
-*Prebuilt standalone binaries for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) with SHA256 checksums are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
+```bash
+# Via npm (global binary for Node.js environments)
+npm install --global @shledery/vetto
+```
+
+```bash
+# Via Cargo (crates.io — compiled from source)
+cargo install vetto --locked
+```
+
+```bash
+# Via Homebrew (macOS & Linux)
+brew install shleder/tap/vetto
+```
+
+```bash
+# Run one-off without installing (npx)
+npx @shledery/vetto doctor
+```
+
+*Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
 
 ---
 
