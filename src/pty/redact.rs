@@ -461,9 +461,7 @@ impl StreamingRedactor {
                             (start, end)
                         };
                         let val = &buffer[token_start..token_end];
-                        if val.len() >= pat.min_run_len
-                            && !val.iter().all(|&b| b == val[0])
-                        {
+                        if val.len() >= pat.min_run_len && !val.iter().all(|&b| b == val[0]) {
                             redacted_spans.push((token_start, token_end, pattern_idx));
                         }
                     }

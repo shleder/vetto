@@ -18,13 +18,13 @@ use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
+use vetto::pty;
+#[cfg(unix)]
+use vetto::tui;
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
     rescue, sandbox, shim, watchdog,
 };
-use vetto::pty;
-#[cfg(unix)]
-use vetto::tui;
 
 fn main() {
     if let Err(err) = run() {

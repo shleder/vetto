@@ -108,8 +108,12 @@ mod tests {
         let secret = "sk-proj-0123456789abcdefghijklmnopqrstuvwxyz";
         let input = format!("TOKEN={secret}\n");
         let mut output = Vec::new();
-        stream_mask(Cursor::new(input.as_bytes()), &mut output, RedactionStyle::PadMask)
-            .unwrap();
+        stream_mask(
+            Cursor::new(input.as_bytes()),
+            &mut output,
+            RedactionStyle::PadMask,
+        )
+        .unwrap();
         let result = String::from_utf8(output).unwrap();
 
         assert!(result.starts_with("TOKEN=sk-proj-"));

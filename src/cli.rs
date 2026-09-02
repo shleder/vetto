@@ -920,8 +920,8 @@ mod tests {
             }))
         ));
 
-        let cli_pad = Cli::try_parse_from(["vetto", "mask", "--style", "pad"])
-            .expect("mask pad parsing");
+        let cli_pad =
+            Cli::try_parse_from(["vetto", "mask", "--style", "pad"]).expect("mask pad parsing");
         assert!(matches!(
             cli_pad.command,
             Some(Command::Mask(MaskArgs {
