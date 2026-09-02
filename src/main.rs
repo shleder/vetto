@@ -142,6 +142,7 @@ fn run() -> Result<()> {
             fix,
         }) => doctor(*probe, check_agent.as_deref(), *fix),
         Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
+        Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
         Some(cli::Command::Init { force, wizard }) => {
             if *wizard {
                 cli::wizard::run_wizard_cli(&cli::wizard::WizardArgs {
@@ -615,13 +616,27 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if pol.snapshot || cfg.snapshot {
-        if let Err(e) = rescue::snapshot::create_snapshot(
+    if pol.snapshot || cfg.snapshot || !cfg.agent.is_empty() {
+        match rescue::snapshot::create_snapshot(
             &project,
             &session_id,
             rescue::snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
         ) {
-            eprintln!("vetto: warning: snapshot creation failed: {e}");
+            Ok(meta) => {
+                tracing::debug!(
+                    "created snapshot for session {session_id} ({} files, {} bytes)",
+                    meta.file_count,
+                    meta.total_size_bytes
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("exceeds maximum snapshot limit") {
+                    tracing::debug!("vetto: snapshot skipped (project exceeds 50MB limit): {msg}");
+                } else {
+                    tracing::debug!("vetto: snapshot creation skipped: {e}");
+                }
+            }
         }
     }
     if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {

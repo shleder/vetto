@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -13,7 +13,7 @@ use std::time::SystemTime;
 pub const DEFAULT_MAX_SNAPSHOT_SIZE: u64 = 50 * 1024 * 1024;
 
 /// Metadata stored alongside the snapshot archive.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotMetadata {
     pub session_id: String,
     pub created_at: String,
@@ -39,6 +39,95 @@ pub fn snapshots_root_dir() -> Result<PathBuf> {
         .map(PathBuf::from)
         .context("neither HOME nor USERPROFILE is set")?;
     Ok(home.join(".vetto").join("snapshots"))
+}
+
+/// Lists all available project snapshots across all sessions, ordered newest first.
+pub fn list_snapshots() -> Result<Vec<SnapshotMetadata>> {
+    let root = match snapshots_root_dir() {
+        Ok(dir) => dir,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = match std::fs::read_dir(&root) {
+        Ok(e) => e,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut snapshots = Vec::new();
+    for entry in entries.flatten() {
+        let meta_file = entry.path().join("metadata.json");
+        if meta_file.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&meta_file) {
+                if let Ok(meta) = serde_json::from_str::<SnapshotMetadata>(&text) {
+                    snapshots.push(meta);
+                }
+            }
+        }
+    }
+
+    snapshots.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.session_id.cmp(&a.session_id))
+    });
+    Ok(snapshots)
+}
+
+/// Inspect entries in a snapshot archive, returning relative paths and byte sizes.
+pub fn inspect_snapshot_archive(session: &str) -> Result<Vec<(String, u64)>> {
+    let session_path = Path::new(session);
+    let archive_path = if session_path.is_file() {
+        session_path.to_path_buf()
+    } else {
+        let root = snapshots_root_dir()?;
+        let dir = root.join(session);
+        if !dir.exists() {
+            bail!(
+                "snapshot for session '{session}' was not found in {}",
+                root.display()
+            );
+        }
+        let archive = dir.join("snapshot.tar");
+        if !archive.exists() {
+            bail!("snapshot archive '{}' not found", archive.display());
+        }
+        archive
+    };
+
+    let mut archive_file = File::open(&archive_path)
+        .with_context(|| format!("failed to open snapshot archive {}", archive_path.display()))?;
+
+    let mut entries = Vec::new();
+    loop {
+        let mut header = [0u8; 512];
+        let n = archive_file.read(&mut header)?;
+        if n < 512 || header.iter().all(|&b| b == 0) {
+            break;
+        }
+
+        let (name, size) = parse_tar_header(&header)?;
+        if name.is_empty() {
+            break;
+        }
+
+        let clean_path = Path::new(&name);
+        if !clean_path.is_absolute()
+            && !clean_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            entries.push((name, size));
+        }
+
+        let padding = (512 - (size % 512)) % 512;
+        let to_skip = size + padding;
+        archive_file.seek(std::io::SeekFrom::Current(to_skip as i64))?;
+    }
+
+    Ok(entries)
 }
 
 /// Create a project snapshot for the given session.

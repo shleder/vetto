@@ -4,11 +4,13 @@ pub mod hook;
 pub mod plugin;
 pub mod shell_env;
 pub mod status;
+pub mod undo;
 pub mod why_slow;
 pub mod wizard;
 
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
+pub use undo::UndoArgs;
 pub use wizard::WizardArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -297,6 +299,8 @@ pub enum Command {
     },
     /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml
     Wizard(wizard::WizardArgs),
+    /// Restore project files from a previous session snapshot (instant rollback)
+    Undo(undo::UndoArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
     #[command(hide = true)]
     Init {
