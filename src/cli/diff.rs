@@ -474,7 +474,11 @@ pub fn compare_snapshot_against_disk(
     session_id: &str,
 ) -> Result<SessionReview> {
     let snapshot_files = read_tar_archive(archive_path)?;
-    let disk_files = scan_disk_files(project_dir)?;
+    let mut disk_files = scan_disk_files(project_dir)?;
+    if let Ok(rel_archive) = archive_path.strip_prefix(project_dir) {
+        let rel_str = rel_archive.to_string_lossy().replace('\\', "/");
+        disk_files.remove(&rel_str);
+    }
 
     let snapshot_keys: BTreeSet<&String> = snapshot_files.keys().collect();
     let disk_keys: BTreeSet<&String> = disk_files.keys().collect();
