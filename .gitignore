@@ -12,5 +12,7 @@ vetto-wiki/
 
 # Secrets & logs
 .env
+# Python cache
 *.log
-
+__pycache__/
+*.pyc
