@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.11] — 2026-09-02
+
+### Added
+
+- **Automated Self-Update (`vetto upgrade`)**: End-to-end self-updating across all distribution channels with active installation method detection (npm global `@shledery/vetto`, cargo install `vetto`, Homebrew tap `shleder/vetto`, and direct binary via GitHub Releases). Supports `--dry-run`, `--check`, `--channel <stable|alpha>`, clean changelog diff display, and atomic replacement for binary releases.
+- **Update Notification Banner**: Lightweight, non-blocking update check against npm registry / GitHub releases during `vetto doctor` and session initialization, cached for 24 hours in `~/.vetto/cache/update-check.json`. Subtle, non-intrusive banner (`Update available: X.Y.Z -> A.B.C (run 'vetto upgrade')`) with zero startup latency impact on timeout or offline.
+- **Session Audit Inspector (`vetto audit [session_id]`)**: Dedicated security inspector CLI command to inspect recorded session events from `~/.vetto/logs/*.jsonl` or `.vetto/reports/*.json`.
+  - Lists past agent execution sessions with timestamps, commands, agent presets, tiers, exit statuses, and violation counts.
+  - Given a session ID (or `--latest`), displays structured breakdown of all security events: denied filesystem access paths (Landlock), blocked outbound network destinations, and filtered syscalls (seccomp).
+  - Full `--json` output support for automated security pipelines and CI integration.
+
 ## [0.2.10] — 2026-09-02
 
 ### Added

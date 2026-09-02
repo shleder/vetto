@@ -433,7 +433,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Self-upgrade vetto via npm or cargo based on installation method
+    /// Self-upgrade vetto via npm, cargo, homebrew, or direct binary
     #[command(hide = true)]
     Upgrade {
         /// Channel to upgrade from (stable or alpha)
@@ -504,9 +504,15 @@ pub enum Command {
         #[arg(long)]
         table: bool,
     },
-    /// Query and inspect session audit history (~/.vetto/history.jsonl).
+    /// Inspect recorded session events, filesystem denials, blocked egress, and filtered syscalls.
     #[command(hide = true)]
     Audit {
+        /// Session ID, report/log path to inspect, or omit to list sessions
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+        /// Inspect the most recent session
+        #[arg(long)]
+        latest: bool,
         /// Filter sessions since duration (e.g. 24h, 7d, 30m, YYYY-MM-DD)
         #[arg(long, value_name = "DURATION")]
         since: Option<String>,
@@ -516,10 +522,10 @@ pub enum Command {
         /// Limit the maximum number of history entries displayed
         #[arg(long, value_name = "COUNT")]
         limit: Option<usize>,
-        /// Optional substring search in policy path, profile, agent, or session ID
-        #[arg(value_name = "QUERY")]
+        /// Optional substring search in policy path, profile, agent, command, or session ID
+        #[arg(long, value_name = "QUERY")]
         query: Option<String>,
-        /// Emit machine-readable JSON lines
+        /// Emit machine-readable JSON output
         #[arg(long)]
         json: bool,
     },
@@ -1042,6 +1048,7 @@ mod tests {
             "codex",
             "--limit",
             "10",
+            "--query",
             "search_term",
         ])
         .expect("audit parsing");
@@ -1052,8 +1059,31 @@ mod tests {
                 ref agent,
                 limit: Some(10),
                 ref query,
+                latest: false,
                 ..
             }) if since.as_deref() == Some("24h") && agent.as_deref() == Some("codex") && query.as_deref() == Some("search_term")
+        ));
+
+        let audit_session = Cli::try_parse_from(["vetto", "audit", "session-12345", "--json"])
+            .expect("audit session parsing");
+        assert!(matches!(
+            audit_session.command,
+            Some(Command::Audit {
+                ref session_id,
+                json: true,
+                ..
+            }) if session_id.as_deref() == Some("session-12345")
+        ));
+
+        let audit_latest = Cli::try_parse_from(["vetto", "audit", "--latest", "--json"])
+            .expect("audit latest parsing");
+        assert!(matches!(
+            audit_latest.command,
+            Some(Command::Audit {
+                latest: true,
+                json: true,
+                ..
+            })
         ));
 
         let digest_cli = Cli::try_parse_from(["vetto", "digest", "--since", "7d", "--json"])
