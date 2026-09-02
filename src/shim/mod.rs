@@ -318,12 +318,11 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
             || env::var("VETTO_GIT_GUARD")
                 .map(|v| v == "1")
                 .unwrap_or(false))
+        && !bypass_active
     {
-        if !bypass_active {
-            if let Some(reason) = is_destructive_git_command(&clean_args) {
-                eprintln!("vetto: {reason}");
-                bail!("{reason}");
-            }
+        if let Some(reason) = is_destructive_git_command(&clean_args) {
+            eprintln!("vetto: {reason}");
+            bail!("{reason}");
         }
     }
 

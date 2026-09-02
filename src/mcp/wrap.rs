@@ -138,14 +138,16 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
     let net_mode = parse_wrap_net(&args.net)?;
     let deny_network = matches!(net_mode, NetMode::Off);
 
-    let mut policy = Policy::default();
-    policy.name = "mcp-wrap".to_string();
-    policy.allow_write = allow_write;
-    policy.allow_read = allow_read;
-    policy.deny_write = deny_write;
-    policy.deny_read = deny_read;
-    policy.deny_resolved = deny_resolved;
-    policy.deny_network = deny_network;
+    let policy = Policy {
+        name: "mcp-wrap".to_string(),
+        allow_write,
+        allow_read,
+        deny_write,
+        deny_read,
+        deny_resolved,
+        deny_network,
+        ..Policy::default()
+    };
 
     Ok((policy, net_mode))
 }

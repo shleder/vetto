@@ -54,8 +54,8 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
         }
 
         println!(
-            "{:<16} {:<21} {:<7} {:<8} {}",
-            "SESSION ID", "CREATED", "FILES", "SIZE", "PROJECT"
+            "{:<16} {:<21} {:<7} {:<8} PROJECT",
+            "SESSION ID", "CREATED", "FILES", "SIZE"
         );
         println!("-----------------------------------------------------------------");
         for s in &snapshots {
