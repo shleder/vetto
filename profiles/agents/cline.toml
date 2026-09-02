@@ -6,4 +6,5 @@ description = "Safe read-only compatibility roots for Cline."
 allow_read = ["$AGENT/cache", "$AGENT/logs"]
 
 [display_only_deny]
-paths = ["$AGENT/secrets.json", "$AGENT/settings.json"]
+paths = ["$AGENT/secrets.json"]
+

@@ -9,6 +9,7 @@ pub const PROFILE_NAMES: [&str; 4] = ["default", "strict", "audit", "permissive"
 
 pub const CODEX_AGENT_TOML: &str = include_str!("../../profiles/agents/codex.toml");
 pub const CLAUDE_AGENT_TOML: &str = include_str!("../../profiles/agents/claude.toml");
+pub const GEMINI_AGENT_TOML: &str = include_str!("../../profiles/agents/gemini.toml");
 pub const AIDER_AGENT_TOML: &str = include_str!("../../profiles/agents/aider.toml");
 pub const CURSOR_AGENT_TOML: &str = include_str!("../../profiles/agents/cursor.toml");
 pub const CLINE_AGENT_TOML: &str = include_str!("../../profiles/agents/cline.toml");
@@ -16,8 +17,8 @@ pub const OPENCODE_AGENT_TOML: &str = include_str!("../../profiles/agents/openco
 pub const COPILOT_AGENT_TOML: &str = include_str!("../../profiles/agents/copilot.toml");
 pub const CUSTOM_AGENT_TOML: &str = include_str!("../../profiles/agents/custom.toml");
 
-pub const AGENT_PROFILE_NAMES: [&str; 8] = [
-    "codex", "claude", "aider", "cursor", "cline", "opencode", "copilot", "custom",
+pub const AGENT_PROFILE_NAMES: [&str; 9] = [
+    "codex", "claude", "gemini", "aider", "cursor", "cline", "opencode", "copilot", "custom",
 ];
 
 /// Environment variables that are safe and useful for an agent session.
@@ -79,10 +80,26 @@ pub fn builtin(name: &str) -> Option<&'static str> {
     }
 }
 
+pub fn canonical_agent_name(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "codex" | "codex-cli" => Some("codex"),
+        "claude" | "claude-code" => Some("claude"),
+        "aider" | "aider-chat" => Some("aider"),
+        "cursor" | "cursor-server" => Some("cursor"),
+        "cline" => Some("cline"),
+        "opencode" => Some("opencode"),
+        "copilot" | "github-copilot-cli" => Some("copilot"),
+        "gemini" | "gemini-cli" => Some("gemini"),
+        "custom" => Some("custom"),
+        _ => None,
+    }
+}
+
 pub fn agent_builtin(name: &str) -> Option<&'static str> {
-    match name {
+    match canonical_agent_name(name)? {
         "codex" => Some(CODEX_AGENT_TOML),
         "claude" => Some(CLAUDE_AGENT_TOML),
+        "gemini" => Some(GEMINI_AGENT_TOML),
         "aider" => Some(AIDER_AGENT_TOML),
         "cursor" => Some(CURSOR_AGENT_TOML),
         "cline" => Some(CLINE_AGENT_TOML),

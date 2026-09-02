@@ -4,3 +4,13 @@
 .mimosa/
 vetto-report-*.{html,md,json,sarif}
 all-assets/
+
+# Local sensitive roadmaps & wiki
+LOCAL-ROADMAP.md
+LOCAL-100.md
+vetto-wiki/
+
+# Secrets & logs
+.env
+*.log
+

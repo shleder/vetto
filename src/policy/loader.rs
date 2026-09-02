@@ -1056,7 +1056,11 @@ impl LayeredPolicyLoader {
         // Tier 4: Agent Preset
         // -------------------------------------------------------------------
         let agent_path = match options.agent.as_deref() {
-            Some(agent) => Some(agent_root(home, agent)?),
+            Some(agent) => {
+                let p = agent_root(home, agent)?;
+                let _ = std::fs::create_dir_all(&p);
+                Some(p)
+            }
             None => None,
         };
         if let Some(agent) = options.agent.as_deref() {
@@ -1508,6 +1512,11 @@ fn build_policy(
 
     for entry in &all_deny_entries {
         for path in resolve_list(std::slice::from_ref(entry), &vars, agent)? {
+            if let Some(agent_dir) = agent {
+                if path == agent_dir {
+                    continue;
+                }
+            }
             if deny_set.insert(path.clone()) {
                 if let Ok(meta) = std::fs::symlink_metadata(&path) {
                     deny_resolved.push(DenyEntry {
@@ -1687,9 +1696,11 @@ fn resolve_list(entries: &[String], vars: &Vars, agent: Option<&Path>) -> Result
 }
 
 fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
-    let suffix = match agent {
+    let canon = defaults::canonical_agent_name(agent).unwrap_or(agent);
+    let suffix = match canon {
         "codex" => PathBuf::from(".codex"),
         "claude" => PathBuf::from(".claude"),
+        "gemini" => PathBuf::from(".gemini"),
         "aider" => PathBuf::from(".aider"),
         "cursor" => PathBuf::from(".cursor"),
         "cline" => PathBuf::from(".cline"),
@@ -2203,6 +2214,151 @@ allow_read = ["/usr", "${PROJECT}"]
             &options,
         );
         assert!(loaded.is_ok(), "signed policy must load successfully");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_agent_preset_policy_loading() {
+        let root = std::env::temp_dir().join(format!("vetto-claude-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Create secrets and claude.json
+        let ssh_dir = root.join(".ssh");
+        let env_file = root.join(".env");
+        let codex_dir = root.join(".codex");
+        let claude_json = root.join(".claude.json");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        std::fs::write(&env_file, "SECRET=1").unwrap();
+        std::fs::write(&claude_json, "{}").unwrap();
+
+        let claude_dir = root.join(".claude");
+        // Do NOT manually create claude_dir — loader must auto-create it
+
+        let options = PolicyLoadOptions {
+            agent: Some("claude-code".to_string()),
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &root, &root, Tier::Full, &options)
+            .expect("claude preset must load");
+
+        // Environment pass_through
+        use std::ffi::OsStr;
+        assert!(pol.environment.allows(OsStr::new("ANTHROPIC_API_KEY")));
+        assert!(pol.environment.allows(OsStr::new("ANTHROPIC_BASE_URL")));
+        assert!(pol.environment.allows(OsStr::new("CLAUDE_TEST_FLAG")));
+        assert!(pol.environment.allows(OsStr::new("PATH")));
+        assert!(!pol.environment.allows(OsStr::new("AWS_SECRET_ACCESS_KEY")));
+        assert!(!pol.environment.allows(OsStr::new("GH_TOKEN")));
+
+        // Filesystem permissions
+        assert!(pol.allow_write.contains(&claude_dir));
+        assert!(pol.allow_read.contains(&claude_json));
+
+        // Secrets must be in deny_resolved, but claude_dir must NOT be in deny_resolved
+        let deny_paths: Vec<_> = pol.deny_resolved.iter().map(|d| &d.path).collect();
+        assert!(deny_paths.contains(&&ssh_dir));
+        assert!(deny_paths.contains(&&env_file));
+        assert!(deny_paths.contains(&&codex_dir));
+        assert!(!deny_paths.contains(&&claude_dir));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_agent_preset_policy_loading() {
+        let root = std::env::temp_dir().join(format!("vetto-codex-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Create secrets and claude_dir
+        let ssh_dir = root.join(".ssh");
+        let env_file = root.join(".env");
+        let claude_dir = root.join(".claude");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(&env_file, "SECRET=1").unwrap();
+
+        let codex_dir = root.join(".codex");
+        // Do NOT manually create codex_dir — loader must auto-create it
+
+        let options = PolicyLoadOptions {
+            agent: Some("codex-cli".to_string()),
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &root, &root, Tier::Full, &options)
+            .expect("codex preset must load");
+
+        // Environment pass_through
+        use std::ffi::OsStr;
+        assert!(pol.environment.allows(OsStr::new("OPENAI_API_KEY")));
+        assert!(pol.environment.allows(OsStr::new("OPENAI_BASE_URL")));
+        assert!(pol.environment.allows(OsStr::new("CODEX_TEST_FLAG")));
+        assert!(pol.environment.allows(OsStr::new("PATH")));
+        assert!(!pol.environment.allows(OsStr::new("AWS_SECRET_ACCESS_KEY")));
+        assert!(!pol.environment.allows(OsStr::new("GH_TOKEN")));
+
+        // Filesystem permissions
+        assert!(pol.allow_write.contains(&codex_dir));
+
+        // Secrets must be in deny_resolved, but codex_dir must NOT be in deny_resolved
+        let deny_paths: Vec<_> = pol.deny_resolved.iter().map(|d| &d.path).collect();
+        assert!(deny_paths.contains(&&ssh_dir));
+        assert!(deny_paths.contains(&&env_file));
+        assert!(deny_paths.contains(&&claude_dir));
+        assert!(!deny_paths.contains(&&codex_dir));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gemini_agent_preset_policy_loading() {
+        let root = std::env::temp_dir().join(format!("vetto-gemini-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Create secrets and claude_dir
+        let ssh_dir = root.join(".ssh");
+        let env_file = root.join(".env");
+        let claude_dir = root.join(".claude");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(&env_file, "SECRET=1").unwrap();
+
+        let gemini_dir = root.join(".gemini");
+        // Do NOT manually create gemini_dir — loader must auto-create it
+
+        let options = PolicyLoadOptions {
+            agent: Some("gemini-cli".to_string()),
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &root, &root, Tier::Full, &options)
+            .expect("gemini preset must load");
+
+        // Environment pass_through
+        use std::ffi::OsStr;
+        assert!(pol.environment.allows(OsStr::new("GEMINI_API_KEY")));
+        assert!(pol.environment.allows(OsStr::new("GOOGLE_API_KEY")));
+        assert!(pol.environment.allows(OsStr::new("GEMINI_BASE_URL")));
+        assert!(pol.environment.allows(OsStr::new("GEMINI_TEST_FLAG")));
+        assert!(pol.environment.allows(OsStr::new("PATH")));
+        assert!(!pol.environment.allows(OsStr::new("AWS_SECRET_ACCESS_KEY")));
+        assert!(!pol.environment.allows(OsStr::new("GH_TOKEN")));
+
+        // Filesystem permissions
+        assert!(pol.allow_write.contains(&gemini_dir));
+
+        // Secrets must be in deny_resolved, but gemini_dir must NOT be in deny_resolved
+        let deny_paths: Vec<_> = pol.deny_resolved.iter().map(|d| &d.path).collect();
+        assert!(deny_paths.contains(&&ssh_dir));
+        assert!(deny_paths.contains(&&env_file));
+        assert!(deny_paths.contains(&&claude_dir));
+        assert!(!deny_paths.contains(&&gemini_dir));
 
         let _ = std::fs::remove_dir_all(root);
     }

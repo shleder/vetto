@@ -3,7 +3,17 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.10] — 2026-09-02
+
+### Added
+
+- Automatic agent network allowlist defaulting: when `--net` is omitted on the CLI, `RunConfig` automatically defaults to `NetMode::Allowlist` using the detected or specified agent's predefined domain allowlist (`agent_network_allowlist`, e.g. `api.anthropic.com` for Claude, `api.openai.com` and `chatgpt.com` for Codex). Non-agent commands continue to default strictly to `NetMode::Off`.
+- Agent environment pass-through: `[environment]` sections in agent profiles explicitly pass through operational API keys and configurations (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_*` for Claude Code; `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_*` for Codex CLI) while maintaining strict default-deny for unrelated host credentials (`AWS_*`, `GH_TOKEN`, etc.).
+- Full agent state & filesystem compatibility: Claude Code and Codex CLI can read and write to their own session, project, and config stores (`~/.claude/`, `~/.claude.json`, `~/.codex/`).
+- Removed legitimate database and config files (`state_*.sqlite`, `config.toml`, `settings.json`) from `[display_only_deny]` to avoid false-positive masking of agent runtime state.
+
 ## [0.2.9] — 2026-08-31
+
 
 ### Added
 

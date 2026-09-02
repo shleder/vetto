@@ -343,18 +343,24 @@ this ([`profiles/agents/codex.toml`](profiles/agents/codex.toml), verbatim):
 ```toml
 [metadata]
 name = "codex"
-description = "Safe read-only compatibility roots for the Codex CLI."
+description = "Safe compatibility roots for the Codex CLI."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_write = ["$AGENT"]
+allow_read = ["$AGENT"]
+
+[environment]
+pass_through = [
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "CODEX_*",
+]
 
 [display_only_deny]
 paths = [
     "$AGENT/auth.json",
-    "$AGENT/config.toml",
     "$AGENT/app_server.sock",
     "$AGENT/*.sock",
-    "$AGENT/state_*.sqlite",
 ]
 ```
 

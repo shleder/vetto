@@ -11,7 +11,7 @@ use anyhow::{bail, Result};
 use serde::Deserialize;
 
 use crate::cli::Cli;
-use crate::policy::presets::Preset;
+use crate::policy::presets::{agent_network_allowlist, Preset};
 
 #[derive(Debug, Clone)]
 pub enum NetMode {
@@ -182,12 +182,40 @@ impl RunConfig {
     }
 
     pub fn from_cli_with_global(cli: &Cli, global: &GlobalConfig) -> Result<Self> {
-        let raw_net = cli
-            .net
-            .as_deref()
-            .or(global.net.as_deref())
-            .unwrap_or("off");
-        let net = parse_net_mode(raw_net)?;
+        let agent_preset = if cli.multi {
+            None
+        } else {
+            match cli.agents.as_slice() {
+                [] => detect_agent_preset(&cli.agent),
+                [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
+                    Some(
+                        crate::policy::defaults::canonical_agent_name(agent)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| agent.clone()),
+                    )
+                }
+                [_] => bail!(
+                    "single-agent --agent expects a preset name; NAME=PROGRAM is only valid with --multi"
+                ),
+                _ => bail!("single-agent mode accepts at most one --agent preset"),
+            }
+        };
+
+        let net = match cli.net.as_deref().or(global.net.as_deref()) {
+            Some(raw) => parse_net_mode(raw)?,
+            None => {
+                if let Some(ref agent) = agent_preset {
+                    let domains = agent_network_allowlist(agent);
+                    if !domains.is_empty() {
+                        NetMode::Allowlist(domains)
+                    } else {
+                        NetMode::Off
+                    }
+                } else {
+                    NetMode::Off
+                }
+            }
+        };
 
         let git_ssh = cli.git_ssh || global.git_ssh.unwrap_or(false);
         if git_ssh && !net.uses_relay() {
@@ -273,21 +301,6 @@ impl RunConfig {
             .as_ref()
             .map(PathBuf::from)
             .or_else(|| global.jsonl.as_ref().map(PathBuf::from));
-
-        let agent_preset = if cli.multi {
-            None
-        } else {
-            match cli.agents.as_slice() {
-                [] => detect_agent_preset(&cli.agent),
-                [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
-                    Some(agent.clone())
-                }
-                [_] => bail!(
-                    "single-agent --agent expects a preset name; NAME=PROGRAM is only valid with --multi"
-                ),
-                _ => bail!("single-agent mode accepts at most one --agent preset"),
-            }
-        };
 
         let mut auto_timeout_requested = false;
         let session_timeout = match timeout_str {
@@ -484,17 +497,7 @@ pub fn detect_agent_preset(command: &[String]) -> Option<String> {
     let normalized = first.replace('\\', "/");
     let path = std::path::Path::new(&normalized);
     let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
-
-    match stem.as_str() {
-        "codex" | "codex-cli" => Some("codex".to_string()),
-        "claude" | "claude-code" => Some("claude".to_string()),
-        "cursor" | "cursor-server" => Some("cursor".to_string()),
-        "aider" | "aider-chat" => Some("aider".to_string()),
-        "cline" => Some("cline".to_string()),
-        "copilot" | "github-copilot-cli" => Some("copilot".to_string()),
-        "opencode" => Some("opencode".to_string()),
-        _ => None,
-    }
+    crate::policy::defaults::canonical_agent_name(&stem).map(|s| s.to_string())
 }
 
 #[cfg(test)]
@@ -676,5 +679,90 @@ mod tests {
         assert_eq!(cfg2.preset, Some(Preset::Yolo));
         assert_eq!(cfg2.net.label(), "off");
         assert_eq!(cfg2.fail_on_block, Some(1));
+    }
+
+    #[test]
+    fn agent_preset_defaults_network_to_allowlist_when_net_omitted() {
+        // Claude defaults to api.anthropic.com
+        let cli = Cli::try_parse_from(["vetto", "--", "claude", "-p", "hello"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+
+        // Claude-code alias defaults to api.anthropic.com
+        let cli = Cli::try_parse_from(["vetto", "--", "claude-code"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+
+        // Codex defaults to api.openai.com,chatgpt.com
+        let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
+        assert_eq!(cfg.net.label(), "allowlist:api.openai.com,chatgpt.com");
+
+        // Codex-cli alias defaults to api.openai.com,chatgpt.com
+        let cli = Cli::try_parse_from(["vetto", "--", "codex-cli"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
+        assert_eq!(cfg.net.label(), "allowlist:api.openai.com,chatgpt.com");
+
+        // Gemini defaults to generativelanguage.googleapis.com
+        let cli = Cli::try_parse_from(["vetto", "--", "gemini"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("gemini"));
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:generativelanguage.googleapis.com"
+        );
+
+        // Aider defaults to api.openai.com,api.anthropic.com
+        let cli = Cli::try_parse_from(["vetto", "--", "aider"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("aider"));
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.openai.com,api.anthropic.com"
+        );
+
+        // Cursor defaults to api.cursor.com,api2.cursor.sh
+        let cli = Cli::try_parse_from(["vetto", "--", "cursor-server"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("cursor"));
+        assert_eq!(cfg.net.label(), "allowlist:api.cursor.com,api2.cursor.sh");
+
+        // Explicit --agent flag with alias also defaults to agent allowlist
+        let cli = Cli::try_parse_from([
+            "vetto",
+            "--agent",
+            "claude-code",
+            "--",
+            "python",
+            "agent.py",
+        ])
+        .unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+
+        // Non-agent commands default to NetMode::Off
+        let cli = Cli::try_parse_from(["vetto", "--", "python", "script.py"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset, None);
+        assert_eq!(cfg.net.label(), "off");
+
+        // Explicit --net off overrides agent default
+        let cli = Cli::try_parse_from(["vetto", "--net", "off", "--", "claude"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
+        assert_eq!(cfg.net.label(), "off");
+
+        // Explicit --net allowlist overrides agent default
+        let cli =
+            Cli::try_parse_from(["vetto", "--net", "allowlist:custom.api.com", "--", "codex"])
+                .unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
+        assert_eq!(cfg.net.label(), "allowlist:custom.api.com");
     }
 }
