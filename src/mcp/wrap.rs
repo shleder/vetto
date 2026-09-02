@@ -199,8 +199,7 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
             NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask,
             NetMode::Off => crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
         };
-        let mut broker_config =
-            crate::sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
+        let mut broker_config = crate::sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
         broker_config.allow_cidr = policy.allow_cidr.clone();
         broker_config.quotas = policy.net_quota.clone();
         let bus = crate::events::EventBus::new();
