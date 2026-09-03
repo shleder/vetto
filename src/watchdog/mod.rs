@@ -100,7 +100,8 @@ pub fn workspace_hash(root: &Path) -> String {
 /// Resolves the file path to the persistent state JSON for a workspace.
 pub fn state_file_path(root: &Path) -> Result<PathBuf> {
     let dir = watchdog_dir()?;
-    let hash = workspace_hash(root);
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let hash = workspace_hash(&canonical);
     Ok(dir.join(format!("{hash}.json")))
 }
 
@@ -438,7 +439,9 @@ mod tests {
         let proj_dir = base.join("project");
         std::fs::create_dir_all(&wd_dir).unwrap();
         std::fs::create_dir_all(&proj_dir).unwrap();
-        (wd_dir, proj_dir)
+        let wd_canonical = wd_dir.canonicalize().unwrap_or(wd_dir);
+        let proj_canonical = proj_dir.canonicalize().unwrap_or(proj_dir);
+        (wd_canonical, proj_canonical)
     }
 
     fn cleanup_test_dirs(wd: &Path, proj: &Path) {
@@ -454,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_resets_on_success() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("resets_on_success");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -478,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_resets_on_workspace_modification() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("resets_on_mod");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -505,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_triggers_after_threshold() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("triggers_threshold");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -537,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_different_command_resets_counter() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("diff_cmd");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -565,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_bypass_env_var() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("bypass_env");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -585,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_bypass_flag() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("bypass_flag");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
@@ -605,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_custom_threshold() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("custom_thresh");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         env::set_var("VETTO_LOOP_THRESHOLD", "2");
@@ -628,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_watchdog_clear_records() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (temp_wd, temp_proj) = setup_test_dirs("clear_recs");
         env::set_var("VETTO_WATCHDOG_DIR", &temp_wd);
         let file_path = temp_proj.join("main.rs");
