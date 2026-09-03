@@ -190,6 +190,8 @@ fn run() -> Result<()> {
             supervise(cfg)
         }
         Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
+        Some(cli::Command::Pack(args)) => cli::bundle::run_pack(args),
+        Some(cli::Command::Unpack(args)) => cli::bundle::run_unpack(args),
         Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
         Some(cli::Command::Init { force, wizard }) => {
             if *wizard {

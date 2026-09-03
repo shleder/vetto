@@ -1,3 +1,4 @@
+pub mod bundle;
 pub mod diff;
 pub mod enable;
 pub mod git_hook;
@@ -12,6 +13,7 @@ pub mod why_slow;
 pub mod wizard;
 
 pub use crate::watchdog::WatchdogArgs;
+pub use bundle::{PackArgs, UnpackArgs};
 pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
@@ -329,6 +331,11 @@ pub enum Command {
     Ephemeral(EphemeralArgs),
     /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
     Diff(diff::DiffArgs),
+    /// Export a session into a portable repro bundle (.vetto-pack) with snapshot, logs,
+    /// and telemetry
+    Pack(bundle::PackArgs),
+    /// Unpack or inspect a .vetto-pack bundle to investigate or reproduce an incident
+    Unpack(bundle::UnpackArgs),
     /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
     Watchdog(WatchdogArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
