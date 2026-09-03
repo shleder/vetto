@@ -63,6 +63,11 @@ brew install shleder/tap/vetto
 npx @shledery/vetto doctor
 ```
 
+```yaml
+# In GitHub Actions CI (unattended agent runs, evals, SWE-bench)
+- uses: shleder/vetto@v0.2.12
+```
+
 *Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
 
 ---
