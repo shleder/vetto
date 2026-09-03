@@ -61,6 +61,10 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
         "claude" => vec!["api.anthropic.com".into()],
         "codex" => vec!["api.openai.com".into(), "chatgpt.com".into()],
         "gemini" => vec!["generativelanguage.googleapis.com".into()],
+        "antigravity" => vec![
+            "generativelanguage.googleapis.com".into(),
+            "oauth2.googleapis.com".into(),
+        ],
         "aider" => vec!["api.openai.com".into(), "api.anthropic.com".into()],
         "opencode" => vec!["api.openai.com".into(), "api.anthropic.com".into()],
         "cursor" => vec!["api.cursor.com".into(), "api2.cursor.sh".into()],

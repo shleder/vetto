@@ -1,0 +1,90 @@
+name: 'Setup Vetto'
+description: 'Daemon-less, 0ms kernel-enforced sandbox for AI coding agents (Claude Code, Codex, Cursor)'
+author: 'shleder'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  version:
+    description: 'Vetto version to install (e.g. "0.2.12" or "latest")'
+    required: false
+    default: 'latest'
+
+outputs:
+  vetto-version:
+    description: 'Installed Vetto version'
+    value: ${{ steps.install.outputs.version }}
+  vetto-path:
+    description: 'Path to the installed vetto binary'
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        REQUESTED_VERSION="${{ inputs.version }}"
+
+        # Resolve version tag
+        if [ -z "$REQUESTED_VERSION" ] || [ "$REQUESTED_VERSION" = "latest" ]; then
+          RESOLVED_TAG=$(curl -sSL -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/shleder/vetto/releases/latest 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$RESOLVED_TAG" ]; then
+            RESOLVED_TAG="v0.2.12"
+          fi
+        elif [[ "$REQUESTED_VERSION" =~ ^v ]]; then
+          RESOLVED_TAG="$REQUESTED_VERSION"
+        else
+          RESOLVED_TAG="v$REQUESTED_VERSION"
+        fi
+
+        VERSION_STR="${RESOLVED_TAG#v}"
+
+        # Detect OS & Arch
+        OS_RAW="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        ARCH_RAW="$(uname -m)"
+
+        case "$OS_RAW" in
+          linux*)   TARGET_OS="linux" ;;
+          darwin*)  TARGET_OS="macos" ;;
+          msys*|mingw*|cygwin*) TARGET_OS="windows" ;;
+          *) echo "::error::Unsupported OS: $OS_RAW"; exit 1 ;;
+        esac
+
+        case "$ARCH_RAW" in
+          x86_64|amd64)   TARGET_ARCH="x86_64" ;;
+          aarch64|arm64)  TARGET_ARCH="aarch64" ;;
+          *) echo "::error::Unsupported architecture: $ARCH_RAW"; exit 1 ;;
+        esac
+
+        INSTALL_DIR="${RUNNER_TOOL_CACHE:-$HOME/.vetto}/bin"
+        mkdir -p "$INSTALL_DIR"
+
+        if [ "$TARGET_OS" = "windows" ]; then
+          ASSET_NAME="vetto-windows-${TARGET_ARCH}.zip"
+          DOWNLOAD_URL="https://github.com/shleder/vetto/releases/download/${RESOLVED_TAG}/${ASSET_NAME}"
+          TMP_ZIP="$(mktemp 2>/dev/null || echo "/tmp/vetto-$$").zip"
+          echo "Downloading $DOWNLOAD_URL..."
+          curl -fsSL "$DOWNLOAD_URL" -o "$TMP_ZIP"
+          unzip -q -o "$TMP_ZIP" -d "$INSTALL_DIR"
+          rm -f "$TMP_ZIP"
+          BIN_PATH="$INSTALL_DIR/vetto.exe"
+        else
+          ASSET_NAME="vetto-${TARGET_OS}-${TARGET_ARCH}.tar.gz"
+          DOWNLOAD_URL="https://github.com/shleder/vetto/releases/download/${RESOLVED_TAG}/${ASSET_NAME}"
+          echo "Downloading $DOWNLOAD_URL..."
+          curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$INSTALL_DIR"
+          BIN_PATH="$INSTALL_DIR/vetto"
+          chmod +x "$BIN_PATH"
+        fi
+
+        echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+        echo "version=$VERSION_STR" >> "$GITHUB_OUTPUT"
+        echo "path=$BIN_PATH" >> "$GITHUB_OUTPUT"
+
+        echo "✓ Vetto $VERSION_STR successfully installed at $BIN_PATH"
+        "$BIN_PATH" --version

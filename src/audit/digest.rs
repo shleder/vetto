@@ -165,6 +165,7 @@ mod tests {
                 ts: Utc::now(),
                 session_id: "s1".into(),
                 agent: "codex".into(),
+                command: Some("codex".into()),
                 profile: "default".into(),
                 policy_path: None,
                 exit_code: 0,
@@ -174,11 +175,13 @@ mod tests {
                 blocked_count: 0,
                 events_total: 20,
                 report_path: None,
+                log_path: None,
             },
             AuditRecord {
                 ts: Utc::now(),
                 session_id: "s2".into(),
                 agent: "codex".into(),
+                command: Some("codex".into()),
                 profile: "strict".into(),
                 policy_path: None,
                 exit_code: 1,
@@ -188,11 +191,13 @@ mod tests {
                 blocked_count: 3,
                 events_total: 15,
                 report_path: None,
+                log_path: None,
             },
             AuditRecord {
                 ts: Utc::now(),
                 session_id: "s3".into(),
                 agent: "claude".into(),
+                command: Some("claude".into()),
                 profile: "default".into(),
                 policy_path: None,
                 exit_code: 0,
@@ -202,6 +207,7 @@ mod tests {
                 blocked_count: 2,
                 events_total: 30,
                 report_path: None,
+                log_path: None,
             },
         ];
 

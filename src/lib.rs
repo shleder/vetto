@@ -26,7 +26,6 @@ pub mod notify;
 pub mod onboard;
 pub mod policy;
 pub mod profile;
-#[cfg(unix)]
 pub mod pty;
 pub mod redteam;
 pub mod remote;
@@ -41,3 +40,4 @@ pub mod tui;
 pub mod verify;
 pub mod version;
 pub mod watch;
+pub mod watchdog;

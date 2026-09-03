@@ -1,6 +1,6 @@
 # Maintainer: vetto contributors
 pkgname=vetto-git
-pkgver=0.2.10.r0.g0000000
+pkgver=0.2.12.r0.g0000000
 pkgrel=1
 pkgdesc='Daemon-less sandbox and audit layer for AI coding agents'
 arch=('x86_64' 'aarch64')

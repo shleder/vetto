@@ -90,6 +90,7 @@ pub fn canonical_agent_name(name: &str) -> Option<&'static str> {
         "opencode" => Some("opencode"),
         "copilot" | "github-copilot-cli" => Some("copilot"),
         "gemini" | "gemini-cli" => Some("gemini"),
+        "antigravity" | "antigravity-cli" | "agy" => Some("antigravity"),
         "custom" => Some("custom"),
         _ => None,
     }
@@ -99,7 +100,7 @@ pub fn agent_builtin(name: &str) -> Option<&'static str> {
     match canonical_agent_name(name)? {
         "codex" => Some(CODEX_AGENT_TOML),
         "claude" => Some(CLAUDE_AGENT_TOML),
-        "gemini" => Some(GEMINI_AGENT_TOML),
+        "gemini" | "antigravity" => Some(GEMINI_AGENT_TOML),
         "aider" => Some(AIDER_AGENT_TOML),
         "cursor" => Some(CURSOR_AGENT_TOML),
         "cline" => Some(CLINE_AGENT_TOML),
