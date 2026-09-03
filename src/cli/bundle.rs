@@ -250,9 +250,8 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
             .with_context(|| format!("failed to create output directory '{}'", parent.display()))?;
     }
 
-    let mut out_file = File::create(&output_path).with_context(|| {
-        format!("failed to create bundle file '{}'", output_path.display())
-    })?;
+    let mut out_file = File::create(&output_path)
+        .with_context(|| format!("failed to create bundle file '{}'", output_path.display()))?;
     let now = std::time::SystemTime::now();
 
     write_tar_entry(
