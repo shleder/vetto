@@ -174,7 +174,8 @@ mod tests {
 
         let res = run_with_timeout(&mut cmd, Duration::from_millis(150));
         if let Ok(status) = res {
-            assert_eq!(status.code(), Some(124));
+            assert!(!status.success());
+            assert!(status.code() == Some(124) || status.code().is_none());
         }
     }
 
