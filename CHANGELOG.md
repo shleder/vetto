@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.13] — 2026-09-03
+
+### Added
+
+- **Full 20 AI coding CLI roster**: OpenCode (`opencode`), Claude Code (`claude`), OpenAI Codex (`codex`), Gemini (`gemini`), Antigravity (`antigravity`/`agy`), Cursor (`cursor`), Aider (`aider`), Cline (`cline`), Copilot (`copilot`), Windsurf (`windsurf`), Continue (`continue`), Goose (`goose`), OpenHands (`openhands`), SWE-agent (`swe_agent`), Plandex (`plandex`), Mentat (`mentat`), GPT-Engineer (`gpt_engineer`), Devin (`devin`), Crust (`crust`), Amp (`amp`) — dedicated security profiles in `profiles/agents/*.toml`, project marker detection, zero-config network allowlists, transparent PATH-shims (`vetto enable <agent>`), interactive wizard integration.
+- **Official GitHub Action (`action.yml`)**: Ubuntu/macOS/Windows setup action, verified in CI (`test-action.yml`).
+
 ## [0.2.12] — 2026-09-03
 
 ### Added

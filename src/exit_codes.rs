@@ -46,7 +46,14 @@ pub fn map_session_exit_code(
 }
 
 /// Map an anyhow error from session setup or command execution to an exit code.
+///
+/// Deterministic path first: if the error chain carries a typed [`crate::error::VettoError`],
+/// its [`crate::error::VettoError::exit_code`] wins. The substring fallback below is legacy
+/// (kept for untyped `anyhow!` call sites) — do not extend it; construct a typed error instead.
 pub fn map_error_to_exit_code(err: &anyhow::Error) -> i32 {
+    if let Some(typed) = err.downcast_ref::<crate::error::VettoError>() {
+        return typed.exit_code();
+    }
     let msg = err.to_string().to_lowercase();
     if msg.contains("not found in path") || msg.contains("no such file or directory") {
         EXIT_COMMAND_NOT_FOUND

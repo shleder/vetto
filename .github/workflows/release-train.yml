@@ -68,6 +68,26 @@ jobs:
             exit 1
           fi
 
+          # Packaging parity: every channel pinned to the release version must agree.
+          # Homebrew / chocolatey / rpm carry the version string; their hashes/tarballs
+          # are produced by the release itself and verified at publish time.
+          brew_ver="$(sed -n 's/^[[:space:]]*version "\(.*\)"$/\1/p' packaging/homebrew/vetto.rb | head -n 1)"
+          nuspec_ver="$(sed -n 's/^[[:space:]]*<version>\(.*\)<\/version>$/\1/p' packaging/chocolatey/vetto.nuspec | head -n 1)"
+          rpm_ver="$(sed -n 's/^Version:[[:space:]]*\(.*\)$/\1/p' packaging/rpm/vetto.spec | head -n 1)"
+          lock_ver="$(grep -A1 '^name = "vetto"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)"
+          for pair in "homebrew:$brew_ver" "chocolatey:$nuspec_ver" "rpm:$rpm_ver" "Cargo.lock:$lock_ver"; do
+            name="${pair%%:*}"
+            ver="${pair#*:}"
+            if [[ -z "$ver" ]]; then
+              echo "Version missing: $name has no parseable version" >&2
+              exit 1
+            fi
+            if [[ "$ver" != "$cargo_ver" ]]; then
+              echo "Version mismatch: $name ($ver) vs Cargo.toml ($cargo_ver)" >&2
+              exit 1
+            fi
+          done
+
           echo "version=$cargo_ver" >> "$GITHUB_OUTPUT"
           echo "tag=v$cargo_ver" >> "$GITHUB_OUTPUT"
 
@@ -90,6 +110,46 @@ jobs:
           echo "changelog<<$EOF" >> "$GITHUB_OUTPUT"
           echo "$changelog_snippet" >> "$GITHUB_OUTPUT"
           echo "$EOF" >> "$GITHUB_OUTPUT"
+
+  publish-status:
+    # Merge != release: the train only publishes on manual dispatch
+    # (dry_run=false). This job makes an unpublished merged version LOUD
+    # instead of silently diverging markdown claims from registries
+    # (incident 2026-09-03: npm/crates stuck at 0.2.9 while tree said 0.2.13).
+    name: verify version is actually published
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fail if merged version was never published
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+          TAG: ${{ needs.version-check.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if ! git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+            echo "::error ::Tag $TAG does not exist. Version $VERSION was merged but never released. Dispatch release-train (workflow_dispatch, dry_run=false) to publish."
+            missing=1
+          fi
+          if ! npm view "@shledery/vetto@$VERSION" version >/dev/null 2>&1; then
+            echo "::error ::npm @shledery/vetto@$VERSION is missing. Publish is incomplete."
+            missing=1
+          fi
+          if ! curl -fsSL -A "vetto-release-train (github.com/shleder/vetto)" \
+              "https://crates.io/api/v1/crates/vetto" | grep -q "\"num\":\"$VERSION\""; then
+            echo "::error ::crates.io vetto $VERSION is missing. Publish is incomplete."
+            missing=1
+          fi
+          if [[ "$missing" -ne 0 ]]; then
+            echo "Merge is not a release: publish requires manual dispatch. See pages/ops/release-process.md."
+            exit 1
+          fi
+          echo "Version $VERSION fully published (tag + npm + crates.io)."
 
   build:
     name: build ${{ matrix.target }}
