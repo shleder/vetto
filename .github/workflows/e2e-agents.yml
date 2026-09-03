@@ -101,3 +101,41 @@ jobs:
             echo "=== 3. Dry-run agent execution under sandbox (without external API invocation) ==="
             $VETTO_BIN --verify -- /bin/sh -c "echo 'Supervised agent sub-process launched inside sandbox with full isolation boundaries.'"
           fi
+
+  # Depth over breadth: every shipped agent profile must resolve to an
+  # effective policy. TOML syntax is already covered at compile time
+  # (include_str!), this job covers semantic resolution per profile.
+  profile-matrix:
+    name: profile ${{ matrix.profile }} resolves
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [codex, claude, gemini, antigravity, aider, cursor, cline, opencode, copilot, windsurf, continue, goose, openhands, swe_agent, plandex, mentat, gpt_engineer, devin, crust, amp]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release vetto binary
+        run: cargo build --release
+
+      - name: Resolve effective policy for profile
+        shell: bash
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VETTO_BIN: ./target/release/vetto
+        run: |
+          set -euo pipefail
+
+          echo "=== effective policy for --agent $PROFILE ==="
+          "$VETTO_BIN" --agent "$PROFILE" policy show --effective > /dev/null
+
+          echo "=== lint for --agent $PROFILE (non-zero means broken, not advisory) ==="
+          "$VETTO_BIN" --agent "$PROFILE" policy lint
+
+          echo "=== doctor probe mapping for $PROFILE ==="
+          "$VETTO_BIN" doctor --check-agent "$PROFILE"
