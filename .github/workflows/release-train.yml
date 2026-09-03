@@ -116,8 +116,11 @@ jobs:
     # (dry_run=false). This job makes an unpublished merged version LOUD
     # instead of silently diverging markdown claims from registries
     # (incident 2026-09-03: npm/crates stuck at 0.2.9 while tree said 0.2.13).
+    # Runs on push (dry-run) only: on a real publish run the tag/registry
+    # records do not exist yet while this job executes, so it would race.
     name: verify version is actually published
     needs: version-check
+    if: needs.version-check.outputs.is_dry_run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -418,4 +421,6 @@ jobs:
             exit 0
           fi
           # The build is already verified by the build jobs in this run.
-          cargo publish --no-verify
+          # --locked: without it cargo re-resolves against the live index,
+          # dirties Cargo.lock and aborts on the dirty tree (incident 2026-09-03).
+          cargo publish --locked --no-verify
