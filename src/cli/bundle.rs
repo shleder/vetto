@@ -254,19 +254,9 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
         .with_context(|| format!("failed to create bundle file '{}'", output_path.display()))?;
     let now = std::time::SystemTime::now();
 
-    write_tar_entry(
-        &mut out_file,
-        "bundle.manifest.json",
-        &manifest_json,
-        now,
-    )?;
+    write_tar_entry(&mut out_file, "bundle.manifest.json", &manifest_json, now)?;
 
-    write_tar_entry(
-        &mut out_file,
-        "snapshot.tar",
-        &snapshot_tar_bytes,
-        now,
-    )?;
+    write_tar_entry(&mut out_file, "snapshot.tar", &snapshot_tar_bytes, now)?;
 
     if let Some(ref logs) = log_bytes {
         write_tar_entry(&mut out_file, "session.jsonl", logs, now)?;
