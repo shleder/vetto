@@ -918,8 +918,7 @@ mod tests {
 
     #[test]
     fn kill_subcommand_parses_hung_and_pid() {
-        let hung_cli =
-            Cli::try_parse_from(["vetto", "kill", "--hung"]).expect("kill hung parsing");
+        let hung_cli = Cli::try_parse_from(["vetto", "kill", "--hung"]).expect("kill hung parsing");
         assert!(matches!(
             hung_cli.command,
             Some(Command::Kill(KillArgs {

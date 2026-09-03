@@ -171,7 +171,10 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
     };
 
     let snapshot_tar_bytes = std::fs::read(&archive_path).with_context(|| {
-        format!("failed to read snapshot archive '{}'", archive_path.display())
+        format!(
+            "failed to read snapshot archive '{}'",
+            archive_path.display()
+        )
     })?;
     let snapshot_size_bytes = snapshot_tar_bytes.len() as u64;
 
@@ -243,9 +246,8 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
         .unwrap_or_else(|| default_bundle_path(&target_snapshot.session_id));
 
     if let Some(parent) = output_path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create output directory '{}'", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory '{}'", parent.display()))?;
     }
 
     let mut out_file = File::create(&output_path).with_context(|| {
@@ -470,12 +472,9 @@ mod tests {
         fs::write(&file_b, "pub fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
 
         let session_id = format!("test-roundtrip-{}", std::process::id());
-        let meta = snapshot::create_snapshot(
-            &proj_dir,
-            &session_id,
-            snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
-        )
-        .expect("snapshot creation should succeed");
+        let meta =
+            snapshot::create_snapshot(&proj_dir, &session_id, snapshot::DEFAULT_MAX_SNAPSHOT_SIZE)
+                .expect("snapshot creation should succeed");
         assert_eq!(meta.file_count, 2);
 
         // Write a mock session log

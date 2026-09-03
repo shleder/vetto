@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.12] — 2026-09-03
+
+### Added
+
+- **Interactive Sandbox Wizard (`vetto wizard`)**: First-class interactive and non-interactive terminal configurator to setup sandbox boundaries and generate `.vetto/policy.toml`. Supports OpenAI Codex, Claude Code, Antigravity, Cursor, Aider, OpenCode; presets (`balanced`, `paranoid`, `yolo`), network modes, and automated secret masking.
+- **Session Instant Undo (`vetto undo`)**: Instant workspace rollback to pre-session snapshots (`vetto undo [session_id]` and `vetto undo --list`), protecting developer work from agent hallucinations without losing uncommitted progress.
+- **Extended Git Guard**: Proactive blocking of destructive git actions (`git reset --hard`, `git clean -f/-fd/-fx`, `git checkout .`, `git restore .`, `git push --force`, `git branch -D`) with configurable bypass via `VETTO_ALLOW_DESTRUCTIVE_GIT=1` or `--allow-destructive-git`.
+- **Isolated MCP Server Sandbox (`vetto mcp wrap`)**: Safe runner for third-party Model Context Protocol (MCP) servers in Claude Desktop and Cursor with strict path isolation and network egress controls.
+- **Autonomous Loop & Token Burn Watchdog**: Intercepts runaway agent retry loops (e.g. repeated failing commands without workspace file edits) to halt wasteful token burn and host CPU pinning (`vetto watchdog [--clear]`).
+- **Real-Time Secret Stream Sanitizer (`vetto mask`)**: Real-time redaction of modern AI tokens (`sk-ant-`, `sk-proj-`, `AIza`, `npm_`, `pypi-`, `gho_`, `.env` key-values) across child stdout/stderr and CLI pipes before leaking into LLM context windows.
+- **Session Diff & Security Review (`vetto diff`)**: Instant Myers diff engine comparing project workspace against session snapshot tarballs with unified color diff, security event summaries (blocked Landlock paths, egress blocks), `--stat`, and `--json`.
+- **Runaway Process Killer & Watchdog (`vetto kill`)**: Process group management with Unix `-pgid` isolation, cascading termination (`SIGTERM` -> 2s grace -> `SIGKILL`), `--timeout <duration>`, `VETTO_COMMAND_TIMEOUT`, and `vetto kill [--hung]`.
+- **Ephemeral Disposable Sandbox (`vetto ephemeral` & `--ephemeral`)**: One-shot sandbox that automatically rolls back file modifications on non-zero exit or error, prompts for `Apply changes? [Y/n]` on success in TTY, and supports automated `--discard` / `--yes`.
+- **Session Export & Replay Bundles (`vetto pack` & `vetto unpack`)**: Packaging of snapshots, session event logs, security reports, and manifests into portable `.vetto-pack` archives for reproducible bug sharing and incident triage.
+
 ## [0.2.11] — 2026-09-02
 
 ### Added

@@ -630,7 +630,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let overrides = policy::loader::PolicyOverrides {
         deny_glob: cfg.deny_glob.clone(),
         git_guard: if cfg.git_guard { Some(true) } else { None },
-        snapshot: if cfg.snapshot || cfg.ephemeral { Some(true) } else { None },
+        snapshot: if cfg.snapshot || cfg.ephemeral {
+            Some(true)
+        } else {
+            None
+        },
         auto_deny_secrets: if cfg.auto_deny_secrets {
             Some(true)
         } else {

@@ -136,7 +136,7 @@ If you prefer Claude Code's native hook system instead of global PATH shims, you
   },
   "vetto": {
     "enabled": true,
-    "version": "0.2.11",
+    "version": "0.2.12",
     "managed": true
   }
 }
