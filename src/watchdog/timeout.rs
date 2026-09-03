@@ -173,9 +173,8 @@ mod tests {
         cmd.args(["-Command", "Start-Sleep -Seconds 5"]);
 
         let res = run_with_timeout(&mut cmd, Duration::from_millis(150));
-        match res {
-            Ok(status) => assert_eq!(status.code(), Some(124)),
-            Err(_) => {}
+        if let Ok(status) = res {
+            assert_eq!(status.code(), Some(124));
         }
     }
 
