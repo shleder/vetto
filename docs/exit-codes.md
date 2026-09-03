@@ -15,3 +15,23 @@ Vetto guarantees consistent, deterministic process exit codes across Linux, macO
 ## Behavior in CI / Headless Mode
 
 When running with `--ci` or `--tui=none`, vetto emits structured JSON summaries to `stdout` containing both the agent's raw `exit_code` and the supervisor's `final_exit_code`.
+
+## Attributing failures: sandbox denial vs agent error
+
+When an agent run fails inside nested sandboxes (eval harnesses, outer containers,
+vetto), the first question is always: did *my* sandbox block this, or did the
+agent itself fail? Rules of thumb:
+
+- `Operation not permitted` / `EACCES` / `EPERM` on paths **outside** the agent's
+  own state dir, paired with vetto exit `125`, means the *outer* boundary denied
+  it — the inner tool cannot fix this by retrying. Inspect with
+  `vetto audit --latest` (denied Landlock paths) instead of re-running the agent.
+- Same errno on paths **inside** the agent workspace with exit `0`/`1` usually
+  means the agent or its own harness did it — check `vetto diff --stat` to see
+  what the session actually touched before blaming the sandbox.
+- `126` always means vetto policy intentionally blocked the action
+  (`--fail-on-block` threshold or lockdown violation): this is the sandbox
+  working as configured, not an environment bug. `policy explain --why` shows
+  the exact rule.
+- Timeouts (`124`) with repeated identical failures beforehand suggest a runaway
+  retry loop — see `vetto watchdog` rather than raising limits.
