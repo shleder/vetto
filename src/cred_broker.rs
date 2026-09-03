@@ -4,8 +4,11 @@
 //! Secrets listed in `secrets.proxy` are completely stripped from the sandboxed agent's
 //! environment and injected into upstream requests by the host broker only for allowlisted domains.
 
-#[allow(unused_imports)]
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+// `Context` is only used by the Unix broker thread; a blanket allow here
+// would hide the next unused-import regression (cf. pty import incident).
+#[cfg(unix)]
+use anyhow::Context;
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
@@ -13,8 +16,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
-#[allow(unused_imports)]
-use crate::events::{Event, EventBus};
+use crate::events::EventBus;
+// `Event` is only published from the Unix client handler (see above).
+#[cfg(unix)]
+use crate::events::Event;
 
 /// Configuration for the credential broker.
 #[derive(Debug, Clone, Default)]

@@ -422,6 +422,9 @@ fn build_envp(policy: &Policy, opts: &SpawnOptions) -> Vec<CString> {
         std::env::vars_os()
             .filter(|(key, _)| policy.environment.allows(key))
             .collect();
+    // Same guarantee as the Linux backend: broker-managed secrets never reach
+    // the agent environment (the broker itself spawns on Unix in main.rs).
+    crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
     for (k, v) in &opts.env_extra {
         env.insert(
             std::ffi::OsString::from(k.as_str()),
