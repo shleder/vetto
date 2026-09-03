@@ -30,9 +30,27 @@ pub const AMP_AGENT_TOML: &str = include_str!("../../profiles/agents/amp.toml");
 pub const CUSTOM_AGENT_TOML: &str = include_str!("../../profiles/agents/custom.toml");
 
 pub const AGENT_PROFILE_NAMES: [&str; 21] = [
-    "codex", "claude", "gemini", "antigravity", "aider", "cursor", "cline", "opencode", "copilot",
-    "windsurf", "continue", "goose", "openhands", "swe_agent", "plandex", "mentat",
-    "gpt_engineer", "devin", "crust", "amp", "custom",
+    "codex",
+    "claude",
+    "gemini",
+    "antigravity",
+    "aider",
+    "cursor",
+    "cline",
+    "opencode",
+    "copilot",
+    "windsurf",
+    "continue",
+    "goose",
+    "openhands",
+    "swe_agent",
+    "plandex",
+    "mentat",
+    "gpt_engineer",
+    "devin",
+    "crust",
+    "amp",
+    "custom",
 ];
 
 /// Environment variables that are safe and useful for an agent session.
