@@ -20,11 +20,14 @@ pub fn resolve_in_path(cmd: &str) -> Result<PathBuf> {
         return Ok(p.to_path_buf());
     }
     if let Some(path_var) = std::env::var_os("PATH") {
+        #[cfg(windows)]
+        let extensions = [".exe", ".cmd", ".bat", ""];
+
         for dir in std::env::split_paths(&path_var) {
-            let candidate = dir.join(cmd);
-            if candidate.is_file() {
-                #[cfg(unix)]
-                {
+            #[cfg(unix)]
+            {
+                let candidate = dir.join(cmd);
+                if candidate.is_file() {
                     use std::os::unix::fs::PermissionsExt;
                     if let Ok(meta) = candidate.metadata() {
                         if meta.permissions().mode() & 0o111 != 0 {
@@ -32,8 +35,20 @@ pub fn resolve_in_path(cmd: &str) -> Result<PathBuf> {
                         }
                     }
                 }
-                #[cfg(not(unix))]
-                return Ok(candidate);
+            }
+
+            #[cfg(windows)]
+            {
+                let candidate = dir.join(cmd);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+                for ext in &extensions {
+                    let with_ext = dir.join(format!("{cmd}{ext}"));
+                    if with_ext.is_file() {
+                        return Ok(with_ext);
+                    }
+                }
             }
         }
     }
@@ -298,6 +313,9 @@ mod tests {
         {
             let resolved = resolve_in_path("cmd");
             assert!(resolved.is_ok());
+
+            let resolved_exe = resolve_in_path("cmd.exe");
+            assert!(resolved_exe.is_ok());
 
             let comspec = std::env::var("COMSPEC")
                 .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".into());
