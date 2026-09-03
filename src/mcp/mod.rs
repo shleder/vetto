@@ -2,6 +2,9 @@
 //!
 //! Exposes vetto sandboxing as an MCP tool (`run_sandboxed`) for AI agents and LLM clients.
 
+pub mod wrap;
+pub use wrap::run_wrap;
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::Command;
 

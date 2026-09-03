@@ -107,7 +107,7 @@
     <g transform="translate(52, 102)">
       <text class="mono">
         <tspan class="dim">└─ </tspan>
-        <tspan class="tag-installed">[installed v0.2.11]</tspan>
+        <tspan class="tag-installed">[installed v0.2.12]</tspan>
         <tspan class="dim"> (kernel verified: Landlock ABI 5, seccomp-BPF active)</tspan>
       </text>
     </g>

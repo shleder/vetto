@@ -4,12 +4,15 @@ pub mod codex;
 pub mod codex_index;
 pub mod codex_inventory;
 pub mod cursor;
+pub mod ephemeral;
 pub mod lock;
 pub mod rollback;
 pub mod safe_fs;
 pub mod snapshot;
 pub mod types;
 pub mod wal;
+
+pub use ephemeral::handle_ephemeral_completion;
 
 use std::path::{Path, PathBuf};
 

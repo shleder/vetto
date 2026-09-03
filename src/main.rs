@@ -18,12 +18,13 @@ use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
+use vetto::pty;
+#[cfg(unix)]
+use vetto::tui;
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
-    rescue, sandbox, shim,
+    rescue, sandbox, shim, watchdog,
 };
-#[cfg(unix)]
-use vetto::{pty, tui};
 
 fn main() {
     if let Err(err) = run() {
@@ -110,6 +111,7 @@ fn run() -> Result<()> {
     }
 
     match &args.command {
+        Some(cli::Command::Mask(mask_args)) => cli::mask::run_mask(mask_args),
         Some(cli::Command::Enable(enable_args)) => cli::enable::run_enable(enable_args),
         Some(cli::Command::Disable(disable_args)) => cli::enable::run_disable(disable_args),
         Some(cli::Command::Run {
@@ -141,11 +143,76 @@ fn run() -> Result<()> {
             check_agent,
             fix,
         }) => doctor(*probe, check_agent.as_deref(), *fix),
-        Some(cli::Command::Init { force, wizard }) => init(*force, *wizard),
+        Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
+        Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
+        Some(cli::Command::Ephemeral(ephemeral_args)) => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            cfg.ephemeral = true;
+            cfg.snapshot = true;
+            cfg.ephemeral_auto_accept = ephemeral_args.yes;
+            cfg.ephemeral_force_discard = ephemeral_args.discard;
+            if !ephemeral_args.command.is_empty() {
+                cfg.agent = ephemeral_args.command.clone();
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = vetto::config::detect_agent_preset(&cfg.agent);
+                }
+                if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
+                    if let Some(ref agent) = cfg.agent_preset {
+                        let domains = policy::presets::agent_network_allowlist(agent);
+                        if !domains.is_empty() {
+                            cfg.net = NetMode::Allowlist(domains);
+                        }
+                    }
+                }
+            }
+            if cfg.agent.is_empty() {
+                let project = std::env::current_dir().context("getcwd")?;
+                let detected = match vetto::onboard::detect_agent(&project) {
+                    Ok(detected) => detected,
+                    Err(e) => bail!(
+                        "no AI agent detected in {} ({e})\n\n\
+                         Usage: vetto ephemeral [OPTIONS] -- <command> [args...]",
+                        project.display()
+                    ),
+                };
+                eprintln!(
+                    "vetto: zero-config auto-detected agent '{}' ({})",
+                    detected.name, detected.reason
+                );
+                cfg.agent = detected.command;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = Some(detected.name.to_string());
+                }
+                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                    cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+            }
+            supervise(cfg)
+        }
+        Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
+        Some(cli::Command::Pack(args)) => cli::bundle::run_pack(args),
+        Some(cli::Command::Unpack(args)) => cli::bundle::run_unpack(args),
+        Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
+        Some(cli::Command::Init { force, wizard }) => {
+            if *wizard {
+                cli::wizard::run_wizard_cli(&cli::wizard::WizardArgs {
+                    path: ".".to_string(),
+                    yes: false,
+                    force: *force,
+                    preset: None,
+                    agent: None,
+                })
+            } else {
+                init(*force, *wizard)
+            }
+        }
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
-        Some(cli::Command::Mcp) => mcp::run_stdio_server(),
+        Some(cli::Command::Mcp { command }) => match command {
+            None | Some(cli::McpCommand::Serve) => mcp::run_stdio_server(),
+            Some(cli::McpCommand::Wrap(args)) => mcp::run_wrap(args),
+        },
         Some(cli::Command::Daemon { command }) => daemon::run_cli(command),
         Some(cli::Command::Serve { port }) => remote::run_serve(*port),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
@@ -159,6 +226,7 @@ fn run() -> Result<()> {
             profile.as_deref(),
         ),
         Some(cli::Command::Status { json }) => cli::status::run_cli(*json),
+        Some(cli::Command::Kill(kill_args)) => cli::kill::run_cli(kill_args),
         Some(cli::Command::Profile { command }) => match command {
             cli::ProfileCommand::Save {
                 name,
@@ -562,7 +630,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let overrides = policy::loader::PolicyOverrides {
         deny_glob: cfg.deny_glob.clone(),
         git_guard: if cfg.git_guard { Some(true) } else { None },
-        snapshot: if cfg.snapshot { Some(true) } else { None },
+        snapshot: if cfg.snapshot || cfg.ephemeral {
+            Some(true)
+        } else {
+            None
+        },
         auto_deny_secrets: if cfg.auto_deny_secrets {
             Some(true)
         } else {
@@ -602,13 +674,27 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if pol.snapshot || cfg.snapshot {
-        if let Err(e) = rescue::snapshot::create_snapshot(
+    if pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty() {
+        match rescue::snapshot::create_snapshot(
             &project,
             &session_id,
             rescue::snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
         ) {
-            eprintln!("vetto: warning: snapshot creation failed: {e}");
+            Ok(meta) => {
+                tracing::debug!(
+                    "created snapshot for session {session_id} ({} files, {} bytes)",
+                    meta.file_count,
+                    meta.total_size_bytes
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("exceeds maximum snapshot limit") {
+                    tracing::debug!("vetto: snapshot skipped (project exceeds 50MB limit): {msg}");
+                } else {
+                    tracing::debug!("vetto: snapshot creation skipped: {e}");
+                }
+            }
         }
     }
     if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
@@ -788,7 +874,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             stderr_w = Some(w2);
             stdio
         }
-        TuiMode::None => sandbox::StdioMode::Inherit,
+        TuiMode::None => {
+            if cfg.mask_secrets {
+                let (r1, w1) = pipe2()?;
+                let (r2, w2) = pipe2()?;
+                let stdio = sandbox::StdioMode::Captured {
+                    stdout_w: w1.as_raw_fd(),
+                    stderr_w: w2.as_raw_fd(),
+                };
+                stdout_r = Some(r1);
+                stdout_w = Some(w1);
+                stderr_r = Some(r2);
+                stderr_w = Some(w2);
+                stdio
+            } else {
+                sandbox::StdioMode::Inherit
+            }
+        }
     };
     #[cfg(windows)]
     let stdio = {
@@ -830,6 +932,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // ---- Phase 2: threads now allowed -------------------------------------
     let bus = EventBus::new();
     let root_pid = handle.root_pid;
+
+    #[cfg(unix)]
+    let mut out_reader = None;
+    #[cfg(unix)]
+    let mut err_reader = None;
+    #[cfg(unix)]
+    if cfg.tui == TuiMode::None && cfg.mask_secrets {
+        if let Some(r1) = stdout_r.take() {
+            out_reader = Some(spawn_streaming_redactor(r1, std::io::stdout()));
+        }
+        if let Some(r2) = stderr_r.take() {
+            err_reader = Some(spawn_streaming_redactor(r2, std::io::stderr()));
+        }
+    }
 
     if let Ok(reg) = cli::status::SessionRegistry::new() {
         let agent_name = cfg.agent_preset.as_deref().unwrap_or_else(|| &cfg.agent[0]);
@@ -1095,10 +1211,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 false,
             )
         }
-        TuiMode::None => match cfg.session_timeout {
-            Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
-            None => (handle.wait(), false),
-        },
+        TuiMode::None => {
+            let res = match cfg.session_timeout {
+                Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+                None => (handle.wait(), false),
+            };
+            if let Some(h) = out_reader {
+                let _ = h.join();
+            }
+            if let Some(h) = err_reader {
+                let _ = h.join();
+            }
+            res
+        }
     };
     #[cfg(windows)]
     let (exit_code, timed_out) = match cfg.session_timeout {
@@ -1261,6 +1386,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         log_path: Some(default_log_path.display().to_string()),
     };
     let _ = vetto::audit::record_session_history(&history_record);
+
+    if cfg.ephemeral {
+        rescue::ephemeral::handle_ephemeral_completion(
+            &session_id,
+            &project,
+            exit_code,
+            cfg.ephemeral_auto_accept,
+            cfg.ephemeral_force_discard,
+        )?;
+    }
 
     std::process::exit(code);
 }
@@ -1756,4 +1891,39 @@ fn profiles() -> Result<()> {
         println!("  {name:<12} {desc}");
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_streaming_redactor<W: std::io::Write + Send + 'static>(
+    fd: OwnedFd,
+    mut dest: W,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("vetto-stream-redactor".into())
+        .spawn(move || {
+            use std::io::Read;
+            let mut file = std::fs::File::from(fd);
+            let mut chunk = [0u8; 8192];
+            let mut redactor = pty::AnsiRedactor::new();
+            loop {
+                match file.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let redacted = redactor.redact_chunk(&chunk[..n]);
+                        if !redacted.is_empty() {
+                            let _ = dest.write_all(&redacted);
+                            let _ = dest.flush();
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            let flushed = redactor.flush();
+            if !flushed.is_empty() {
+                let _ = dest.write_all(&flushed);
+                let _ = dest.flush();
+            }
+        })
+        .expect("spawn stream redactor thread")
 }

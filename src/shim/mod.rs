@@ -163,105 +163,241 @@ pub fn find_project_root() -> Option<PathBuf> {
     None
 }
 
-/// Checks if git arguments constitute a destructive operation (force push or delete).
-pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
-    if args.is_empty() {
-        return None;
+fn find_git_subcommand(args: &[String]) -> Option<(usize, &str)> {
+    let mut i = 0;
+    if i < args.len()
+        && (args[i] == "git" || args[i].ends_with("/git") || args[i].ends_with("\\git.exe"))
+    {
+        i += 1;
     }
-    let mut is_push = false;
-    for arg in args {
-        if !arg.starts_with('-') {
-            if arg == "push" {
-                is_push = true;
-            }
-            break;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--allow-destructive-git" {
+            i += 1;
+            continue;
         }
+        if arg == "-C"
+            || arg == "-c"
+            || arg == "--git-dir"
+            || arg == "--work-tree"
+            || arg == "--namespace"
+            || arg == "--exec-path"
+        {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        return Some((i, arg.as_str()));
     }
-    if !is_push {
+    None
+}
+
+/// Comprehensive Git Guard: detects and blocks destructive git operations.
+pub fn is_destructive_git_command(args: &[String]) -> Option<&'static str> {
+    if env::var("VETTO_ALLOW_DESTRUCTIVE_GIT")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        || args.iter().any(|a| a == "--allow-destructive-git")
+    {
         return None;
     }
 
-    for arg in args {
-        if arg == "--force"
-            || arg == "-f"
-            || arg == "--force-with-lease"
-            || arg.starts_with("--force-with-lease=")
-            || arg == "--force-if-includes"
-            || arg == "--delete"
-            || arg == "-d"
-            || (arg.starts_with('+') && arg.contains(':'))
-            || (arg.starts_with(':') && arg.len() > 1)
-        {
-            return Some("destructive git push (force/delete) blocked by vetto git_guard");
+    let (subcmd_idx, subcmd) = find_git_subcommand(args)?;
+    let sub_args = &args[subcmd_idx + 1..];
+
+    match subcmd {
+        "push" => {
+            for arg in sub_args {
+                if arg == "--force"
+                    || arg == "-f"
+                    || arg == "--force-with-lease"
+                    || arg.starts_with("--force-with-lease=")
+                    || arg == "--force-if-includes"
+                    || arg == "--delete"
+                    || arg == "-d"
+                    || (arg.starts_with('+') && (arg.contains(':') || arg.len() > 1))
+                    || (arg.starts_with(':') && arg.len() > 1)
+                {
+                    return Some("destructive git push (force/delete) blocked by vetto git_guard");
+                }
+            }
         }
+        "reset" => {
+            for arg in sub_args {
+                if arg == "--hard" || arg.starts_with("--hard=") {
+                    return Some(
+                        "destructive 'git reset --hard' blocked by vetto git_guard (wipes uncommitted changes)",
+                    );
+                }
+            }
+        }
+        "clean" => {
+            for arg in sub_args {
+                if arg == "--force" || arg == "-force" {
+                    return Some(
+                        "destructive 'git clean -f' blocked by vetto git_guard (deletes untracked files)",
+                    );
+                }
+                if arg.starts_with('-') && !arg.starts_with("--") && arg.contains('f') {
+                    return Some(
+                        "destructive 'git clean -f' blocked by vetto git_guard (deletes untracked files)",
+                    );
+                }
+            }
+        }
+        "checkout" => {
+            let has_dot = sub_args.iter().any(|a| a == ".");
+            let has_force = sub_args.iter().any(|a| a == "-f" || a == "--force");
+            if has_dot || has_force {
+                return Some(
+                    "destructive 'git checkout .' blocked by vetto git_guard (discards working tree changes)",
+                );
+            }
+        }
+        "restore" => {
+            let has_dot = sub_args.iter().any(|a| a == ".");
+            if has_dot {
+                return Some(
+                    "destructive 'git restore .' blocked by vetto git_guard (discards working tree changes)",
+                );
+            }
+        }
+        "branch" => {
+            let has_capital_d = sub_args.iter().any(|a| a == "-D");
+            let has_delete = sub_args.iter().any(|a| a == "--delete" || a == "-d");
+            let has_force = sub_args.iter().any(|a| a == "--force" || a == "-f");
+            if has_capital_d || (has_delete && has_force) {
+                return Some("destructive 'git branch -D' blocked by vetto git_guard");
+            }
+        }
+        _ => {}
     }
 
     None
 }
 
+/// Checks if git arguments constitute a destructive push operation.
+pub fn is_destructive_git_push(args: &[String]) -> Option<&'static str> {
+    if let Some(reason) = is_destructive_git_command(args) {
+        if reason.contains("push") {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+/// Extracts shim control flags (`--allow-destructive-git`, `--no-loop-guard`,
+/// `--timeout <duration>`) and clean args.
+pub fn parse_shim_args(args: &[String]) -> (bool, bool, Option<std::time::Duration>, Vec<String>) {
+    let mut clean = Vec::with_capacity(args.len());
+    let mut allow_override = false;
+    let mut no_loop_guard = false;
+    let mut timeout = env::var("VETTO_COMMAND_TIMEOUT")
+        .ok()
+        .and_then(|v| crate::watchdog::timeout::parse_timeout(&v).ok());
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--allow-destructive-git" {
+            allow_override = true;
+            i += 1;
+        } else if a == "--no-loop-guard" {
+            no_loop_guard = true;
+            i += 1;
+        } else if a == "--timeout" {
+            if i + 1 < args.len() {
+                if let Ok(dur) = crate::watchdog::timeout::parse_timeout(&args[i + 1]) {
+                    timeout = Some(dur);
+                }
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if let Some(raw) = a.strip_prefix("--timeout=") {
+            if let Ok(dur) = crate::watchdog::timeout::parse_timeout(raw) {
+                timeout = Some(dur);
+            }
+            i += 1;
+        } else {
+            clean.push(a.clone());
+            i += 1;
+        }
+    }
+
+    (allow_override, no_loop_guard, timeout, clean)
+}
+
 /// Fast native dispatch entrypoint for shimmed binaries.
 pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
+    let (allow_override, no_loop_guard, configured_timeout, clean_args) = parse_shim_args(args);
+
+    let bypass_active = allow_override
+        || env::var("VETTO_ALLOW_DESTRUCTIVE_GIT")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
     let real_binary = find_real_binary(binary_name)
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
 
-    // Git guard check: block destructive push
+    // Git guard check: block destructive git commands
     if (binary_name == "git" || binary_name.ends_with("/git") || binary_name.ends_with("\\git.exe"))
         && (is_sandboxed()
             || env::var("VETTO_GIT_GUARD")
                 .map(|v| v == "1")
                 .unwrap_or(false))
+        && !bypass_active
     {
-        if let Some(reason) = is_destructive_git_push(args) {
+        if let Some(reason) = is_destructive_git_command(&clean_args) {
             eprintln!("vetto: {reason}");
             bail!("{reason}");
         }
     }
 
-    if is_sandboxed() {
+    if !no_loop_guard {
+        crate::watchdog::check_before_execution(binary_name, &clean_args, None)?;
+    }
+
+    let exit_code = if is_sandboxed() {
         // Recursion barrier active — execute real binary directly with zero overhead
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            let err = Command::new(&real_binary).args(args).exec();
-            bail!(
-                "failed to exec real binary {}: {err}",
-                real_binary.display()
-            );
-        }
-
-        #[cfg(not(unix))]
-        {
-            let mut child = Command::new(&real_binary).args(args).spawn()?;
+        let mut cmd = Command::new(&real_binary);
+        cmd.args(&clean_args);
+        if let Some(limit) = configured_timeout {
+            let status = crate::watchdog::timeout::run_with_timeout(&mut cmd, limit)?;
+            status.code().unwrap_or(124)
+        } else {
+            let mut child = cmd.spawn()?;
             let status = child.wait()?;
-            return Ok(status.code().unwrap_or(1));
+            status.code().unwrap_or(1)
         }
-    }
+    } else {
+        // Not sandboxed yet: execute under Vetto sandbox supervisor
+        let vetto_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("vetto"));
 
-    // Not sandboxed yet: execute under Vetto sandbox supervisor
-    let vetto_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("vetto"));
+        let mut supervisor_cmd = Command::new(vetto_exe);
+        supervisor_cmd.env(ENV_VETTO_SANDBOXED, "1");
+        supervisor_cmd.env(ENV_VETTO_SHIM_ACTIVE, "1");
+        supervisor_cmd.env(ENV_VETTO_WRAPPED, "1");
 
-    let mut supervisor_cmd = Command::new(vetto_exe);
-    supervisor_cmd.env(ENV_VETTO_SANDBOXED, "1");
-    supervisor_cmd.env(ENV_VETTO_SHIM_ACTIVE, "1");
-    supervisor_cmd.env(ENV_VETTO_WRAPPED, "1");
+        supervisor_cmd.arg("--");
+        supervisor_cmd.arg(&real_binary);
+        supervisor_cmd.args(&clean_args);
 
-    supervisor_cmd.arg("--");
-    supervisor_cmd.arg(&real_binary);
-    supervisor_cmd.args(args);
+        if let Some(limit) = configured_timeout {
+            let status = crate::watchdog::timeout::run_with_timeout(&mut supervisor_cmd, limit)?;
+            status.code().unwrap_or(124)
+        } else {
+            let mut child = supervisor_cmd.spawn()?;
+            let status = child.wait()?;
+            status.code().unwrap_or(1)
+        }
+    };
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = supervisor_cmd.exec();
-        bail!("failed to exec vetto supervisor: {err}");
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut child = supervisor_cmd.spawn()?;
-        let status = child.wait()?;
-        Ok(status.code().unwrap_or(1))
-    }
+    let _ = crate::watchdog::record_after_execution(binary_name, &clean_args, exit_code, None);
+    Ok(exit_code)
 }
 
 /// Entrypoint for the `vetto shim` subcommand.
@@ -365,5 +501,157 @@ mod tests {
             is_destructive_git_push(&["push".into(), "origin".into(), "main".into()]).is_none()
         );
         assert!(is_destructive_git_push(&["status".into()]).is_none());
+    }
+
+    #[test]
+    fn detects_destructive_git_commands() {
+        // Hard reset
+        assert!(is_destructive_git_command(&["reset".into(), "--hard".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["reset".into(), "--hard".into(), "HEAD~1".into()])
+                .is_some()
+        );
+        assert!(is_destructive_git_command(&["reset".into(), "--hard=HEAD~1".into()]).is_some());
+
+        // Aggressive clean
+        assert!(is_destructive_git_command(&["clean".into(), "-f".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "-fd".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "-fx".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "-fdx".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "-fxd".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "-force".into()]).is_some());
+        assert!(is_destructive_git_command(&["clean".into(), "--force".into()]).is_some());
+
+        // Discard checkout
+        assert!(is_destructive_git_command(&["checkout".into(), ".".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["checkout".into(), "--".into(), ".".into()]).is_some()
+        );
+        assert!(is_destructive_git_command(&["checkout".into(), "-f".into()]).is_some());
+        assert!(is_destructive_git_command(&["checkout".into(), "--force".into()]).is_some());
+
+        // Discard restore
+        assert!(is_destructive_git_command(&["restore".into(), ".".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["restore".into(), "--worktree".into(), ".".into()])
+                .is_some()
+        );
+        assert!(
+            is_destructive_git_command(&["restore".into(), "--staged".into(), ".".into()])
+                .is_some()
+        );
+
+        // Destructive push
+        assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_some());
+        assert!(is_destructive_git_command(&["push".into(), "-f".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "--force-with-lease".into()]).is_some()
+        );
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "--delete".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "-d".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), ":feat".into()]).is_some()
+        );
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "+main:main".into()])
+                .is_some()
+        );
+
+        // Forced branch delete
+        assert!(
+            is_destructive_git_command(&["branch".into(), "-D".into(), "feat".into()]).is_some()
+        );
+        assert!(is_destructive_git_command(&[
+            "branch".into(),
+            "--delete".into(),
+            "--force".into(),
+            "feat".into()
+        ])
+        .is_some());
+        assert!(is_destructive_git_command(&[
+            "branch".into(),
+            "-d".into(),
+            "-f".into(),
+            "feat".into()
+        ])
+        .is_some());
+
+        // Works with explicit `git` prefix as well
+        assert!(
+            is_destructive_git_command(&["git".into(), "reset".into(), "--hard".into()]).is_some()
+        );
+    }
+
+    #[test]
+    fn allows_safe_git_commands() {
+        assert!(is_destructive_git_command(&["status".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["commit".into(), "-m".into(), "msg".into()]).is_none()
+        );
+        assert!(is_destructive_git_command(&["diff".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["checkout".into(), "-b".into(), "new-branch".into()])
+                .is_none()
+        );
+        assert!(is_destructive_git_command(&["checkout".into(), "main".into()]).is_none());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_none()
+        );
+        assert!(
+            is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()])
+                .is_none()
+        );
+        assert!(is_destructive_git_command(&["clean".into(), "-n".into()]).is_none());
+        assert!(is_destructive_git_command(&["restore".into(), "file.txt".into()]).is_none());
+    }
+
+    #[test]
+    fn allows_destructive_git_bypass_and_override() {
+        // Flag override
+        assert!(is_destructive_git_command(&[
+            "reset".into(),
+            "--hard".into(),
+            "--allow-destructive-git".into()
+        ])
+        .is_none());
+
+        // Env var override
+        env::set_var("VETTO_ALLOW_DESTRUCTIVE_GIT", "1");
+        assert!(is_destructive_git_command(&["reset".into(), "--hard".into()]).is_none());
+        assert!(is_destructive_git_command(&["clean".into(), "-fd".into()]).is_none());
+        assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_none());
+        env::remove_var("VETTO_ALLOW_DESTRUCTIVE_GIT");
+    }
+
+    #[test]
+    fn parse_shim_args_timeout_extraction() {
+        let args = vec![
+            "--timeout".to_string(),
+            "45s".to_string(),
+            "status".to_string(),
+            "--no-loop-guard".to_string(),
+        ];
+        let (allow_override, no_loop_guard, timeout, clean) = parse_shim_args(&args);
+        assert!(!allow_override);
+        assert!(no_loop_guard);
+        assert_eq!(timeout, Some(std::time::Duration::from_secs(45)));
+        assert_eq!(clean, vec!["status".to_string()]);
+
+        let args_eq = vec!["--timeout=2m".to_string(), "commit".to_string()];
+        let (_, _, timeout_eq, clean_eq) = parse_shim_args(&args_eq);
+        assert_eq!(timeout_eq, Some(std::time::Duration::from_secs(120)));
+        assert_eq!(clean_eq, vec!["commit".to_string()]);
     }
 }

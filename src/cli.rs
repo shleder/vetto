@@ -1,13 +1,26 @@
+pub mod bundle;
+pub mod diff;
 pub mod enable;
 pub mod git_hook;
 pub mod hook;
+pub mod kill;
+pub mod mask;
 pub mod plugin;
 pub mod shell_env;
 pub mod status;
+pub mod undo;
 pub mod why_slow;
+pub mod wizard;
 
+pub use crate::watchdog::WatchdogArgs;
+pub use bundle::{PackArgs, UnpackArgs};
+pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
+pub use kill::KillArgs;
+pub use mask::MaskArgs;
+pub use undo::UndoArgs;
+pub use wizard::WizardArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -201,6 +214,10 @@ pub struct Cli {
     #[arg(long = "snapshot")]
     pub snapshot: bool,
 
+    /// Disposable session: auto-rollback on failure, or prompt [Y/n] to keep changes on success
+    #[arg(long = "ephemeral")]
+    pub ephemeral: bool,
+
     /// Automatically scan project for secrets at session start and deny them.
     #[arg(long = "auto-deny-secrets")]
     pub auto_deny_secrets: bool,
@@ -208,6 +225,14 @@ pub struct Cli {
     /// Target remote daemon API endpoint URL (e.g. http://127.0.0.1:54321)
     #[arg(long, value_name = "URL")]
     pub remote: Option<String>,
+
+    /// Redact secrets in real-time from stdout/stderr streams
+    #[arg(long = "mask-secrets")]
+    pub mask_secrets: bool,
+
+    /// Disable real-time secret redaction
+    #[arg(long = "no-mask-secrets")]
+    pub no_mask_secrets: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -219,6 +244,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Stream stdin to stdout with real-time secret and API key redaction
+    Mask(mask::MaskArgs),
+
     /// Enable transparent sandbox wrapper for an AI coding agent (e.g. `vetto enable claude`)
     Enable(EnableArgs),
 
@@ -274,6 +302,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Terminate a running session or process, or kill hung runaway sessions
+    Kill(kill::KillArgs),
     /// Verify the sandbox boundary WITHOUT running any agent: secret paths,
     /// network reachability, and write-outside checks execute inside a
     /// throwaway sandbox built from the resolved policy.
@@ -293,6 +323,21 @@ pub enum Command {
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
     },
+    /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml
+    Wizard(wizard::WizardArgs),
+    /// Restore project files from a previous session snapshot (instant rollback)
+    Undo(undo::UndoArgs),
+    /// Run an agent in a disposable ephemeral sandbox with instant rollback on cancel/failure
+    Ephemeral(EphemeralArgs),
+    /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
+    Diff(diff::DiffArgs),
+    /// Export a session into a portable repro bundle (.vetto-pack) with snapshot, logs,
+    /// and telemetry
+    Pack(bundle::PackArgs),
+    /// Unpack or inspect a .vetto-pack bundle to investigate or reproduce an incident
+    Unpack(bundle::UnpackArgs),
+    /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
+    Watchdog(WatchdogArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
     #[command(hide = true)]
     Init {
@@ -318,9 +363,12 @@ pub enum Command {
         #[command(subcommand)]
         command: plugin::PluginCommand,
     },
-    /// Run as a Model Context Protocol (MCP) JSON-RPC stdio server
+    /// Run or wrap Model Context Protocol (MCP) servers
     #[command(hide = true)]
-    Mcp,
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommand>,
+    },
     /// Manage background session multiplexer daemon and session registry
     #[command(hide = true)]
     Daemon {
@@ -578,6 +626,49 @@ pub enum Command {
     External(Vec<String>),
 }
 
+#[derive(clap::Args, Debug, Clone)]
+pub struct EphemeralArgs {
+    /// Force discard changes without prompting, regardless of exit code
+    #[arg(long = "discard")]
+    pub discard: bool,
+
+    /// Automatically accept and keep changes without prompting if session succeeds
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
+    /// Command and arguments to execute; everything after `--`
+    #[arg(last = true, value_name = "COMMAND [ARGS...]")]
+    pub command: Vec<String>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum McpCommand {
+    /// Run as native Vetto MCP JSON-RPC stdio server (default)
+    Serve,
+
+    /// Wrap and sandbox an external third-party MCP server binary
+    Wrap(McpWrapArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct McpWrapArgs {
+    /// Allow read+write access to a path (can be repeated)
+    #[arg(long = "allow", value_name = "PATH")]
+    pub allow: Vec<String>,
+
+    /// Allow read-only access to a path (can be repeated)
+    #[arg(long = "allow-read", value_name = "PATH")]
+    pub allow_read: Vec<String>,
+
+    /// Network egress mode: off (default) | allowlist:<domains> | open
+    #[arg(long, default_value = "off", value_name = "MODE")]
+    pub net: String,
+
+    /// Target MCP server command and arguments; everything after `--`
+    #[arg(last = true, value_name = "COMMAND [ARGS...]")]
+    pub command: Vec<String>,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum PolicyCommand {
     /// Print the effective policy after all layers merge: tier, network,
@@ -826,6 +917,42 @@ mod tests {
     }
 
     #[test]
+    fn kill_subcommand_parses_hung_and_pid() {
+        let hung_cli = Cli::try_parse_from(["vetto", "kill", "--hung"]).expect("kill hung parsing");
+        assert!(matches!(
+            hung_cli.command,
+            Some(Command::Kill(KillArgs {
+                hung: true,
+                target: None,
+                force: false,
+                ..
+            }))
+        ));
+
+        let pid_cli = Cli::try_parse_from(["vetto", "kill", "12345"]).expect("kill pid parsing");
+        assert!(matches!(
+            pid_cli.command,
+            Some(Command::Kill(KillArgs {
+                target: Some(ref t),
+                hung: false,
+                force: false,
+                ..
+            })) if t == "12345"
+        ));
+
+        let force_cli =
+            Cli::try_parse_from(["vetto", "kill", "-9", "54321"]).expect("kill force parsing");
+        assert!(matches!(
+            force_cli.command,
+            Some(Command::Kill(KillArgs {
+                target: Some(ref t),
+                force: true,
+                ..
+            })) if t == "54321"
+        ));
+    }
+
+    #[test]
     fn top_level_multi_keeps_named_agents_separate_from_literal_command() {
         let cli = Cli::try_parse_from([
             "vetto",
@@ -852,6 +979,26 @@ mod tests {
                 check_agent: Some(ref agent),
                 ..
             }) if agent == "codex"
+        ));
+    }
+
+    #[test]
+    fn mask_subcommand_parses_style() {
+        let cli_default = Cli::try_parse_from(["vetto", "mask"]).expect("mask default parsing");
+        assert!(matches!(
+            cli_default.command,
+            Some(Command::Mask(MaskArgs {
+                style: mask::MaskStyle::Marker,
+            }))
+        ));
+
+        let cli_pad =
+            Cli::try_parse_from(["vetto", "mask", "--style", "pad"]).expect("mask pad parsing");
+        assert!(matches!(
+            cli_pad.command,
+            Some(Command::Mask(MaskArgs {
+                style: mask::MaskStyle::Pad,
+            }))
         ));
     }
 
@@ -1124,7 +1271,33 @@ mod tests {
     #[test]
     fn tier7_subcommands_parse_correctly() {
         let mcp = Cli::try_parse_from(["vetto", "mcp"]).expect("mcp syntax");
-        assert!(matches!(mcp.command, Some(Command::Mcp)));
+        assert!(matches!(mcp.command, Some(Command::Mcp { command: None })));
+
+        let mcp_serve = Cli::try_parse_from(["vetto", "mcp", "serve"]).expect("mcp serve");
+        assert!(matches!(
+            mcp_serve.command,
+            Some(Command::Mcp {
+                command: Some(McpCommand::Serve)
+            })
+        ));
+
+        let mcp_wrap = Cli::try_parse_from([
+            "vetto",
+            "mcp",
+            "wrap",
+            "--allow",
+            "/tmp",
+            "--",
+            "node",
+            "server.js",
+        ])
+        .expect("mcp wrap");
+        assert!(matches!(
+            mcp_wrap.command,
+            Some(Command::Mcp {
+                command: Some(McpCommand::Wrap(ref args))
+            }) if args.allow == vec!["/tmp"] && args.command == vec!["node", "server.js"]
+        ));
 
         let plugin_install =
             Cli::try_parse_from(["vetto", "plugin", "install", "claude-code", "--force"])
@@ -1179,6 +1352,39 @@ mod tests {
             Some(Command::Policy {
                 command: PolicyCommand::Use { ref name, force: false }
             }) if name == "python-dev"
+        ));
+    }
+
+    #[test]
+    fn test_ephemeral_cli_flag_and_subcommand() {
+        let flag_cli = Cli::try_parse_from(["vetto", "--ephemeral", "--", "claude"])
+            .expect("--ephemeral parsing");
+        assert!(flag_cli.ephemeral);
+        assert_eq!(flag_cli.agent, vec!["claude"]);
+
+        let subcmd_cli = Cli::try_parse_from(["vetto", "ephemeral", "--", "claude"])
+            .expect("ephemeral subcommand parsing");
+        assert!(matches!(
+            subcmd_cli.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["claude"] && !args.discard && !args.yes
+        ));
+
+        let subcmd_discard =
+            Cli::try_parse_from(["vetto", "ephemeral", "--discard", "--", "codex"])
+                .expect("ephemeral --discard");
+        assert!(matches!(
+            subcmd_discard.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["codex"] && args.discard && !args.yes
+        ));
+
+        let subcmd_yes = Cli::try_parse_from(["vetto", "ephemeral", "-y", "--", "cursor"])
+            .expect("ephemeral -y");
+        assert!(matches!(
+            subcmd_yes.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["cursor"] && !args.discard && args.yes
         ));
     }
 }

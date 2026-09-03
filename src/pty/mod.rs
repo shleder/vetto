@@ -7,25 +7,32 @@
 pub mod ansi;
 pub mod entropy;
 pub mod redact;
+#[cfg(unix)]
 pub mod resizer;
+#[cfg(unix)]
 pub mod sigwinch;
 
 pub use ansi::AnsiRedactor;
 pub use entropy::{calculate_entropy, is_entropy_masked, mask_high_entropy_tokens};
 pub use redact::{RedactionStyle, StreamingRedactor};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(unix, target_os = "macos"))]
 use std::ffi::CStr;
+#[cfg(unix)]
 use std::ffi::CString;
+#[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
+#[cfg(unix)]
 use crate::error::{VettoError, VettoResult};
 
+#[cfg(unix)]
 pub struct Pty {
     pub master: OwnedFd,
     pub slave: OwnedFd,
 }
 
+#[cfg(unix)]
 impl Pty {
     /// Open a fresh pty pair sized `(rows, cols)`.
     pub fn open(rows: u16, cols: u16) -> VettoResult<Self> {
@@ -116,6 +123,7 @@ impl Pty {
 
 /// TIOCSWINSZ on a pty end. The kernel forwards SIGWINCH to the foreground
 /// process group of the pty — no manual signaling needed.
+#[cfg(unix)]
 pub fn set_winsize(fd: RawFd, rows: u16, cols: u16) {
     let ws = libc::winsize {
         ws_row: rows,
@@ -128,6 +136,7 @@ pub fn set_winsize(fd: RawFd, rows: u16, cols: u16) {
 }
 
 /// Toggle O_NONBLOCK on a descriptor.
+#[cfg(unix)]
 pub fn set_nonblocking(fd: RawFd, on: bool) -> std::io::Result<()> {
     // SAFETY: fcntl(F_GETFL) on a live descriptor.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -147,6 +156,7 @@ pub fn set_nonblocking(fd: RawFd, on: bool) -> std::io::Result<()> {
 }
 
 /// Read whatever is ready on a nonblocking fd (empty slice when nothing).
+#[cfg(unix)]
 pub fn read_ready(fd: RawFd, buf: &mut [u8]) -> usize {
     // SAFETY: raw read into the caller's buffer.
     let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
@@ -159,6 +169,7 @@ pub fn read_ready(fd: RawFd, buf: &mut [u8]) -> usize {
 
 /// Copy one currently-ready chunk from a PTY/file descriptor to an output
 /// descriptor without interpreting or modifying any bytes.
+#[cfg(unix)]
 pub fn passthrough_once(input_fd: RawFd, output_fd: RawFd, buf: &mut [u8]) -> usize {
     let n = read_ready(input_fd, buf);
     if n > 0 {
@@ -169,6 +180,7 @@ pub fn passthrough_once(input_fd: RawFd, output_fd: RawFd, buf: &mut [u8]) -> us
 
 /// Copy one currently-ready chunk from a PTY descriptor to an output descriptor,
 /// passing through live streaming ANSI secret redaction.
+#[cfg(unix)]
 pub fn passthrough_redacted(
     input_fd: RawFd,
     output_fd: RawFd,
@@ -184,6 +196,7 @@ pub fn passthrough_redacted(
 }
 
 /// Blocking-write loop for a fd (EINTR-safe). Best-effort: returns on error.
+#[cfg(unix)]
 pub fn write_all_fd(fd: RawFd, mut buf: &[u8]) {
     while !buf.is_empty() {
         // SAFETY: raw write of the remaining slice.
