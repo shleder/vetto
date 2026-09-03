@@ -4,9 +4,12 @@
 //! Secrets listed in `secrets.proxy` are completely stripped from the sandboxed agent's
 //! environment and injected into upstream requests by the host broker only for allowlisted domains.
 
-use anyhow::{bail, Result};
-// `Context` is only used by the Unix broker thread; a blanket allow here
-// would hide the next unused-import regression (cf. pty import incident).
+use anyhow::Result;
+// `bail` serves only the non-Unix stub below, `Context` only the Unix broker
+// thread; per-platform gates instead of a blanket allow, so the next
+// unused-import regression stays visible (cf. pty import incident).
+#[cfg(not(unix))]
+use anyhow::bail;
 #[cfg(unix)]
 use anyhow::Context;
 use std::collections::HashMap;
