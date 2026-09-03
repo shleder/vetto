@@ -737,13 +737,22 @@ mod tests {
             "allowlist:generativelanguage.googleapis.com"
         );
 
-        // Aider defaults to api.openai.com,api.anthropic.com
+        // Aider defaults to api.openai.com,api.anthropic.com,openrouter.ai
         let cli = Cli::try_parse_from(["vetto", "--", "aider"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("aider"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,api.anthropic.com"
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai"
+        );
+
+        // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai
+        let cli = Cli::try_parse_from(["vetto", "--", "opencode"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.agent_preset.as_deref(), Some("opencode"));
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai"
         );
 
         // Cursor defaults to api.cursor.com,api2.cursor.sh
