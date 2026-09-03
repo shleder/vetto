@@ -173,6 +173,9 @@ pub struct RunConfig {
     pub deny_glob: Vec<String>,
     pub git_guard: bool,
     pub snapshot: bool,
+    pub ephemeral: bool,
+    pub ephemeral_auto_accept: bool,
+    pub ephemeral_force_discard: bool,
     pub auto_deny_secrets: bool,
     pub mask_secrets: bool,
     pub agent: Vec<String>,
@@ -327,6 +330,9 @@ impl RunConfig {
             global.mask_secrets.unwrap_or(true)
         };
 
+        let ephemeral = cli.ephemeral;
+        let snapshot = cli.snapshot || ephemeral;
+
         Ok(Self {
             profile,
             preset,
@@ -358,7 +364,10 @@ impl RunConfig {
             agent_preset,
             deny_glob: cli.deny_glob.clone(),
             git_guard: cli.git_guard,
-            snapshot: cli.snapshot,
+            snapshot,
+            ephemeral,
+            ephemeral_auto_accept: false,
+            ephemeral_force_discard: false,
             auto_deny_secrets: cli.auto_deny_secrets,
             mask_secrets,
             agent: cli.agent.clone(),
@@ -776,5 +785,13 @@ mod tests {
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
         assert_eq!(cfg.net.label(), "allowlist:custom.api.com");
+    }
+
+    #[test]
+    fn test_ephemeral_flag_enables_snapshot_and_ephemeral() {
+        let cli = Cli::try_parse_from(["vetto", "--ephemeral", "--", "claude"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert!(cfg.ephemeral);
+        assert!(cfg.snapshot);
     }
 }

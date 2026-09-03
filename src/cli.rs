@@ -212,6 +212,10 @@ pub struct Cli {
     #[arg(long = "snapshot")]
     pub snapshot: bool,
 
+    /// Disposable session: auto-rollback on failure, or prompt [Y/n] to keep changes on success
+    #[arg(long = "ephemeral")]
+    pub ephemeral: bool,
+
     /// Automatically scan project for secrets at session start and deny them.
     #[arg(long = "auto-deny-secrets")]
     pub auto_deny_secrets: bool,
@@ -321,6 +325,8 @@ pub enum Command {
     Wizard(wizard::WizardArgs),
     /// Restore project files from a previous session snapshot (instant rollback)
     Undo(undo::UndoArgs),
+    /// Run an agent in a disposable ephemeral sandbox with instant rollback on cancel/failure
+    Ephemeral(EphemeralArgs),
     /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
     Diff(diff::DiffArgs),
     /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
@@ -611,6 +617,21 @@ pub enum Command {
     /// Stored workspace profile invocation by name.
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct EphemeralArgs {
+    /// Force discard changes without prompting, regardless of exit code
+    #[arg(long = "discard")]
+    pub discard: bool,
+
+    /// Automatically accept and keep changes without prompting if session succeeds
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
+    /// Command and arguments to execute; everything after `--`
+    #[arg(last = true, value_name = "COMMAND [ARGS...]")]
+    pub command: Vec<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1325,6 +1346,39 @@ mod tests {
             Some(Command::Policy {
                 command: PolicyCommand::Use { ref name, force: false }
             }) if name == "python-dev"
+        ));
+    }
+
+    #[test]
+    fn test_ephemeral_cli_flag_and_subcommand() {
+        let flag_cli = Cli::try_parse_from(["vetto", "--ephemeral", "--", "claude"])
+            .expect("--ephemeral parsing");
+        assert!(flag_cli.ephemeral);
+        assert_eq!(flag_cli.agent, vec!["claude"]);
+
+        let subcmd_cli = Cli::try_parse_from(["vetto", "ephemeral", "--", "claude"])
+            .expect("ephemeral subcommand parsing");
+        assert!(matches!(
+            subcmd_cli.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["claude"] && !args.discard && !args.yes
+        ));
+
+        let subcmd_discard =
+            Cli::try_parse_from(["vetto", "ephemeral", "--discard", "--", "codex"])
+                .expect("ephemeral --discard");
+        assert!(matches!(
+            subcmd_discard.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["codex"] && args.discard && !args.yes
+        ));
+
+        let subcmd_yes = Cli::try_parse_from(["vetto", "ephemeral", "-y", "--", "cursor"])
+            .expect("ephemeral -y");
+        assert!(matches!(
+            subcmd_yes.command,
+            Some(Command::Ephemeral(ref args))
+                if args.command == vec!["cursor"] && !args.discard && args.yes
         ));
     }
 }

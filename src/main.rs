@@ -145,6 +145,50 @@ fn run() -> Result<()> {
         }) => doctor(*probe, check_agent.as_deref(), *fix),
         Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
         Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
+        Some(cli::Command::Ephemeral(ephemeral_args)) => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            cfg.ephemeral = true;
+            cfg.snapshot = true;
+            cfg.ephemeral_auto_accept = ephemeral_args.yes;
+            cfg.ephemeral_force_discard = ephemeral_args.discard;
+            if !ephemeral_args.command.is_empty() {
+                cfg.agent = ephemeral_args.command.clone();
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = vetto::config::detect_agent_preset(&cfg.agent);
+                }
+                if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
+                    if let Some(ref agent) = cfg.agent_preset {
+                        let domains = policy::presets::agent_network_allowlist(agent);
+                        if !domains.is_empty() {
+                            cfg.net = NetMode::Allowlist(domains);
+                        }
+                    }
+                }
+            }
+            if cfg.agent.is_empty() {
+                let project = std::env::current_dir().context("getcwd")?;
+                let detected = match vetto::onboard::detect_agent(&project) {
+                    Ok(detected) => detected,
+                    Err(e) => bail!(
+                        "no AI agent detected in {} ({e})\n\n\
+                         Usage: vetto ephemeral [OPTIONS] -- <command> [args...]",
+                        project.display()
+                    ),
+                };
+                eprintln!(
+                    "vetto: zero-config auto-detected agent '{}' ({})",
+                    detected.name, detected.reason
+                );
+                cfg.agent = detected.command;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = Some(detected.name.to_string());
+                }
+                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                    cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+            }
+            supervise(cfg)
+        }
         Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
         Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
         Some(cli::Command::Init { force, wizard }) => {
@@ -584,7 +628,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let overrides = policy::loader::PolicyOverrides {
         deny_glob: cfg.deny_glob.clone(),
         git_guard: if cfg.git_guard { Some(true) } else { None },
-        snapshot: if cfg.snapshot { Some(true) } else { None },
+        snapshot: if cfg.snapshot || cfg.ephemeral { Some(true) } else { None },
         auto_deny_secrets: if cfg.auto_deny_secrets {
             Some(true)
         } else {
@@ -624,7 +668,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if pol.snapshot || cfg.snapshot || !cfg.agent.is_empty() {
+    if pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty() {
         match rescue::snapshot::create_snapshot(
             &project,
             &session_id,
@@ -1336,6 +1380,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         log_path: Some(default_log_path.display().to_string()),
     };
     let _ = vetto::audit::record_session_history(&history_record);
+
+    if cfg.ephemeral {
+        rescue::ephemeral::handle_ephemeral_completion(
+            &session_id,
+            &project,
+            exit_code,
+            cfg.ephemeral_auto_accept,
+            cfg.ephemeral_force_discard,
+        )?;
+    }
 
     std::process::exit(code);
 }
