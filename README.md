@@ -65,7 +65,7 @@ npx @shledery/vetto doctor
 
 ```yaml
 # In GitHub Actions CI (unattended agent runs, evals, SWE-bench)
-- uses: shleder/vetto@v0.2.12
+- uses: shleder/vetto@v0.2.13
 ```
 
 *Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
@@ -79,13 +79,23 @@ Protect your workstation and run any AI coding agent unattended in seconds:
 ### 1. Enable Your Agent
 ```bash
 # Wrap any agent of choice (creates transparent zero-overhead shims):
-vetto enable codex         # OpenAI Codex CLI
+vetto enable opencode      # OpenCode CLI
 vetto enable claude        # Claude Code
-vetto enable antigravity   # Antigravity CLI
+vetto enable codex         # OpenAI Codex CLI
+vetto enable windsurf      # Codeium Windsurf
+vetto enable goose         # Block Goose
 vetto enable cursor        # Cursor Agent
 vetto enable aider         # Aider
 ```
 *Creates transparent, zero-latency shims in `~/.vetto/shims/` and configures shell PATH priority.*
+
+#### Supported AI Coding Agents (20 Native Presets)
+Vetto provides tailored sandbox presets, project marker auto-detection, and zero-config network allowlists for 20 AI coding tools:
+- **`opencode`** (OpenCode) · **`claude`** (Claude Code) · **`codex`** (OpenAI Codex) · **`gemini`** (Google Gemini)
+- **`antigravity`** (Google Antigravity / `agy`) · **`cursor`** (Cursor Agent) · **`aider`** (Aider) · **`cline`** (Cline)
+- **`copilot`** (GitHub Copilot CLI) · **`windsurf`** (Codeium Windsurf) · **`continue`** (Continue CLI) · **`goose`** (Block Goose)
+- **`openhands`** (All-Hands OpenHands) · **`swe-agent`** (SWE-agent) · **`plandex`** (Plandex) · **`mentat`** (Mentat)
+- **`gpt-engineer`** (GPT Engineer) · **`devin`** (Cognition Devin) · **`crust`** (Crust AI) · **`amp`** (Amp AI)
 
 ### 2. Run Completely Unattended
 Launch your agent with full autonomy:

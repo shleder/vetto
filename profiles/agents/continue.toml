@@ -1,0 +1,26 @@
+[metadata]
+name = "continue"
+description = "Safe compatibility roots for Continue CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.continue",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.continue",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "CONTINUE_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

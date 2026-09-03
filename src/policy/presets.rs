@@ -65,14 +65,73 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "generativelanguage.googleapis.com".into(),
             "oauth2.googleapis.com".into(),
         ],
-        "aider" => vec!["api.openai.com".into(), "api.anthropic.com".into()],
-        "opencode" => vec!["api.openai.com".into(), "api.anthropic.com".into()],
+        "aider" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+        ],
+        "opencode" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+        ],
         "cursor" => vec!["api.cursor.com".into(), "api2.cursor.sh".into()],
         "copilot" => vec![
             "api.github.com".into(),
             "copilot-proxy.githubusercontent.com".into(),
         ],
-        "cline" => vec!["api.anthropic.com".into(), "api.openai.com".into()],
+        "cline" => vec![
+            "api.anthropic.com".into(),
+            "api.openai.com".into(),
+            "openrouter.ai".into(),
+        ],
+        "windsurf" => vec!["api.codeium.com".into(), "windsurf.codeium.com".into()],
+        "continue" => vec![
+            "api.continue.dev".into(),
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+        ],
+        "goose" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+        ],
+        "openhands" => vec![
+            "api.all-hands.dev".into(),
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+        ],
+        "swe_agent" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+        ],
+        "plandex" => vec![
+            "api.plandex.ai".into(),
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+        ],
+        "mentat" => vec![
+            "api.mentat.ai".into(),
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+        ],
+        "gpt_engineer" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+        ],
+        "devin" => vec![
+            "api.devin.ai".into(),
+            "cognition.ai".into(),
+            "api.openai.com".into(),
+        ],
+        "crust" => vec!["api.crustdata.com".into(), "api.openai.com".into()],
+        "amp" => vec![
+            "api.amp.dev".into(),
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -300,15 +359,15 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("aider"),
-            vec!["api.openai.com", "api.anthropic.com"]
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
         );
         assert_eq!(
             agent_network_allowlist("aider-chat"),
-            vec!["api.openai.com", "api.anthropic.com"]
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
         );
         assert_eq!(
             agent_network_allowlist("opencode"),
-            vec!["api.openai.com", "api.anthropic.com"]
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
         );
         assert_eq!(
             agent_network_allowlist("cursor"),
@@ -320,7 +379,7 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("cline"),
-            vec!["api.anthropic.com", "api.openai.com"]
+            vec!["api.anthropic.com", "api.openai.com", "openrouter.ai"]
         );
         assert_eq!(
             agent_network_allowlist("copilot"),
@@ -329,6 +388,18 @@ mod tests {
         assert_eq!(
             agent_network_allowlist("github-copilot-cli"),
             vec!["api.github.com", "copilot-proxy.githubusercontent.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("windsurf"),
+            vec!["api.codeium.com", "windsurf.codeium.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("continue"),
+            vec!["api.continue.dev", "api.openai.com", "api.anthropic.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("goose"),
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
         );
         assert!(agent_network_allowlist("unknown").is_empty());
     }

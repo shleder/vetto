@@ -109,6 +109,13 @@ jobs:
           test -n "$cargo_version"
           test "$expected_version" = "$cargo_version"
           test "$expected_version" = "$npm_version"
+          # Packaging parity: fail the release if any pinned channel drifted.
+          brew_version="$(sed -n 's/^[[:space:]]*version "\(.*\)"$/\1/p' packaging/homebrew/vetto.rb | head -n 1)"
+          nuspec_version="$(sed -n 's/^[[:space:]]*<version>\(.*\)<\/version>$/\1/p' packaging/chocolatey/vetto.nuspec | head -n 1)"
+          rpm_version="$(sed -n 's/^Version:[[:space:]]*\(.*\)$/\1/p' packaging/rpm/vetto.spec | head -n 1)"
+          test "$expected_version" = "$brew_version"
+          test "$expected_version" = "$nuspec_version"
+          test "$expected_version" = "$rpm_version"
 
       - name: Install the ARM64 Linux linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'

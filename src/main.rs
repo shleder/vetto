@@ -18,6 +18,7 @@ use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
+#[cfg(unix)]
 use vetto::pty;
 #[cfg(unix)]
 use vetto::tui;

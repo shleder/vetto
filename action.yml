@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: 'Vetto version to install (e.g. "0.2.12" or "latest")'
+    description: 'Vetto version to install (e.g. "0.2.13" or "latest")'
     required: false
     default: 'latest'
 
@@ -34,7 +34,7 @@ runs:
           RESOLVED_TAG=$(curl -sSL -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/shleder/vetto/releases/latest 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
           if [ -z "$RESOLVED_TAG" ]; then
-            RESOLVED_TAG="v0.2.12"
+            RESOLVED_TAG="v0.2.13"
           fi
         elif [[ "$REQUESTED_VERSION" =~ ^v ]]; then
           RESOLVED_TAG="$REQUESTED_VERSION"
