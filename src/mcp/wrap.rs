@@ -284,12 +284,26 @@ mod tests {
 
     #[test]
     fn test_mcp_wrap_resolve_in_path() {
-        let resolved = resolve_in_path("sh");
-        assert!(resolved.is_ok());
+        #[cfg(unix)]
+        {
+            let resolved = resolve_in_path("sh");
+            assert!(resolved.is_ok());
 
-        let direct = resolve_in_path("/bin/sh");
-        assert!(direct.is_ok());
-        assert_eq!(direct.unwrap(), PathBuf::from("/bin/sh"));
+            let direct = resolve_in_path("/bin/sh");
+            assert!(direct.is_ok());
+            assert_eq!(direct.unwrap(), PathBuf::from("/bin/sh"));
+        }
+
+        #[cfg(windows)]
+        {
+            let resolved = resolve_in_path("cmd");
+            assert!(resolved.is_ok());
+
+            let comspec = std::env::var("COMSPEC")
+                .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".into());
+            let direct = resolve_in_path(&comspec);
+            assert!(direct.is_ok());
+        }
 
         let nonexistent = resolve_in_path("non_existent_binary_xyz_12345");
         assert!(nonexistent.is_err());
