@@ -826,6 +826,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         env_extra.insert("VETTO_GIT_GUARD".into(), "1".into());
     }
 
+    #[cfg(not(unix))]
+    if !pol.secret_proxies.is_empty() {
+        bail!(
+            "secrets.proxy requires the Unix credential broker, which is not supported on this platform: \
+             refusing to run rather than leak broker-managed secrets ({}) into the agent environment. \
+             Remove [secrets] proxy entries or run on Linux/macOS",
+            pol.secret_proxies.join(", ")
+        );
+    }
+
     #[cfg(unix)]
     let cred_sock = if !pol.secret_proxies.is_empty() {
         let sock = std::env::temp_dir().join(format!("vetto-cred-{}.sock", std::process::id()));
