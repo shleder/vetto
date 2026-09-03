@@ -31,7 +31,7 @@ pub struct WizardArgs {
     #[arg(long, value_name = "PRESET")]
     pub preset: Option<String>,
 
-    /// Target AI coding agent: codex | claude | antigravity | cursor | aider | opencode | custom
+    /// Target AI coding agent: codex | claude | opencode | gemini | windsurf | cursor | etc.
     #[arg(long, value_name = "AGENT")]
     pub agent: Option<String>,
 }
@@ -56,6 +56,14 @@ pub const AGENT_OPTIONS: &[AgentOption] = &[
         display: "Antigravity CLI",
     },
     AgentOption {
+        slug: "opencode",
+        display: "OpenCode",
+    },
+    AgentOption {
+        slug: "gemini",
+        display: "Google Gemini",
+    },
+    AgentOption {
         slug: "cursor",
         display: "Cursor",
     },
@@ -64,8 +72,56 @@ pub const AGENT_OPTIONS: &[AgentOption] = &[
         display: "Aider",
     },
     AgentOption {
-        slug: "opencode",
-        display: "OpenCode",
+        slug: "cline",
+        display: "Cline",
+    },
+    AgentOption {
+        slug: "copilot",
+        display: "GitHub Copilot",
+    },
+    AgentOption {
+        slug: "windsurf",
+        display: "Windsurf",
+    },
+    AgentOption {
+        slug: "continue",
+        display: "Continue",
+    },
+    AgentOption {
+        slug: "goose",
+        display: "Block Goose",
+    },
+    AgentOption {
+        slug: "openhands",
+        display: "OpenHands",
+    },
+    AgentOption {
+        slug: "swe_agent",
+        display: "SWE-agent",
+    },
+    AgentOption {
+        slug: "plandex",
+        display: "Plandex",
+    },
+    AgentOption {
+        slug: "mentat",
+        display: "Mentat",
+    },
+    AgentOption {
+        slug: "gpt_engineer",
+        display: "GPT Engineer",
+    },
+    AgentOption {
+        slug: "devin",
+        display: "Cognition Devin",
+    },
+    AgentOption {
+        slug: "crust",
+        display: "Crust AI",
+    },
+    AgentOption {
+        slug: "amp",
+        display: "Amp AI",
     },
     AgentOption {
         slug: "custom",
@@ -92,7 +148,10 @@ pub fn resolve_agent(input: &str) -> (&'static str, &'static str) {
         "claude-code" | "anthropic" => ("claude", "Claude Code"),
         "agy" | "antigravity-cli" => ("antigravity", "Antigravity CLI"),
         "aider-chat" => ("aider", "Aider"),
-        "cursor-server" => ("cursor", "Cursor"),
+        "cursor-server" | "cursor-agent" => ("cursor", "Cursor"),
+        "all-hands" => ("openhands", "OpenHands"),
+        "sweagent" | "swe-agent" => ("swe_agent", "SWE-agent"),
+        "gpte" => ("gpt_engineer", "GPT Engineer"),
         _ => ("custom", "Custom"),
     }
 }

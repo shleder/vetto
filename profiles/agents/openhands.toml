@@ -1,0 +1,27 @@
+[metadata]
+name = "openhands"
+description = "Safe compatibility roots for All-Hands OpenHands CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.openhands",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.openhands",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "OPENHANDS_*",
+  "ALL_HANDS_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]
