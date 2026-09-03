@@ -105,13 +105,16 @@ jobs:
   # Depth over breadth: every shipped agent profile must resolve to an
   # effective policy. TOML syntax is already covered at compile time
   # (include_str!), this job covers semantic resolution per profile.
+  # Windows included per #26: profile resolution must hold where most
+  # of the world actually runs.
   profile-matrix:
-    name: profile ${{ matrix.profile }} resolves
-    runs-on: ubuntu-latest
+    name: profile ${{ matrix.profile }} resolves (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         profile: [codex, claude, gemini, antigravity, aider, cursor, cline, opencode, copilot, windsurf, continue, goose, openhands, swe_agent, plandex, mentat, gpt_engineer, devin, crust, amp]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v5
@@ -127,9 +130,12 @@ jobs:
         shell: bash
         env:
           PROFILE: ${{ matrix.profile }}
-          VETTO_BIN: ./target/release/vetto
         run: |
           set -euo pipefail
+          VETTO_BIN="./target/release/vetto"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VETTO_BIN="./target/release/vetto.exe"
+          fi
 
           echo "=== effective policy for --agent $PROFILE ==="
           "$VETTO_BIN" --agent "$PROFILE" policy show --effective > /dev/null
