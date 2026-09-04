@@ -1021,7 +1021,12 @@ impl LayeredPolicyLoader {
 
         if let Some(base_profile) = base_profile {
             stack.push(base_profile.to_string());
-            let base_text = defaults::builtin(base_profile).expect("base profile checked above");
+            // builtin() is a pure match and base_profile was just resolved
+            // through it, but a session-start panic is never acceptable:
+            // degrade to a proper error if the two ever disagree.
+            let base_text = defaults::builtin(base_profile).with_context(|| {
+                format!("built-in profile '{base_profile}' disappeared during load")
+            })?;
             let base = parse_layer(base_text, base_profile)?;
             if base.environment.is_none() && merged.pass_through.is_empty() {
                 merged.pass_through = defaults::default_env_passthrough();
