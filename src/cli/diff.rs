@@ -405,7 +405,21 @@ fn render_human_review(review: &SessionReview, stat_only: bool) {
 pub fn resolve_session_and_snapshot(
     requested_session: Option<&str>,
 ) -> Result<Option<SnapshotMetadata>> {
-    let snapshots = snapshot::list_snapshots()?;
+    match snapshot::snapshots_root_dir() {
+        Ok(dir) => resolve_session_and_snapshot_in(&dir, requested_session),
+        // Same as before: unreadable HOME means "no snapshots", not an error.
+        Err(_) => Ok(None),
+    }
+}
+
+/// Same as [`resolve_session_and_snapshot`], but rooted at an explicit
+/// directory. Production passes the real store root; tests pass a fresh
+/// temp dir, which keeps them hermetic against the shared per-user store.
+pub fn resolve_session_and_snapshot_in(
+    snapshots_root: &Path,
+    requested_session: Option<&str>,
+) -> Result<Option<SnapshotMetadata>> {
+    let snapshots = snapshot::list_snapshots_in(snapshots_root)?;
 
     if let Some(req_id) = requested_session {
         if let Some(s) = snapshots.iter().find(|s| {
@@ -429,19 +443,17 @@ pub fn resolve_session_and_snapshot(
             }));
         }
 
-        if let Ok(root) = snapshot::snapshots_root_dir() {
-            let candidate = root.join(req_id).join("snapshot.tar");
-            if candidate.is_file() {
-                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                return Ok(Some(SnapshotMetadata {
-                    session_id: req_id.to_string(),
-                    created_at: String::new(),
-                    project_dir: cwd,
-                    archive_file: candidate,
-                    file_count: 0,
-                    total_size_bytes: 0,
-                }));
-            }
+        let candidate = snapshots_root.join(req_id).join("snapshot.tar");
+        if candidate.is_file() {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            return Ok(Some(SnapshotMetadata {
+                session_id: req_id.to_string(),
+                created_at: String::new(),
+                project_dir: cwd,
+                archive_file: candidate,
+                file_count: 0,
+                total_size_bytes: 0,
+            }));
         }
 
         return Ok(None);
@@ -1269,11 +1281,26 @@ mod tests {
             json: true,
             path: None,
         };
-        let result_none = run_diff(&args_none);
+        // The latest-snapshot branch depends on the shared per-user store
+        // ($HOME/.vetto), which parallel tests and real dev-machine usage
+        // pollute — asserting through run_diff here would be non-hermetic.
+        // Exercise the resolver directly against a fresh empty store instead.
+        let tmp = std::env::temp_dir().join(format!(
+            "vetto-diff-test-store-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("empty snapshot store");
+        let result_none = resolve_session_and_snapshot_in(&tmp, args_none.session_id.as_deref())
+            .expect("empty store resolves");
         assert!(
-            result_none.is_ok(),
-            "no snapshot in workspace should be handled gracefully"
+            result_none.is_none(),
+            "empty snapshot store must resolve to None"
         );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

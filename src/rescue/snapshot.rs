@@ -47,11 +47,18 @@ pub fn list_snapshots() -> Result<Vec<SnapshotMetadata>> {
         Ok(dir) => dir,
         Err(_) => return Ok(Vec::new()),
     };
+    list_snapshots_in(&root)
+}
+
+/// Same as [`list_snapshots`], but rooted at an explicit directory.
+/// Production passes the real store root; tests pass a fresh temp dir so
+/// they stay hermetic against the shared per-user store ($HOME/.vetto).
+pub fn list_snapshots_in(root: &Path) -> Result<Vec<SnapshotMetadata>> {
     if !root.exists() {
         return Ok(Vec::new());
     }
 
-    let entries = match std::fs::read_dir(&root) {
+    let entries = match std::fs::read_dir(root) {
         Ok(e) => e,
         Err(_) => return Ok(Vec::new()),
     };
