@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.14] — 2026-09-04
+
+### Fixed
+
+- **Secret-proxy fail-open closed**: `filter_proxy_secrets` ran only in the Linux backend, so broker-managed secrets reached the agent environment unstripped on macOS/Windows. macOS now strips in `build_envp`; non-Unix targets refuse to start with `secrets.proxy` set (fail-closed).
+- **Rescue repair hardening**: removed `unwrap` from the two-phase atomic commit path; swallowed project-index reconcile errors are now recorded on the repair receipt.
+- **Policy editing without panics**: `vetto allow`/`deny` return errors (with context) on malformed policy documents instead of panicking; builtin profile lookup degrades to an error.
+- **Hermetic snapshot tests**: snapshot resolution rooted at an explicit store path, ending flakes from the shared per-user store.
+
 ## [0.2.13] — 2026-09-03
 
 ### Added
