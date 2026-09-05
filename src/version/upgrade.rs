@@ -555,100 +555,11 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) 
         }
     };
 
-    // Extract archive
-    let unpack_status = if ext == "zip" {
-        // Built-in tar on Windows 10/11 handles zip, otherwise fall back to powershell
-        let tar_res = Command::new("tar")
-            .args([
-                "-xf",
-                archive_path.to_str().unwrap_or("vetto_download.zip"),
-                "-C",
-                temp_dir.to_str().unwrap_or("."),
-            ])
-            .status();
-        match tar_res {
-            Ok(s) if s.success() => s,
-            _ => Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        archive_path.display(),
-                        temp_dir.display()
-                    ),
-                ])
-                .status()
-                .context("failed to unpack zip archive via tar or powershell")?,
-        }
-    } else {
-        Command::new("tar")
-            .args([
-                "-xzf",
-                archive_path.to_str().unwrap_or("vetto_download.tar.gz"),
-                "-C",
-                temp_dir.to_str().unwrap_or("."),
-            ])
-            .status()
-            .context("failed to unpack binary archive via tar")?
-    };
-
-    if !unpack_status.success() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        bail!("archive unpack failed with status {unpack_status}");
-    }
-
-    let extracted_bin = if temp_dir.join("vetto.exe").exists() {
-        temp_dir.join("vetto.exe")
-    } else if temp_dir.join("vetto").exists() {
-        temp_dir.join("vetto")
-    } else if temp_dir.join("bin").join("vetto").exists() {
-        temp_dir.join("bin").join("vetto")
-    } else {
-        find_binary_in_dir(&temp_dir).unwrap_or_else(|| temp_dir.join("vetto"))
-    };
-
-    if !extracted_bin.exists() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        bail!("extracted archive did not contain 'vetto' executable");
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&extracted_bin, std::fs::Permissions::from_mode(0o755));
-    }
-
-    // Keep exactly one last-good copy next to the executable so
-    // `vetto upgrade --rollback` can restore it. Must run BEFORE any
-    // rename-away below (Windows moves the running exe aside first).
-    // A failed backup aborts the upgrade rather than risking a no-way-back state.
-    let durable_backup = backup_path_for(exe_path);
-    std::fs::copy(exe_path, &durable_backup).with_context(|| {
-        format!(
-            "failed to back up current executable to {}",
-            durable_backup.display()
-        )
-    })?;
-
-    #[cfg(windows)]
-    {
-        let old_backup = temp_dir.join("vetto.exe.old");
-        let _ = std::fs::rename(exe_path, &old_backup);
-    }
-
-    // Atomic rename over target exe
-    let rename_res = std::fs::rename(&extracted_bin, exe_path);
-    if let Err(e) = rename_res {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        bail!(
-            "failed to replace executable at {}: {e}. Try running with elevated permissions (e.g. sudo vetto upgrade).",
-            exe_path.display()
-        );
-    }
-
+    // Single install path shared with staged updates (extract, verify
+    // contents, keep last-good backup, atomic replace).
+    let res = install_from_unpack_root(exe_path, &archive_path, ext, &temp_dir);
     let _ = std::fs::remove_dir_all(&temp_dir);
-    Ok(())
+    res
 }
 
 /// Durable last-good location next to the executable: `vetto` → `vetto.prev`,
