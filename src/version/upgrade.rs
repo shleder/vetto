@@ -329,6 +329,185 @@ pub fn stage_update(version: &str, archive_url: &str, ext: &str) -> Result<PathB
     Ok(dir)
 }
 
+/// Archive URL + extension for a direct-binary release, if this OS/arch
+/// combination is published. Shared by interactive upgrades and staging.
+pub fn binary_archive_url(version: &str) -> Option<(String, &'static str)> {
+    let (target, ext) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => ("macos-aarch64", "tar.gz"),
+        ("macos", "x86_64") => ("macos-x86_64", "tar.gz"),
+        ("linux", "aarch64") => ("linux-aarch64", "tar.gz"),
+        ("linux", "x86_64") => ("linux-x86_64", "tar.gz"),
+        ("windows", "x86_64") => ("windows-x86_64", "zip"),
+        _ => return None,
+    };
+    Some((
+        format!(
+            "https://github.com/shleder/vetto/releases/download/v{version}/vetto-{target}.{ext}"
+        ),
+        ext,
+    ))
+}
+
+/// Newest staged version dir carrying a READY marker, if any.
+fn newest_staged_update() -> Option<(String, PathBuf)> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    let root = home.join(".vetto").join("updates");
+    let entries = std::fs::read_dir(&root).ok()?;
+    let mut best: Option<(super::parser::SemVer, String, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || !path.join(STAGED_READY_MARKER).is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let ver = super::parser::SemVer::parse(&name)?;
+        let replace = match &best {
+            Some((cur, _, _)) => ver.is_newer_than(cur),
+            None => true,
+        };
+        if replace {
+            best = Some((ver, name, path));
+        }
+    }
+    best.map(|(_, name, path)| (name, path))
+}
+
+/// Applies a staged update (if any) by installing its verified archive over
+/// the current executable. Runs at startup, never mid-session. Returns true
+/// when an update was applied.
+pub fn apply_pending_staged_update() -> Result<bool> {
+    let current = env!("CARGO_PKG_VERSION");
+    let (version, dir) = match newest_staged_update() {
+        Some(v) => v,
+        None => return Ok(false),
+    };
+    // Stale stage (user upgraded manually meanwhile): drop it silently.
+    let is_newer = super::parser::SemVer::parse(&version)
+        .and_then(|v| super::parser::SemVer::parse(current).map(|c| v.is_newer_than(&c)))
+        .unwrap_or(false);
+    if !is_newer {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Ok(false);
+    }
+    let marker = std::fs::read_to_string(dir.join(STAGED_READY_MARKER))
+        .with_context(|| format!("read staged marker in {}", dir.display()))?;
+    let archive_path = PathBuf::from(marker.trim());
+    if !archive_path.exists() {
+        let _ = std::fs::remove_dir_all(&dir);
+        bail!("staged update {version} is incomplete; re-staging on next run");
+    }
+    let ext = if archive_path.extension().and_then(|e| e.to_str()) == Some("zip") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    let exe_path = std::env::current_exe().context("resolve current executable")?;
+    println!("vetto: applying staged update v{current} → v{version}...");
+    install_archive_over_exe(&exe_path, &archive_path, ext, &dir)?;
+    let _ = std::fs::remove_dir_all(&dir);
+    println!("vetto: updated to v{version} (previous copy kept for `vetto upgrade --rollback`).");
+    Ok(true)
+}
+
+/// Extracts a verified archive and atomically replaces the executable,
+/// keeping a last-good backup. `scratch` hosts extraction temp state.
+fn install_archive_over_exe(
+    exe_path: &Path,
+    archive_path: &Path,
+    ext: &str,
+    scratch: &Path,
+) -> Result<()> {
+    let unpack_dir = scratch.join("unpack");
+    std::fs::create_dir_all(&unpack_dir)
+        .with_context(|| format!("create {}", unpack_dir.display()))?;
+    let unpack_status = if ext == "zip" {
+        // Built-in tar on Windows 10/11 handles zip, otherwise fall back to powershell
+        let tar_res = Command::new("tar")
+            .args([
+                "-xf",
+                archive_path.to_str().unwrap_or("vetto_download.zip"),
+                "-C",
+                unpack_dir.to_str().unwrap_or("."),
+            ])
+            .status();
+        match tar_res {
+            Ok(s) if s.success() => s,
+            _ => Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        archive_path.display(),
+                        unpack_dir.display()
+                    ),
+                ])
+                .status()
+                .context("failed to unpack zip archive via tar or powershell")?,
+        }
+    } else {
+        Command::new("tar")
+            .args([
+                "-xzf",
+                archive_path.to_str().unwrap_or("vetto_download.tar.gz"),
+                "-C",
+                unpack_dir.to_str().unwrap_or("."),
+            ])
+            .status()
+            .context("failed to unpack binary archive via tar")?
+    };
+
+    if !unpack_status.success() {
+        bail!("archive unpack failed with status {unpack_status}");
+    }
+
+    let extracted_bin = if unpack_dir.join("vetto.exe").exists() {
+        unpack_dir.join("vetto.exe")
+    } else if unpack_dir.join("vetto").exists() {
+        unpack_dir.join("vetto")
+    } else if unpack_dir.join("bin").join("vetto").exists() {
+        unpack_dir.join("bin").join("vetto")
+    } else {
+        find_binary_in_dir(&unpack_dir).unwrap_or_else(|| unpack_dir.join("vetto"))
+    };
+
+    if !extracted_bin.exists() {
+        bail!("extracted archive did not contain 'vetto' executable");
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&extracted_bin, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let durable_backup = backup_path_for(exe_path);
+    std::fs::copy(exe_path, &durable_backup).with_context(|| {
+        format!(
+            "failed to back up current executable to {}",
+            durable_backup.display()
+        )
+    })?;
+
+    #[cfg(windows)]
+    {
+        // Renaming a running image aside is allowed; overwriting is not.
+        let _ = std::fs::rename(exe_path, exe_path.with_extension("stale-tmp"));
+    }
+
+    std::fs::rename(&extracted_bin, exe_path).with_context(|| {
+        format!(
+            "failed to replace executable at {}. Try running with elevated permissions (e.g. sudo).",
+            exe_path.display()
+        )
+    })?;
+    // Best-effort cleanup of the Windows move-aside leftover (no-op on Unix).
+    let _ = std::fs::remove_file(exe_path.with_extension("stale-tmp"));
+    Ok(())
+}
+
 /// Downloads release archive and performs atomic replacement of the current executable.
 fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) -> Result<()> {
     let parent_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));

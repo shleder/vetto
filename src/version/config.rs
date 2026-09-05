@@ -21,6 +21,8 @@ pub struct UserConfig {
     /// Opt-in background self-update (default off: a security tool must not
     /// mutate itself silently). Env `VETTO_AUTO_UPDATE=1` enables,
     /// `VETTO_NO_SELF_UPDATE=1` (or CI) always disables.
+    /// v1 scope: direct-binary installs (npm/cargo/brew stay with their
+    /// package managers and keep showing the banner instead).
     #[serde(default)]
     pub auto_update: bool,
 }
