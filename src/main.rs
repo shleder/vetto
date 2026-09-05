@@ -81,6 +81,18 @@ fn run() -> Result<()> {
         return shim::run_cli(Some(binary), args);
     }
 
+    // Apply a previously staged auto-update before doing anything else.
+    // Skipped for shims (agent hot path), --version (observation only) and
+    // the upgrade command itself (it manages its own lifecycle).
+    let first_arg = raw_args.get(1).map(|s| s.as_str()).unwrap_or("");
+    if first_arg != "upgrade" {
+        match vetto::version::apply_pending_staged_update() {
+            Ok(true) => println!("vetto: continuing with the updated binary on next invocation."),
+            Ok(false) => {}
+            Err(e) => eprintln!("vetto: warning: staged update not applied: {e:#}"),
+        }
+    }
+
     let args = cli::Cli::parse();
     logger::init_flags(args.quiet, args.verbose);
 
@@ -603,6 +615,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         env!("CARGO_PKG_VERSION"),
         &user_config.channel,
     );
+
+    // Opt-in background staging (default off): when a newer release is known
+    // and this is a direct-binary install, download+verify it now so a later
+    // startup can apply it. Synchronous and cache-gated (24h), so at most one
+    // download per day. Managed installs (npm/cargo/brew) are left to their
+    // package managers.
+    if vetto::version::auto_update_enabled(&user_config) {
+        stage_update_if_available(&user_config);
+    }
 
     let backend_res = sandbox::Backend::detect_with_backend(
         cfg.net.clone(),
@@ -1644,10 +1665,37 @@ fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
 #[cfg(windows)]
 fn install_sigint_forwarder(_root_pid: u32, _tier: Option<policy::Tier>) {}
 
+/// Opt-in background staging hook (see call site in supervise()).
+/// Direct-binary installs only; managed installs stay with npm/cargo/brew.
+fn stage_update_if_available(user_config: &vetto::version::UserConfig) {
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if vetto::version::detect_install_method(&exe_path) != vetto::version::InstallMethod::Binary {
+        return;
+    }
+    let Some(notice) =
+        vetto::version::check_version(env!("CARGO_PKG_VERSION"), &user_config.channel, false)
+    else {
+        return;
+    };
+    let Some((url, ext)) = vetto::version::binary_archive_url(&notice.latest_version) else {
+        return;
+    };
+    match vetto::version::stage_update(&notice.latest_version, &url, ext) {
+        Ok(dir) => println!(
+            "vetto: update v{} staged, applies on next startup ({}).",
+            notice.latest_version,
+            dir.display()
+        ),
+        Err(e) => eprintln!("vetto: warning: background staging failed: {e:#}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // doctor
 // ---------------------------------------------------------------------------
-
 fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
     let user_config = vetto::version::load_user_config().unwrap_or_default();
