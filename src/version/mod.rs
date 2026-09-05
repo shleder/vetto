@@ -11,4 +11,4 @@ pub use checker::{
 };
 pub use config::{load_user_config, UserConfig};
 pub use parser::{parse_registry_version, SemVer};
-pub use upgrade::{detect_install_method, run_upgrade, InstallMethod};
+pub use upgrade::{detect_install_method, run_rollback, run_upgrade, InstallMethod};

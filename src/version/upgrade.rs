@@ -5,6 +5,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::checker::check_version;
 use super::config::load_user_config;
@@ -270,6 +271,11 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) 
         bail!("download failed with status {status}");
     }
 
+    // Supply-chain gate: every release publishes a .sha256 sidecar next to
+    // the archive. A security tool must not execute unverified bytes —
+    // fail closed when the sidecar is missing or mismatched.
+    verify_archive_sha256(&archive_path, &format!("{archive_url}.sha256"), &temp_dir)?;
+
     // Extract archive
     let unpack_status = if ext == "zip" {
         // Built-in tar on Windows 10/11 handles zip, otherwise fall back to powershell
@@ -334,6 +340,18 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) 
         let _ = std::fs::set_permissions(&extracted_bin, std::fs::Permissions::from_mode(0o755));
     }
 
+    // Keep exactly one last-good copy next to the executable so
+    // `vetto upgrade --rollback` can restore it. Must run BEFORE any
+    // rename-away below (Windows moves the running exe aside first).
+    // A failed backup aborts the upgrade rather than risking a no-way-back state.
+    let durable_backup = backup_path_for(exe_path);
+    std::fs::copy(exe_path, &durable_backup).with_context(|| {
+        format!(
+            "failed to back up current executable to {}",
+            durable_backup.display()
+        )
+    })?;
+
     #[cfg(windows)]
     {
         let old_backup = temp_dir.join("vetto.exe.old");
@@ -352,6 +370,109 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) 
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
+}
+
+/// Durable last-good location next to the executable: `vetto` → `vetto.prev`,
+/// `vetto.exe` → `vetto.exe.prev`. Exactly one backup is kept (overwritten).
+fn backup_path_for(exe_path: &Path) -> PathBuf {
+    let file_name = exe_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "vetto".to_string());
+    exe_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("{file_name}.prev"))
+}
+
+/// First whitespace-separated token of a `<hash>  <filename>` sidecar file.
+fn parse_sha256_sidecar(text: &str) -> Option<String> {
+    let token = text.split_whitespace().next()?.trim().to_lowercase();
+    if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(token)
+    } else {
+        None
+    }
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Downloads `{archive_url}.sha256` and fails closed unless the downloaded
+/// archive matches. Every release publishes the sidecar next to the archive.
+fn verify_archive_sha256(archive_path: &Path, sidecar_url: &str, temp_dir: &Path) -> Result<()> {
+    let sidecar_path = temp_dir.join("vetto_download.sha256");
+    let status = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-A",
+            "vetto-updater",
+            "-o",
+            sidecar_path.to_str().unwrap_or("vetto_download.sha256"),
+            sidecar_url,
+        ])
+        .status()
+        .context("failed to download release checksum via curl")?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(temp_dir);
+        bail!("checksum sidecar missing at {sidecar_url}: refusing to install unverified bytes");
+    }
+    let text = std::fs::read_to_string(&sidecar_path)
+        .with_context(|| format!("read checksum sidecar {}", sidecar_path.display()))?;
+    let expected = parse_sha256_sidecar(&text)
+        .with_context(|| format!("malformed checksum sidecar at {sidecar_url}"))?;
+    let actual = sha256_file(archive_path)?;
+    if actual != expected {
+        let _ = std::fs::remove_dir_all(temp_dir);
+        bail!("checksum mismatch for downloaded archive: refusing to install");
+    }
+    Ok(())
+}
+
+/// Restores the last-good executable saved by the previous binary upgrade.
+pub fn run_rollback(dry_run: bool) -> Result<()> {
+    let exe_path = std::env::current_exe().context("resolve current executable")?;
+    let backup = backup_path_for(&exe_path);
+    if dry_run {
+        println!(
+            "[dry-run] Would restore {} from backup {}",
+            exe_path.display(),
+            backup.display()
+        );
+        return Ok(());
+    }
+    if !backup.exists() {
+        bail!(
+            "no rollback backup found at {} (binary upgrades keep exactly one last-good copy)",
+            backup.display()
+        );
+    }
+    // Move the current binary aside first so a failed restore can be undone.
+    // Renaming a running image aside is allowed on both Unix and Windows.
+    let stale = exe_path.with_extension("stale-tmp");
+    if exe_path.exists() {
+        std::fs::rename(&exe_path, &stale)
+            .with_context(|| format!("move aside {}", exe_path.display()))?;
+    }
+    match std::fs::rename(&backup, &exe_path) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&stale);
+            println!(
+                "Rolled back {} from backup {}.",
+                exe_path.display(),
+                backup.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::rename(&stale, &exe_path);
+            bail!("rollback failed, original restored: {e}");
+        }
+    }
 }
 
 fn find_binary_in_dir(dir: &Path) -> Option<PathBuf> {
@@ -391,6 +512,32 @@ fn tempfile_dir(base: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidecar_parsing_accepts_release_format() {
+        let good = "6401092d62b8388809eece60b764851c596b78f3423952d699ea6f673604b493  vetto-macos-aarch64.tar.gz\n";
+        assert_eq!(
+            parse_sha256_sidecar(good),
+            Some("6401092d62b8388809eece60b764851c596b78f3423952d699ea6f673604b493".to_string())
+        );
+        assert_eq!(parse_sha256_sidecar(""), None);
+        assert_eq!(parse_sha256_sidecar("notahash  file.tgz\n"), None);
+    }
+
+    #[test]
+    fn backup_path_sits_next_to_executable() {
+        // Platform-native case (path semantics differ per OS).
+        #[cfg(unix)]
+        assert_eq!(
+            backup_path_for(Path::new("/opt/vetto/bin/vetto")),
+            PathBuf::from("/opt/vetto/bin/vetto.prev")
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            backup_path_for(Path::new(r"C:\tools\vetto.exe")),
+            PathBuf::from(r"C:\tools\vetto.exe.prev")
+        );
+    }
 
     #[test]
     fn test_detect_install_method() {
