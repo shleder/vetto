@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Opt-in background self-update (default off)**: `auto_update` user config + `VETTO_AUTO_UPDATE=1`, kill-switch `VETTO_NO_SELF_UPDATE`/`CI`. Verified release archives stage under `~/.vetto/updates/<version>/` and apply on next startup (never mid-session; skipped for shims, `--version` and `upgrade` itself). v1 scope: direct-binary installs.
+- **`vetto upgrade --rollback`**: restores the last-good binary copy kept next to the executable.
+- **Supply-chain gate**: binary upgrades fetch the release `.sha256` sidecar and fail closed on missing/mismatch.
+
 ## [0.2.14] — 2026-09-04
 
 ### Fixed
