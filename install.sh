@@ -10,8 +10,8 @@ set -eu
 GITHUB_REPO="shleder/vetto"
 # Last version verified published on ALL channels (GitHub tag + npm + crates.io).
 # Bump only after the release-train publish + registry verification for the new
-# version succeed (see pages/ops/release-process.md). Verified 2026-09-04.
-DEFAULT_FALLBACK_VERSION="0.2.14"
+# version succeed (see pages/ops/release-process.md). Verified 2026-09-05.
+DEFAULT_FALLBACK_VERSION="0.2.15"
 
 # Initialize colors if stdout is connected to a terminal
 if [ -t 1 ]; then
