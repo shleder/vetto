@@ -129,7 +129,10 @@ fn resolve_snapshot(session_id: Option<&str>) -> Result<SnapshotMetadata> {
             });
         }
 
-        bail!("snapshot for session '{req_id}' was not found");
+        bail!(
+            "snapshot for session '{req_id}' was not found ({} snapshot(s) visible)",
+            snapshots.len()
+        );
     }
 
     if snapshots.is_empty() {

@@ -58,29 +58,39 @@ pub fn list_snapshots_in(root: &Path) -> Result<Vec<SnapshotMetadata>> {
         return Ok(Vec::new());
     }
 
-    let entries = match std::fs::read_dir(root) {
-        Ok(e) => e,
-        Err(_) => return Ok(Vec::new()),
-    };
-
-    let mut snapshots = Vec::new();
-    for entry in entries.flatten() {
-        let meta_file = entry.path().join("metadata.json");
-        if meta_file.is_file() {
-            if let Ok(text) = std::fs::read_to_string(&meta_file) {
-                if let Ok(meta) = serde_json::from_str::<SnapshotMetadata>(&text) {
-                    snapshots.push(meta);
+    // Transient IO failures (Windows Defender locks on fresh dirs, loaded
+    // CI runners) must not masquerade as "no snapshots": retry briefly,
+    // then fail loudly instead of returning a lying empty list.
+    let mut last_err = String::new();
+    for _ in 0..3 {
+        match std::fs::read_dir(root) {
+            Ok(entries) => {
+                let mut snapshots = Vec::new();
+                for entry in entries.flatten() {
+                    let meta_file = entry.path().join("metadata.json");
+                    if meta_file.is_file() {
+                        if let Ok(text) = std::fs::read_to_string(&meta_file) {
+                            if let Ok(meta) = serde_json::from_str::<SnapshotMetadata>(&text) {
+                                snapshots.push(meta);
+                            }
+                        }
+                    }
                 }
+
+                snapshots.sort_by(|a, b| {
+                    b.created_at
+                        .cmp(&a.created_at)
+                        .then_with(|| b.session_id.cmp(&a.session_id))
+                });
+                return Ok(snapshots);
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
     }
-
-    snapshots.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| b.session_id.cmp(&a.session_id))
-    });
-    Ok(snapshots)
+    bail!("cannot list snapshots in {}: {last_err}", root.display())
 }
 
 /// Inspect entries in a snapshot archive, returning relative paths and byte sizes.
