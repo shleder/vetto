@@ -1,0 +1,140 @@
+name: macos-sbpl-matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/sandbox/macos/**'
+      - 'tests/integration/macos_seatbelt.rs'
+      - '.github/workflows/macos-sbpl-matrix.yml'
+      - 'scripts/sbpl-matrix-test.sh'
+
+jobs:
+  sbpl-dispute-matrix:
+    name: SBPL Matrix / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # macos-13 runners are gone/long-queued; 15-intel keeps x86_64 coverage.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-15-intel]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Compile Test Binaries
+        run: |
+          mkdir -p target/matrix-binaries
+
+          # 1. Go Static (CGO_ENABLED=0: minimal Go runtime; dynamic linkage to libSystem.B.dylib via dyld on Darwin)
+          cat << 'EOF' > target/matrix-binaries/main_static.go
+          package main
+          import (
+              "fmt"
+              "os"
+          )
+          func main() {
+              if len(os.Args) < 2 { os.Exit(1) }
+              data, err := os.ReadFile(os.Args[1])
+              if err != nil { fmt.Fprintf(os.Stderr, "ERR: %v\n", err); os.Exit(2) }
+              fmt.Print(string(data))
+          }
+          EOF
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o target/matrix-binaries/go_static target/matrix-binaries/main_static.go
+
+          # 2. Go Dynamic (cgo enabled, links against libSystem.dylib)
+          cat << 'EOF' > target/matrix-binaries/main_cgo.go
+          package main
+          /*
+          #include <stdio.h>
+          #include <stdlib.h>
+          */
+          import "C"
+          import (
+              "fmt"
+              "os"
+          )
+          func main() {
+              if len(os.Args) < 2 { os.Exit(1) }
+              data, err := os.ReadFile(os.Args[1])
+              if err != nil { fmt.Fprintf(os.Stderr, "ERR: %v\n", err); os.Exit(2) }
+              fmt.Print(string(data))
+          }
+          EOF
+          CGO_ENABLED=1 go build -o target/matrix-binaries/go_dynamic target/matrix-binaries/main_cgo.go
+
+          # 3. Rust Dynamic (standard Mach-O binary linking to libSystem)
+          cat << 'EOF' > target/matrix-binaries/rust_bin.rs
+          use std::env;
+          use std::fs;
+          fn main() {
+              let path = env::args().nth(1).expect("no target path provided");
+              match fs::read_to_string(&path) {
+                  Ok(s) => print!("{s}"),
+                  Err(e) => {
+                      eprintln!("ERR: {e}");
+                      std::process::exit(2);
+                  }
+              }
+          }
+          EOF
+          rustc -O target/matrix-binaries/rust_bin.rs -o target/matrix-binaries/rust_dynamic
+
+          # 4. Swift Dynamic (Mach-O linking against Swift runtime, Foundation, and OS dylibs)
+          cat << 'EOF' > target/matrix-binaries/main.swift
+          import Foundation
+          let args = CommandLine.arguments
+          guard args.count > 1 else { exit(1) }
+          do {
+              let contents = try String(contentsOfFile: args[1], encoding: .utf8)
+              print(contents, terminator: "")
+          } catch {
+              fputs("ERR: \(error)\n", stderr)
+              exit(2)
+          }
+          EOF
+          swiftc -O target/matrix-binaries/main.swift -o target/matrix-binaries/swift_dynamic
+
+      - name: Run Empirical Matrix Harness
+        run: |
+          chmod +x scripts/sbpl-matrix-test.sh
+          ./scripts/sbpl-matrix-test.sh
+
+      - name: Verify Matrix Results JSON
+        run: |
+          python3 -c '
+          import json, sys
+          with open("target/sbpl-matrix-results.json") as f:
+              results = json.load(f)
+          print(f"Total results recorded: {len(results)}")
+          assert len(results) >= 20, f"Insufficient matrix results: {len(results)}"
+          leaks = [r for r in results if r["expected_type"] == "DENY" and r["status"] == "LEAK_FAIL"]
+          if leaks:
+              print(f"FATAL: Secret leak detected: {leaks}", file=sys.stderr)
+              sys.exit(1)
+          errors = [r for r in results if r["status"] == "ERROR"]
+          if errors:
+              print(f"FATAL: Execution errors in harness: {errors}", file=sys.stderr)
+              sys.exit(1)
+          print("Matrix results validation passed successfully.")
+          '
+
+      - name: Archive Matrix Artifacts & Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbpl-results-${{ matrix.os }}
+          path: |
+            target/sbpl-matrix-results.json
+            target/sbpl-matrix.log
+            ~/Library/Logs/DiagnosticReports/
