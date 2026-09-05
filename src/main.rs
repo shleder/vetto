@@ -418,7 +418,14 @@ fn run() -> Result<()> {
             channel,
             check,
             dry_run,
-        }) => vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run),
+            rollback,
+        }) => {
+            if *rollback {
+                vetto::version::run_rollback(*dry_run)
+            } else {
+                vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run)
+            }
+        }
         Some(cli::Command::Tour { non_interactive }) => vetto::tour::run_tour(*non_interactive),
         Some(cli::Command::ScanSecrets {
             path,

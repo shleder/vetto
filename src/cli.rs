@@ -493,6 +493,9 @@ pub enum Command {
         /// Simulate upgrade command without running
         #[arg(long)]
         dry_run: bool,
+        /// Restore the last-good binary saved by the previous upgrade
+        #[arg(long)]
+        rollback: bool,
     },
     /// Scan project directory for exposed secrets and credentials
     #[command(hide = true)]
@@ -1108,7 +1111,14 @@ mod tests {
                 channel: Some(ref ch),
                 check: true,
                 dry_run: false,
+                rollback: false,
             }) if ch == "alpha"
+        ));
+        let cli_rb =
+            Cli::try_parse_from(["vetto", "upgrade", "--rollback"]).expect("upgrade rollback");
+        assert!(matches!(
+            cli_rb.command,
+            Some(Command::Upgrade { rollback: true, .. })
         ));
     }
 
