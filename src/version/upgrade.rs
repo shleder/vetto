@@ -318,9 +318,12 @@ pub fn stage_update(version: &str, archive_url: &str, ext: &str) -> Result<PathB
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("create staged update dir {}", dir.display()))?;
     let archive = download_and_verify_archive(archive_url, ext, &dir)?;
+    // Marker carries the verified hash so apply-time re-checks close the
+    // TOCTOU window between staging (T1) and application (T2).
+    let digest = sha256_file(&archive)?;
     std::fs::write(
         dir.join(STAGED_READY_MARKER),
-        archive.to_string_lossy().as_ref(),
+        format!("{digest}\n{}", archive.display()),
     )
     .with_context(|| format!("write staged marker in {}", dir.display()))?;
     if let Some(root) = dir.parent() {
@@ -393,10 +396,25 @@ pub fn apply_pending_staged_update() -> Result<bool> {
     }
     let marker = std::fs::read_to_string(dir.join(STAGED_READY_MARKER))
         .with_context(|| format!("read staged marker in {}", dir.display()))?;
-    let archive_path = PathBuf::from(marker.trim());
+    let mut lines = marker.lines();
+    // Legacy single-line markers (path only, pre-hash) are distrusted:
+    // drop the stage so the next run re-stages with a hash.
+    let (expected_digest, archive_path) = match (lines.next(), lines.next()) {
+        (Some(digest), Some(path)) => (digest.trim().to_string(), PathBuf::from(path.trim())),
+        _ => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Ok(false);
+        }
+    };
     if !archive_path.exists() {
         let _ = std::fs::remove_dir_all(&dir);
         bail!("staged update {version} is incomplete; re-staging on next run");
+    }
+    // TOCTOU close: re-hash at apply time, not just at stage time.
+    let actual_digest = sha256_file(&archive_path)?;
+    if actual_digest != expected_digest {
+        let _ = std::fs::remove_dir_all(&dir);
+        bail!("staged update {version} failed integrity re-check; stage dropped");
     }
     let ext = if archive_path.extension().and_then(|e| e.to_str()) == Some("zip") {
         "zip"
@@ -417,9 +435,25 @@ fn install_archive_over_exe(
     exe_path: &Path,
     archive_path: &Path,
     ext: &str,
-    scratch: &Path,
+    _scratch: &Path,
 ) -> Result<()> {
-    let unpack_dir = scratch.join("unpack");
+    // Unpack on the SAME filesystem as the executable: rename() across
+    // mounts fails with EXDEV (staged dir lives under $HOME, the binary may
+    // live in /usr/local/bin). Scratch is always cleaned, success or not.
+    let parent_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+    let unpack_root = tempfile_dir(parent_dir)?;
+    let res = install_from_unpack_root(exe_path, archive_path, ext, &unpack_root);
+    let _ = std::fs::remove_dir_all(&unpack_root);
+    res
+}
+
+fn install_from_unpack_root(
+    exe_path: &Path,
+    archive_path: &Path,
+    ext: &str,
+    unpack_root: &Path,
+) -> Result<()> {
+    let unpack_dir = unpack_root.join("unpack");
     std::fs::create_dir_all(&unpack_dir)
         .with_context(|| format!("create {}", unpack_dir.display()))?;
     let unpack_status = if ext == "zip" {
