@@ -247,13 +247,14 @@ pub fn run_upgrade(channel_opt: Option<&str>, check_only: bool, dry_run: bool) -
     }
 }
 
-/// Downloads release archive and performs atomic replacement of the current executable.
-fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) -> Result<()> {
-    let parent_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-    let temp_dir = tempfile_dir(parent_dir)?;
-
-    // Download archive via curl
-    let archive_path = temp_dir.join(format!("vetto_download.{ext}"));
+/// Downloads a release archive and fails closed unless its .sha256 sidecar
+/// verifies. Shared by interactive upgrades and background staging.
+fn download_and_verify_archive(
+    archive_url: &str,
+    ext: &str,
+    staging_dir: &Path,
+) -> Result<PathBuf> {
+    let archive_path = staging_dir.join(format!("vetto_download.{ext}"));
     let status = Command::new("curl")
         .args([
             "-fsSL",
@@ -267,14 +268,79 @@ fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) 
         .context("failed to download release binary via curl")?;
 
     if !status.success() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
         bail!("download failed with status {status}");
     }
 
-    // Supply-chain gate: every release publishes a .sha256 sidecar next to
-    // the archive. A security tool must not execute unverified bytes —
-    // fail closed when the sidecar is missing or mismatched.
-    verify_archive_sha256(&archive_path, &format!("{archive_url}.sha256"), &temp_dir)?;
+    verify_archive_sha256(&archive_path, &format!("{archive_url}.sha256"), staging_dir)?;
+    Ok(archive_path)
+}
+
+/// Root for staged background updates: ~/.vetto/updates/<version>/.
+pub fn staged_update_dir(version: &str) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    Some(home.join(".vetto").join("updates").join(version))
+}
+
+const STAGED_READY_MARKER: &str = "READY";
+
+/// Removes staged updates other than `keep_version` (only dirs carrying our
+/// marker are touched — never user data).
+fn prune_staged_updates(updates_root: &Path, keep_version: &str) {
+    let entries = match std::fs::read_dir(updates_root) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let keep = path
+            .file_name()
+            .map(|n| n.to_string_lossy() == keep_version)
+            .unwrap_or(false);
+        if !keep && path.join(STAGED_READY_MARKER).is_file() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Downloads and verifies a release into the staged dir (idempotent: a
+/// version already staged is returned as-is). Applied on a later startup,
+/// never mid-session.
+pub fn stage_update(version: &str, archive_url: &str, ext: &str) -> Result<PathBuf> {
+    let dir = staged_update_dir(version).context("resolve staged update dir")?;
+    if dir.join(STAGED_READY_MARKER).is_file() {
+        return Ok(dir);
+    }
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("create staged update dir {}", dir.display()))?;
+    let archive = download_and_verify_archive(archive_url, ext, &dir)?;
+    std::fs::write(
+        dir.join(STAGED_READY_MARKER),
+        archive.to_string_lossy().as_ref(),
+    )
+    .with_context(|| format!("write staged marker in {}", dir.display()))?;
+    if let Some(root) = dir.parent() {
+        prune_staged_updates(root, version);
+    }
+    Ok(dir)
+}
+
+/// Downloads release archive and performs atomic replacement of the current executable.
+fn perform_atomic_binary_upgrade(exe_path: &Path, archive_url: &str, ext: &str) -> Result<()> {
+    let parent_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+    let temp_dir = tempfile_dir(parent_dir)?;
+
+    let archive_path = match download_and_verify_archive(archive_url, ext, &temp_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(e);
+        }
+    };
 
     // Extract archive
     let unpack_status = if ext == "zip" {
@@ -522,6 +588,32 @@ mod tests {
         );
         assert_eq!(parse_sha256_sidecar(""), None);
         assert_eq!(parse_sha256_sidecar("notahash  file.tgz\n"), None);
+    }
+
+    #[test]
+    fn prune_keeps_only_current_staged_version() {
+        let root = std::env::temp_dir().join(format!(
+            "vetto-prune-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        for v in ["0.2.13", "0.2.14"] {
+            let d = root.join(v);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("READY"), "x").unwrap();
+        }
+        // Foreign dir without our marker must survive.
+        std::fs::create_dir_all(root.join("user-stuff")).unwrap();
+
+        prune_staged_updates(&root, "0.2.14");
+
+        assert!(root.join("0.2.14").exists());
+        assert!(!root.join("0.2.13").exists());
+        assert!(root.join("user-stuff").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
