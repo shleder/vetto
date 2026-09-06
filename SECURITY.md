@@ -128,46 +128,62 @@ An exact name added to `[environment].pass_through` is an explicit choice to
 expose that value to the agent. Unknown policy fields are errors so a misspelt
 environment restriction cannot silently disappear.
 
-## macOS
+## Platform Security Tiers
 
-The macOS backend uses `sandbox-exec`/Seatbelt. Apple has deprecated and does
-not document `sandbox-exec`; it works on current systems but is a platform
-risk. If the runner or required policy behaviour is unavailable, vetto must
-fail closed rather than execute unsandboxed.
+### Tier 1: Linux (Production-Grade)
+Linux is Vetto's reference production platform, offering hardware-enforced unprivileged isolation via:
+- **Landlock LSM (ABI v1–v6)**: Inode-level access restriction evaluated in the kernel VFS before `execve`.
+- **Private Namespaces**: Mount namespace (`CLONE_NEWNS`) with empty `tmpfs` mode-000 and `/dev/null` overlays masking `~/.ssh`, `~/.aws`, and `.env*`; PID namespace (`CLONE_NEWPID`) ensuring 100% process tree teardown; Network namespace (`CLONE_NEWNET`) with loopback-only egress and local TCP/TLS broker.
+- **Seccomp-BPF**: System call filtering preventing ptrace, process_vm_readv, mount, bpf, userfaultfd, and dangerous syscalls.
+- **Tiers within Linux**: `FULL` tier leverages user namespaces (`CLONE_NEWUSER`) for private mount and network namespaces; `FS-ONLY` tier provides Landlock filesystem confinement and seccomp network blocking on systems where unprivileged user namespaces are disabled.
+- **Windows WSL2**: Fully supported as Tier 1, utilizing the native Linux kernel inside WSL2.
 
-Endpoint Security support is optional and requires Apple's
-`com.apple.developer.endpoint-security.client` entitlement, appropriate code
-signing and system approval. Enabling the Cargo feature does not grant the
-entitlement. Doctor reports present/absent/unavailable and the backend falls
-back to Seatbelt enforcement plus coarse FSEvents changes when ES cannot be
-used.
+### Tier 2: macOS (Experimental)
+The macOS backend uses Apple's private Seatbelt API (`libsandbox.1.dylib!sandbox_init_with_parameters`):
+- **Write and Exec Isolation**: File writes are strictly locked to `$PROJECT` and `/tmp`. Network egress is locked via `--net=off` (`(deny network*)`).
+- **dyld Crash Limitation & Broad Reads**: On modern macOS (13/14/15), the dynamic linker (`dyld`) aborts (`SIGABRT`) when SBPL read rules are fragmented across multiple discrete path clauses. Vetto applies broad read permissions `(allow file-read* (subpath "/"))` alongside tail denials on known secrets. Because Darwin lacks unprivileged mount overlays and VFS inode masking, unprivileged read denial cannot guarantee absolute secrecy against all native binaries. This platform defect is tracked via `vetto doctor` under `sbpl-read-fragment`.
+- **Process Supervision**: Enforced via a `kqueue` EVFILT_PROC watchdog (`pdeath_watch`), providing best-effort process tree termination.
+- **Recommendation**: For hardware-enforced kernel read-denial of host credentials on macOS, run Vetto inside **OrbStack**, a lightweight Linux VM, or Docker devcontainers.
 
-## Windows
+### Tier 3: Windows (Experimental / Preview)
+Windows native isolation uses Win32 security tokens and Job Objects:
+- **Process Guardrails**: Job Objects enforce `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to terminate all descendant processes on exit. AppContainer and LPAC (`S-1-15-2-2`) tokens isolate IPC and local tokens.
+- **No Unprivileged LSM / Mounts**: The Windows kernel does not expose unprivileged mount namespaces or LSM hooks. Fine-grained network filtering via WFP requires administrator rights, which Vetto strictly refuses to require.
+- **Production Recommendation**: For production-grade Tier 1 isolation on Windows hosts, execute Vetto within **WSL2** (`wsl -- vetto ...`).
+- **Windows Sandbox**: Available as an opt-in hardware-virtualized tier (`--backend win-sandbox`), generating `.wsb` specifications with dedicated virtual storage.
 
-Windows uses different primitives; it must not be described as Landlock-like.
-The native path capability-probes the experimental Windows 11 process-sandbox
-API, AppContainer capabilities, restricted/low-integrity tokens and Job Object
-kill-on-close. Experimental API availability can change between Windows
-builds. A Job Object or Low integrity token alone is not a filesystem/network
-sandbox, so vetto refuses to launch when the complete selected boundary cannot
-be established.
+---
 
-Firewall/WFP mutation, Event Log source registration, some ETW providers and
-minifilter installation require administrator rights. Optional integrations
-must report that requirement and never prompt for or manufacture elevation.
-An already-installed signed minifilter may be detected, but its absence cannot
-be relabelled as enforcement. Windows Sandbox is a separate opt-in
-hardware-virtualized tier and explicitly breaks the “no VM dependency”
-property; it is never a silent fallback.
+## What Vetto Does NOT Protect
 
-## Residual risks
+Vetto enforces strict OS-level containment for untrusted agent subprocesses. However, security boundaries are defined and limited by the underlying kernel and host architecture. Vetto explicitly does NOT defend against the following four threat classes:
 
-- Kernel vulnerabilities can bypass kernel-enforced sandboxes.
-- An allowed project file created after load may not match a secret glob until
-  the next session, depending on tier and overlay availability.
-- Proxy-aware allowlists constrain destinations, not what an allowed service
-  does with uploaded data.
-- Visibility feeds and sanitization are incomplete by design.
-- Availability controls are bounded mitigations, not hard real-time quotas.
-- User-selected pass-through variables, read roots, network destinations and
-  permissive profiles deliberately widen the boundary.
+### 1. Prompt Injection Within Authorized Agent Tools & Allowed Network APIs
+Vetto operates strictly at the OS kernel boundary (LSM, namespaces, and TCP transport brokers). It is **not** an application-level prompt firewall or an LLM guardrail:
+- Vetto does **not** inspect, filter, or semantically validate payload contents exchanged over TLS with allowlisted endpoints (e.g., Anthropic, OpenAI, or GitHub APIs).
+- If an agent is coerced via prompt injection into transmitting project source code to an allowed external API or executing authorized tool commands (e.g., committing code to a permitted Git branch), Vetto treats these operations as legitimate within the defined policy.
+- Defenses against semantic manipulation, prompt poisoning, and model-level hallucinations must be implemented at the orchestration or application layer.
+
+### 2. Legitimate Writes to Explicitly Allowed Project Paths
+To allow coding agents to perform their core duties, the designated project directory (`$PROJECT`) and `/tmp` are explicitly granted read-write access in the Landlock/Seatbelt policy:
+- Vetto prevents modifications to files outside `$PROJECT` and shields masked paths (such as `$PROJECT/.env*`).
+- Vetto does **not** monitor or prevent destructive, buggy, or malicious file edits, code deletions, or subtle backdoor insertions within the allowed project directory.
+- Developers must rely on version control (Git branches, staged commits, pre-merge reviews) and workspace backups to verify and safeguard project code integrity.
+
+### 3. Microarchitectural and Timing Side-Channels
+Vetto utilizes operating system isolation primitives (namespaces, Landlock LSM, and seccomp-bpf), not hardware virtualization boundaries:
+- Untrusted agent processes share physical CPU cores, cache hierarchies (L1/L2/L3), TLBs, and branch predictors with host processes.
+- Vetto does **not** defend against hardware speculative execution attacks (e.g., Spectre, Meltdown, MDS) or cache-timing side-channels (e.g., Flush+Reload, Prime+Probe), particularly under SMT/Hyper-Threading.
+- Workloads requiring complete side-channel immunity must be isolated via hardware hypervisors (microVMs), dedicated CPU affinity pinning, or disabled SMT.
+
+### 4. Compromised Host Kernel or Root-Level Operator Compromise
+Vetto executes entirely as an unprivileged user-space process and relies fundamentally on the integrity and correctness of the host operating system kernel:
+- Vetto does **not** defend against host kernel vulnerabilities (e.g., kernel privilege escalation CVEs, unpatched LSM bugs, or memory corruption flaws).
+- Vetto does **not** protect against a compromised root/administrator account or another host process executing under the same user ID outside the sandbox.
+- Vetto does not implement hardware-rooted cryptographic attestation or secure enclave execution. If the host environment is compromised, all sandbox guarantees fail.
+
+### Additional Residual Risks
+- Kernel 0-days or VFS race conditions can bypass software kernel sandboxes.
+- Files created in the writable project root after session startup that match secret naming patterns may not be masked until the next session.
+- Visibility feeds, logging, and audit channels are racy and advisory by design; missing audit events never imply permission.
+- User-selected pass-through environment variables, widened read roots, and permissive network destinations deliberately expand the attack surface.

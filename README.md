@@ -13,6 +13,10 @@
 [![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#platform-support)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](LICENSE)
 [![Fail-Closed](https://img.shields.io/badge/fallback-none%20%2F%20fail--closed-success?style=flat-square)](#honest-status)
+<br/>
+[![cargo-deny](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=cargo-deny&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
+[![cargo-audit](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=cargo-audit&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
+[![gitleaks](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=gitleaks&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
 
 <br/>
 
@@ -149,20 +153,49 @@ Containers were designed for packaging backend microservices—not for interacti
 
 ---
 
-## Platform Reality (Zero Snake Oil)
+## <a id="platform-support"></a>Platform Support
 
-Security tooling frequently makes deceptive cross-platform claims. Vetto is architecturally transparent about what each operating system kernel can and cannot enforce:
+Security tooling frequently makes misleading cross-platform claims. Vetto rejects snake oil and is architecturally transparent about what each operating system kernel can and cannot enforce unprivileged.
 
-| Operating System | Enforcement Primitives | Read Isolation (`~/.ssh`, `.env`) | Write Isolation (Host/System) | Network Allowlist | Security Tier |
-| :--- | :--- | :---: | :---: | :---: | :--- |
-| **Linux (Native)** | **Landlock ABI (v1–v6)** + **Seccomp-BPF** + **NetNS** | **100% Kernel Deny** | **100% Locked to Project** | **Per-Domain Broker** | **Tier 1 (Complete Boundary)** |
-| **Windows WSL2** | **Linux Landlock via WSL2 Kernel** | **100% Kernel Deny** | **100% Locked to Project** | **Per-Domain Broker** | **Tier 1 (Recommended for Windows)** |
-| **macOS (Darwin)** | **Apple Seatbelt (`libsandbox`)** + **Kqueue** | **Broad Reads (SBPL bug)** | **100% System Protected** | **`--net=off` Lockdown** | **Tier 2 (Write Safety & Ceilings)** |
-| **Windows Native** | **Job Objects** + **Restricted Tokens** | **ACL Fallback** | **Workspace Only** | **Host Firewall Rules** | **Tier 3 (Process Guardrails)** |
+Vetto establishes an immutable 3-tier boundary architecture:
+- **Tier 1 (Production-Grade)**: **Linux (Native)** and **Linux (WSL2)**. Full kernel isolation via Landlock LSM (ABI v1–v6), Seccomp-BPF, private Mount/PID/Network namespaces, and tmpfs secret masking overlays.
+- **Tier 2 (Experimental)**: **macOS (Darwin)**. Apple Seatbelt SBPL (`sandbox_init_with_parameters`) write and execution confinement, kqueue parent-death watchdog process reaping. Broad read permissions required due to Apple dynamic linker (`dyld`) shared cache constraints.
+- **Tier 3 (Preview / Process Guardrails)**: **Windows Native**. Process containment via Job Objects (`KILL_ON_JOB_CLOSE`), Low Integrity tokens (`S-1-16-4096`), and AppContainer DACLs. For production-grade Tier 1 isolation on Windows, running inside WSL2 is strongly recommended.
 
-> **The Honest macOS Disclosure**:
-> Apple has deprecated SBPL (`sandbox-exec`) and deliberately restricts unprivileged file-read denial in modern Darwin kernels. Any tool claiming unprivileged read-masking on macOS without SIP bypass is misleading you.
-> **Recommendation**: If you require hardware-enforced, 100% kernel read-denial for SSH and AWS credentials on a Mac, run your agent with Vetto inside **OrbStack**, a lightweight Linux VM, or Docker devcontainer. On host macOS, Vetto guarantees write safety, network lockdown, and watchdog termination.
+### Canonical 5-Factor Capability Matrix
+
+| Platform / Tier | Filesystem Write | Filesystem Read | Network Namespace | Process Reaping | Secret Overlays per OS | Assurance Status |
+| :--- | :--- | :--- | :---: | :--- | :---: | :--- |
+| **Linux (Native)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O Mounts) | **100% Scoped Read** (Landlock VFS Inode checks, `~/.ssh` / `.env` blocked) | **Yes** (`CLONE_NEWNET`, loopback-only + local TCP/TLS broker) | **100% PID Namespace** (`CLONE_NEWPID` init teardown + `PR_SET_PDEATHSIG`) | **Yes** (tmpfs mode-000 and `/dev/null` bind-mounts over secrets) | **Production-grade**: Complete hardware & kernel isolation boundary |
+| **Linux (WSL2)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock via WSL2 Linux Kernel) | **100% Scoped Read** (Landlock VFS Inode checks) | **Yes** (`CLONE_NEWNET` inside WSL2 VM) | **100% PID Namespace** teardown | **Yes** (tmpfs mount overlays inside WSL2) | **Production-grade**: Recommended path for Windows workstations |
+| **macOS (Darwin)**<br/>*Tier 2 (Experimental)* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **Partial** (Watchdog `kqueue` `pdeath_watch` sends `SIGKILL` to group) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Experimental**: Write confinement and `--net=off` network lockdown |
+| **Windows Native**<br/>*Tier 3 (Preview)* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Preview**: Process guardrails only; use WSL2 for full kernel boundary |
+| **Windows Sandbox**<br/>*Tier 3 (VM Isolated)* | **VM Isolated** (Dedicated virtual disk, mapped read-write folders only) | **VM Isolated** (Host secrets never mapped into `.wsb` specification) | **Virtual Switch** (Hyper-V vSwitch disabled under `--net=off`) | **VM Teardown** (Hyper-V VM instance termination) | **Full Isolation** (Physically separated filesystem in disposable VM) | **Disposable VM**: Hardware-virtualized container (requires Hyper-V) |
+
+---
+
+## <a id="honest-status"></a>Honest Status
+
+### Fail-Closed Principle
+Vetto strictly enforces a fail-closed contract across all platforms. If a requested security boundary cannot be guaranteed by the current operating system kernel or runtime environment, Vetto exits immediately with code `103` (`VETTO_ERR_FAIL_CLOSED`). Vetto never silently degrades to an unconfined or insecure execution state.
+
+### The Honest macOS Disclosure
+Apple has deprecated SBPL (`sandbox-exec`) and Darwin kernels impose severe constraints on unprivileged file-read denial:
+- Modern versions of Apple's dynamic linker (`dyld`) on macOS 13, 14, and 15 crash with `SIGABRT` when SBPL file-read rules are fragmented across multiple discrete path clauses.
+- Vetto transparently tracks this platform defect via `vetto doctor` under the `sbpl-read-fragment` probe.
+- Rather than crashing agent workflows or manufacturing illusory read security, Vetto on macOS grants broad system reads while strictly enforcing 100% filesystem write lockouts, `--net=off` network isolation, and process supervision.
+- **Recommendation**: If your threat model requires 100% hardware-enforced kernel read-denial of host credentials (`~/.ssh`, `~/.aws`, `.env`) on macOS, execute Vetto inside **OrbStack**, a lightweight Linux VM, or Docker devcontainers where Linux Landlock and mount namespaces are available.
+
+### The Honest Windows Disclosure
+Native Windows isolation uses Job Objects and Less Privileged AppContainers (LPAC). While Job Objects guarantee 100% child process termination on close (`KILL_ON_JOB_CLOSE`), Windows lacks unprivileged mount namespaces and kernel Landlock LSM primitives:
+- Native Windows is designated **Tier 3 (Preview)**.
+- For production-grade **Tier 1** protection on Windows workstations, use **WSL2** (`wsl -- vetto ...`), which provides the native Linux kernel Landlock LSM and namespace isolation stack.
+
+### Scope Closure: Issue #26 Resolution
+Issue #26 formally closes the gap between marketing assertions and kernel reality. Vetto permanently repudiates ungrounded claims of cross-platform parity:
+1. Platform capabilities are strictly tiered (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows).
+2. All capability claims are continuously verified in CI via automated red-team matrices and diagnostic doctor probes.
+3. Pull requests or features claiming parity without underlying OS kernel enforcement proofs will be rejected.
 
 ---
 

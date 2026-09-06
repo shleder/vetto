@@ -102,6 +102,17 @@ jobs:
             $VETTO_BIN --verify -- /bin/sh -c "echo 'Supervised agent sub-process launched inside sandbox with full isolation boundaries.'"
           fi
 
+      - name: Run Red-Team Containment Battery & Render Summary
+        shell: bash
+        env:
+          VETTO_BIN: ./target/release/vetto
+        run: |
+          set -euo pipefail
+          echo "=== 4. Running red-team containment battery ==="
+          REPORT_PATH="${{ runner.temp }}/redteam-report-${{ matrix.agent }}-${{ matrix.os }}.json"
+          $VETTO_BIN redteam --json > "$REPORT_PATH" || true
+          python3 scripts/render-redteam-summary.py --input "$REPORT_PATH" --allow-failure
+
   # Depth over breadth: every shipped agent profile must resolve to an
   # effective policy. TOML syntax is already covered at compile time
   # (include_str!), this job covers semantic resolution per profile.

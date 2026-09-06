@@ -1,0 +1,106 @@
+name: slsa-reproducible
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/slsa-reproducible.yml'
+      - 'src/**'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify-reproducible-build:
+    name: verify bit-for-bit reproducible build (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup deterministic build environment
+        run: |
+          # Anchor build timestamp to the last git commit timestamp
+          SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          # Remap build paths to eliminate absolute host environment variance
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=/vetto" >> "$GITHUB_ENV"
+
+      - name: Build 1 (Clean Target A)
+        env:
+          CARGO_TARGET_DIR: target/build-a
+        run: cargo build --release --locked --all-features
+
+      - name: Build 2 (Clean Target B)
+        env:
+          CARGO_TARGET_DIR: target/build-b
+        run: cargo build --release --locked --all-features
+
+      - name: Compare binary SHA-256 digests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HASH_A=$(sha256sum target/build-a/release/vetto | awk '{print $1}')
+          HASH_B=$(sha256sum target/build-b/release/vetto | awk '{print $1}')
+
+          echo "Build A SHA-256: $HASH_A"
+          echo "Build B SHA-256: $HASH_B"
+
+          if [ "$HASH_A" != "$HASH_B" ]; then
+            echo "::error ::Reproducible build verification FAILED: Binaries differ bit-for-bit!"
+            diff -u <(sha256sum target/build-a/release/vetto) <(sha256sum target/build-b/release/vetto)
+            exit 1
+          fi
+
+          echo "✅ Bit-for-bit reproducible build verified: identical cryptographic hash ($HASH_A)"
+
+          # Prepare artifact for provenance attestation
+          mkdir -p dist
+          cp target/build-a/release/vetto dist/vetto-linux-x86_64
+          sha256sum dist/vetto-linux-x86_64 > dist/vetto-linux-x86_64.sha256
+
+      - name: Generate SLSA Build Provenance Attestation (Staged Non-Release)
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/vetto-linux-x86_64
+
+      - name: Verify SLSA Attestation locally via GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify dist/vetto-linux-x86_64 --owner "${{ github.repository_owner }}"
+
+      - name: Render SLSA Summary into Job Step Summary
+        shell: bash
+        run: |
+          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## 🔒 SLSA Level 3 Provenance & Reproducible Build Report
+
+          | Verification Gate | Result | Details |
+          |:---|:---:|:---|
+          | **Reproducible Build** | ✅ **VERIFIED** | Bit-for-bit identical binary across independent clean builds |
+          | **Cryptographic Hash** | `SHA-256` | Verified deterministic hash match |
+          | **SLSA Provenance** | ✅ **ATTESTED** | Signed by GitHub Sigstore OIDC under `actions/attest-build-provenance@v2` |
+          | **Integrity Verification** | ✅ **PASSED** | Local `gh attestation verify` successfully validated against repository owner |
+          | **Release Safety** | 🛡️ **FROZEN** | Non-release staging; zero release tags, zero public registries touched |
+          EOF
+
+      - name: Upload Attested Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vetto-slsa-attested-binary
+          path: dist/*

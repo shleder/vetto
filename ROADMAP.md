@@ -23,6 +23,10 @@ test matrix for the exact revision being used.
 
 ## Stabilization gate
 
+- **Issue #26 Resolution (Platform Parity & Scope Honesty)**: Formalize the 3-tier platform contract across all documentation, doctor probes, and CI matrices. Reject any pull request claiming cross-platform parity without kernel-level enforcement proof:
+  - Tier 1 (Linux): Production-grade Landlock ABI v1–v6 + complete namespace isolation (Mount, User, PID, NET) and tmpfs secret masking.
+  - Tier 2 (macOS): Experimental Seatbelt SBPL containment; continuous tracking of Apple dyld read-allowlist regressions.
+  - Tier 3 (Windows): Experimental AppContainer/Job Object process sandboxing; promote WSL2 as the production pathway on Windows hosts.
 - keep the fail-closed Linux, macOS and Windows capability probes covered by
   negative integration tests;
 - run the x86-64/ARM64 Linux, macOS Intel/Apple Silicon and Windows build
@@ -36,16 +40,15 @@ test matrix for the exact revision being used.
 
 ## Ongoing security work
 
-- track Landlock ABI changes and kernel audit visibility without making the
-  audit feed a prerequisite for enforcement;
-- re-evaluate the seccomp syscall set when kernel behaviour or legitimate
-  build workloads change;
-- test Seatbelt behaviour on each supported macOS release and keep Endpoint
-  Security entitlement detection explicit;
-- treat the experimental Windows process-sandbox API as unstable and refuse
-  fallback whenever an equivalent filesystem/network boundary cannot be
-  proved;
-- expand malicious descendant, DNS rebinding, symlink/race and lifecycle
+- **Tier 1 (Linux)**: Track Landlock ABI changes (ABI v1–v6) and kernel audit visibility without making the
+  audit feed a prerequisite for enforcement; re-evaluate seccomp syscall filters when kernel behaviour or legitimate
+  build workloads change; monitor user-notify notification races and unprivileged userns hardening.
+- **Tier 2 (macOS)**: Test Seatbelt behaviour on each supported macOS release (13/14/15) and keep Endpoint
+  Security entitlement detection explicit; optimize SBPL profile AST shape and track Apple dyld shared-cache regressions.
+- **Tier 3 (Windows)**: Treat the experimental Windows process-sandbox API as unstable and refuse
+  fallback whenever an equivalent filesystem/network boundary cannot be proved; enforce Job Object memory quotas,
+  AppContainer DACL edge cases, and Windows Sandbox `.wsb` specification parity.
+- Expand malicious descendant, DNS rebinding, symlink/race and lifecycle
   fixtures as new bypass techniques are disclosed.
 
 ## Ecosystem maintenance
