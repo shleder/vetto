@@ -292,8 +292,7 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
                 .collect(),
         };
         bug_report_json = Some(
-            serde_json::to_vec_pretty(&report)
-                .context("failed to serialize bug report to JSON")?,
+            serde_json::to_vec_pretty(&report).context("failed to serialize bug report to JSON")?,
         );
     }
 
