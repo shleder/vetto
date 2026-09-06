@@ -1401,6 +1401,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             tier_label(tier),
             if timed_out { ", TIMEOUT" } else { "" },
         );
+        if let Some(hint) = exit_codes::recap_hint(code, blocked_total, timed_out) {
+            eprintln!("vetto: recap: {hint}");
+        }
     }
 
     otel_session.finish(code);

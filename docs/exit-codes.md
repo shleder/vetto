@@ -35,3 +35,22 @@ agent itself fail? Rules of thumb:
   the exact rule.
 - Timeouts (`124`) with repeated identical failures beforehand suggest a runaway
   retry loop — see `vetto watchdog` rather than raising limits.
+
+## Exit recap and bug reports
+
+A fully clean session (exit `0`, no denials) exits quietly. Any other outcome
+prints one `vetto: recap:` line with exactly one next action:
+
+| Outcome | Recap points at |
+|---|---|
+| `124` / timeout | larger `--session-timeout` or splitting the task |
+| `126` | `vetto audit --latest` + `vetto allow` / `vetto deny` |
+| `125` | `vetto doctor`, then `vetto pack --bug` |
+| `127` | `vetto enable <agent>` or PATH check |
+| other non-zero | `vetto pack --bug -o bug.vetto-pack` |
+| `0` with denials | `vetto audit --latest` |
+
+`vetto pack --bug` attaches `bug-report.json` to the bundle: vetto version,
+OS/arch, session id, denial counts plus denied paths (capped at 50 entries).
+No file contents, no environment values. Attach the bundle to your issue —
+`vetto unpack --info` shows whether a report is inside.

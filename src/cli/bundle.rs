@@ -28,6 +28,11 @@ pub struct PackArgs {
     /// Include event logs in the bundle
     #[arg(long = "include-logs", default_value_t = true)]
     pub include_logs: bool,
+
+    /// Attach redacted diagnostics (bug-report.json) for issue reports:
+    /// denied paths only, no file contents or environment values
+    #[arg(long = "bug")]
+    pub bug: bool,
 }
 
 /// CLI arguments for `vetto unpack`.
@@ -59,6 +64,26 @@ pub struct BundleManifest {
     pub blocked_network_count: usize,
     pub allowed_domains: Vec<String>,
 }
+
+/// Redacted diagnostics stored at `bug-report.json` inside the `.vetto-pack`
+/// archive when packed with `vetto pack --bug`. Denied paths only — no file
+/// contents, no environment values, no secrets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BugReport {
+    pub format_version: u32,
+    pub vetto_version: String,
+    pub os: String,
+    pub arch: String,
+    pub session_id: String,
+    pub created_at: String,
+    pub blocked_filesystem_count: usize,
+    pub blocked_network_count: usize,
+    pub blocked_file_paths: Vec<String>,
+    pub blocked_network_destinations: Vec<String>,
+}
+
+/// Maximum denied-path entries kept in a bug report (counts are never truncated).
+pub const BUG_REPORT_MAX_ENTRIES: usize = 50;
 
 /// Computes the default bundle archive filename for a session.
 pub fn default_bundle_name(session_id: &str) -> String {
@@ -242,6 +267,36 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
     let manifest_json = serde_json::to_vec_pretty(&manifest)
         .context("failed to serialize bundle manifest to JSON")?;
 
+    let mut bug_report_json: Option<Vec<u8>> = None;
+    if args.bug {
+        let report = BugReport {
+            format_version: 1,
+            vetto_version: env!("CARGO_PKG_VERSION").to_string(),
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            session_id: target_snapshot.session_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            blocked_filesystem_count,
+            blocked_network_count,
+            blocked_file_paths: telemetry
+                .blocked_file_paths
+                .iter()
+                .take(BUG_REPORT_MAX_ENTRIES)
+                .cloned()
+                .collect(),
+            blocked_network_destinations: telemetry
+                .blocked_network_destinations
+                .iter()
+                .take(BUG_REPORT_MAX_ENTRIES)
+                .cloned()
+                .collect(),
+        };
+        bug_report_json = Some(
+            serde_json::to_vec_pretty(&report)
+                .context("failed to serialize bug report to JSON")?,
+        );
+    }
+
     let output_path = args
         .output
         .as_ref()
@@ -265,6 +320,10 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
         write_tar_entry(&mut out_file, "session.jsonl", logs, now)?;
     }
 
+    if let Some(ref bug) = bug_report_json {
+        write_tar_entry(&mut out_file, "bug-report.json", bug, now)?;
+    }
+
     out_file.write_all(&[0u8; 1024])?;
     out_file.flush()?;
 
@@ -279,6 +338,11 @@ pub fn run_pack(args: &PackArgs) -> Result<()> {
         "  Security events: {} fs blocked, {} net blocked",
         manifest.blocked_filesystem_count, manifest.blocked_network_count
     );
+    if args.bug {
+        println!(
+            "  Bug report: bug-report.json attached (denied paths only, no file contents or env)"
+        );
+    }
     println!("  Unpack with: vetto unpack {}", output_path.display());
 
     Ok(())
@@ -319,6 +383,11 @@ pub fn run_unpack(args: &UnpackArgs) -> Result<()> {
             manifest.blocked_filesystem_count, manifest.blocked_network_count
         );
         println!("Domains:     {}", domains_str);
+        if bundle_entries.contains_key("bug-report.json")
+            || bundle_entries.contains_key("./bug-report.json")
+        {
+            println!("Bug report:  bug-report.json attached (--bug)");
+        }
         return Ok(());
     }
 
@@ -376,6 +445,16 @@ pub fn run_unpack(args: &UnpackArgs) -> Result<()> {
             .with_context(|| format!("failed to write logs to '{}'", log_dest.display()))?;
     }
 
+    let bug_report = bundle_entries
+        .get("bug-report.json")
+        .or_else(|| bundle_entries.get("./bug-report.json"));
+
+    if let Some(bug) = bug_report {
+        let bug_dest = target_dir.join("bug-report.json");
+        std::fs::write(&bug_dest, bug)
+            .with_context(|| format!("failed to write bug report to '{}'", bug_dest.display()))?;
+    }
+
     println!("✓ Vetto bundle extracted to {}", target_dir.display());
     println!("  Files restored: {files_restored}");
 
@@ -419,10 +498,12 @@ mod tests {
             session_id: None,
             output: None,
             include_logs: true,
+            bug: false,
         };
         assert!(pack_args.include_logs);
         assert!(pack_args.session_id.is_none());
         assert!(pack_args.output.is_none());
+        assert!(!pack_args.bug);
 
         let unpack_args = UnpackArgs {
             bundle: "test.vetto-pack".to_string(),
@@ -483,6 +564,7 @@ mod tests {
             session_id: Some(session_id.clone()),
             output: Some(bundle_out.display().to_string()),
             include_logs: true,
+            bug: true,
         };
 
         let pack_res = run_pack(&pack_args);
@@ -518,6 +600,12 @@ mod tests {
         );
         assert!(extract_dir.join("bundle.manifest.json").is_file());
         assert!(extract_dir.join("session.jsonl").is_file());
+        let bug_bytes = fs::read(extract_dir.join("bug-report.json"))
+            .expect("bug-report.json must be extracted with --bug");
+        let bug: BugReport =
+            serde_json::from_slice(&bug_bytes).expect("bug-report.json must parse");
+        assert_eq!(bug.session_id, session_id);
+        assert_eq!(bug.vetto_version, env!("CARGO_PKG_VERSION"));
 
         if let Some(h) = old_home {
             std::env::set_var("HOME", h);
