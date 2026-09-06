@@ -32,9 +32,9 @@ use crate::report::{self, storage::ReportStorage, ReportOptions};
 use crate::sandbox::SandboxHandle;
 #[cfg(unix)]
 use crate::sandbox::{Backend, SpawnOptions, StdioMode};
-use anyhow::{Context, Result};
 #[cfg(unix)]
 use anyhow::bail;
+use anyhow::{Context, Result};
 
 #[cfg(unix)]
 use std::collections::HashMap;
