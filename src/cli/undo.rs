@@ -167,7 +167,6 @@ pub fn run_undo(args: &UndoArgs) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::cli::TEST_ENV_LOCK;

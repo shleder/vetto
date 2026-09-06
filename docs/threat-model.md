@@ -95,3 +95,16 @@ The filter is installed after vetto finishes its own namespace/mount setup and
 immediately before `execve`, then inherited irreversibly by descendants. Tests
 exercise the native syscall ABI rather than command wrappers. Architecture
 numbers come from `libc::SYS_*`, so x86-64 constants are never reused on ARM64.
+
+## Trust boundaries
+
+- **In scope:** the OS kernel boundary vetto enforces — filesystem writes/reads,
+  process tree, network egress, secret overlays — on the tier the current OS
+  supports (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows; see README capability
+  matrix). Per-backend gaps are tracked in #62 (macOS read-isolation) and #63
+  (Windows hardening), parent #26.
+- **Out of scope:** everything under "What Vetto Does NOT Protect" above
+  (prompt injection inside allowed tools/APIs, legitimate writes to allowed
+  paths, microarchitectural side-channels, compromised kernel/root operator).
+- **No silent downgrade:** when a requested boundary cannot be guaranteed,
+  vetto exits fail-closed (`103`) instead of running unconfined.

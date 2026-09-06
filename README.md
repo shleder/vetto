@@ -82,6 +82,12 @@ minisign -V -p packaging/release.pub -m vetto-linux-x86_64.tar.gz
 # → "Signature and comment signature verified"
 ```
 
+*Every release binary is additionally attested with SLSA Build Provenance (Level 3) via GitHub Sigstore. Verify provenance ([guide](docs/security/slsa-provenance.md)):*
+```bash
+gh attestation verify vetto-linux-x86_64.tar.gz --owner shleder
+# → "Verification succeeded!"
+```
+
 ---
 
 ## Quick Start
@@ -191,8 +197,8 @@ Native Windows isolation uses Job Objects and Less Privileged AppContainers (LPA
 - Native Windows is designated **Tier 3 (Preview)**.
 - For production-grade **Tier 1** protection on Windows workstations, use **WSL2** (`wsl -- vetto ...`), which provides the native Linux kernel Landlock LSM and namespace isolation stack.
 
-### Scope Closure: Issue #26 Resolution
-Issue #26 formally closes the gap between marketing assertions and kernel reality. Vetto permanently repudiates ungrounded claims of cross-platform parity:
+### Scope Closure: Issues #26, #62, #63
+Issue #26 formally closes the gap between marketing assertions and kernel reality, with per-backend tracking in #62 (macOS Seatbelt read-isolation, blocked by Apple `dyld` regression) and #63 (Windows AppContainer/LPAC hardening, WFP lease admin opt-in, release signing status). Vetto permanently repudiates ungrounded claims of cross-platform parity:
 1. Platform capabilities are strictly tiered (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows).
 2. All capability claims are continuously verified in CI via automated red-team matrices and diagnostic doctor probes.
 3. Pull requests or features claiming parity without underlying OS kernel enforcement proofs will be rejected.
