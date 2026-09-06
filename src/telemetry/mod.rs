@@ -10,6 +10,7 @@
 pub mod otel;
 pub use otel::{spawn_telemetry_subscriber, TelemetrySession};
 
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -97,6 +98,120 @@ pub fn send_session_telemetry(stats: &SessionStats, tier: &str) -> Result<()> {
     Ok(())
 }
 
+/// Funnel milestone events for the activation funnel (issue #27):
+/// `install` (first-ever run) → `enable` (first agent wrapped) →
+/// `first_session` (first supervised session completed).
+///
+/// Same opt-in gate and anonymity guarantees as session telemetry: each event
+/// carries only version/OS/arch plus the milestone name — no paths, commands,
+/// identifiers, or any PII. Each milestone is sent at most once (tracked in
+/// `~/.vetto/funnel.json`); when telemetry is off, nothing is recorded.
+pub const FUNNEL_EVENTS: [&str; 3] = ["install", "enable", "first_session"];
+
+/// Anonymous funnel milestone payload (schema v1, same envelope as sessions).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunnelEvent {
+    pub schema_version: u32,
+    pub vetto_version: String,
+    pub os: String,
+    pub arch: String,
+    pub event: String,
+}
+
+impl FunnelEvent {
+    pub fn new(event: &str) -> Self {
+        Self {
+            schema_version: TELEMETRY_SCHEMA_VERSION,
+            vetto_version: env!("CARGO_PKG_VERSION").to_string(),
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            event: event.to_string(),
+        }
+    }
+}
+
+fn funnel_marker_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    Some(home.join(".vetto").join("funnel.json"))
+}
+
+fn funnel_already_sent(event: &str) -> bool {
+    let path = match funnel_marker_path() {
+        Some(p) => p,
+        None => return true,
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let sent: Vec<String> = serde_json::from_str(&text).unwrap_or_default();
+    sent.iter().any(|e| e == event)
+}
+
+fn funnel_mark_sent(event: &str) {
+    let path = match funnel_marker_path() {
+        Some(p) => p,
+        None => return,
+    };
+    let mut sent: Vec<String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    if sent.iter().any(|e| e == event) {
+        return;
+    }
+    sent.push(event.to_string());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string(&sent) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+/// Records a funnel milestone exactly once. No-op for unknown event names,
+/// for already-recorded milestones, and unless telemetry is explicitly opted
+/// in with an endpoint configured.
+pub fn record_funnel_milestone(event: &str) -> Result<()> {
+    if !FUNNEL_EVENTS.contains(&event) {
+        return Ok(());
+    }
+    if funnel_already_sent(event) {
+        return Ok(());
+    }
+    let config = match load_user_config() {
+        Ok(cfg) => cfg,
+        Err(_) => return Ok(()),
+    };
+    if !config.telemetry || config.telemetry_endpoint.trim().is_empty() {
+        return Ok(());
+    }
+    let payload_json = match serde_json::to_string(&FunnelEvent::new(event)) {
+        Ok(j) => j,
+        Err(_) => return Ok(()),
+    };
+    let endpoint = config.telemetry_endpoint.trim().to_string();
+    let _ = Command::new("curl")
+        .arg("-s")
+        .arg("--max-time")
+        .arg(TELEMETRY_TIMEOUT.as_secs().max(1).to_string())
+        .arg("-X")
+        .arg("POST")
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-d")
+        .arg(&payload_json)
+        .arg(&endpoint)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    funnel_mark_sent(event);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +275,18 @@ mod tests {
         let stats = SessionStats::default();
         // Should execute cleanly without error
         assert!(send_session_telemetry(&stats, "none").is_ok());
+    }
+
+    #[test]
+    fn test_funnel_event_shape_and_allowlist() {
+        for event in FUNNEL_EVENTS {
+            let payload = FunnelEvent::new(event);
+            assert_eq!(payload.schema_version, TELEMETRY_SCHEMA_VERSION);
+            assert_eq!(payload.event, event);
+            let json = serde_json::to_string(&payload).unwrap();
+            assert!(json.contains(event));
+        }
+        // Unknown events are a silent no-op (no fs touch, no network).
+        assert!(record_funnel_milestone("not-a-milestone").is_ok());
     }
 }

@@ -36,6 +36,10 @@ agent itself fail? Rules of thumb:
 - Timeouts (`124`) with repeated identical failures beforehand suggest a runaway
   retry loop — see `vetto watchdog` rather than raising limits.
 
+Silent failures with no useful error at the failure site get their own page:
+[troubleshooting.md](troubleshooting.md) (auth hangs, outer-boundary
+misattribution, shim bypass).
+
 ## Exit recap and bug reports
 
 A fully clean session (exit `0`, no denials) exits quietly. Any other outcome

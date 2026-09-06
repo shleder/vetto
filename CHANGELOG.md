@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Troubleshooting guide**: `docs/troubleshooting.md` covers the top-3 silent
+  failure modes (auth hang, outer-boundary misattribution, shim bypass) with
+  one distinguishing check and one action each.
+- **Activation funnel telemetry** (#27): one-time opt-in `install` / `enable` /
+  `first_session` milestones (version/OS/arch + name only, no PII, tracked in
+  `~/.vetto/funnel.json`).
+
+### Fixed
+
+- **Exit recap flag**: timeout hint now points at the real `--timeout` flag
+  (was `--session-timeout`, which does not exist).
+
 ## [0.2.16] — 2026-09-06
 
 ### Added
