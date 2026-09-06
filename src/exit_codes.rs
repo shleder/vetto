@@ -209,3 +209,4 @@ mod tests {
         assert!(contained.contains('4'));
         assert!(contained.contains("vetto audit --latest"));
     }
+}
