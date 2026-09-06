@@ -438,6 +438,48 @@ fn is_executable_file(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Holds the module env lock and restores cleared vars on drop.
+    ///
+    /// `is_destructive_git_command` reads process-global
+    /// `VETTO_ALLOW_DESTRUCTIVE_GIT` and `parse_shim_args` reads
+    /// `VETTO_COMMAND_TIMEOUT`. Unit tests run on parallel threads of one
+    /// process, so a sibling test's `set_var` is visible here: without the
+    /// lock + clear, `detects_destructive_git_commands` flakes whenever it
+    /// overlaps `allows_destructive_git_bypass_and_override`.
+    struct EnvLock {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvLock {
+        fn cleared(vars: &[&'static str]) -> Self {
+            let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let mut saved = Vec::with_capacity(vars.len());
+            for name in vars {
+                saved.push((*name, env::var_os(name)));
+                env::remove_var(name);
+            }
+            Self {
+                _guard: guard,
+                saved,
+            }
+        }
+    }
+
+    impl Drop for EnvLock {
+        fn drop(&mut self) {
+            for (name, value) in self.saved.drain(..) {
+                match value {
+                    Some(v) => env::set_var(name, v),
+                    None => env::remove_var(name),
+                }
+            }
+        }
+    }
 
     #[test]
     fn detects_shim_directory_patterns() {
@@ -452,6 +494,11 @@ mod tests {
 
     #[test]
     fn recursion_barrier_checks_environment() {
+        let _env = EnvLock::cleared(&[
+            ENV_VETTO_SANDBOXED,
+            ENV_VETTO_SHIM_ACTIVE,
+            ENV_VETTO_WRAPPED,
+        ]);
         env::remove_var(ENV_VETTO_SANDBOXED);
         env::remove_var(ENV_VETTO_SHIM_ACTIVE);
         env::remove_var(ENV_VETTO_WRAPPED);
@@ -484,6 +531,9 @@ mod tests {
 
     #[test]
     fn detects_destructive_git_push_variants() {
+        // `is_destructive_git_push` honors VETTO_ALLOW_DESTRUCTIVE_GIT: clear
+        // it under lock so ambient CI env or a sibling test can't flip asserts.
+        let _env = EnvLock::cleared(&["VETTO_ALLOW_DESTRUCTIVE_GIT"]);
         assert!(is_destructive_git_push(&["push".into(), "--force".into()]).is_some());
         assert!(is_destructive_git_push(&["push".into(), "-f".into()]).is_some());
         assert!(is_destructive_git_push(&["push".into(), "--force-with-lease".into()]).is_some());
@@ -505,6 +555,9 @@ mod tests {
 
     #[test]
     fn detects_destructive_git_commands() {
+        // Same bypass-env hazard as above: `reset --hard` asserts return
+        // None while a sibling test holds VETTO_ALLOW_DESTRUCTIVE_GIT=1.
+        let _env = EnvLock::cleared(&["VETTO_ALLOW_DESTRUCTIVE_GIT"]);
         // Hard reset
         assert!(is_destructive_git_command(&["reset".into(), "--hard".into()]).is_some());
         assert!(
@@ -596,6 +649,7 @@ mod tests {
 
     #[test]
     fn allows_safe_git_commands() {
+        let _env = EnvLock::cleared(&["VETTO_ALLOW_DESTRUCTIVE_GIT"]);
         assert!(is_destructive_git_command(&["status".into()]).is_none());
         assert!(
             is_destructive_git_command(&["commit".into(), "-m".into(), "msg".into()]).is_none()
@@ -619,6 +673,9 @@ mod tests {
 
     #[test]
     fn allows_destructive_git_bypass_and_override() {
+        // Sole writer of VETTO_ALLOW_DESTRUCTIVE_GIT in this module: hold the
+        // lock for the whole body; Drop restores the ambient value.
+        let _env = EnvLock::cleared(&["VETTO_ALLOW_DESTRUCTIVE_GIT"]);
         // Flag override
         assert!(is_destructive_git_command(&[
             "reset".into(),
@@ -637,6 +694,8 @@ mod tests {
 
     #[test]
     fn parse_shim_args_timeout_extraction() {
+        // `parse_shim_args` falls back to VETTO_COMMAND_TIMEOUT; isolate it.
+        let _env = EnvLock::cleared(&["VETTO_COMMAND_TIMEOUT"]);
         let args = vec![
             "--timeout".to_string(),
             "45s".to_string(),
