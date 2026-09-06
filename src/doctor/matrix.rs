@@ -93,12 +93,15 @@ mod tests {
     #[test]
     fn default_is_tier1_or_vm_never_silent_legacy() {
         let def = default_enforcement();
-        assert_eq!(def.row_label(), MATRIX_ROWS[match def {
-            DefaultEnforcement::LinuxTier1 => 0,
-            DefaultEnforcement::MacVm => 1,
-            DefaultEnforcement::Wsl2 => 2,
-            DefaultEnforcement::LegacyProcess => 3,
-        }]);
+        assert_eq!(
+            def.row_label(),
+            MATRIX_ROWS[match def {
+                DefaultEnforcement::LinuxTier1 => 0,
+                DefaultEnforcement::MacVm => 1,
+                DefaultEnforcement::Wsl2 => 2,
+                DefaultEnforcement::LegacyProcess => 3,
+            }]
+        );
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         assert_ne!(def, DefaultEnforcement::LegacyProcess);
     }
