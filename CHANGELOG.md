@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
-## [Unreleased]
+## [0.2.17] — 2026-09-06
 
 ### Added
 
@@ -13,9 +13,24 @@ Keep a Changelog; versioning follows SemVer.
 - **Activation funnel telemetry** (#27): one-time opt-in `install` / `enable` /
   `first_session` milestones (version/OS/arch + name only, no PII, tracked in
   `~/.vetto/funnel.json`).
+- **Adversarial regression suite**: 12 hermetic isolation probes
+  (`tests/integration/adv_isolation.rs`) + property tests for parsers and
+  exit-code mapping.
 
 ### Fixed
 
+- **Scope traversal bypass**: `..` and symlinked-parent escapes could evade
+  deny-prefix checks — scope decisions now use fail-closed normalization
+  (longest-existing-ancestor canonicalization + lexical remainder).
+- **Secret reintroduction**: merged `env_extra` could restore stripped proxy
+  secrets — re-stripped fail-closed after merge (Linux + macOS).
+- **Snapshot TOCTOU**: `metadata.json` published atomically (tmp + rename).
+- **Parser panics**: non-ASCII hex input, lax signature-file parsing
+  (multiple signatures / duplicate key headers), `i32::MIN` negation.
+- **Fail-open unwraps**: crafted repair selectors, relay fd wiring, session-id
+  slicing, plus sandbox/policy failures mapped to typed exit codes (125/1).
+- **Flaky tests**: shim git-guard env race fixed with module lock + ambient
+  restore; pid-unique temp dirs.
 - **Exit recap flag**: timeout hint now points at the real `--timeout` flag
   (was `--session-timeout`, which does not exist).
 
