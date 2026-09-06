@@ -672,6 +672,9 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
             std::ffi::OsString::from(v.as_str()),
         );
     }
+    // env_extra bypasses the allowlist by design (internal VETTO_* only):
+    // re-strip fail-closed so a colliding extra can never reintroduce one.
+    crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
     let mut envp = Vec::with_capacity(env.len());
     for (k, v) in &env {
         let mut entry = k.as_encoded_bytes().to_vec();
