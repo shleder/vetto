@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn prop_parse_sig_rejects_truncated_and_bad_lengths() {
-        let short_sig = "ab".repeat(1);
+        let short_sig = "ab".to_string();
         let sig_63 = "ab".repeat(63);
         let sig_65 = "ab".repeat(65);
         let cases = [
@@ -466,11 +466,8 @@ mod tests {
                     }
                 }
             }
-            match parse_signature_file(&s) {
-                Ok((sig, _)) => {
-                    assert_eq!(to_hex(&sig.to_bytes()).len(), 128);
-                }
-                Err(_) => {}
+            if let Ok((sig, _)) = parse_signature_file(&s) {
+                assert_eq!(to_hex(&sig.to_bytes()).len(), 128);
             }
         }
     }
