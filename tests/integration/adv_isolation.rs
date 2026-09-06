@@ -23,7 +23,10 @@ fn scope_policy(proj: &Path) -> vetto::policy::Policy {
 }
 
 fn os_env(pairs: &[(&str, &str)]) -> BTreeMap<OsString, OsString> {
-    pairs.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .collect()
 }
 
 fn has_key(env: &BTreeMap<OsString, OsString>, key: &str) -> bool {
@@ -72,7 +75,12 @@ fn adv_dotdot_evasion_of_deny_is_still_denied() {
     let policy = scope_policy(proj.path());
     // `/proj/a/../secret/x.txt` normalizes into the denied subtree; the
     // naive prefix check misses it, the normalized one must deny.
-    let probe = proj.path().join("a").join("..").join("secret").join("x.txt");
+    let probe = proj
+        .path()
+        .join("a")
+        .join("..")
+        .join("secret")
+        .join("x.txt");
     assert!(
         !policy.in_write_scope(&probe),
         "dotdot evaded write deny: {}",
@@ -135,6 +143,11 @@ fn adv_symlink_parent_escape_is_denied() {
     );
 }
 
+// Case-sensitivity of scope checks follows the filesystem: on case-sensitive
+// filesystems (Linux) an uppercased variant is a different path and must not
+// match; on case-insensitive ones (Windows, default macOS) canonicalization
+// resolves it to the same directory, where in-scope is the secure answer.
+#[cfg(target_os = "linux")]
 #[test]
 fn adv_case_variant_is_not_confused() {
     let proj = TempProject::new("adv-case");
@@ -176,8 +189,10 @@ fn adv_proxy_beats_explicit_passthrough() {
     };
     assert!(policy_env.allows(OsStr::new("PROXIED_TWO")));
     let host = os_env(&[("PROXIED_TWO", "host-secret"), ("SAFE_VAR", "ok")]);
-    let mut agent: BTreeMap<OsString, OsString> =
-        host.into_iter().filter(|(k, _)| policy_env.allows(k)).collect();
+    let mut agent: BTreeMap<OsString, OsString> = host
+        .into_iter()
+        .filter(|(k, _)| policy_env.allows(k))
+        .collect();
     vetto::cred_broker::filter_proxy_secrets(&mut agent, &["PROXIED_TWO".to_string()]);
     assert!(!has_key(&agent, "PROXIED_TWO"), "proxy lost to passthrough");
     assert_eq!(
@@ -195,7 +210,10 @@ fn adv_proxy_env_extra_merge_must_be_restripped() {
     vetto::cred_broker::filter_proxy_secrets(&mut env, &proxies);
     env.insert(OsString::from("PROXIED_THREE"), OsString::from("x"));
     vetto::cred_broker::filter_proxy_secrets(&mut env, &proxies);
-    assert!(!has_key(&env, "PROXIED_THREE"), "colliding extra reintroduced");
+    assert!(
+        !has_key(&env, "PROXIED_THREE"),
+        "colliding extra reintroduced"
+    );
     assert!(has_key(&env, "PATH"));
 }
 

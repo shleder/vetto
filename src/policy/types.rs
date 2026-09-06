@@ -360,7 +360,9 @@ impl Policy {
         {
             return false;
         }
-        self.allow_write.iter().any(|root| probed.starts_with(normalize_scope_path(root)))
+        self.allow_write
+            .iter()
+            .any(|root| probed.starts_with(normalize_scope_path(root)))
     }
 
     /// Is `path` covered by an allow rule at all?
