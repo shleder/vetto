@@ -350,6 +350,32 @@ jobs:
           path: all-assets
           merge-multiple: true
 
+      - name: Render Scoop manifest
+        env:
+          TAG: ${{ needs.version-check.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="all-assets/vetto-windows-x86_64.zip"
+          sidecar="$zip.sha256"
+          for f in "$zip" "$sidecar" packaging/scoop/vetto.json.template; do
+            [[ -f "$f" ]] || { echo "::error ::required file missing: $f"; exit 1; }
+          done
+          (cd all-assets && sha256sum -c vetto-windows-x86_64.zip.sha256)
+          sha="$(awk '{print $1}' "$sidecar")"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error ::malformed sha256 sidecar"; exit 1; }
+          version="${TAG#v}"
+          url="https://github.com/shleder/vetto/releases/download/${TAG}/vetto-windows-x86_64.zip"
+          sed -e "s/__VERSION__/${version}/g" \
+              -e "s|__WINDOWS_X64_ARCHIVE_URL__|${url}|g" \
+              -e "s/__WINDOWS_X64_SHA256__/${sha}/g" \
+              packaging/scoop/vetto.json.template > all-assets/vetto.json
+          if grep -q "__VERSION__\|__WINDOWS_X64_" all-assets/vetto.json; then
+            echo "::error ::unrendered placeholders remain in vetto.json"
+            exit 1
+          fi
+          python3 -c "import json; m=json.load(open('all-assets/vetto.json')); print('scoop manifest OK:', m['version'], m['architecture']['64bit']['hash'][:12])"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
