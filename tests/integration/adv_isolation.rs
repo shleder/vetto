@@ -252,7 +252,11 @@ fn adv_snapshot_list_skips_partial_and_corrupt() {
     std::fs::write(corrupt.join("metadata.json"), "{not-json").expect("write corrupt meta");
     let listed = vetto::rescue::snapshot::list_snapshots_in(root)
         .expect("list must succeed despite partial entries");
-    assert_eq!(listed.len(), 1, "partial entries must not be listed: {listed:?}");
+    assert_eq!(
+        listed.len(),
+        1,
+        "partial entries must not be listed: {listed:?}"
+    );
     assert_eq!(listed[0].session_id, "adv-complete");
 }
 
