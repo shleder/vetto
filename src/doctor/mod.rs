@@ -5,10 +5,12 @@
 pub mod agent_check;
 pub mod environment;
 pub mod fix;
+pub mod matrix;
 
 pub use agent_check::{probe, probe_agent, AgentCheck, ProbeStatus};
 pub use environment::{detect_environment, EnvironmentInfo};
 pub use fix::{print_fixes, DoctorFix};
+pub use matrix::{default_enforcement, default_reason, MATRIX_ROWS};
 
 // The probe spawn machinery is unix-only (Captured stdio contract).
 #[cfg(unix)]
