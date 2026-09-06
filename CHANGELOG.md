@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Exit recap**: every non-clean session ends with one `vetto: recap:` line
+  pointing at exactly one next action per exit code (`--session-timeout`,
+  `vetto audit --latest`, `vetto doctor`, `vetto enable <agent>`).
+- **`vetto pack --bug`**: attaches redacted `bug-report.json` (version,
+  OS/arch, denial counts + denied paths, no file contents or env) for issue
+  reports; `vetto unpack` extracts it and `--info` shows its presence.
+
 ## [0.2.15] — 2026-09-05
 
 ### Added

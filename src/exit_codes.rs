@@ -45,6 +45,49 @@ pub fn map_session_exit_code(
     raw_exit_code
 }
 
+/// One-line actionable recap for the end of a supervised session.
+///
+/// Returns `None` when the session was fully clean (exit 0, no denials,
+/// no timeout) so the exit path stays quiet. Every other outcome maps to
+/// exactly one next action — this is the in-product half of the activation
+/// funnel (issue #27): a first-run failure must point at one command.
+pub fn recap_hint(final_code: i32, blocked_total: u64, timed_out: bool) -> Option<String> {
+    if timed_out || final_code == EXIT_TIMEOUT {
+        return Some(
+            "session hit the deadline — re-run with a larger --session-timeout or split the task"
+                .to_string(),
+        );
+    }
+    if final_code == EXIT_POLICY_BLOCKED {
+        return Some(format!(
+            "{blocked_total} boundary denials tripped fail-on-block — 'vetto audit --latest' shows what the kernel denied; adjust grants with 'vetto allow'/'vetto deny'"
+        ));
+    }
+    if final_code == EXIT_FAIL_CLOSED {
+        return Some(
+            "sandbox refused fail-closed — run 'vetto doctor' for the capability picture, then 'vetto pack --bug -o bug.vetto-pack' to bundle a report"
+                .to_string(),
+        );
+    }
+    if final_code == EXIT_COMMAND_NOT_FOUND {
+        return Some(
+            "agent binary not found in PATH — 'vetto enable <agent>' wires the shim, or check PATH"
+                .to_string(),
+        );
+    }
+    if final_code != EXIT_SUCCESS {
+        return Some(format!(
+            "agent exited {final_code} — 'vetto pack --bug -o bug.vetto-pack' bundles a redacted report for your issue"
+        ));
+    }
+    if blocked_total > 0 {
+        return Some(format!(
+            "{blocked_total} denials contained, exit 0 — 'vetto audit --latest' shows what was denied"
+        ));
+    }
+    None
+}
+
 /// Map an anyhow error from session setup or command execution to an exit code.
 ///
 /// Deterministic path first: if the error chain carries a typed [`crate::error::VettoError`],
@@ -132,5 +175,38 @@ mod tests {
             map_error_to_exit_code(&anyhow!("invalid CLI argument provided")),
             EXIT_AGENT_ERROR
         );
+    }
+
+    #[test]
+    fn recap_stays_quiet_on_clean_exit() {
+        assert_eq!(recap_hint(EXIT_SUCCESS, 0, false), None);
+    }
+
+    #[test]
+    fn recap_points_at_one_action_per_outcome() {
+        let timeout = recap_hint(EXIT_TIMEOUT, 0, true).expect("timeout recap");
+        assert!(timeout.contains("--session-timeout"));
+
+        let blocked = recap_hint(EXIT_POLICY_BLOCKED, 7, false).expect("blocked recap");
+        assert!(blocked.contains('7'));
+        assert!(blocked.contains("vetto audit --latest"));
+
+        let fail_closed = recap_hint(EXIT_FAIL_CLOSED, 0, false).expect("fail-closed recap");
+        assert!(fail_closed.contains("vetto doctor"));
+        assert!(fail_closed.contains("vetto pack --bug"));
+
+        let missing = recap_hint(EXIT_COMMAND_NOT_FOUND, 0, false).expect("missing recap");
+        assert!(missing.contains("vetto enable"));
+
+        let agent_err = recap_hint(3, 0, false).expect("agent error recap");
+        assert!(agent_err.contains('3'));
+        assert!(agent_err.contains("vetto pack --bug"));
+
+        let signal = recap_hint(137, 0, false).expect("signal recap");
+        assert!(signal.contains("137"));
+
+        let contained = recap_hint(EXIT_SUCCESS, 4, false).expect("contained recap");
+        assert!(contained.contains('4'));
+        assert!(contained.contains("vetto audit --latest"));
     }
 }
