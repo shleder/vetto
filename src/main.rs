@@ -1889,7 +1889,10 @@ fn print_enforcement_matrix() {
         "default enforcement:     {}",
         vetto::doctor::default_enforcement().row_label()
     );
-    println!("default reason:          {}", vetto::doctor::default_reason());
+    println!(
+        "default reason:          {}",
+        vetto::doctor::default_reason()
+    );
 }
 
 /// Build a throwaway sandbox around a probe script and verify every
