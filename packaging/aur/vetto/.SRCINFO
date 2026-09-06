@@ -1,6 +1,6 @@
 pkgbase = vetto
 	pkgdesc = Daemon-less sandbox and audit layer for AI coding agents
-	pkgver = 0.2.15
+	pkgver = 0.2.16
 	pkgrel = 1
 	url = https://github.com/shleder/vetto
 	arch = x86_64
@@ -10,7 +10,7 @@ pkgbase = vetto
 	provides = vetto
 	conflicts = vetto
 	conflicts = vetto-git
-	source = vetto-0.2.15.tar.gz::https://github.com/shleder/vetto/archive/refs/tags/v0.2.15.tar.gz
-	sha256sums = abd0dff06da41af1a7692fe1c35135d1d46221f498da6897ad03165dd64cbad9
+	source = vetto-0.2.16.tar.gz::https://github.com/shleder/vetto/archive/refs/tags/v0.2.16.tar.gz
+	sha256sums = 049020935faa90f47298000fc06e6aea5b5b789bc5da7e3f8fb03ac61ad120b8
 
 pkgname = vetto
