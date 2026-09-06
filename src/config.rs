@@ -11,6 +11,7 @@ use anyhow::{bail, Result};
 use serde::Deserialize;
 
 use crate::cli::Cli;
+use crate::error::VettoError;
 use crate::policy::presets::{agent_network_allowlist, Preset};
 
 #[derive(Debug, Clone)]
@@ -230,7 +231,12 @@ impl RunConfig {
 
         let fail_on_block = cli.fail_on_block.or(global.fail_on_block);
         if fail_on_block == Some(0) {
-            bail!("--fail-on-block threshold must be greater than zero");
+            // Typed Policy (exit 1): the message names the flag, so the
+            // legacy "fail-on-block" substring would otherwise mis-map
+            // this CLI validation error to 126 (policy blocked).
+            return Err(anyhow::Error::new(VettoError::Policy(
+                "--fail-on-block threshold must be greater than zero".into(),
+            )));
         }
 
         let report_auto_cleanup = !cli.no_report_auto_cleanup;
@@ -556,6 +562,17 @@ mod tests {
         let cfg = config(&["--fail-on-block"]).expect("config");
         assert_eq!(cfg.fail_on_block, Some(1));
         assert!(config(&["--fail-on-block", "0"]).is_err());
+    }
+
+    #[test]
+    fn zero_fail_on_block_is_a_cli_error_not_policy_blocked() {
+        // The validation message names the flag, so it must be typed:
+        // exit 1 (agent/CLI error), never 126 (policy blocked).
+        let err = config(&["--fail-on-block", "0"]).expect_err("zero threshold rejected");
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            crate::exit_codes::EXIT_AGENT_ERROR
+        );
     }
 
     #[test]

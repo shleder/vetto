@@ -19,6 +19,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::config::NetMode;
+use crate::error::VettoError;
 #[cfg(unix)]
 use crate::events::Event;
 use crate::events::EventBus;
@@ -31,7 +32,9 @@ use crate::report::{self, storage::ReportStorage, ReportOptions};
 use crate::sandbox::SandboxHandle;
 #[cfg(unix)]
 use crate::sandbox::{Backend, SpawnOptions, StdioMode};
-use anyhow::{bail, Context, Result};
+#[cfg(unix)]
+use anyhow::bail;
+use anyhow::{Context, Result};
 
 #[cfg(unix)]
 use std::collections::HashMap;
@@ -195,7 +198,9 @@ impl MultiRuntime {
                     for session in &mut pending {
                         session.terminate();
                     }
-                    bail!("multi-agent launch aborted; no unsandboxed fallback: {error:#}");
+                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                        "multi-agent launch aborted; no unsandboxed fallback: {error:#}"
+                    ))));
                 }
             }
         }
@@ -223,7 +228,9 @@ impl MultiRuntime {
 
     #[cfg(not(unix))]
     pub fn launch(_manifest: Manifest, _project: PathBuf, _home: PathBuf) -> Result<Self> {
-        bail!("multi-agent mode is unavailable on this platform; refusing to run unsandboxed")
+        Err(anyhow::Error::new(VettoError::UnsupportedPlatform(
+            "multi-agent",
+        )))
     }
 
     pub fn terminate(&self, index: usize) -> Result<()> {
@@ -627,6 +634,19 @@ mod tests {
         assert_ne!(
             manifest.agents[0].report_path(Some(root)),
             manifest.agents[1].report_path(Some(root))
+        );
+    }
+
+    #[test]
+    fn aborted_launch_maps_to_fail_closed() {
+        // "no unsandboxed fallback" must exit 125 via the typed path:
+        // the legacy substring fallback does not contain this message.
+        let err = anyhow::Error::new(crate::error::VettoError::Sandbox(
+            "multi-agent launch aborted; no unsandboxed fallback: boom".into(),
+        ));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            crate::exit_codes::EXIT_FAIL_CLOSED
         );
     }
 

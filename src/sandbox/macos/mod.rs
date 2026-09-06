@@ -24,11 +24,12 @@ pub mod seatbelt;
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, RawFd};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use super::handle::{KillStrategy, SandboxHandle, SpawnOptions, StdioMode};
 use super::Spawned;
 use crate::config::NetMode;
+use crate::error::VettoError;
 use crate::policy::Policy;
 
 pub struct MacosSandbox {
@@ -118,11 +119,15 @@ impl MacosSandbox {
             (1, b'R') => {}
             (1, b'E') => {
                 let code = reap(pid);
-                return Err(anyhow!("sandbox setup failed (child exit {code})"));
+                return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                    "child exit {code} during setup"
+                ))));
             }
             _ => {
                 let code = reap(pid);
-                return Err(anyhow!("sandbox child died during setup (exit {code})"));
+                return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                    "child died during setup (exit {code})"
+                ))));
             }
         }
 
@@ -447,9 +452,26 @@ fn build_envp(policy: &Policy, opts: &SpawnOptions) -> Vec<CString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exit_codes::EXIT_FAIL_CLOSED;
 
     #[test]
     fn seatbelt_available_does_not_panic() {
         let _ = MacosSandbox::seatbelt_available();
+    }
+
+    #[test]
+    fn child_setup_failures_map_to_fail_closed() {
+        // Both child-setup branches must exit 125 via the typed path,
+        // not via the legacy substring fallback.
+        let reported = anyhow::Error::new(VettoError::Sandbox("child exit 1 during setup".into()));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&reported),
+            EXIT_FAIL_CLOSED
+        );
+        let died = anyhow::Error::new(VettoError::Sandbox("child died during setup".into()));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&died),
+            EXIT_FAIL_CLOSED
+        );
     }
 }

@@ -21,6 +21,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+#[cfg(any(not(unix), test))]
+use crate::error::VettoError;
 use crate::events::{Event, EventBus, FileAccess};
 
 pub mod isolation;
@@ -186,7 +188,9 @@ pub fn run_cli(
     legacy_command: Vec<String>,
 ) -> Result<i32> {
     let _ = manifest_from_cli_inputs(manifest_path, repeated_agents, legacy_command)?;
-    bail!("multi-agent mode is unavailable on this platform; refusing to run unsandboxed")
+    Err(anyhow::Error::new(VettoError::UnsupportedPlatform(
+        "multi-agent",
+    )))
 }
 
 /// TOML manifest accepted by `vetto multi --manifest ...`.
@@ -747,5 +751,15 @@ mod tests {
         assert_eq!(p2, vec![48010, 48011, 48012, 48013, 48014]);
         assert_eq!(pool.allocate_relay_port(0), 47129);
         assert_eq!(pool.allocate_relay_port(1), 47130);
+    }
+
+    #[test]
+    fn unsupported_platform_maps_to_fail_closed() {
+        // Multi-agent on non-unix must exit 125 via the typed path.
+        let err = anyhow::Error::new(VettoError::UnsupportedPlatform("multi-agent"));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            crate::exit_codes::EXIT_FAIL_CLOSED
+        );
     }
 }

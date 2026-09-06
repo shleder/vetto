@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::config::NetMode;
+use crate::error::VettoError;
 use crate::policy::{Policy, ResourceLimits};
 use crate::sandbox::handle::{KillStrategy, SandboxHandle, SpawnOptions};
 use crate::sandbox::Spawned;
@@ -431,26 +432,35 @@ impl WindowsSandbox {
     pub fn new(net: NetMode) -> Result<Self> {
         let capabilities = probe();
         if !capabilities.job_object_kill_on_close {
-            bail!("Windows Job Object kill-on-close is unavailable; refusing to run")
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Windows Job Object kill-on-close is unavailable; refusing to run".into(),
+            )));
         }
         if !capabilities.restricted_token || !capabilities.low_integrity_token {
-            bail!("restricted low-integrity token setup is unavailable; refusing to run")
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "restricted low-integrity token setup is unavailable; refusing to run".into(),
+            )));
         }
         if !capabilities.appcontainer_api {
-            bail!("AppContainer capability APIs are unavailable; refusing to run")
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "AppContainer capability APIs are unavailable; refusing to run".into(),
+            )));
         }
         if !capabilities.experimental_create_process_in_sandbox {
-            bail!(
-                "Experimental_CreateProcessInSandbox is unavailable; refusing an unsandboxed Windows fallback"
-            )
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Experimental_CreateProcessInSandbox is unavailable; refusing an unsandboxed Windows fallback".into(),
+            )));
         }
         if !capabilities.filesystem_policy || !capabilities.network_policy {
-            bail!("Windows process sandbox policy capabilities are incomplete; refusing to run")
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Windows process sandbox policy capabilities are incomplete; refusing to run"
+                    .into(),
+            )));
         }
         if !matches!(&net, &NetMode::Off) {
-            bail!(
-                "Windows experimental process sandbox needs a compiled IP/port policy; vetto's domain network modes have no DNS-to-IP compiler on this backend, refusing a weaker network policy"
-            )
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Windows experimental process sandbox needs a compiled IP/port policy; vetto's domain network modes have no DNS-to-IP compiler on this backend, refusing a weaker network policy".into(),
+            )));
         }
         Ok(Self { capabilities, net })
     }
@@ -460,12 +470,14 @@ impl WindowsSandbox {
             bail!("empty agent command")
         }
         if !self.capabilities.enforcement_ready() {
-            bail!("Windows sandbox capabilities are not enforcement-ready; refusing to run")
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Windows sandbox capabilities are not enforcement-ready; refusing to run".into(),
+            )));
         }
         if !matches!(opts.stdio, crate::sandbox::handle::StdioMode::Inherit) {
-            bail!(
-                "Windows backend currently supports inherited stdio only; refusing to detach output handles"
-            )
+            return Err(anyhow::Error::new(VettoError::Sandbox(
+                "Windows backend currently supports inherited stdio only; refusing to detach output handles".into(),
+            )));
         }
         if opts.agent_cmd.iter().any(|arg| arg.contains('\0')) {
             bail!("Windows agent command contains an embedded NUL")
@@ -1386,5 +1398,26 @@ mod tests {
         assert!(!status.enabled);
         assert!(status.requires_admin);
         assert!(status.reason.contains("optional WFP lease"));
+    }
+
+    #[test]
+    fn sandbox_unavailable_maps_to_fail_closed() {
+        // Fail-closed Windows setup errors must exit 125 via the typed
+        // path, including messages without the legacy "refusing to run"
+        // substring (e.g. weaker-network-policy, detach).
+        let err = anyhow::Error::new(crate::error::VettoError::Sandbox(
+            "Windows sandbox capabilities are not enforcement-ready; refusing to run".into(),
+        ));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            crate::exit_codes::EXIT_FAIL_CLOSED
+        );
+        let weaker = anyhow::Error::new(crate::error::VettoError::Sandbox(
+            "refusing a weaker network policy".into(),
+        ));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&weaker),
+            crate::exit_codes::EXIT_FAIL_CLOSED
+        );
     }
 }

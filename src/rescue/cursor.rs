@@ -33,6 +33,22 @@ use super::wal::SqliteWalManager;
 
 static CURSOR_NONCE: AtomicU64 = AtomicU64::new(0);
 
+/// Build the atomic-commit staging name for a canonical repair target.
+///
+/// Returns an error (instead of panicking) when the target has no file
+/// name — e.g. `/` reaching the repair path via a crafted selector.
+fn tmp_repair_name(canonical_target: &Path, nonce: u64) -> Result<String> {
+    let file_name = canonical_target
+        .file_name()
+        .context("target file has no filename")?;
+    Ok(format!(
+        ".{}.vetto_tmp.{}.{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        nonce
+    ))
+}
+
 const CURSOR_INTERESTING_KEYS: [&str; 4] = [
     "composer.composerData",
     "workbench.panel.chatSidebar",
@@ -548,12 +564,7 @@ impl RescueAdapter for CursorAdapter {
         let parent_dir = canonical_target
             .parent()
             .context("canonical target has no parent")?;
-        let tmp_name = format!(
-            ".{}.vetto_tmp.{}.{}",
-            canonical_target.file_name().unwrap().to_string_lossy(),
-            std::process::id(),
-            nonce
-        );
+        let tmp_name = tmp_repair_name(&canonical_target, nonce)?;
         let tmp_path = parent_dir.join(tmp_name);
 
         SqliteWalManager::copy_sqlite_set(&canonical_target, &tmp_path)?;
@@ -667,5 +678,15 @@ mod tests {
         assert!(serde_json::from_str::<serde_json::Value>(&val).is_ok());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tmp_repair_name_errors_without_filename() {
+        // A bare root has no file name: the repair path must error
+        // instead of panicking on user-controlled selectors.
+        assert!(tmp_repair_name(Path::new("/"), 1).is_err());
+        let ok = tmp_repair_name(Path::new("/tmp/state.vscdb"), 7).expect("named file");
+        assert!(ok.contains("state.vscdb"));
+        assert!(ok.contains(".vetto_tmp."));
     }
 }
