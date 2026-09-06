@@ -350,25 +350,84 @@ impl Policy {
         )
     }
 
-    /// Is `path` inside any write root? (lexical prefix check, best-effort)
+    /// Is `path` inside any write root? (fail-closed normalized prefix check)
     pub fn in_write_scope(&self, path: &Path) -> bool {
+        let probed = normalize_scope_path(path);
         if self
             .deny_write
             .iter()
-            .any(|denied| path.starts_with(denied))
+            .any(|denied| probed.starts_with(normalize_scope_path(denied)))
         {
             return false;
         }
-        self.allow_write.iter().any(|root| path.starts_with(root))
+        self.allow_write
+            .iter()
+            .any(|root| probed.starts_with(normalize_scope_path(root)))
     }
 
     /// Is `path` covered by an allow rule at all?
     pub fn in_read_scope(&self, path: &Path) -> bool {
-        if self.deny_read.iter().any(|denied| path.starts_with(denied)) {
+        let probed = normalize_scope_path(path);
+        if self
+            .deny_read
+            .iter()
+            .any(|denied| probed.starts_with(normalize_scope_path(denied)))
+        {
             return false;
         }
         let mut allowed = self.allow_read.iter().chain(self.allow_write.iter());
-        allowed.any(|root| path.starts_with(root))
+        allowed.any(|root| probed.starts_with(normalize_scope_path(root)))
+    }
+}
+
+/// Collapse `.`, `..`, and redundant separators without touching the
+/// filesystem (mirrors the loader's containment normalization).
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let has_root = path.has_root();
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !has_root {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
+/// Fail-closed normalization for scope decisions: resolve the longest
+/// existing ancestor (follows symlink parents), then lexically normalize
+/// the remainder. Pure lexical fallback when nothing exists, so `..`
+/// escapes and symlink-parent escapes cannot evade the prefix comparison.
+fn normalize_scope_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        let mut unresolved: Vec<std::ffi::OsString> = Vec::new();
+        let mut cursor = path;
+        loop {
+            if let Ok(canonical) = std::fs::canonicalize(cursor) {
+                let mut resolved = canonical;
+                for component in unresolved.iter().rev() {
+                    resolved.push(component);
+                }
+                return lexical_normalize(&resolved);
+            }
+            match (cursor.file_name(), cursor.parent()) {
+                (Some(name), Some(parent)) if parent != cursor => {
+                    unresolved.push(name.to_os_string());
+                    cursor = parent;
+                }
+                _ => return lexical_normalize(path),
+            }
+        }
+    } else {
+        lexical_normalize(path)
     }
 }
 

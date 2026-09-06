@@ -431,6 +431,9 @@ fn build_envp(policy: &Policy, opts: &SpawnOptions) -> Vec<CString> {
             std::ffi::OsString::from(v.as_str()),
         );
     }
+    // env_extra bypasses the allowlist by design (internal VETTO_* only):
+    // re-strip fail-closed so a colliding extra can never reintroduce one.
+    crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
     env.iter()
         .map(|(k, v)| {
             let mut entry = k.as_encoded_bytes().to_vec();
