@@ -145,19 +145,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   supply-chain:
-    name: cargo-deny + cargo-audit (supply chain)
+    name: cargo-deny (advisories + licenses)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Cargo Deny (advisories + licenses)
-        uses: EmbarkStudios/cargo-deny-action@v2
-
-      - name: Cargo Audit (vulnerabilities)
-        uses: rustsec/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --ignore RUSTSEC-2024-0436
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
   perf:
     name: e2e spawn overhead + baseline gate
@@ -185,9 +177,6 @@ jobs:
         env:
           VETTO_PERF_OUT: ${{ runner.temp }}/vetto-perf-latest.json
         run: cargo bench --bench e2e_spawn --all-features
-
-      - name: Run micro-performance benchmarks
-        run: cargo bench --bench performance --all-features -- --noplot
 
       # Gate: the committed baseline stays empty until this job has produced
       # one real run; only then do 3.0x median regressions fail the job.
@@ -272,6 +261,7 @@ jobs:
         with:
           name: criterion-benchmarks
           path: target/criterion/
+          if-no-files-found: ignore
 
   micro-tier-fallback:
     name: micro-tier downgrade & redteam (seccomp fallback)

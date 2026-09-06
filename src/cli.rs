@@ -12,6 +12,9 @@ pub mod undo;
 pub mod why_slow;
 pub mod wizard;
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub use crate::watchdog::WatchdogArgs;
 pub use bundle::{PackArgs, UnpackArgs};
 pub use diff::DiffArgs;

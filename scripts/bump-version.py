@@ -105,11 +105,15 @@ def main():
     update_cargo_lock(current, target)
     update_file(PACKAGE_JSON, r'"version":\s*"[^"]+"', f'"version": "{target}"')
     update_file(PKGBUILD, r'^pkgver=.*', f'pkgver={target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "aur", "vetto", "PKGBUILD"), r'^pkgver=.*', f'pkgver={target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "aur", "vetto-git", ".SRCINFO"), r'^\s*pkgver\s*=\s*.*', f'\tpkgver = {target}')
+    update_file(os.path.join(REPO_ROOT, "install.sh"), r'DEFAULT_FALLBACK_VERSION="[^"]+"', f'DEFAULT_FALLBACK_VERSION="{target}"')
     update_file(NUSPEC, r'<version>[^<]+</version>', f'<version>{target}</version>')
     update_file(HOMEBREW_RB, r'version\s+"[^"]+"', f'version "{target}"')
+    update_file(HOMEBREW_RB, rf'/v{re.escape(current)}/', f'/v{target}/')
     update_file(SPEC, r'^Version:\s*.*', f'Version: {target}')
     
-    desc = "Automated version bump"
+    desc = "Платформенный паритет (#26: Tier 1 Linux, Tier 2 macOS exp, Tier 3 Win), CI redteam 8-вектор матрица ($GITHUB_STEP_SUMMARY), Criterion бенчмарки, Threat model границы (non-defenses), Gitleaks аудит"
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 

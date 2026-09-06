@@ -170,7 +170,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use crate::cli::TEST_ENV_LOCK;
 
     fn temp_test_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -188,10 +188,12 @@ mod tests {
 
     #[test]
     fn test_undo_list_empty() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         let temp_home = temp_test_dir("home-empty");
         let old_home = std::env::var_os("HOME");
+        let old_userprofile = std::env::var_os("USERPROFILE");
         std::env::set_var("HOME", &temp_home);
+        std::env::set_var("USERPROFILE", &temp_home);
 
         let args = UndoArgs {
             session_id: None,
@@ -208,15 +210,22 @@ mod tests {
         } else {
             std::env::remove_var("HOME");
         }
+        if let Some(u) = old_userprofile {
+            std::env::set_var("USERPROFILE", u);
+        } else {
+            std::env::remove_var("USERPROFILE");
+        }
         let _ = fs::remove_dir_all(&temp_home);
     }
 
     #[test]
     fn test_undo_restore_snapshot() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         let temp_home = temp_test_dir("home-restore");
         let old_home = std::env::var_os("HOME");
+        let old_userprofile = std::env::var_os("USERPROFILE");
         std::env::set_var("HOME", &temp_home);
+        std::env::set_var("USERPROFILE", &temp_home);
 
         let proj_dir = temp_test_dir("proj-restore");
         let file_a = proj_dir.join("a.txt");
@@ -255,16 +264,23 @@ mod tests {
         } else {
             std::env::remove_var("HOME");
         }
+        if let Some(u) = old_userprofile {
+            std::env::set_var("USERPROFILE", u);
+        } else {
+            std::env::remove_var("USERPROFILE");
+        }
         let _ = fs::remove_dir_all(&temp_home);
         let _ = fs::remove_dir_all(&proj_dir);
     }
 
     #[test]
     fn test_undo_dry_run() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         let temp_home = temp_test_dir("home-dryrun");
         let old_home = std::env::var_os("HOME");
+        let old_userprofile = std::env::var_os("USERPROFILE");
         std::env::set_var("HOME", &temp_home);
+        std::env::set_var("USERPROFILE", &temp_home);
 
         let proj_dir = temp_test_dir("proj-dryrun");
         let file_a = proj_dir.join("a.txt");
@@ -295,6 +311,11 @@ mod tests {
             std::env::set_var("HOME", h);
         } else {
             std::env::remove_var("HOME");
+        }
+        if let Some(u) = old_userprofile {
+            std::env::set_var("USERPROFILE", u);
+        } else {
+            std::env::remove_var("USERPROFILE");
         }
         let _ = fs::remove_dir_all(&temp_home);
         let _ = fs::remove_dir_all(&proj_dir);

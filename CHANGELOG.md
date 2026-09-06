@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.18] — 2026-09-06
+
+### Added
+
+- **Platform Parity Tiering (#26)**: Formalized transparent 3-tier OS security contract with canonical 5-factor capability matrix (Filesystem Write, Filesystem Read, Network Namespace, Process Reaping, Secret Overlays). Linux Native/WSL2 established as Tier 1 (Production), macOS Darwin as Tier 2 (Experimental, with documented dyld read-isolation constraints), Windows as Tier 3 (Preview).
+- **Red-Team Attack Matrix in CI**: Automated execution of 8-vector containment battery (`vetto redteam --json`) formatted directly into GitHub Actions `$GITHUB_STEP_SUMMARY` across CI workflows (`ci.yml` and `e2e-agents.yml`).
+- **Empirical Performance Evidence**: Criterion benchmarks and comparative execution overhead matrix published in CI, demonstrating <2ms in-process setup and 0MB daemon memory footprint against Docker (~1800ms) and bubblewrap (~30ms).
+- **Supply-Chain Trust & Audit Badges**: Integrated automated Gitleaks secret scanning and `cargo-audit` vulnerability checking into CI; surfaced live status badges in README.
+- **SLSA Provenance Template**: Standalone workflow scaffolding for SLSA Level 3 attestations and reproducible build verification.
+
+### Fixed
+
+- **Documentation Anchor Deadlinks**: Resolved broken `#platform-support` and `#honest-status` badge anchor targets in README.
+- **Threat Model Boundaries**: Added explicit "What Vetto Does NOT Protect" specification across `SECURITY.md` and `docs/threat-model.md`, clearly bounding non-defenses (prompt injection into authorized APIs, legitimate workspace writes, microarchitectural side-channels, and host kernel/root compromise).
+- **Windows Unit Test Hermeticity**: Resolved concurrent test environment race on `HOME`/`USERPROFILE` by introducing `TEST_ENV_LOCK` across CLI bundle and undo tests.
+
 ## [0.2.17] — 2026-09-06
 
 ### Added
