@@ -236,7 +236,7 @@ vetto --report html,sarif --jsonl session.jsonl -- cargo test
 - **No background daemon** — zero idle CPU, zero RAM consumption, no service to stall or crash.
 - **No root / sudo** — runs completely unprivileged; cannot escalate host permissions.
 - **No TLS interception** — zero MITM, no custom root certificate authority; moves opaque bytes only.
-- **No telemetry or tracking** — completely private by default; zero network calls home.
+- **No telemetry or tracking** — completely private by default. No telemetry or project/user data is ever transmitted. The only network calls vetto itself initiates are short, non-blocking version checks against the npm registry and GitHub Releases (24h cache, 2s timeout, silent offline via cache). Self-update never runs unless explicitly opted in, and never in CI (`VETTO_NO_SELF_UPDATE=1` disables everything update-related).
 - **No Docker dependency** — instant 0.002s startup directly on your native OS kernel.
 
 ---
