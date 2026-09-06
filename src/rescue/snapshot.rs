@@ -229,7 +229,11 @@ pub fn create_snapshot(
 
     let meta_path = snapshots_dir.join("metadata.json");
     let json_text = serde_json::to_string_pretty(&metadata)?;
-    std::fs::write(&meta_path, json_text)?;
+    // Atomic publish: concurrent list_snapshots_in must never observe a
+    // half-written metadata.json (TOCTOU omission). Tmp + rename is atomic.
+    let tmp_path = snapshots_dir.join(format!("metadata.json.tmp.{}", std::process::id()));
+    std::fs::write(&tmp_path, json_text)?;
+    std::fs::rename(&tmp_path, &meta_path)?;
 
     Ok(metadata)
 }
