@@ -1743,6 +1743,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             Ok(t) => println!("chosen tier:             {}", t.label()),
             Err(e) => println!("chosen tier:             NONE — fail-closed: {e}"),
         }
+        print_enforcement_matrix();
         if fix {
             let fixes = vetto::doctor::fix::collect_linux_fixes(&p);
             vetto::doctor::print_fixes(&fixes);
@@ -1764,9 +1765,10 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         );
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
-        println!("  platform status:       Tier 2 (write isolation + process rlimits + network lockdown)");
         println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
         println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
+        println!("  platform status:       legacy process (Seatbelt, deprecated — default requires Tier-1 via mac-vm, missing VM fails closed)");
+        print_enforcement_matrix();
         if fix {
             vetto::doctor::print_fixes(&[]);
         }
@@ -1832,8 +1834,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
-        println!("  platform status:       Tier 3 (Job Objects + Restricted Token + LPAC)");
+        println!("  platform status:       legacy process (AppContainer, deprecated — default requires Tier-1 via wsl2, missing distro fails closed)");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
+        print_enforcement_matrix();
         if fix {
             vetto::doctor::print_fixes(&[]);
         }
@@ -1858,6 +1861,20 @@ fn doctor_agent_check(agent: &str) -> Result<()> {
     let result = vetto::doctor::probe_agent(agent, std::time::Duration::from_secs(5));
     println!("agent check: {}", result.summary());
     Ok(())
+}
+
+/// Uniform enforcement matrix shared by every platform's `vetto doctor`
+/// output: canonical rows + platform default + fail-closed reason.
+fn print_enforcement_matrix() {
+    println!("enforcement matrix:");
+    for row in vetto::doctor::MATRIX_ROWS {
+        println!("  - enforcement: {row}");
+    }
+    println!(
+        "default enforcement:     {}",
+        vetto::doctor::default_enforcement().row_label()
+    );
+    println!("default reason:          {}", vetto::doctor::default_reason());
 }
 
 /// Build a throwaway sandbox around a probe script and verify every

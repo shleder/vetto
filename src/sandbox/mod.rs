@@ -46,6 +46,12 @@ pub struct Spawned {
 }
 
 /// Selected enforcement backend for this session.
+///
+/// Integration note for the parallel `feat/uniform-mac-vm` / `feat/uniform-win-wsl2`
+/// branches: their `Backend::MacVm` / `Backend::Wsl2` variants plug in here.
+/// Until those branches merge, `--backend mac-vm|wsl2` parses (see
+/// [`parse_backend_name`]) but [`Backend::detect_with_backend`] fails closed
+/// with an explicit "not yet integrated" error — never a silent fallback.
 pub enum Backend {
     #[cfg(target_os = "linux")]
     Linux(Box<linux::LinuxSandbox>),
@@ -53,6 +59,40 @@ pub enum Backend {
     Macos(Box<macos::MacosSandbox>),
     #[cfg(target_os = "windows")]
     Windows(Box<windows::WindowsSandbox>),
+}
+
+/// Canonical `--backend` name set (uniform dispatch surface).
+pub const VALID_BACKENDS: &str = "auto, process, mac-vm, wsl2, win-sandbox";
+
+/// Parsed `--backend` selector. Pure value: no I/O, no spawning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendName {
+    Auto,
+    Process,
+    MacVm,
+    Wsl2,
+    WinSandbox,
+}
+
+/// Pure `--backend` name parser (no I/O, no spawning): the unit-testable
+/// dispatch surface shared with the `feat/uniform-mac-vm` (`Backend::MacVm`)
+/// and `feat/uniform-win-wsl2` (`Backend::Wsl2`) branches.
+///
+/// `mac-vm` / `wsl2` parse OK so CLI help, doctor matrix, and docs stay in
+/// sync; construction fails closed in `detect_with_backend` until the sibling
+/// branches land their variants.
+pub fn parse_backend_name(name: &str) -> Result<BackendName, String> {
+    match name {
+        "auto" | "default" => Ok(BackendName::Auto),
+        "process" => Ok(BackendName::Process),
+        "mac-vm" | "macvm" => Ok(BackendName::MacVm),
+        "wsl2" => Ok(BackendName::Wsl2),
+        "win-sandbox" | "windows-sandbox" => Ok(BackendName::WinSandbox),
+        other => Err(format!(
+            "unknown backend '{other}'; valid backends: {VALID_BACKENDS}\n\
+             action: select a valid backend or omit the flag; run `vetto doctor` for the full capability picture"
+        )),
+    }
 }
 
 impl Backend {
@@ -68,10 +108,47 @@ impl Backend {
         backend_name: Option<&str>,
     ) -> anyhow::Result<Self> {
         if let Some(name) = backend_name {
-            match name {
-                "auto" | "default" => {}
-                "process" => {}
-                "win-sandbox" | "windows-sandbox" => {
+            let parsed = parse_backend_name(name).map_err(|msg| anyhow::anyhow!("{msg}"))?;
+            match parsed {
+                BackendName::Auto | BackendName::Process => {}
+                BackendName::MacVm => {
+                    // Integration point for feat/uniform-mac-vm: construct
+                    // `Backend::MacVm` here once that branch merges its variant.
+                    // cfg-gate keeps every platform building until then.
+                    #[cfg(target_os = "macos")]
+                    {
+                        anyhow::bail!(
+                            "--backend mac-vm is not yet integrated (feat/uniform-mac-vm not merged)\n\
+                             action: omit the flag (legacy Seatbelt process backend applies, deprecated) or retry after the mac-vm branch lands; run `vetto doctor` for the enforcement matrix"
+                        );
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        anyhow::bail!(
+                            "--backend mac-vm is only available on macOS (Virtualization.framework host)\n\
+                             action: use `--backend auto` on this operating system; run `vetto doctor` for supported backends"
+                        );
+                    }
+                }
+                BackendName::Wsl2 => {
+                    // Integration point for feat/uniform-win-wsl2: construct
+                    // `Backend::Wsl2` here once that branch merges its variant.
+                    #[cfg(target_os = "windows")]
+                    {
+                        anyhow::bail!(
+                            "--backend wsl2 is not yet integrated (feat/uniform-win-wsl2 not merged)\n\
+                             action: omit the flag (legacy AppContainer process backend applies, deprecated) or retry after the wsl2 branch lands; run `vetto doctor` for the enforcement matrix"
+                        );
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        anyhow::bail!(
+                            "--backend wsl2 is only available on Windows (WSL2 host)\n\
+                             action: use `--backend auto` on this operating system; run `vetto doctor` for supported backends"
+                        );
+                    }
+                }
+                BackendName::WinSandbox => {
                     #[cfg(target_os = "windows")]
                     {
                         let caps = windows::windows_sandbox::capabilities();
@@ -96,12 +173,6 @@ impl Backend {
                              action: use `--backend auto` or `--backend process` on this operating system; run `vetto doctor` for supported backends"
                         );
                     }
-                }
-                other => {
-                    anyhow::bail!(
-                        "unknown backend '{other}'; valid backends: auto, process, win-sandbox\n\
-                         action: select a valid backend or omit the flag; run `vetto doctor` for the full capability picture"
-                    );
                 }
             }
         }
@@ -162,9 +233,14 @@ impl Backend {
                 s.probe.audit_feed_readable,
             ),
             #[cfg(target_os = "macos")]
-            Backend::Macos(_) => "macos seatbelt (deprecated sandbox-exec, works today)".into(),
+            Backend::Macos(_) => {
+                "macos seatbelt (legacy process-only, use mac-vm for Tier-1)".into()
+            }
             #[cfg(target_os = "windows")]
-            Backend::Windows(s) => format!("windows process sandbox ({})", s.capabilities.summary()),
+            Backend::Windows(s) => format!(
+                "windows process sandbox (legacy process-only, use wsl2 for Tier-1) ({})",
+                s.capabilities.summary()
+            ),
         }
     }
 
@@ -181,6 +257,45 @@ impl Backend {
             Backend::Macos(s) => s.spawn(policy, opts),
             #[cfg(target_os = "windows")]
             Backend::Windows(s) => s.spawn(policy, opts),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_backend_name_accepts_uniform_dispatch_set() {
+        assert_eq!(parse_backend_name("auto"), Ok(BackendName::Auto));
+        assert_eq!(parse_backend_name("default"), Ok(BackendName::Auto));
+        assert_eq!(parse_backend_name("process"), Ok(BackendName::Process));
+        assert_eq!(parse_backend_name("mac-vm"), Ok(BackendName::MacVm));
+        assert_eq!(parse_backend_name("macvm"), Ok(BackendName::MacVm));
+        assert_eq!(parse_backend_name("wsl2"), Ok(BackendName::Wsl2));
+        assert_eq!(
+            parse_backend_name("win-sandbox"),
+            Ok(BackendName::WinSandbox)
+        );
+        assert_eq!(
+            parse_backend_name("windows-sandbox"),
+            Ok(BackendName::WinSandbox)
+        );
+    }
+
+    #[test]
+    fn parse_backend_name_rejects_unknown_with_valid_list() {
+        let err = parse_backend_name("qemu").expect_err("unknown backend must fail");
+        assert!(err.contains("unknown backend 'qemu'"), "{err}");
+        for name in ["auto", "process", "mac-vm", "wsl2", "win-sandbox"] {
+            assert!(err.contains(name), "{err}");
+        }
+    }
+
+    #[test]
+    fn valid_backends_string_lists_uniform_dispatch_set() {
+        for name in ["auto", "process", "mac-vm", "wsl2", "win-sandbox"] {
+            assert!(VALID_BACKENDS.contains(name), "{VALID_BACKENDS}");
         }
     }
 }

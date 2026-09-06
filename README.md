@@ -163,10 +163,10 @@ Containers were designed for packaging backend microservices—not for interacti
 
 Security tooling frequently makes misleading cross-platform claims. Vetto rejects snake oil and is architecturally transparent about what each operating system kernel can and cannot enforce unprivileged.
 
-Vetto establishes an immutable 3-tier boundary architecture:
-- **Tier 1 (Production-Grade)**: **Linux (Native)** and **Linux (WSL2)**. Full kernel isolation via Landlock LSM (ABI v1–v6), Seccomp-BPF, private Mount/PID/Network namespaces, and tmpfs secret masking overlays.
-- **Tier 2 (Experimental)**: **macOS (Darwin)**. Apple Seatbelt SBPL (`sandbox_init_with_parameters`) write and execution confinement, kqueue parent-death watchdog process reaping. Broad read permissions required due to Apple dynamic linker (`dyld`) shared cache constraints.
-- **Tier 3 (Preview / Process Guardrails)**: **Windows Native**. Process containment via Job Objects (`KILL_ON_JOB_CLOSE`), Low Integrity tokens (`S-1-16-4096`), and AppContainer DACLs. For production-grade Tier 1 isolation on Windows, running inside WSL2 is strongly recommended.
+Vetto establishes an immutable 3-tier boundary architecture with uniform Tier-1 guarantees via VM backends:
+- **Tier 1 (Production-Grade)**: **Linux (Native)** direct, **macOS via `mac-vm`** (default), **Windows via `wsl2`** (default). Full kernel isolation via Landlock LSM (ABI v1–v6), Seccomp-BPF, private Mount/PID/Network namespaces, and tmpfs secret masking overlays — identical guarantees on every OS through the uniform runtime (see `docs/uniform-runtime.md`).
+- **Legacy process Seatbelt (deprecated, explicit `--backend process` only)**: **macOS (Darwin)** write/execution confinement via Apple Seatbelt SBPL (`sandbox_init_with_parameters`), kqueue parent-death watchdog process reaping. Broad read permissions required due to Apple dynamic linker (`dyld`) shared cache constraints.
+- **Legacy process AppContainer (deprecated, explicit `--backend process` only)**: **Windows Native** process containment via Job Objects (`KILL_ON_JOB_CLOSE`), Low Integrity tokens (`S-1-16-4096`), and AppContainer DACLs. Never a default; production runs go through `wsl2`.
 
 ### Canonical 5-Factor Capability Matrix
 
@@ -174,9 +174,11 @@ Vetto establishes an immutable 3-tier boundary architecture:
 | :--- | :--- | :--- | :---: | :--- | :---: | :--- |
 | **Linux (Native)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O Mounts) | **100% Scoped Read** (Landlock VFS Inode checks, `~/.ssh` / `.env` blocked) | **Yes** (`CLONE_NEWNET`, loopback-only + local TCP/TLS broker) | **100% PID Namespace** (`CLONE_NEWPID` init teardown + `PR_SET_PDEATHSIG`) | **Yes** (tmpfs mode-000 and `/dev/null` bind-mounts over secrets) | **Production-grade**: Complete hardware & kernel isolation boundary |
 | **Linux (WSL2)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock via WSL2 Linux Kernel) | **100% Scoped Read** (Landlock VFS Inode checks) | **Yes** (`CLONE_NEWNET` inside WSL2 VM) | **100% PID Namespace** teardown | **Yes** (tmpfs mount overlays inside WSL2) | **Production-grade**: Recommended path for Windows workstations |
-| **macOS (Darwin)**<br/>*Tier 2 (Experimental)* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **Partial** (Watchdog `kqueue` `pdeath_watch` sends `SIGKILL` to group) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Experimental**: Write confinement and `--net=off` network lockdown |
-| **Windows Native**<br/>*Tier 3 (Preview)* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Preview**: Process guardrails only; use WSL2 for full kernel boundary |
-| **Windows Sandbox**<br/>*Tier 3 (VM Isolated)* | **VM Isolated** (Dedicated virtual disk, mapped read-write folders only) | **VM Isolated** (Host secrets never mapped into `.wsb` specification) | **Virtual Switch** (Hyper-V vSwitch disabled under `--net=off`) | **VM Teardown** (Hyper-V VM instance termination) | **Full Isolation** (Physically separated filesystem in disposable VM) | **Disposable VM**: Hardware-virtualized container (requires Hyper-V) |
+| **macOS via mac-vm**<br/>*Tier 1 (uniform default)* | **100% Kernel Deny** (Linux Landlock inside the VM) | **100% Scoped Read** (Landlock VFS Inode checks inside the VM) | **Yes** (`CLONE_NEWNET` inside the VM) | **100% PID Namespace** teardown | **Yes** (tmpfs mount overlays inside the VM) | **Production-grade**: same guarantees as Linux, via uniform runtime |
+| **Windows via wsl2**<br/>*Tier 1 (uniform default)* | **100% Kernel Deny** (Linux Landlock inside WSL2) | **100% Scoped Read** (Landlock VFS Inode checks inside WSL2) | **Yes** (`CLONE_NEWNET` inside WSL2) | **100% PID Namespace** teardown | **Yes** (tmpfs mount overlays inside WSL2) | **Production-grade**: same guarantees as Linux, via uniform runtime |
+| **macOS (Darwin)**<br/>*legacy process, deprecated — explicit `--backend process` only* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **Partial** (Watchdog `kqueue` `pdeath_watch` sends `SIGKILL` to group) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Deprecated legacy**: write confinement and `--net=off` network lockdown only; default is Tier-1 via `mac-vm` |
+| **Windows Native**<br/>*legacy process, deprecated — explicit `--backend process` only* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Deprecated legacy**: process guardrails only; default is Tier-1 via `wsl2` |
+| **Windows Sandbox**<br/>*opt-in VM (`--backend win-sandbox`)* | **VM Isolated** (Dedicated virtual disk, mapped read-write folders only) | **VM Isolated** (Host secrets never mapped into `.wsb` specification) | **Virtual Switch** (Hyper-V vSwitch disabled under `--net=off`) | **VM Teardown** (Hyper-V VM instance termination) | **Full Isolation** (Physically separated filesystem in disposable VM) | **Disposable VM**: Hardware-virtualized container (requires Hyper-V) |
 
 ---
 
@@ -190,16 +192,16 @@ Apple has deprecated SBPL (`sandbox-exec`) and Darwin kernels impose severe cons
 - Modern versions of Apple's dynamic linker (`dyld`) on macOS 13, 14, and 15 crash with `SIGABRT` when SBPL file-read rules are fragmented across multiple discrete path clauses.
 - Vetto transparently tracks this platform defect via `vetto doctor` under the `sbpl-read-fragment` probe.
 - Rather than crashing agent workflows or manufacturing illusory read security, Vetto on macOS grants broad system reads while strictly enforcing 100% filesystem write lockouts, `--net=off` network isolation, and process supervision.
-- **Recommendation**: If your threat model requires 100% hardware-enforced kernel read-denial of host credentials (`~/.ssh`, `~/.aws`, `.env`) on macOS, execute Vetto inside **OrbStack**, a lightweight Linux VM, or Docker devcontainers where Linux Landlock and mount namespaces are available.
+- **Recommendation**: If your threat model requires 100% hardware-enforced kernel read-denial of host credentials (`~/.ssh`, `~/.aws`, `.env`) on macOS, use the default **Tier-1 via `mac-vm`** uniform runtime (or OrbStack / a lightweight Linux VM / Docker devcontainers where Linux Landlock and mount namespaces are available).
 
 ### The Honest Windows Disclosure
 Native Windows isolation uses Job Objects and Less Privileged AppContainers (LPAC). While Job Objects guarantee 100% child process termination on close (`KILL_ON_JOB_CLOSE`), Windows lacks unprivileged mount namespaces and kernel Landlock LSM primitives:
-- Native Windows is designated **Tier 3 (Preview)**.
-- For production-grade **Tier 1** protection on Windows workstations, use **WSL2** (`wsl -- vetto ...`), which provides the native Linux kernel Landlock LSM and namespace isolation stack.
+- Native Windows process backend is **deprecated legacy (explicit `--backend process` only)**.
+- The default on Windows is **Tier-1 via `wsl2`**: uniform runtime (VM provision → sync → exec Linux vetto → sync back → teardown) with the same guarantees as Linux; a missing distro fails closed, never silently downgrades.
 
 ### Scope Closure: Issues #26, #62, #63
 Issue #26 formally closes the gap between marketing assertions and kernel reality, with per-backend tracking in #62 (macOS Seatbelt read-isolation, blocked by Apple `dyld` regression) and #63 (Windows AppContainer/LPAC hardening, WFP lease admin opt-in, release signing status). Vetto permanently repudiates ungrounded claims of cross-platform parity:
-1. Platform capabilities are strictly tiered (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows).
+1. Platform defaults require Tier-1 (direct Linux, `mac-vm` on macOS, `wsl2` on Windows); legacy process backends are deprecated and explicit-only; missing VM runtimes fail closed.
 2. All capability claims are continuously verified in CI via automated red-team matrices and diagnostic doctor probes.
 3. Pull requests or features claiming parity without underlying OS kernel enforcement proofs will be rejected.
 

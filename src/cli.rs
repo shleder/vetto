@@ -77,7 +77,9 @@ pub struct Cli {
     #[arg(long, value_name = "MODE", default_value = "statusline")]
     pub tui: String,
 
-    /// Explicit sandbox backend: auto | process | win-sandbox
+    /// Explicit sandbox backend: auto | process | mac-vm | wsl2 | win-sandbox.
+    /// Default (auto) requires Tier-1 (direct Linux, mac-vm on macOS, wsl2 on
+    /// Windows) and fails closed; legacy process backends are explicit-only.
     #[arg(long, value_name = "BACKEND")]
     pub backend: Option<String>,
 
