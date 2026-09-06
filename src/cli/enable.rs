@@ -297,7 +297,10 @@ pub fn get_wrapped_agents(scope: HookScope) -> Result<Vec<WrappedAgentInfo>> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[derive(Parser, Debug)]
     struct TestCli {
@@ -313,7 +316,8 @@ mod tests {
 
     fn temp_test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "vetto-enable-test-{name}-{}",
+            "vetto-enable-test-{name}-{}-{}",
+            std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -360,6 +364,9 @@ mod tests {
 
     #[test]
     fn enable_creates_shim_and_disable_removes_it() {
+        // Mutates process-global PATH: serialize under lock so parallel
+        // tests resolving binaries never observe the fake bin_dir.
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_test_dir("lifecycle");
         let shims_dir = dir.join("shims");
 

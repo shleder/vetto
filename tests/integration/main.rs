@@ -7,6 +7,7 @@
 
 mod common;
 
+mod adv_isolation;
 mod cli_reporting;
 mod ecosystem_tier7;
 mod enable_wrapper;
