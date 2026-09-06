@@ -380,7 +380,10 @@ mod tests {
         // Empty input decodes to empty output; a leading BOM is whitespace
         // trimmed before parsing — both are valid, not errors.
         assert_eq!(from_hex("").expect("empty hex is valid"), Vec::<u8>::new());
-        assert_eq!(from_hex("\u{feff}ab").expect("BOM-trimmed hex is valid"), vec![0xab]);
+        assert_eq!(
+            from_hex("\u{feff}ab").expect("BOM-trimmed hex is valid"),
+            vec![0xab]
+        );
         let mut rng = Lcg(0xdead_beef_cafe_f00d);
         for _ in 0..512 {
             let mut s = String::new();
