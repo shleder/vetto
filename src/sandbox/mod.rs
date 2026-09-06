@@ -10,6 +10,9 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+#[cfg(target_os = "macos")]
+pub mod macvm;
+
 // Kept outside `macos/mod.rs` so the security worker remains untouched.  The
 // broker is an opt-in library surface for later integration, not part of the
 // Seatbelt spawn path.
@@ -30,8 +33,14 @@ use crate::policy::{Policy, Tier};
 
 /// Everything `Backend::spawn` hands back to the supervisor besides the
 /// waitable handle itself.
+///
+/// `post_wait` runs in the supervisor AFTER `handle.wait()` returns, while
+/// still fail-loud: VM backends pull the workspace back here (guest keeps
+/// the truth on failure — the error names the guest path, never silent).
 pub struct Spawned {
     pub handle: SandboxHandle,
+    /// Post-wait hook (VM sync-back). `None` for host-local backends.
+    pub post_wait: Option<PostWait>,
     /// Broker end of the relay control socketpair (`--net=allowlist`).
     /// `main` passes it to `net_relay::spawn_broker` which takes ownership.
     #[cfg(unix)]
@@ -43,6 +52,29 @@ pub struct Spawned {
     /// it to `observe_seccomp::spawn_notifier` which takes ownership.
     #[cfg(unix)]
     pub notif_listener: Option<OwnedFd>,
+}
+
+/// Post-wait action for VM backends: pull the workspace back exactly once
+/// after the agent exits. Runs on the supervisor thread (threads allowed).
+pub enum PostWait {
+    #[cfg(target_os = "macos")]
+    MacVmSyncBack {
+        cfg: macvm::MacVmConfig,
+        project: std::path::PathBuf,
+    },
+}
+
+impl PostWait {
+    /// Run the post-wait hook. Fail-LOUD (error, never silent): a failed
+    /// sync-back means the host tree is stale — the guest keeps the truth.
+    pub fn run(self) -> anyhow::Result<()> {
+        match self {
+            #[cfg(target_os = "macos")]
+            PostWait::MacVmSyncBack { cfg, project } => {
+                macvm::sync::sync_from_guest(&cfg, &project)
+            }
+        }
+    }
 }
 
 /// Selected enforcement backend for this session.
@@ -57,6 +89,8 @@ pub enum Backend {
     Linux(Box<linux::LinuxSandbox>),
     #[cfg(target_os = "macos")]
     Macos(Box<macos::MacosSandbox>),
+    #[cfg(target_os = "macos")]
+    MacVm(Box<macvm::MacVmSandbox>),
     #[cfg(target_os = "windows")]
     Windows(Box<windows::WindowsSandbox>),
 }
@@ -112,15 +146,23 @@ impl Backend {
             match parsed {
                 BackendName::Auto | BackendName::Process => {}
                 BackendName::MacVm => {
-                    // Integration point for feat/uniform-mac-vm: construct
-                    // `Backend::MacVm` here once that branch merges its variant.
-                    // cfg-gate keeps every platform building until then.
                     #[cfg(target_os = "macos")]
                     {
-                        anyhow::bail!(
-                            "--backend mac-vm is not yet integrated (feat/uniform-mac-vm not merged)\n\
-                             action: omit the flag (legacy Seatbelt process backend applies, deprecated) or retry after the mac-vm branch lands; run `vetto doctor` for the enforcement matrix"
-                        );
+                        // Uniform default path: Tier-1 inside the Linux VM.
+                        // Missing VM fails closed with an action, never a
+                        // silent Seatbelt run.
+                        let cfg = macvm::load_config()?;
+                        let avail = macvm::MacVmSandbox::probe_availability_with(&cfg);
+                        if !avail.available {
+                            anyhow::bail!(
+                                "mac-vm unavailable: {}\n\
+                                 action: start the VM (`vetto-vz start`), check ssh, or pass explicit `--backend process` (deprecated legacy); run `vetto doctor` for the enforcement matrix",
+                                avail.reason
+                            );
+                        }
+                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(
+                            net, cfg,
+                        ))));
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -190,6 +232,32 @@ impl Backend {
         }
         #[cfg(target_os = "macos")]
         {
+            // Uniform default: Tier-1 inside the Linux VM when available;
+            // explicit `--backend process` keeps the deprecated Seatbelt path.
+            let explicit_process = matches!(
+                backend_name.map(parse_backend_name),
+                Some(Ok(BackendName::Process))
+            );
+            if !explicit_process {
+                if let Ok(cfg) = macvm::load_config() {
+                    let avail = macvm::MacVmSandbox::probe_availability_with(&cfg);
+                    if avail.available {
+                        let _ = observe_seccomp;
+                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(
+                            net, cfg,
+                        ))));
+                    }
+                    anyhow::bail!(
+                        "default enforcement requires Tier-1 via mac-vm, but: {}\n\
+                         action: start the VM (`vetto-vz start`), check ssh, or pass explicit `--backend process` (deprecated legacy, Seatbelt write-confinement only); run `vetto doctor` for the enforcement matrix",
+                        avail.reason
+                    );
+                }
+                anyhow::bail!(
+                    "default enforcement requires Tier-1 via mac-vm (no VM configured)\n\
+                     action: install the VM helper (`vetto-vz`), create the Linux VM, write ~/.vetto/mac-vm.toml, or pass explicit `--backend process` (deprecated legacy); run `vetto doctor` for the enforcement matrix"
+                );
+            }
             let _ = observe_seccomp;
             Ok(Backend::Macos(Box::new(macos::MacosSandbox::new(net))))
         }
@@ -215,6 +283,8 @@ impl Backend {
             Backend::Linux(s) => Some(s.tier),
             #[cfg(target_os = "macos")]
             Backend::Macos(_) => None,
+            #[cfg(target_os = "macos")]
+            Backend::MacVm(_) => Some(Tier::Full),
             #[cfg(target_os = "windows")]
             Backend::Windows(_) => None,
         }
@@ -236,6 +306,10 @@ impl Backend {
             Backend::Macos(_) => {
                 "macos seatbelt (legacy process-only, use mac-vm for Tier-1)".into()
             }
+            #[cfg(target_os = "macos")]
+            Backend::MacVm(_) => {
+                "mac-vm tier-1 (Linux Landlock/seccomp/namespaces inside the VM)".into()
+            }
             #[cfg(target_os = "windows")]
             Backend::Windows(s) => format!(
                 "windows process sandbox (legacy process-only, use wsl2 for Tier-1) ({})",
@@ -255,6 +329,16 @@ impl Backend {
             Backend::Linux(s) => s.spawn(policy, opts),
             #[cfg(target_os = "macos")]
             Backend::Macos(s) => s.spawn(policy, opts),
+            #[cfg(target_os = "macos")]
+            Backend::MacVm(s) => {
+                let project = opts.cwd.clone();
+                let mut spawned = s.spawn(policy, opts)?;
+                spawned.post_wait = Some(PostWait::MacVmSyncBack {
+                    cfg: macvm::load_config().unwrap_or_else(|_| macvm::MacVmConfig::default()),
+                    project,
+                });
+                Ok(spawned)
+            }
             #[cfg(target_os = "windows")]
             Backend::Windows(s) => s.spawn(policy, opts),
         }

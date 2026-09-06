@@ -955,6 +955,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let started = std::time::Instant::now();
     let spawned = backend.spawn(&pol, opts)?;
     let mut handle = spawned.handle;
+    // VM sync-back hook: runs after wait() returns (guest keeps the truth
+    // on failure — the error below names the guest path, never silent).
+    let post_wait = spawned.post_wait;
     #[cfg(unix)]
     let broker_ctrl_fd = spawned.broker_ctrl_fd;
     #[cfg(unix)]
@@ -1279,6 +1282,18 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         exit_code,
         duration_secs,
     });
+    // VM sync-back (mac-vm / wsl2): the guest owns the truth until this
+    // pull lands. Fail-LOUD: a failed pull errors the session (exit path
+    // reports it) instead of pretending the host tree is fresh.
+    if let Some(hook) = post_wait {
+        if let Err(e) = hook.run() {
+            eprintln!("vetto: workspace sync-back failed: {e:#}");
+            bus.publish(Event::Notice {
+                ts: events::types::now(),
+                message: format!("workspace sync-back failed: {e:#}"),
+            });
+        }
+    }
     std::thread::sleep(std::time::Duration::from_millis(100)); // let sinks drain
 
     let snap = stats.snapshot();

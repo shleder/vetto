@@ -1232,6 +1232,7 @@ fn spawn_full(
         };
 
     Ok(Spawned {
+        post_wait: None,
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::PidNsPipe(alive_w)),
@@ -1471,6 +1472,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     proctrack::arm_exit_sweep(pid, pid);
 
     Ok(Spawned {
+        post_wait: None,
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::ProcessGroup {
@@ -1649,6 +1651,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
     proctrack::arm_exit_sweep(pid, pid);
 
     Ok(Spawned {
+        post_wait: None,
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::ProcessGroup {

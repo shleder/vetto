@@ -354,7 +354,8 @@ mod tests {
     fn session_argv_is_single_remote_string() {
         use crate::policy::Policy;
         // Minimal policy surface: only name + net label matter here.
-        let pol = Policy::test_default("default");
+        let mut pol = Policy::default();
+        pol.name = "default".to_string();
         let argv = session_ssh_argv(&cfg(), &pol, &NetMode::Off, &["agent".into()]);
         assert_eq!(argv[0], "ssh");
         // Last element is the whole remote command (one string).

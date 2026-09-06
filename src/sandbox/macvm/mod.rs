@@ -196,13 +196,18 @@ impl MacVmSandbox {
     /// Detect: config present AND helper responsive AND ssh reachable.
     /// Anything else → unavailable with a reason (fail-closed downstream).
     pub fn probe_availability() -> Availability {
-        let cfg = match load_config() {
-            Ok(c) => c,
+        match load_config() {
+            Ok(cfg) => Self::probe_availability_with(&cfg),
             Err(e) => {
                 let first = e.to_string().lines().next().unwrap_or("no VM configured");
-                return Availability::missing(format!("{first}"));
+                Availability::missing(format!("{first}"))
             }
-        };
+        }
+    }
+
+    /// Detect with an already-loaded config (avoids double file read in the
+    /// dispatch path). Pure probe: no provisioning, no side effects.
+    pub fn probe_availability_with(cfg: &MacVmConfig) -> Availability {
         let helper = cfg.effective_helper();
         if !vm::helper_present(&helper) {
             return Availability::missing(format!(
@@ -230,6 +235,11 @@ impl MacVmSandbox {
     /// Full provision + run. Called pre-fork from the single-threaded path
     /// (same iron rule as the other backends): `std::process::Command` is
     /// used for ssh/rsync, no threads are spawned here.
+    ///
+    /// Sync-back back into the host workspace happens in the supervisor
+    /// after `handle.wait()` returns (see `main.rs` wait callers): until
+    /// then the guest owns the truth. `sync::sync_from_guest` is fail-loud
+    /// (never silent) so a failed sync-back cannot masquerade as success.
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
         self.cfg.validate()?;
         let project = opts.cwd.clone();
@@ -245,16 +255,18 @@ impl MacVmSandbox {
         let guest_cmd = exec::guest_vetto_argv(policy, &self.net, &opts.agent_cmd);
         let child = exec::spawn_guest(&self.cfg, &project, &opts, guest_cmd)?;
         let root_pid = child.id();
-        // `exec::spawn_guest` returns a live `std::process::Child`; wrap it
-        // in a reaper thread-free handle. We intentionally leak the Child
-        // into a pid-based handle: wait/terminate go through libc waitpid
-        // and kill on the ssh pid, mirroring the Seatbelt backend contract.
-        // The sync-back on exit is performed by `wait` callers? No — it must
-        // happen exactly once at process exit. The supervisor calls
-        // `handle.wait()` then drops; sync-back happens in `MacVmHandle`
-        // drop via a best-effort rsync guarded by a done-flag file.
-        std::mem::forget(child);
+        // `exec::spawn_guest` returns a live `std::process::Child`; convert
+        // it to a pid-based handle WITHOUT leaking: `Child` owns no
+        // wait-critical state beyond the pid on unix — `SandboxHandle::wait`
+        // reaps via libc waitpid on root_pid, and SIGKILL goes to the ssh
+        // process group. Dropping `Child` here does NOT kill ssh (no
+        // kill-on-drop): the pid stays valid until reaped by wait().
+        // NOTE: `std::process::Child` has no kill-on-drop; dropping it only
+        // releases the Rust-side handle. The ssh process keeps running until
+        // waitpid reaps it — exactly what `SandboxHandle` expects.
+        drop(child);
         Ok(Spawned {
+            post_wait: None,
             handle: SandboxHandle {
                 root_pid,
                 strategy: Some(super::handle::KillStrategy::ProcessGroup {

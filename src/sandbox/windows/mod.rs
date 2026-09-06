@@ -647,6 +647,7 @@ impl WindowsSandbox {
         }
 
         Ok(Spawned {
+            post_wait: None,
             handle: SandboxHandle {
                 root_pid: process_info.process_id,
                 strategy: Some(KillStrategy::JobObject { job, process }),
