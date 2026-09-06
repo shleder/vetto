@@ -42,11 +42,12 @@ pub mod visibility;
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use super::handle::{KillStrategy, SandboxHandle, SpawnOptions, StdioMode};
 use super::Spawned;
 use crate::config::NetMode;
+use crate::error::VettoError;
 use crate::policy::{Policy, Tier};
 
 const SETUP_TIMEOUT_MS: i32 = 30_000;
@@ -261,6 +262,17 @@ fn child_fail(err_w: RawFd, code: i32, msg: &str) -> ! {
 fn child_exit(code: i32) -> ! {
     // SAFETY: immediate child exit.
     unsafe { libc::_exit(code) }
+}
+
+/// Resolve the relay fd for allowlist mode without panicking.
+///
+/// The forked child must fail closed via `child_fail`, never via `expect`:
+/// a wiring mismatch must report to the parent instead of aborting.
+fn resolve_relay_fd(relay_end: Option<RawFd>, relay_port: Option<u16>) -> Option<RawFd> {
+    match (relay_end, relay_port) {
+        (Some(fd), Some(_)) => Some(fd),
+        _ => None,
+    }
 }
 
 /// PDEATHSIG + the classic fork race check: if the parent died between fork
@@ -535,12 +547,14 @@ fn err_from_dead_child(pid: libc::pid_t, err_r: RawFd) -> anyhow::Error {
     let reason = drain_err_reason(err_r);
     let code = reap_child(pid);
     if reason.is_empty() {
-        anyhow!("sandbox child died during setup (exit {code})")
+        anyhow::Error::new(VettoError::Sandbox(format!(
+            "child died during setup (exit {code})"
+        )))
     } else {
-        anyhow!(
-            "sandbox setup failed (child exit {code}): {}",
+        anyhow::Error::new(VettoError::Sandbox(format!(
+            "child exit {code}: {}",
             reason.trim_start_matches("E:")
-        )
+        )))
     }
 }
 
@@ -1012,7 +1026,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     }
 
     if let Some(port) = relay_port {
-        let relay_fd = relay_end.expect("relay fd wired for allowlist mode");
+        let Some(relay_fd) = resolve_relay_fd(relay_end, relay_port) else {
+            child_fail(err_w, 115, "relay fd missing for allowlist mode");
+        };
         if let Err(e) = mounts::blackhole_resolv_conf() {
             child_fail(err_w, 121, &format!("blackhole resolv.conf: {e}"));
         }
@@ -1154,10 +1170,10 @@ fn spawn_full(
     if let Err(e) = read_exact_timeout(map_r.as_raw_fd(), &mut pid_buf, SETUP_TIMEOUT_MS) {
         let code = kill_and_reap(pid);
         let reason = drain_err_reason(err_r.as_raw_fd());
-        return Err(anyhow!(
+        return Err(anyhow::Error::new(VettoError::Sandbox(format!(
             "userns handshake failed ({e}, child exit {code}): {}",
             reason.trim_start_matches("E:")
-        ));
+        ))));
     }
     let child_pid = u32::from_le_bytes(pid_buf) as libc::pid_t;
     let maps_ok = namespaces::write_id_maps(child_pid).is_ok();
@@ -1166,10 +1182,10 @@ fn spawn_full(
     let _ = unsafe { libc::write(ack_w.as_raw_fd(), ack.as_ptr().cast(), ack.len()) };
     if !maps_ok {
         let code = reap_child(pid);
-        return Err(anyhow!(
+        return Err(anyhow::Error::new(VettoError::Sandbox(format!(
             "writing uid_map/gid_map failed (child exit {code}); \
              unprivileged userns may be restricted here"
-        ));
+        ))));
     }
     drop(map_r);
     drop(ack_w);
@@ -1182,13 +1198,15 @@ fn spawn_full(
         }
         ByteRead::Byte(other) => {
             let code = reap_child(pid);
-            return Err(anyhow!(
-                "unexpected setup byte {other:#x} from sandbox child (exit {code})"
-            ));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "unexpected setup byte {other:#x} from child (exit {code})"
+            ))));
         }
         ByteRead::Timeout => {
             let code = kill_and_reap(pid);
-            return Err(anyhow!("sandbox setup timed out (child exit {code})"));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "setup timed out (child exit {code})"
+            ))));
         }
     }
 
@@ -1423,13 +1441,15 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
         }
         ByteRead::Byte(other) => {
             let code = reap_child(pid);
-            return Err(anyhow!(
-                "unexpected setup byte {other:#x} from sandbox child (exit {code})"
-            ));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "unexpected setup byte {other:#x} from child (exit {code})"
+            ))));
         }
         ByteRead::Timeout => {
             let code = kill_and_reap(pid);
-            return Err(anyhow!("sandbox setup timed out (child exit {code})"));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "setup timed out (child exit {code})"
+            ))));
         }
     }
 
@@ -1603,13 +1623,15 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
         }
         ByteRead::Byte(other) => {
             let code = reap_child(pid);
-            return Err(anyhow!(
-                "unexpected setup byte {other:#x} from sandbox child (exit {code})"
-            ));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "unexpected setup byte {other:#x} from child (exit {code})"
+            ))));
         }
         ByteRead::Timeout => {
             let code = kill_and_reap(pid);
-            return Err(anyhow!("sandbox setup timed out (child exit {code})"));
+            return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                "setup timed out (child exit {code})"
+            ))));
         }
     }
 
@@ -1637,4 +1659,29 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
         relay_port: None,
         notif_listener,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exit_codes::EXIT_FAIL_CLOSED;
+
+    #[test]
+    fn relay_fd_resolves_only_when_both_ends_wired() {
+        assert_eq!(resolve_relay_fd(Some(7), Some(8080)), Some(7));
+        assert_eq!(resolve_relay_fd(None, Some(8080)), None);
+        assert_eq!(resolve_relay_fd(Some(7), None), None);
+        assert_eq!(resolve_relay_fd(None, None), None);
+    }
+
+    #[test]
+    fn sandbox_setup_failures_map_to_fail_closed() {
+        // Typed sandbox errors must exit 125 without relying on the
+        // legacy substring fallback in map_error_to_exit_code.
+        let err = anyhow::Error::new(VettoError::Sandbox("setup timed out".into()));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            EXIT_FAIL_CLOSED
+        );
+    }
 }

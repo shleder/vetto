@@ -180,11 +180,7 @@ pub fn run_cli(json: bool) -> Result<()> {
     for s in &sessions {
         let uptime_secs = now_secs.saturating_sub(s.started_at_secs);
         let uptime_str = format_uptime(uptime_secs);
-        let short_sid = if s.session_id.len() > 8 {
-            &s.session_id[..8]
-        } else {
-            &s.session_id
-        };
+        let short_sid = short_session_id(&s.session_id);
         println!(
             "{:<10} {:<15} {:<12} {:<15} {:<10} {:<8}",
             s.pid, s.agent, s.policy, s.tier, uptime_str, short_sid
@@ -220,9 +216,41 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
+/// Truncate a session id for the status table without panicking.
+///
+/// Session ids arrive from on-disk registry files (user-controlled) and
+/// may contain multi-byte UTF-8: byte slicing at 8 could split a char
+/// boundary and panic. Floor the cut to the last valid boundary.
+fn short_session_id(session_id: &str) -> &str {
+    if session_id.len() <= 8 {
+        return session_id;
+    }
+    let mut end = 8;
+    while end > 0 && !session_id.is_char_boundary(end) {
+        end -= 1;
+    }
+    &session_id[..end]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_session_id_never_splits_utf8() {
+        assert_eq!(short_session_id("abc"), "abc");
+        assert_eq!(short_session_id("12345678"), "12345678");
+        assert_eq!(short_session_id("123456789"), "12345678");
+        // 8-byte cut inside a 2-byte char must floor, not panic.
+        let unicode = "ééééé"; // 10 bytes, 5 chars
+        let short = short_session_id(unicode);
+        assert!(short.len() <= 8);
+        assert!(unicode.is_char_boundary(short.len()));
+        // Emoji (4 bytes each): cut floors to a valid boundary.
+        let emoji = "😀😀😀";
+        let short_emoji = short_session_id(emoji);
+        assert!(emoji.is_char_boundary(short_emoji.len()));
+    }
 
     #[test]
     fn registry_lifecycle_and_pruning() {
