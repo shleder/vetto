@@ -373,10 +373,14 @@ mod tests {
 
     #[test]
     fn prop_from_hex_never_panics_on_garbage() {
-        for bad in ["€€", "😀", "éé", "a€b€", "\u{feff}ab", "zz", "abc", ""] {
+        for bad in ["€€", "😀", "éé", "a€b€", "zz", "abc"] {
             let res = from_hex(bad);
             assert!(res.is_err(), "input {bad:?} must be Err");
         }
+        // Empty input decodes to empty output; a leading BOM is whitespace
+        // trimmed before parsing — both are valid, not errors.
+        assert_eq!(from_hex("").expect("empty hex is valid"), Vec::<u8>::new());
+        assert_eq!(from_hex("\u{feff}ab").expect("BOM-trimmed hex is valid"), vec![0xab]);
         let mut rng = Lcg(0xdead_beef_cafe_f00d);
         for _ in 0..512 {
             let mut s = String::new();
