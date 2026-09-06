@@ -527,6 +527,159 @@ mod tests {
         assert!(err_str.contains("not found"));
     }
 
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+
+        fn below(&mut self, bound: u64) -> u64 {
+            if bound == 0 {
+                0
+            } else {
+                self.next() % bound
+            }
+        }
+    }
+
+    fn pick_piece(rng: &mut Lcg) -> &'static str {
+        match rng.below(12) {
+            0 => "a",
+            1 => "Z",
+            2 => "0",
+            3 => "é",
+            4 => "€",
+            5 => "😀",
+            6 => "\"",
+            7 => "\\",
+            8 => "\n",
+            9 => "\0",
+            10 => "/",
+            _ => "",
+        }
+    }
+
+    fn arb_string(rng: &mut Lcg, max_len: usize) -> String {
+        let len = rng.below(max_len as u64 + 1) as usize;
+        let mut s = String::new();
+        for _ in 0..len {
+            s.push_str(pick_piece(rng));
+        }
+        s
+    }
+
+    fn arb_vec(rng: &mut Lcg) -> Vec<String> {
+        let n = rng.below(5) as usize;
+        let mut v = Vec::new();
+        for _ in 0..n {
+            v.push(arb_string(rng, 24));
+        }
+        v
+    }
+
+    #[test]
+    fn prop_bundle_manifest_roundtrip() {
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        for _ in 0..128 {
+            let orig = BundleManifest {
+                format_version: rng.next() as u32,
+                session_id: arb_string(&mut rng, 32),
+                created_at: arb_string(&mut rng, 32),
+                project_dir: arb_string(&mut rng, 48),
+                files_count: rng.below(100_000) as usize,
+                snapshot_size_bytes: rng.next(),
+                blocked_filesystem_count: rng.below(1000) as usize,
+                blocked_network_count: rng.below(1000) as usize,
+                allowed_domains: arb_vec(&mut rng),
+            };
+            let json = serde_json::to_vec(&orig).expect("serialize");
+            let back: BundleManifest = serde_json::from_slice(&json).expect("parse");
+            assert_eq!(orig, back);
+        }
+    }
+
+    #[test]
+    fn prop_bug_report_roundtrip() {
+        let mut rng = Lcg(0xdead_beef_cafe_f00d);
+        for _ in 0..128 {
+            let orig = BugReport {
+                format_version: rng.next() as u32,
+                vetto_version: arb_string(&mut rng, 24),
+                os: arb_string(&mut rng, 16),
+                arch: arb_string(&mut rng, 16),
+                session_id: arb_string(&mut rng, 32),
+                created_at: arb_string(&mut rng, 32),
+                blocked_filesystem_count: rng.below(1000) as usize,
+                blocked_network_count: rng.below(1000) as usize,
+                blocked_file_paths: arb_vec(&mut rng),
+                blocked_network_destinations: arb_vec(&mut rng),
+            };
+            let json = serde_json::to_vec(&orig).expect("serialize");
+            let back: BugReport = serde_json::from_slice(&json).expect("parse");
+            assert_eq!(orig.format_version, back.format_version);
+            assert_eq!(orig.vetto_version, back.vetto_version);
+            assert_eq!(orig.os, back.os);
+            assert_eq!(orig.arch, back.arch);
+            assert_eq!(orig.session_id, back.session_id);
+            assert_eq!(orig.created_at, back.created_at);
+            assert_eq!(orig.blocked_filesystem_count, back.blocked_filesystem_count);
+            assert_eq!(orig.blocked_network_count, back.blocked_network_count);
+            assert_eq!(orig.blocked_file_paths, back.blocked_file_paths);
+            assert_eq!(
+                orig.blocked_network_destinations,
+                back.blocked_network_destinations
+            );
+        }
+    }
+
+    #[test]
+    fn prop_bundle_manifest_huge_unicode() {
+        let huge = "é€😀a".repeat(8192);
+        let orig = BundleManifest {
+            format_version: u32::MAX,
+            session_id: huge.clone(),
+            created_at: String::new(),
+            project_dir: "/tmp/ünicode/€".to_string(),
+            files_count: usize::MAX,
+            snapshot_size_bytes: u64::MAX,
+            blocked_filesystem_count: usize::MAX,
+            blocked_network_count: 0,
+            allowed_domains: vec![huge.clone(), String::new()],
+        };
+        let json = serde_json::to_vec(&orig).expect("serialize huge");
+        let back: BundleManifest = serde_json::from_slice(&json).expect("parse huge");
+        assert_eq!(orig, back);
+    }
+
+    #[test]
+    fn prop_bundle_manifest_rejects_garbage() {
+        for bad in ["", "{", "{\"format_version\":1", "null", "[]", "{}"] {
+            let res: Result<BundleManifest, _> = serde_json::from_str(bad);
+            assert!(res.is_err(), "input {bad:?} must fail");
+        }
+        for bad in ["", "{}", "null", "{\"format_version\":1}"] {
+            let res: Result<BugReport, _> = serde_json::from_str(bad);
+            assert!(res.is_err(), "input {bad:?} must fail");
+        }
+        let mut rng = Lcg(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..256 {
+            let s = arb_string(&mut rng, 48);
+            let a: Result<BundleManifest, _> = serde_json::from_str(&s);
+            if let Ok(v) = a {
+                let _ = serde_json::to_vec(&v).expect("reserialize");
+            }
+            let b: Result<BugReport, _> = serde_json::from_str(&s);
+            if let Ok(v) = b {
+                let _ = serde_json::to_vec(&v).expect("reserialize");
+            }
+        }
+    }
+
     #[test]
     fn test_pack_and_unpack_roundtrip() {
         let _guard = TEST_LOCK.lock().unwrap();
