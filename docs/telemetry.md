@@ -86,3 +86,20 @@ You can verify that zero network activity occurs when telemetry is off by runnin
 # Verify no network packets are sent with default configuration
 vetto -- /bin/echo "testing privacy"
 ```
+
+## 6. Activation funnel milestones (issue #27)
+
+Beyond per-session counters, three one-time milestones track the install →
+enable → first-session funnel, under the same opt-in gate and anonymity
+guarantees (version/OS/arch + milestone name only, no PII):
+
+| Milestone | Sent when |
+|---|---|
+| `install` | first-ever vetto run |
+| `enable` | first `vetto enable <agent>` that wraps an agent |
+| `first_session` | first supervised session completes |
+
+Each milestone is sent at most once (tracked in `~/.vetto/funnel.json`).
+With telemetry off (default), nothing is sent and nothing is recorded.
+Payload shape: `{"schema_version": 1, "vetto_version": "…", "os": "…",
+"arch": "…", "event": "enable"}`.

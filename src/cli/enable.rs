@@ -149,6 +149,9 @@ pub fn enable_agent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
         }
     }
 
+    // Activation funnel milestone (issue #27): agent wrapped. Once-only.
+    let _ = crate::telemetry::record_funnel_milestone("enable");
+
     Ok(())
 }
 

@@ -54,7 +54,7 @@ pub fn map_session_exit_code(
 pub fn recap_hint(final_code: i32, blocked_total: u64, timed_out: bool) -> Option<String> {
     if timed_out || final_code == EXIT_TIMEOUT {
         return Some(
-            "session hit the deadline — re-run with a larger --session-timeout or split the task"
+            "session hit the deadline — re-run with a larger --timeout or split the task"
                 .to_string(),
         );
     }
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn recap_points_at_one_action_per_outcome() {
         let timeout = recap_hint(EXIT_TIMEOUT, 0, true).expect("timeout recap");
-        assert!(timeout.contains("--session-timeout"));
+        assert!(timeout.contains("--timeout"));
 
         let blocked = recap_hint(EXIT_POLICY_BLOCKED, 7, false).expect("blocked recap");
         assert!(blocked.contains('7'));

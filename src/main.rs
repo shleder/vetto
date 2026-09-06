@@ -59,6 +59,9 @@ fn fast_tier_detect() -> &'static str {
 }
 
 fn run() -> Result<()> {
+    // Activation funnel milestone (issue #27): first-ever run. Once-only via
+    // marker file; silent unless telemetry is explicitly opted in.
+    let _ = vetto::telemetry::record_funnel_milestone("install");
     let raw_args: Vec<String> = std::env::args().collect();
     let has_version = raw_args.iter().any(|a| a == "--version" || a == "-V");
     let has_json = raw_args.iter().any(|a| a == "--json");
@@ -1280,6 +1283,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
 
     let snap = stats.snapshot();
     let _ = vetto::telemetry::send_session_telemetry(&snap, tier_label(tier));
+    // Activation funnel milestone (issue #27): first supervised session done.
+    let _ = vetto::telemetry::record_funnel_milestone("first_session");
     let diff = report::diff_project::ProjectDiff::compute(&initial_manifest, &project);
     if !diff.is_empty() {
         bus.publish(Event::Notice {
