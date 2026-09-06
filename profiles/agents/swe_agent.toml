@@ -1,0 +1,26 @@
+[metadata]
+name = "swe_agent"
+description = "Safe compatibility roots for Princeton SWE-agent."
+
+[filesystem]
+allow_write = [
+  "$HOME/.swe-agent",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.swe-agent",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "SWE_AGENT_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

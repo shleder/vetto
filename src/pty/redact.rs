@@ -21,6 +21,7 @@ struct PatternInfo {
     min_run_len: usize,
     is_pem: bool,
     is_bearer: bool,
+    is_kv: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -149,138 +150,238 @@ impl StreamingRedactor {
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"sk-ant-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"sk-".to_vec(),
-                min_run_len: 24,
+                min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
+            },
+            PatternInfo {
+                prefix: b"AIza".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: false,
+            },
+            PatternInfo {
+                prefix: b"npm_".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: false,
+            },
+            PatternInfo {
+                prefix: b"pypi-".to_vec(),
+                min_run_len: 20,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"ghp_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"gho_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"ghu_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"ghs_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"ghr_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"AKIA".to_vec(),
                 min_run_len: 16,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"ASIA".to_vec(),
                 min_run_len: 16,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"xoxb-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"xoxp-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"xoxa-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"xoxs-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"glpat-".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"hf_".to_vec(),
                 min_run_len: 20,
                 is_pem: false,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"Bearer ".to_vec(),
                 min_run_len: 8,
                 is_pem: false,
                 is_bearer: true,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"bearer ".to_vec(),
                 min_run_len: 8,
                 is_pem: false,
                 is_bearer: true,
+                is_kv: false,
+            },
+            PatternInfo {
+                prefix: b"_KEY=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_SECRET=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_TOKEN=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_PASSWORD=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_key=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_secret=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_token=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
+            },
+            PatternInfo {
+                prefix: b"_password=".to_vec(),
+                min_run_len: 8,
+                is_pem: false,
+                is_bearer: false,
+                is_kv: true,
             },
             PatternInfo {
                 prefix: b"-----BEGIN PRIVATE KEY-----".to_vec(),
                 min_run_len: 0,
                 is_pem: true,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"-----BEGIN RSA PRIVATE KEY-----".to_vec(),
                 min_run_len: 0,
                 is_pem: true,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"-----BEGIN EC PRIVATE KEY-----".to_vec(),
                 min_run_len: 0,
                 is_pem: true,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"-----BEGIN OPENSSH PRIVATE KEY-----".to_vec(),
                 min_run_len: 0,
                 is_pem: true,
                 is_bearer: false,
+                is_kv: false,
             },
             PatternInfo {
                 prefix: b"-----BEGIN CERTIFICATE-----".to_vec(),
                 min_run_len: 0,
                 is_pem: true,
                 is_bearer: false,
+                is_kv: false,
             },
         ];
         Self {
@@ -301,7 +402,8 @@ impl StreamingRedactor {
         buffer.extend_from_slice(chunk);
         self.carry_over.clear();
 
-        let mut redacted_spans: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, pattern_idx)
+        // (start, end, pattern_idx)
+        let mut redacted_spans: Vec<(usize, usize, usize)> = Vec::new();
         let mut state = 0;
 
         let mut i = 0;
@@ -328,6 +430,40 @@ impl StreamingRedactor {
                     }
                     if token_end - token_start >= pat.min_run_len {
                         redacted_spans.push((token_start, token_end, pattern_idx));
+                    }
+                } else if pat.is_kv {
+                    let mut val_start = match_start + pat.prefix.len();
+                    while val_start < buffer.len()
+                        && (buffer[val_start] == b' ' || buffer[val_start] == b'\t')
+                    {
+                        val_start += 1;
+                    }
+                    if val_start < buffer.len() {
+                        let quote = buffer[val_start];
+                        let is_quoted = quote == b'"' || quote == b'\'';
+                        let (token_start, token_end) = if is_quoted {
+                            let start = val_start + 1;
+                            let mut end = start;
+                            while end < buffer.len()
+                                && buffer[end] != quote
+                                && buffer[end] != b'\n'
+                                && buffer[end] != b'\r'
+                            {
+                                end += 1;
+                            }
+                            (start, end)
+                        } else {
+                            let start = val_start;
+                            let mut end = start;
+                            while end < buffer.len() && is_token_char(buffer[end]) {
+                                end += 1;
+                            }
+                            (start, end)
+                        };
+                        let val = &buffer[token_start..token_end];
+                        if val.len() >= pat.min_run_len && !val.iter().all(|&b| b == val[0]) {
+                            redacted_spans.push((token_start, token_end, pattern_idx));
+                        }
                     }
                 } else {
                     let mut token_end = match_start + pat.prefix.len();
@@ -379,7 +515,10 @@ impl StreamingRedactor {
             let safe_emit = tail.len() - 256;
             result.extend_from_slice(&tail[..safe_emit]);
             self.carry_over.extend_from_slice(&tail[safe_emit..]);
-        } else if !tail.is_empty() && is_token_char(*tail.last().unwrap()) {
+        } else if !tail.is_empty()
+            && (is_token_char(*tail.last().unwrap())
+                || matches!(*tail.last().unwrap(), b'"' | b'\''))
+        {
             self.carry_over.extend_from_slice(tail);
         } else {
             result.extend_from_slice(tail);
@@ -466,5 +605,77 @@ mod tests {
 
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("GITHUB_TOKEN=ghp_[REDACTED]"));
+    }
+
+    #[test]
+    fn test_claude_token_redaction() {
+        let mut redactor = StreamingRedactor::with_style(RedactionStyle::Marker);
+        let secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+        let output = redactor.redact_str(secret);
+        assert!(output.contains("sk-ant-[REDACTED]"));
+        assert!(!output.contains("api03-abcdefghijklmnopqrstuvwxyz0123456789"));
+
+        let mut redactor_pad = StreamingRedactor::with_style(RedactionStyle::PadMask);
+        let output_pad = redactor_pad.redact_str(secret);
+        assert!(output_pad.starts_with("sk-ant-"));
+        assert!(!output_pad.contains("api03-abcdefghijklmnopqrstuvwxyz0123456789"));
+        assert_eq!(output_pad.len(), secret.len());
+    }
+
+    #[test]
+    fn test_openai_token_redaction() {
+        let mut redactor = StreamingRedactor::with_style(RedactionStyle::Marker);
+        let proj_secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+        let legacy_secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+        let input = format!("{proj_secret} and {legacy_secret}");
+        let output = redactor.redact_str(&input);
+        assert!(output.contains("sk-proj-[REDACTED]"));
+        assert!(output.contains("sk-[REDACTED]"));
+        assert!(!output.contains("abcdefghijklmnopqrstuvwxyz0123456789"));
+    }
+
+    #[test]
+    fn test_gemini_token_redaction() {
+        let mut redactor = StreamingRedactor::with_style(RedactionStyle::Marker);
+        let secret = "AIzaSyD-0123456789abcdefghijklmnopqrstuvwxyz";
+        let output = redactor.redact_str(secret);
+        assert!(output.contains("AIza[REDACTED]"));
+        assert!(!output.contains("SyD-0123456789abcdefghijklmnopqrstuvwxyz"));
+
+        let mut redactor_pad = StreamingRedactor::with_style(RedactionStyle::PadMask);
+        let output_pad = redactor_pad.redact_str(secret);
+        assert!(output_pad.starts_with("AIza"));
+        assert!(!output_pad.contains("SyD-0123456789abcdefghijklmnopqrstuvwxyz"));
+        assert_eq!(output_pad.len(), secret.len());
+    }
+
+    #[test]
+    fn test_npm_pypi_token_redaction() {
+        let mut redactor = StreamingRedactor::with_style(RedactionStyle::Marker);
+        let npm_secret = "npm_0123456789abcdefghijklmnopqrstuvwxyz";
+        let pypi_secret = "pypi-0123456789abcdefghijklmnopqrstuvwxyz";
+        let input = format!("{npm_secret} and {pypi_secret}");
+        let output = redactor.redact_str(&input);
+        assert!(output.contains("npm_[REDACTED]"));
+        assert!(output.contains("pypi-[REDACTED]"));
+        assert!(!output.contains("0123456789abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[test]
+    fn test_key_value_assignment_redaction() {
+        let mut redactor = StreamingRedactor::with_style(RedactionStyle::Marker);
+        let input = "export API_KEY=secretval12345678\n\
+                     export CLIENT_SECRET=\"my-client-secret-999\"\n\
+                     export AUTH_TOKEN='token_xyz_87654321'\n\
+                     export DB_PASSWORD=admin_password_456\n";
+        let output = redactor.redact_str(input);
+        assert!(output.contains("API_KEY=[REDACTED]"));
+        assert!(output.contains("CLIENT_SECRET=\"[REDACTED]\""));
+        assert!(output.contains("AUTH_TOKEN='[REDACTED]'"));
+        assert!(output.contains("DB_PASSWORD=[REDACTED]"));
+        assert!(!output.contains("secretval12345678"));
+        assert!(!output.contains("my-client-secret-999"));
+        assert!(!output.contains("token_xyz_87654321"));
+        assert!(!output.contains("admin_password_456"));
     }
 }

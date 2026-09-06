@@ -1,0 +1,26 @@
+[metadata]
+name = "gpt_engineer"
+description = "Safe compatibility roots for GPT-Engineer CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.gpt-engineer",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.gpt-engineer",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "GPTE_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

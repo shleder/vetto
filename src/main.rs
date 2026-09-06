@@ -18,12 +18,14 @@ use clap::Parser;
 
 use vetto::config::{NetMode, RunConfig, TuiMode};
 use vetto::events::{Event, EventBus};
+#[cfg(unix)]
+use vetto::pty;
+#[cfg(unix)]
+use vetto::tui;
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
-    rescue, sandbox, shim,
+    rescue, sandbox, shim, watchdog,
 };
-#[cfg(unix)]
-use vetto::{pty, tui};
 
 fn main() {
     if let Err(err) = run() {
@@ -79,6 +81,18 @@ fn run() -> Result<()> {
         return shim::run_cli(Some(binary), args);
     }
 
+    // Apply a previously staged auto-update before doing anything else.
+    // Skipped for shims (agent hot path), --version (observation only) and
+    // the upgrade command itself (it manages its own lifecycle).
+    let first_arg = raw_args.get(1).map(|s| s.as_str()).unwrap_or("");
+    if first_arg != "upgrade" {
+        match vetto::version::apply_pending_staged_update() {
+            Ok(true) => println!("vetto: continuing with the updated binary on next invocation."),
+            Ok(false) => {}
+            Err(e) => eprintln!("vetto: warning: staged update not applied: {e:#}"),
+        }
+    }
+
     let args = cli::Cli::parse();
     logger::init_flags(args.quiet, args.verbose);
 
@@ -110,6 +124,7 @@ fn run() -> Result<()> {
     }
 
     match &args.command {
+        Some(cli::Command::Mask(mask_args)) => cli::mask::run_mask(mask_args),
         Some(cli::Command::Enable(enable_args)) => cli::enable::run_enable(enable_args),
         Some(cli::Command::Disable(disable_args)) => cli::enable::run_disable(disable_args),
         Some(cli::Command::Run {
@@ -141,11 +156,76 @@ fn run() -> Result<()> {
             check_agent,
             fix,
         }) => doctor(*probe, check_agent.as_deref(), *fix),
-        Some(cli::Command::Init { force, wizard }) => init(*force, *wizard),
+        Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
+        Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
+        Some(cli::Command::Ephemeral(ephemeral_args)) => {
+            let mut cfg = RunConfig::from_cli(&args)?;
+            cfg.ephemeral = true;
+            cfg.snapshot = true;
+            cfg.ephemeral_auto_accept = ephemeral_args.yes;
+            cfg.ephemeral_force_discard = ephemeral_args.discard;
+            if !ephemeral_args.command.is_empty() {
+                cfg.agent = ephemeral_args.command.clone();
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = vetto::config::detect_agent_preset(&cfg.agent);
+                }
+                if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
+                    if let Some(ref agent) = cfg.agent_preset {
+                        let domains = policy::presets::agent_network_allowlist(agent);
+                        if !domains.is_empty() {
+                            cfg.net = NetMode::Allowlist(domains);
+                        }
+                    }
+                }
+            }
+            if cfg.agent.is_empty() {
+                let project = std::env::current_dir().context("getcwd")?;
+                let detected = match vetto::onboard::detect_agent(&project) {
+                    Ok(detected) => detected,
+                    Err(e) => bail!(
+                        "no AI agent detected in {} ({e})\n\n\
+                         Usage: vetto ephemeral [OPTIONS] -- <command> [args...]",
+                        project.display()
+                    ),
+                };
+                eprintln!(
+                    "vetto: zero-config auto-detected agent '{}' ({})",
+                    detected.name, detected.reason
+                );
+                cfg.agent = detected.command;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = Some(detected.name.to_string());
+                }
+                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                    cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+            }
+            supervise(cfg)
+        }
+        Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
+        Some(cli::Command::Pack(args)) => cli::bundle::run_pack(args),
+        Some(cli::Command::Unpack(args)) => cli::bundle::run_unpack(args),
+        Some(cli::Command::Watchdog(args)) => watchdog::run_cli(args),
+        Some(cli::Command::Init { force, wizard }) => {
+            if *wizard {
+                cli::wizard::run_wizard_cli(&cli::wizard::WizardArgs {
+                    path: ".".to_string(),
+                    yes: false,
+                    force: *force,
+                    preset: None,
+                    agent: None,
+                })
+            } else {
+                init(*force, *wizard)
+            }
+        }
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
-        Some(cli::Command::Mcp) => mcp::run_stdio_server(),
+        Some(cli::Command::Mcp { command }) => match command {
+            None | Some(cli::McpCommand::Serve) => mcp::run_stdio_server(),
+            Some(cli::McpCommand::Wrap(args)) => mcp::run_wrap(args),
+        },
         Some(cli::Command::Daemon { command }) => daemon::run_cli(command),
         Some(cli::Command::Serve { port }) => remote::run_serve(*port),
         Some(cli::Command::Shim { binary, args }) => shim::run_cli(binary.clone(), args.clone()),
@@ -159,6 +239,7 @@ fn run() -> Result<()> {
             profile.as_deref(),
         ),
         Some(cli::Command::Status { json }) => cli::status::run_cli(*json),
+        Some(cli::Command::Kill(kill_args)) => cli::kill::run_cli(kill_args),
         Some(cli::Command::Profile { command }) => match command {
             cli::ProfileCommand::Save {
                 name,
@@ -211,12 +292,16 @@ fn run() -> Result<()> {
             table: _,
         }) => events::run_events(session, filter.as_deref(), *follow, *json),
         Some(cli::Command::Audit {
+            session_id,
+            latest,
             since,
             agent,
             limit,
             query,
             json,
-        }) => vetto::audit::run_audit(
+        }) => vetto::audit::run_audit_command(
+            session_id.as_deref(),
+            *latest,
             since.as_deref(),
             agent.as_deref(),
             *limit,
@@ -345,7 +430,14 @@ fn run() -> Result<()> {
             channel,
             check,
             dry_run,
-        }) => vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run),
+            rollback,
+        }) => {
+            if *rollback {
+                vetto::version::run_rollback(*dry_run)
+            } else {
+                vetto::version::run_upgrade(channel.as_deref(), *check, *dry_run)
+            }
+        }
         Some(cli::Command::Tour { non_interactive }) => vetto::tour::run_tour(*non_interactive),
         Some(cli::Command::ScanSecrets {
             path,
@@ -524,6 +616,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         &user_config.channel,
     );
 
+    // Opt-in background staging (default off): when a newer release is known
+    // and this is a direct-binary install, download+verify it now so a later
+    // startup can apply it. Synchronous and cache-gated (24h), so at most one
+    // download per day. Managed installs (npm/cargo/brew) are left to their
+    // package managers.
+    if vetto::version::auto_update_enabled(&user_config) {
+        stage_update_if_available(&user_config);
+    }
+
     let backend_res = sandbox::Backend::detect_with_backend(
         cfg.net.clone(),
         cfg.observe_seccomp,
@@ -558,7 +659,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let overrides = policy::loader::PolicyOverrides {
         deny_glob: cfg.deny_glob.clone(),
         git_guard: if cfg.git_guard { Some(true) } else { None },
-        snapshot: if cfg.snapshot { Some(true) } else { None },
+        snapshot: if cfg.snapshot || cfg.ephemeral {
+            Some(true)
+        } else {
+            None
+        },
         auto_deny_secrets: if cfg.auto_deny_secrets {
             Some(true)
         } else {
@@ -598,13 +703,27 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if pol.snapshot || cfg.snapshot {
-        if let Err(e) = rescue::snapshot::create_snapshot(
+    if pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty() {
+        match rescue::snapshot::create_snapshot(
             &project,
             &session_id,
             rescue::snapshot::DEFAULT_MAX_SNAPSHOT_SIZE,
         ) {
-            eprintln!("vetto: warning: snapshot creation failed: {e}");
+            Ok(meta) => {
+                tracing::debug!(
+                    "created snapshot for session {session_id} ({} files, {} bytes)",
+                    meta.file_count,
+                    meta.total_size_bytes
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("exceeds maximum snapshot limit") {
+                    tracing::debug!("vetto: snapshot skipped (project exceeds 50MB limit): {msg}");
+                } else {
+                    tracing::debug!("vetto: snapshot creation skipped: {e}");
+                }
+            }
         }
     }
     if tier == Some(policy::Tier::FsOnly) && !pol.deny_resolved.is_empty() {
@@ -735,6 +854,16 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         env_extra.insert("VETTO_GIT_GUARD".into(), "1".into());
     }
 
+    #[cfg(not(unix))]
+    if !pol.secret_proxies.is_empty() {
+        bail!(
+            "secrets.proxy requires the Unix credential broker, which is not supported on this platform: \
+             refusing to run rather than leak broker-managed secrets ({}) into the agent environment. \
+             Remove [secrets] proxy entries or run on Linux/macOS",
+            pol.secret_proxies.join(", ")
+        );
+    }
+
     #[cfg(unix)]
     let cred_sock = if !pol.secret_proxies.is_empty() {
         let sock = std::env::temp_dir().join(format!("vetto-cred-{}.sock", std::process::id()));
@@ -784,7 +913,23 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             stderr_w = Some(w2);
             stdio
         }
-        TuiMode::None => sandbox::StdioMode::Inherit,
+        TuiMode::None => {
+            if cfg.mask_secrets {
+                let (r1, w1) = pipe2()?;
+                let (r2, w2) = pipe2()?;
+                let stdio = sandbox::StdioMode::Captured {
+                    stdout_w: w1.as_raw_fd(),
+                    stderr_w: w2.as_raw_fd(),
+                };
+                stdout_r = Some(r1);
+                stdout_w = Some(w1);
+                stderr_r = Some(r2);
+                stderr_w = Some(w2);
+                stdio
+            } else {
+                sandbox::StdioMode::Inherit
+            }
+        }
     };
     #[cfg(windows)]
     let stdio = {
@@ -827,6 +972,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let bus = EventBus::new();
     let root_pid = handle.root_pid;
 
+    #[cfg(unix)]
+    let mut out_reader = None;
+    #[cfg(unix)]
+    let mut err_reader = None;
+    #[cfg(unix)]
+    if cfg.tui == TuiMode::None && cfg.mask_secrets {
+        if let Some(r1) = stdout_r.take() {
+            out_reader = Some(spawn_streaming_redactor(r1, std::io::stdout()));
+        }
+        if let Some(r2) = stderr_r.take() {
+            err_reader = Some(spawn_streaming_redactor(r2, std::io::stderr()));
+        }
+    }
+
     if let Ok(reg) = cli::status::SessionRegistry::new() {
         let agent_name = cfg.agent_preset.as_deref().unwrap_or_else(|| &cfg.agent[0]);
         let _ = reg.register(
@@ -858,9 +1017,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // Subscribe the sinks FIRST so nothing (incl. SessionStarted) is missed.
+    let default_log_path = home
+        .join(".vetto")
+        .join("logs")
+        .join(format!("session-{root_pid}.jsonl"));
+    if let Some(parent) = default_log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    logger::jsonl::JsonlSink::spawn(&bus, default_log_path.clone());
+
     let jsonl_path = cfg.jsonl_path.clone();
     if let Some(path) = &jsonl_path {
-        logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+        if path != &default_log_path {
+            logger::jsonl::JsonlSink::spawn(&bus, path.clone());
+        }
     }
     if cfg.oslog || pol.oslog {
         logger::oslog::OsLogSink::spawn(&bus);
@@ -1080,10 +1250,19 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 false,
             )
         }
-        TuiMode::None => match cfg.session_timeout {
-            Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
-            None => (handle.wait(), false),
-        },
+        TuiMode::None => {
+            let res = match cfg.session_timeout {
+                Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
+                None => (handle.wait(), false),
+            };
+            if let Some(h) = out_reader {
+                let _ = h.join();
+            }
+            if let Some(h) = err_reader {
+                let _ = h.join();
+            }
+            res
+        }
     };
     #[cfg(windows)]
     let (exit_code, timed_out) = match cfg.session_timeout {
@@ -1114,6 +1293,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         ts: events::types::now(),
         message: format!("I/O summary: {}", snap.io_summary()),
     });
+    let mut primary_report = None;
     if !cfg.report_formats.is_empty() {
         let report_options = report::ReportOptions {
             report_dir: cfg.report_dir.clone(),
@@ -1123,6 +1303,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         };
         for p in report::write_reports_with_options(&snap, &cfg.report_formats, &report_options)? {
             eprintln!("vetto: report written: {}", p.display());
+            if primary_report.is_none() {
+                primary_report = Some(p);
+            }
         }
     }
     if let Ok(reg) = cli::status::SessionRegistry::new() {
@@ -1229,6 +1412,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             .agent_preset
             .clone()
             .unwrap_or_else(|| cfg.agent.first().cloned().unwrap_or_default()),
+        command: Some(cfg.agent.join(" ")),
         profile: pol.name.clone(),
         policy_path: cfg.policy_path.as_ref().map(|p| p.display().to_string()),
         exit_code: code,
@@ -1237,9 +1421,20 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         net_mode: cfg.net.label(),
         blocked_count: blocked_total,
         events_total: snap.events_total,
-        report_path: None,
+        report_path: primary_report.as_ref().map(|p| p.display().to_string()),
+        log_path: Some(default_log_path.display().to_string()),
     };
     let _ = vetto::audit::record_session_history(&history_record);
+
+    if cfg.ephemeral {
+        rescue::ephemeral::handle_ephemeral_completion(
+            &session_id,
+            &project,
+            exit_code,
+            cfg.ephemeral_auto_accept,
+            cfg.ephemeral_force_discard,
+        )?;
+    }
 
     std::process::exit(code);
 }
@@ -1470,17 +1665,47 @@ fn install_sigint_forwarder(root_pid: u32, tier: Option<policy::Tier>) {
 #[cfg(windows)]
 fn install_sigint_forwarder(_root_pid: u32, _tier: Option<policy::Tier>) {}
 
+/// Opt-in background staging hook (see call site in supervise()).
+/// Direct-binary installs only; managed installs stay with npm/cargo/brew.
+fn stage_update_if_available(user_config: &vetto::version::UserConfig) {
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if vetto::version::detect_install_method(&exe_path) != vetto::version::InstallMethod::Binary {
+        return;
+    }
+    let Some(notice) =
+        vetto::version::check_version(env!("CARGO_PKG_VERSION"), &user_config.channel, false)
+    else {
+        return;
+    };
+    let Some((url, ext)) = vetto::version::binary_archive_url(&notice.latest_version) else {
+        return;
+    };
+    match vetto::version::stage_update(&notice.latest_version, &url, ext) {
+        Ok(dir) => println!(
+            "vetto: update v{} staged, applies on next startup ({}).",
+            notice.latest_version,
+            dir.display()
+        ),
+        Err(e) => eprintln!("vetto: warning: background staging failed: {e:#}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // doctor
 // ---------------------------------------------------------------------------
-
 fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> {
     println!("vetto v{} doctor", env!("CARGO_PKG_VERSION"));
     let user_config = vetto::version::load_user_config().unwrap_or_default();
     if let Some(notice) =
         vetto::version::check_version(env!("CARGO_PKG_VERSION"), &user_config.channel, false)
     {
-        println!("update available:        {}", notice.banner_message());
+        println!(
+            "update available:        {} -> {} (run 'vetto upgrade')",
+            notice.current_version, notice.latest_version
+        );
     }
     #[cfg(target_os = "linux")]
     {
@@ -1531,7 +1756,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         );
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
-        println!("  note: sandbox-exec is deprecated by Apple; platform risk accepted");
+        println!("  platform status:       Tier 2 (write isolation + process rlimits + network lockdown)");
+        println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
+        println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
         if fix {
             vetto::doctor::print_fixes(&[]);
         }
@@ -1597,6 +1824,8 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
+        println!("  platform status:       Tier 3 (Job Objects + Restricted Token + LPAC)");
+        println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {
             vetto::doctor::print_fixes(&[]);
         }
@@ -1728,4 +1957,39 @@ fn profiles() -> Result<()> {
         println!("  {name:<12} {desc}");
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_streaming_redactor<W: std::io::Write + Send + 'static>(
+    fd: OwnedFd,
+    mut dest: W,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("vetto-stream-redactor".into())
+        .spawn(move || {
+            use std::io::Read;
+            let mut file = std::fs::File::from(fd);
+            let mut chunk = [0u8; 8192];
+            let mut redactor = pty::AnsiRedactor::new();
+            loop {
+                match file.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let redacted = redactor.redact_chunk(&chunk[..n]);
+                        if !redacted.is_empty() {
+                            let _ = dest.write_all(&redacted);
+                            let _ = dest.flush();
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            let flushed = redactor.flush();
+            if !flushed.is_empty() {
+                let _ = dest.write_all(&flushed);
+                let _ = dest.flush();
+            }
+        })
+        .expect("spawn stream redactor thread")
 }

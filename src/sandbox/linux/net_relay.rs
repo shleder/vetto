@@ -396,6 +396,9 @@ pub fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     allowlist.iter().any(|pat| {
         let pat = pat.trim().trim_end_matches('.').to_ascii_lowercase();
+        if pat == "*" {
+            return true;
+        }
         if let Some(suffix) = pat.strip_prefix("*.") {
             // Wildcard covers only subdomains, not the domain itself
             host.ends_with(&format!(".{suffix}"))
@@ -418,6 +421,9 @@ pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
             .trim()
             .trim_end_matches('.')
             .to_ascii_lowercase();
+        if pat == "*" {
+            return true;
+        }
         if let Some(suffix) = pat.strip_prefix("*.") {
             host.ends_with(&format!(".{suffix}"))
         } else {

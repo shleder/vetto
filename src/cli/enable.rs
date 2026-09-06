@@ -18,7 +18,7 @@ use crate::shim::{find_real_binary, is_vetto_shim_content};
 /// CLI arguments for `vetto enable`.
 #[derive(clap::Args, Debug, Clone)]
 pub struct EnableArgs {
-    /// Name of the AI agent to wrap (e.g. claude, codex, gemini, aider, opencode, cursor)
+    /// Name of the AI agent to wrap (e.g. claude, codex, opencode, windsurf, goose, cursor, aider)
     #[arg(value_name = "AGENT")]
     pub agent: Option<String>,
 
@@ -38,7 +38,7 @@ pub struct EnableArgs {
 /// CLI arguments for `vetto disable`.
 #[derive(clap::Args, Debug, Clone)]
 pub struct DisableArgs {
-    /// Name of the AI agent to unwrap (e.g. claude, codex, gemini, aider, opencode, cursor)
+    /// Name of the AI agent to unwrap (e.g. claude, codex, opencode, windsurf, goose, cursor, aider)
     #[arg(value_name = "AGENT")]
     pub agent: String,
 

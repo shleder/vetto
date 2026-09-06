@@ -1,21 +1,38 @@
 # OpenCode Integration Guide
 
-OpenCode is an open-source terminal coding assistant. Vetto integrates directly with OpenCode to sandbox all generated code executions and shell commands.
+OpenCode is an open-source terminal coding assistant. Vetto provides zero-config kernel sandboxing and network egress allowlisting for OpenCode sessions without requiring Docker or root privileges.
 
 ---
 
-## 1. Automated Installation
+## 1. Quick Start: Transparent Shim
 
-Run:
+The fastest and most reliable way to sandbox OpenCode is via Vetto priority shims:
+
+```bash
+vetto enable opencode
+```
+
+Once enabled, simply run OpenCode normally in any project:
+
+```bash
+opencode
+# Or unattended:
+opencode run --yes
+```
+
+Vetto intercepts the execution, defaults network egress to provider inference APIs (`api.openai.com`, `api.anthropic.com`, `openrouter.ai`), masks system credentials (`~/.ssh`, `~/.aws`, `.env`), and isolates disk access.
+
+---
+
+## 2. Configuration Runner Integration
+
+You can also integrate Vetto directly into OpenCode's configuration runner:
+
 ```bash
 vetto plugin install opencode
 ```
 
-This creates or merges `~/.config/opencode/config.json` with an atomic backup at `~/.config/opencode/config.json.bak.<timestamp>`.
-
----
-
-## 2. Configuration Format
+This merges the sandbox runner into `~/.config/opencode/config.json`:
 
 ```json
 {
@@ -28,17 +45,21 @@ This creates or merges `~/.config/opencode/config.json` with an atomic backup at
   },
   "vetto": {
     "enabled": true,
-    "version": "0.2.5"
+    "version": "0.2.13"
   }
 }
 ```
 
 ---
 
-## 3. Manual Verification
+## 3. Direct Execution
 
-To run OpenCode directly under Vetto:
+To run OpenCode inside a specific preset or custom boundary:
+
 ```bash
-vetto --profile strict -- opencode
+# Balanced preset (recommended: workspace write, secrets masked, inference network)
+vetto -- opencode
+
+# Paranoid preset (read-only workspace, zero network)
+vetto --preset paranoid -- opencode
 ```
-All subagents and background commands spawned by OpenCode inherit the security sandbox restrictions.

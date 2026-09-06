@@ -271,7 +271,7 @@ pub fn run_wizard(
     writer: &mut impl Write,
 ) -> Result<String> {
     writer.write_all(b"vetto first-run wizard:\n")?;
-    writer.write_all(b"1. Which AI coding agent do you use? [claude / codex / gemini / aider / opencode / cursor / none]: ")?;
+    writer.write_all(b"1. Which AI coding agent do you use? [claude / codex / opencode / gemini / cursor / aider / windsurf / none]: ")?;
     writer.flush()?;
 
     let mut agent_line = String::new();
@@ -309,9 +309,23 @@ pub fn run_wizard(
             "claude" => "Claude Code",
             "codex" => "OpenAI Codex",
             "gemini" => "Google Gemini",
+            "antigravity" => "Antigravity CLI",
             "aider" => "Aider",
             "opencode" => "OpenCode",
             "cursor" => "Cursor",
+            "cline" => "Cline",
+            "copilot" => "GitHub Copilot",
+            "windsurf" => "Windsurf",
+            "continue" => "Continue",
+            "goose" => "Block Goose",
+            "openhands" => "OpenHands",
+            "swe-agent" | "swe_agent" => "SWE-agent",
+            "plandex" => "Plandex",
+            "mentat" => "Mentat",
+            "gpt-engineer" | "gpt_engineer" => "GPT Engineer",
+            "devin" => "Cognition Devin",
+            "crust" => "Crust AI",
+            "amp" => "Amp AI",
             _ => "Custom Agent",
         }];
         if allow_net {

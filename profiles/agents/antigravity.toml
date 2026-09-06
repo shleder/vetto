@@ -1,0 +1,29 @@
+[metadata]
+name = "antigravity"
+description = "Safe compatibility roots for Google Antigravity CLI (agy)."
+
+[filesystem]
+allow_write = [
+  "$HOME/.gemini/antigravity",
+  "$HOME/.antigravity",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.gemini",
+  "$HOME/.antigravity",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "ANTIGRAVITY_*",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "VERTEX_*",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

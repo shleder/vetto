@@ -1,0 +1,26 @@
+[metadata]
+name = "plandex"
+description = "Safe compatibility roots for Plandex CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.plandex",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.plandex",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "PLANDEX_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

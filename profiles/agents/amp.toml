@@ -1,0 +1,26 @@
+[metadata]
+name = "amp"
+description = "Safe compatibility roots for Amp AI CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.amp",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.amp",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "AMP_*",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

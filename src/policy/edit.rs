@@ -54,7 +54,11 @@ impl Grant {
 /// Mutate a parsed policy document, appending `target` to the grant's array.
 /// Returns `false` when the value was already present. A first network grant
 /// switches an absent or `off` mode to `allowlist`; explicit modes are kept.
-pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &str) -> bool {
+///
+/// Malformed documents (e.g. a section shadowed by a scalar value) yield an
+/// error instead of panicking: `allow`/`deny` run against user-controlled
+/// files and must stay fail-closed.
+pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &str) -> Result<bool> {
     let (section, key) = grant.section_key(false);
     let table = doc.as_table_mut();
     if table.get(section).is_none() {
@@ -62,9 +66,9 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
     }
     let inner = table
         .get_mut(section)
-        .expect("section present")
+        .context("policy section went missing after insert")?
         .as_table_mut()
-        .expect("section is a table");
+        .with_context(|| format!("policy section [{section}] is not a table"))?;
     if inner.get(key).is_none() {
         inner.insert(
             key,
@@ -73,11 +77,11 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
     }
     let array = inner
         .get_mut(key)
-        .expect("key present")
+        .context("policy key went missing after insert")?
         .as_value_mut()
-        .expect("array value")
+        .with_context(|| format!("policy key [{section}.{key}] is not a value"))?
         .as_array_mut()
-        .expect("string array");
+        .with_context(|| format!("policy key [{section}.{key}] is not a string array"))?;
     let added = if array.iter().any(|v| v.as_str() == Some(target)) {
         false
     } else {
@@ -89,9 +93,9 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
         let inner = doc
             .as_table_mut()
             .get_mut("network")
-            .expect("network section present")
+            .context("network section went missing after insert")?
             .as_table_mut()
-            .expect("network table");
+            .context("policy section [network] is not a table")?;
         match inner.get_mut("mode") {
             None => {
                 inner.insert(
@@ -106,7 +110,7 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
             }
         }
     }
-    added
+    Ok(added)
 }
 
 fn resolve_target_file(global: bool) -> Result<PathBuf> {
@@ -137,9 +141,8 @@ fn apply(grant: Grant, target: &str, global: bool) -> Result<PathBuf> {
     let mut doc: toml_edit::DocumentMut = raw
         .parse()
         .with_context(|| format!("parse {}", path.display()))?;
-    let added = edit_document(&mut doc, grant, target);
+    let _added = edit_document(&mut doc, grant, target)?;
     std::fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
-    let _ = added;
     Ok(path)
 }
 
@@ -186,8 +189,8 @@ mod tests {
     #[test]
     fn grant_then_dedupe_on_fresh_document() {
         let mut doc = doc_with(PROJECT_HEADER);
-        assert!(edit_document(&mut doc, Grant::FsReadWrite, "/opt/data"));
-        assert!(!edit_document(&mut doc, Grant::FsReadWrite, "/opt/data"));
+        assert!(edit_document(&mut doc, Grant::FsReadWrite, "/opt/data").expect("edit"));
+        assert!(!edit_document(&mut doc, Grant::FsReadWrite, "/opt/data").expect("edit"));
         let s = doc.to_string();
         assert!(s.contains("\"/opt/data\""));
         assert!(s.contains("vetto project policy"));
@@ -197,7 +200,7 @@ mod tests {
     fn comments_survive_edit() {
         let mut doc =
             doc_with("# my important comment\n[filesystem]\nallow_read = [\"/usr\"] # keep me\n");
-        assert!(edit_document(&mut doc, Grant::FsRead, "/opt/extra"));
+        assert!(edit_document(&mut doc, Grant::FsRead, "/opt/extra").expect("edit"));
         let s = doc.to_string();
         assert!(s.contains("# my important comment"));
         assert!(s.contains("# keep me"));
@@ -207,31 +210,37 @@ mod tests {
     #[test]
     fn net_grant_defaults_mode_to_allowlist() {
         let mut doc = doc_with(PROJECT_HEADER);
-        assert!(edit_document(&mut doc, Grant::Net, "registry.npmjs.org"));
+        assert!(edit_document(&mut doc, Grant::Net, "registry.npmjs.org").expect("edit"));
         let s = doc.to_string();
         assert!(s.contains("mode = \"allowlist\""));
         assert!(s.contains("\"registry.npmjs.org\""));
         // Explicit "off" is flipped so the grant takes effect.
         let mut doc2 = doc_with("[network]\nmode = \"off\"\n");
-        assert!(edit_document(&mut doc2, Grant::Net, "example.com"));
+        assert!(edit_document(&mut doc2, Grant::Net, "example.com").expect("edit"));
         assert!(doc2.to_string().contains("mode = \"allowlist\""));
         // Explicit allowlist mode is preserved.
         let mut doc3 = doc_with("[network]\nmode = \"allowlist\"\nallow = []\n");
-        assert!(edit_document(&mut doc3, Grant::Net, "example.com"));
+        assert!(edit_document(&mut doc3, Grant::Net, "example.com").expect("edit"));
         assert_eq!(doc3.to_string().matches("mode").count(), 1);
     }
 
     #[test]
     fn deny_grant_uses_display_only_deny() {
         let mut doc = doc_with(PROJECT_HEADER);
-        assert!(edit_document(
-            &mut doc,
-            Grant::Deny,
-            "$HOME/.aws/credentials"
-        ));
+        assert!(edit_document(&mut doc, Grant::Deny, "$HOME/.aws/credentials").expect("edit"));
         let s = doc.to_string();
         assert!(s.contains("[display_only_deny]"));
         assert!(s.contains("\"$HOME/.aws/credentials\""));
+    }
+
+    #[test]
+    fn malformed_document_errors_instead_of_panicking() {
+        // A section shadowed by a scalar (or an array shadowed by one) must
+        // surface as an error: allow/deny run against user-controlled files.
+        let mut doc = doc_with("[filesystem]\nallow_write = \"/not-an-array\"\n");
+        assert!(edit_document(&mut doc, Grant::FsReadWrite, "/opt/data").is_err());
+        let mut doc2 = doc_with("network = \"off\"\n");
+        assert!(edit_document(&mut doc2, Grant::Net, "example.com").is_err());
     }
 
     #[test]
@@ -242,7 +251,7 @@ mod tests {
         std::fs::write(&path, PROJECT_HEADER).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         let mut doc: toml_edit::DocumentMut = raw.parse().unwrap();
-        edit_document(&mut doc, Grant::FsReadWrite, "/opt/data");
+        edit_document(&mut doc, Grant::FsReadWrite, "/opt/data").expect("edit");
         std::fs::write(&path, doc.to_string()).unwrap();
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(on_disk.contains("\"/opt/data\""));

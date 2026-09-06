@@ -156,7 +156,7 @@ pub fn install_opencode() -> Result<()> {
         },
         "vetto": {
             "enabled": true,
-            "version": "0.2.5"
+            "version": env!("CARGO_PKG_VERSION")
         }
     });
 

@@ -14,8 +14,28 @@ use anyhow::{bail, Result};
 use crate::policy::loader::RawLayer;
 use crate::policy::presets::{agent_network_allowlist, preset_layer, Preset};
 
-pub const SUPPORTED_AGENTS: [&str; 6] =
-    ["claude", "codex", "gemini", "aider", "opencode", "cursor"];
+pub const SUPPORTED_AGENTS: [&str; 20] = [
+    "claude",
+    "codex",
+    "opencode",
+    "gemini",
+    "antigravity",
+    "cursor",
+    "aider",
+    "cline",
+    "copilot",
+    "windsurf",
+    "continue",
+    "goose",
+    "openhands",
+    "swe_agent",
+    "plandex",
+    "mentat",
+    "gpt_engineer",
+    "devin",
+    "crust",
+    "amp",
+];
 
 struct AgentSpec {
     name: &'static str,
@@ -35,9 +55,24 @@ const AGENT_SPECS: &[AgentSpec] = &[
         markers: &[".codex", "codex.toml", "codex.json"],
     },
     AgentSpec {
+        name: "opencode",
+        binaries: &["opencode", "opencode-ai"],
+        markers: &[".opencode", "opencode.json"],
+    },
+    AgentSpec {
         name: "gemini",
         binaries: &["gemini", "gemini-cli"],
         markers: &[".gemini", "GEMINI.md", "gemini.json"],
+    },
+    AgentSpec {
+        name: "antigravity",
+        binaries: &["antigravity", "agy", "antigravity-cli"],
+        markers: &[".antigravity", "AGENTS.md"],
+    },
+    AgentSpec {
+        name: "cursor",
+        binaries: &["cursor", "cursor-agent", "cursor-server"],
+        markers: &[".cursor", ".cursorrules"],
     },
     AgentSpec {
         name: "aider",
@@ -45,14 +80,69 @@ const AGENT_SPECS: &[AgentSpec] = &[
         markers: &[".aider", ".aider.conf.yml", ".aider.chat.history.md"],
     },
     AgentSpec {
-        name: "opencode",
-        binaries: &["opencode"],
-        markers: &[".opencode", "opencode.json"],
+        name: "cline",
+        binaries: &["cline", "cline-cli"],
+        markers: &[".cline", ".roomodes"],
     },
     AgentSpec {
-        name: "cursor",
-        binaries: &["cursor", "cursor-server"],
-        markers: &[".cursor", ".cursorrules"],
+        name: "copilot",
+        binaries: &["copilot", "gh-copilot", "github-copilot-cli"],
+        markers: &[".copilot", "copilot-instructions.md"],
+    },
+    AgentSpec {
+        name: "windsurf",
+        binaries: &["windsurf", "windsurf-cli"],
+        markers: &[".windsurf", ".codeium"],
+    },
+    AgentSpec {
+        name: "continue",
+        binaries: &["continue", "continue-cli"],
+        markers: &[".continue"],
+    },
+    AgentSpec {
+        name: "goose",
+        binaries: &["goose", "goose-ai"],
+        markers: &[".goosehints", "goose.yaml"],
+    },
+    AgentSpec {
+        name: "openhands",
+        binaries: &["openhands", "all-hands"],
+        markers: &[".openhands", ".all-hands"],
+    },
+    AgentSpec {
+        name: "swe_agent",
+        binaries: &["swe-agent", "sweagent"],
+        markers: &["swe-agent.yaml", ".swe-agent"],
+    },
+    AgentSpec {
+        name: "plandex",
+        binaries: &["plandex", "plandex-cli"],
+        markers: &[".plandex", "plandex.yaml"],
+    },
+    AgentSpec {
+        name: "mentat",
+        binaries: &["mentat", "mentat-cli"],
+        markers: &[".mentat", ".mentatconfig"],
+    },
+    AgentSpec {
+        name: "gpt_engineer",
+        binaries: &["gpt-engineer", "gpte"],
+        markers: &[".gpteng", "gpt-engineer.toml"],
+    },
+    AgentSpec {
+        name: "devin",
+        binaries: &["devin", "devin-cli"],
+        markers: &[".devin", "devin.json"],
+    },
+    AgentSpec {
+        name: "crust",
+        binaries: &["crust", "crust-cli"],
+        markers: &[".crust", "crust.yaml"],
+    },
+    AgentSpec {
+        name: "amp",
+        binaries: &["amp", "amp-cli"],
+        markers: &[".amp", "amp.yaml"],
     },
 ];
 
@@ -188,9 +278,10 @@ mod tests {
         let res = detect_agent(&dir);
         if let Err(err) = res {
             let msg = err.to_string();
-            assert!(
-                msg.contains("Supported agents: claude, codex, gemini, aider, opencode, cursor")
-            );
+            assert!(msg.contains("Supported agents:"));
+            assert!(msg.contains("claude"));
+            assert!(msg.contains("opencode"));
+            assert!(msg.contains("windsurf"));
             assert!(msg.contains("vetto init"));
         }
         let _ = fs::remove_dir_all(dir);

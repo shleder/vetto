@@ -617,7 +617,7 @@ impl RescueAdapter for ClaudeAdapter {
         let original_bytes = Self::read_stable(context, &canonical_target)?;
         let original_sha256 = Self::sha256(&original_bytes);
 
-        let (repaired_bytes, actions, is_byte_zero_corrupt) =
+        let (repaired_bytes, mut actions, is_byte_zero_corrupt) =
             Self::repair_transcript(&original_bytes, Some(&session.key));
 
         let timestamp_unix_secs = SystemTime::now()
@@ -646,11 +646,11 @@ impl RescueAdapter for ClaudeAdapter {
         let backup_archive_dir = backup_dir.join(format!("claude-{timestamp_unix_secs}-{nonce}"));
         fs::create_dir_all(&backup_archive_dir)
             .with_context(|| format!("create backup dir {}", backup_archive_dir.display()))?;
-        let backup_file = backup_archive_dir.join(
-            canonical_target
-                .file_name()
-                .context("target file has no filename")?,
-        );
+        // Extract once: file_name is checked here, never unwrapped below.
+        let target_file_name = canonical_target
+            .file_name()
+            .context("target file has no filename")?;
+        let backup_file = backup_archive_dir.join(target_file_name);
         fs::write(&backup_file, &original_bytes)
             .with_context(|| format!("write backup file {}", backup_file.display()))?;
 
@@ -660,7 +660,7 @@ impl RescueAdapter for ClaudeAdapter {
             .context("canonical target has no parent")?;
         let tmp_name = format!(
             ".{}.vetto_tmp.{}.{}",
-            canonical_target.file_name().unwrap().to_string_lossy(),
+            target_file_name.to_string_lossy(),
             std::process::id(),
             nonce
         );
@@ -692,8 +692,12 @@ impl RescueAdapter for ClaudeAdapter {
 
         let repaired_sha256 = Self::sha256(&repaired_bytes);
 
-        // Reconcile project index as part of repair
-        let _ = Self::reconcile_projects(context);
+        // Reconcile project index as part of repair. A failure here must not
+        // fail the repair itself (bytes are already written), but swallowing
+        // it silently would hide index drift — record it on the receipt.
+        if let Err(e) = Self::reconcile_projects(context) {
+            actions.push(format!("reconcile_projects_failed: {e:#}"));
+        }
 
         Ok(RepairReceipt {
             adapter: self.id().to_string(),

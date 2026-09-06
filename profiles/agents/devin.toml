@@ -1,0 +1,25 @@
+[metadata]
+name = "devin"
+description = "Safe compatibility roots for Cognition Devin CLI."
+
+[filesystem]
+allow_write = [
+  "$HOME/.devin",
+  "$AGENT",
+]
+allow_read = [
+  "$HOME/.devin",
+  "$AGENT",
+]
+
+[environment]
+pass_through = [
+  "DEVIN_*",
+  "COGNITION_*",
+]
+
+[display_only_deny]
+paths = [
+  "$AGENT/*.sock",
+  "$AGENT/*.ipc",
+]

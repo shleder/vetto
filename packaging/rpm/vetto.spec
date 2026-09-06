@@ -1,5 +1,5 @@
 Name:           vetto
-Version:        0.2.10
+Version:        0.2.15
 Release:        1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
@@ -34,6 +34,18 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Fri Sep 05 2026 vetto contributors - 0.2.15-1
+- Opt-in background self-update, upgrade rollback, supply-chain gate.
+
+* Thu Sep 04 2026 vetto contributors - 0.2.14-1
+- Stabilization: secret-proxy fail-open closed, rescue/policy hardening, hermetic tests.
+
+* Thu Sep 03 2026 vetto contributors - 0.2.13-1
+- Sync the source-only recipe with the published 0.2.13 release.
+
+* Wed Sep 02 2026 vetto contributors - 0.2.11-1
+- Sync the source-only recipe with the published 0.2.11 release.
+
 * Wed Sep 02 2026 vetto contributors - 0.2.10-1
 - Sync the source-only recipe with the published 0.2.10 release.
 
