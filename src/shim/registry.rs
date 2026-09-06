@@ -343,7 +343,8 @@ mod tests {
 
     fn temp_test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "vetto-shim-reg-{name}-{}",
+            "vetto-shim-reg-{name}-{}-{}",
+            std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
