@@ -113,6 +113,14 @@ jobs:
           $VETTO_BIN redteam --json > "$REPORT_PATH" || true
           python3 scripts/render-redteam-summary.py --input "$REPORT_PATH" --allow-failure
 
+      - name: Upload red-team report JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-report-${{ matrix.agent }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/redteam-report-${{ matrix.agent }}-${{ matrix.os }}.json
+          if-no-files-found: warn
+
   # Depth over breadth: every shipped agent profile must resolve to an
   # effective policy. TOML syntax is already covered at compile time
   # (include_str!), this job covers semantic resolution per profile.

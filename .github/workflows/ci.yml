@@ -283,3 +283,11 @@ jobs:
           REPORT_PATH="${{ runner.temp }}/redteam-report.json"
           cargo run --all-features -- redteam --json > "$REPORT_PATH" || true
           python3 scripts/render-redteam-summary.py --input "$REPORT_PATH"
+
+      - name: Upload red-team report JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-report-micro-tier
+          path: ${{ runner.temp }}/redteam-report.json
+          if-no-files-found: warn
