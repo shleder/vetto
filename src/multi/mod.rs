@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+#[cfg(any(not(unix), test))]
 use crate::error::VettoError;
 use crate::events::{Event, EventBus, FileAccess};
 
