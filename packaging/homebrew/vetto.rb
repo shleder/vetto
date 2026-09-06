@@ -1,7 +1,7 @@
 class Vetto < Formula
   desc "Daemon-less OS sandbox and subagent security layer for AI coding agents"
   homepage "https://github.com/shleder/vetto"
-  version "0.2.15"
+  version "0.2.16"
   license "Apache-2.0"
 
   on_macos do

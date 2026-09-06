@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
-## [Unreleased]
+## [0.2.16] — 2026-09-06
 
 ### Added
 
@@ -11,15 +11,21 @@ Keep a Changelog; versioning follows SemVer.
   (key id `75ECEC9B5080C590`, public key `packaging/release.pub`); release-train
   signs and re-verifies before publishing. Verify with
   `minisign -V -p packaging/release.pub -m <archive>`.
-
-### Added
-
 - **Exit recap**: every non-clean session ends with one `vetto: recap:` line
   pointing at exactly one next action per exit code (`--session-timeout`,
   `vetto audit --latest`, `vetto doctor`, `vetto enable <agent>`).
 - **`vetto pack --bug`**: attaches redacted `bug-report.json` (version,
   OS/arch, denial counts + denied paths, no file contents or env) for issue
   reports; `vetto unpack` extracts it and `--info` shows its presence.
+- **Packaging closure**: Scoop manifest rendered and wired into release-train;
+  AUR split into stable `vetto` + `vetto-git`; automated `scripts/bump-version.py`.
+
+### Fixed
+
+- **Snapshot listing honesty**: transient `read_dir` failures retry instead of
+  silently returning an empty list (Windows Defender-lock flake).
+- **Telemetry wording**: README no longer overclaims zero network calls
+  (version-check finding from external review #47).
 
 ## [0.2.15] — 2026-09-05
 
