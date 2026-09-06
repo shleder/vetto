@@ -7,6 +7,13 @@ Keep a Changelog; versioning follows SemVer.
 
 ### Added
 
+- **Minisign release signatures**: every release archive ships a `.minisig`
+  (key id `75ECEC9B5080C590`, public key `packaging/release.pub`); release-train
+  signs and re-verifies before publishing. Verify with
+  `minisign -V -p packaging/release.pub -m <archive>`.
+
+### Added
+
 - **Exit recap**: every non-clean session ends with one `vetto: recap:` line
   pointing at exactly one next action per exit code (`--session-timeout`,
   `vetto audit --latest`, `vetto doctor`, `vetto enable <agent>`).

@@ -376,6 +376,43 @@ jobs:
           fi
           python3 -c "import json; m=json.load(open('all-assets/vetto.json')); print('scoop manifest OK:', m['version'], m['architecture']['64bit']['hash'][:12])"
 
+      - name: Sign and verify release archives (minisign)
+        env:
+          TAG: ${{ needs.version-check.outputs.tag }}
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
+          MINISIGN_TARBALL_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(all-assets/vetto-linux-*.tar.gz all-assets/vetto-macos-*.tar.gz all-assets/vetto-windows-*.zip)
+          if [[ -z "${RELEASE_SIGNING_KEY:-}" ]]; then
+            echo "::warning ::RELEASE_SIGNING_KEY is not set; shipping unsigned archives."
+            exit 0
+          fi
+          [[ "${#archives[@]}" -gt 0 ]] || { echo "::error ::no release archives found to sign"; exit 1; }
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          curl -fsSL --retry 3 -o "$work/minisign.tar.gz" \
+            "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
+          echo "$MINISIGN_TARBALL_SHA256  $work/minisign.tar.gz" | sha256sum -c -
+          tar -xzf "$work/minisign.tar.gz" -C "$work"
+          ms="$work/minisign-linux/x86_64/minisign"
+          [[ -x "$ms" ]] || { echo "::error ::minisign binary missing from pinned tarball"; exit 1; }
+          key="$work/release.key"
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key"
+          chmod 600 "$key"
+          for archive in "${archives[@]}"; do
+            printf '%s\n' "${RELEASE_SIGNING_KEY_PASSWORD:-}" | "$ms" -S \
+              -s "$key" -m "$archive" -t "vetto $TAG" >/dev/null
+          done
+          for sig in all-assets/*.minisig; do
+            "$ms" -V -p packaging/release.pub -m "${sig%.minisig}" -x "$sig" >/dev/null \
+              || { echo "::error ::signature verify failed: $sig"; exit 1; }
+          done
+          echo "::notice ::signed and verified ${#archives[@]} release archives (minisign)"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24

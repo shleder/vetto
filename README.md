@@ -70,6 +70,14 @@ npx @shledery/vetto doctor
 
 *Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
 
+*Every release archive is signed with minisign (key id `75ECEC9B5080C590`, public key: `packaging/release.pub`). Verify before running:*
+
+```bash
+# one-time: install minisign (cargo install minisign / apt install minisign / brew install minisign)
+minisign -V -p packaging/release.pub -m vetto-linux-x86_64.tar.gz
+# → "Signature and comment signature verified"
+```
+
 ---
 
 ## Quick Start
