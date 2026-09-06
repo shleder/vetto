@@ -39,7 +39,7 @@ pub fn map_session_exit_code(
     }
     if raw_exit_code < 0 {
         // Negative return indicates signal termination (e.g. -9 -> 128 + 9 = 137).
-        let sig = -raw_exit_code;
+        let sig = raw_exit_code.saturating_neg();
         return EXIT_SIGNAL_BASE.saturating_add(sig);
     }
     raw_exit_code
@@ -208,5 +208,114 @@ mod tests {
         let contained = recap_hint(EXIT_SUCCESS, 4, false).expect("contained recap");
         assert!(contained.contains('4'));
         assert!(contained.contains("vetto audit --latest"));
+    }
+
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+
+        fn below(&mut self, bound: u64) -> u64 {
+            if bound == 0 {
+                0
+            } else {
+                self.next() % bound
+            }
+        }
+    }
+
+    fn arb_raw(rng: &mut Lcg) -> i32 {
+        match rng.below(8) {
+            0 => i32::MIN,
+            1 => i32::MAX,
+            2 => -1,
+            3 => 0,
+            4 => rng.below(256) as i32,
+            5 => -(rng.below(64) as i32 + 1),
+            6 => 124 + rng.below(10) as i32,
+            _ => rng.next() as i32,
+        }
+    }
+
+    #[test]
+    fn prop_timeout_dominates_everything() {
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        for _ in 0..512 {
+            let raw = arb_raw(&mut rng);
+            let fail = rng.below(2) == 1;
+            assert_eq!(map_session_exit_code(raw, true, fail), EXIT_TIMEOUT);
+        }
+        assert_eq!(map_session_exit_code(i32::MIN, true, true), EXIT_TIMEOUT);
+        assert_eq!(map_session_exit_code(i32::MAX, true, true), EXIT_TIMEOUT);
+    }
+
+    #[test]
+    fn prop_signals_map_to_128_plus_n() {
+        assert_eq!(map_session_exit_code(-9, false, false), 137);
+        assert_eq!(map_session_exit_code(-15, false, false), 143);
+        assert_eq!(map_session_exit_code(-2, false, false), 130);
+        assert_eq!(map_session_exit_code(-1, false, false), 129);
+        for sig in 1..=64 {
+            assert_eq!(map_session_exit_code(-sig, false, false), 128 + sig);
+        }
+        let mut rng = Lcg(0xabcdef01_23456789);
+        for _ in 0..256 {
+            let sig = rng.below(64) as i32 + 1;
+            assert_eq!(map_session_exit_code(-sig, false, false), 128 + sig);
+        }
+    }
+
+    #[test]
+    fn prop_min_signal_never_panics() {
+        let got = map_session_exit_code(i32::MIN, false, false);
+        assert_eq!(got, i32::MAX);
+        assert!(got >= EXIT_SIGNAL_BASE);
+        let got_fail = map_session_exit_code(i32::MIN, false, true);
+        assert_eq!(got_fail, EXIT_POLICY_BLOCKED);
+    }
+
+    #[test]
+    fn prop_nonnegative_passthrough() {
+        let mut rng = Lcg(0x0bad_f00d_dead_beef);
+        for _ in 0..512 {
+            let raw = arb_raw(&mut rng);
+            if raw >= 0 {
+                assert_eq!(map_session_exit_code(raw, false, false), raw);
+            }
+        }
+        for raw in [0, 1, 42, 124, 125, 126, 127, 137, 255, 1000, i32::MAX] {
+            assert_eq!(map_session_exit_code(raw, false, false), raw);
+        }
+    }
+
+    #[test]
+    fn prop_fail_block_dominates_signal_but_not_timeout() {
+        assert_eq!(map_session_exit_code(-9, false, true), EXIT_POLICY_BLOCKED);
+        assert_eq!(map_session_exit_code(0, false, true), EXIT_POLICY_BLOCKED);
+        assert_eq!(map_session_exit_code(0, true, true), EXIT_TIMEOUT);
+        assert_eq!(map_session_exit_code(-9, true, true), EXIT_TIMEOUT);
+    }
+
+    #[test]
+    fn prop_recap_none_only_on_clean() {
+        let mut rng = Lcg(0x51ab_3c5d_7e9f_1a2b);
+        for _ in 0..1024 {
+            let code = arb_raw(&mut rng);
+            let blocked = rng.below(5);
+            let timed_out = rng.below(2) == 1;
+            let got = recap_hint(code, blocked, timed_out);
+            let clean = code == 0 && blocked == 0 && !timed_out;
+            assert_eq!(got.is_none(), clean, "code={code} blocked={blocked}");
+        }
+        assert_eq!(recap_hint(0, 0, false), None);
+        assert!(recap_hint(0, 1, false).is_some());
+        assert!(recap_hint(1, 0, false).is_some());
+        assert!(recap_hint(0, 0, true).is_some());
     }
 }

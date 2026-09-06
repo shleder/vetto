@@ -36,6 +36,9 @@ pub fn from_hex(hex_str: &str) -> Result<Vec<u8>> {
     if hex_str.len() % 2 != 0 {
         bail!("invalid hex string length");
     }
+    if !hex_str.is_ascii() {
+        bail!("invalid hex character: non-ascii input");
+    }
     let mut bytes = Vec::with_capacity(hex_str.len() / 2);
     for i in (0..hex_str.len()).step_by(2) {
         let byte = u8::from_str_radix(&hex_str[i..i + 2], 16)
@@ -122,15 +125,20 @@ pub fn create_signature_file_content(sig: &Signature, pubkey: &VerifyingKey) -> 
 
 /// Parses a `.sig` file to extract the Ed25519 signature and optional public key.
 pub fn parse_signature_file(content: &str) -> Result<(Signature, Option<VerifyingKey>)> {
-    let mut sig_hex = None;
-    let mut pub_hex = None;
+    let mut sig_hex: Option<String> = None;
+    let mut pub_hex: Option<String> = None;
 
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("# Public Key:") {
-            let key_str = line.trim_start_matches("# Public Key:").trim();
-            pub_hex = Some(key_str.to_string());
+        if let Some(rest) = line.strip_prefix("# Public Key:") {
+            if pub_hex.is_some() {
+                bail!("duplicate public key header in .sig file");
+            }
+            pub_hex = Some(rest.trim().to_string());
         } else if !line.starts_with('#') && !line.is_empty() {
+            if sig_hex.is_some() {
+                bail!("multiple signature lines in .sig file");
+            }
             sig_hex = Some(line.to_string());
         }
     }
@@ -307,5 +315,162 @@ mod tests {
         let (parsed_sig, parsed_pub) = parse_signature_file(&text).expect("parse sig");
         assert_eq!(sig, parsed_sig);
         assert_eq!(Some(pubkey), parsed_pub);
+    }
+
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+
+        fn below(&mut self, bound: u64) -> u64 {
+            if bound == 0 {
+                0
+            } else {
+                self.next() % bound
+            }
+        }
+    }
+
+    fn pick_hex_piece(rng: &mut Lcg) -> &'static str {
+        match rng.below(10) {
+            0 => "00",
+            1 => "ab",
+            2 => "zz",
+            3 => " ",
+            4 => "€",
+            5 => "😀",
+            6 => "é",
+            7 => "#",
+            8 => ":",
+            _ => "\n",
+        }
+    }
+
+    fn pick_line_kind(rng: &mut Lcg) -> u64 {
+        rng.below(5)
+    }
+
+    #[test]
+    fn prop_hex_roundtrip_random_bytes() {
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        for _ in 0..256 {
+            let len = rng.below(65) as usize;
+            let mut bytes = Vec::with_capacity(len);
+            for _ in 0..len {
+                bytes.push(rng.below(256) as u8);
+            }
+            let hex = to_hex(&bytes);
+            let back = from_hex(&hex).expect("roundtrip must succeed");
+            assert_eq!(bytes, back);
+        }
+    }
+
+    #[test]
+    fn prop_from_hex_never_panics_on_garbage() {
+        for bad in ["€€", "😀", "éé", "a€b€", "zz", "abc", "\u{feff}ab"] {
+            let res = from_hex(bad);
+            assert!(res.is_err(), "input {bad:?} must be Err");
+        }
+        // Empty input decodes to empty output — valid, not an error.
+        assert_eq!(from_hex("").expect("empty hex is valid"), Vec::<u8>::new());
+        let mut rng = Lcg(0xdead_beef_cafe_f00d);
+        for _ in 0..512 {
+            let mut s = String::new();
+            let n = rng.below(4) as usize;
+            for _ in 0..n {
+                s.push_str(pick_hex_piece(&mut rng));
+            }
+            let res = from_hex(&s);
+            if res.is_ok() {
+                assert_eq!(s.trim().len() % 2, 0);
+                assert!(s.trim().is_ascii());
+            }
+        }
+    }
+
+    #[test]
+    fn prop_parse_sig_rejects_truncated_and_bad_lengths() {
+        let short_sig = "ab".to_string();
+        let sig_63 = "ab".repeat(63);
+        let sig_65 = "ab".repeat(65);
+        let cases = [
+            "",
+            "   \n  \n",
+            "# VETTO POLICY SIGNATURE (ED25519)\n",
+            "zz\n",
+            "abc\n",
+            "# comment\nzz\n",
+        ];
+        for c in cases {
+            assert!(parse_signature_file(c).is_err(), "case {c:?} must fail");
+        }
+        assert!(parse_signature_file(&short_sig).is_err());
+        assert!(parse_signature_file(&sig_63).is_err());
+        assert!(parse_signature_file(&sig_65).is_err());
+        assert!(parse_signature_file("gg").is_err());
+    }
+
+    #[test]
+    fn prop_parse_sig_rejects_trailing_garbage() {
+        let key = SigningKey::generate(&mut OsRng);
+        let pubkey = key.verifying_key();
+        let sig = key.sign(b"prop-input");
+        let valid = create_signature_file_content(&sig, &pubkey);
+        let sig_hex = to_hex(&sig.to_bytes());
+        let pub_hex = to_hex(pubkey.as_bytes());
+        let with_extra_sig = format!("{valid}{sig_hex}\n");
+        assert!(parse_signature_file(&with_extra_sig).is_err());
+        let with_extra_line = format!("{valid}extra-garbage-line\n");
+        assert!(parse_signature_file(&with_extra_line).is_err());
+        let mut dup_pub = String::from("# VETTO POLICY SIGNATURE (ED25519)\n");
+        dup_pub.push_str("# Public Key: ");
+        dup_pub.push_str(&pub_hex);
+        dup_pub.push_str("\n# Public Key: ");
+        dup_pub.push_str(&pub_hex);
+        dup_pub.push('\n');
+        dup_pub.push_str(&sig_hex);
+        dup_pub.push('\n');
+        assert!(parse_signature_file(&dup_pub).is_err());
+        assert!(parse_signature_file(&valid).is_ok());
+    }
+
+    #[test]
+    fn prop_parse_sig_fuzz_no_panic() {
+        let mut rng = Lcg(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..512 {
+            let mut s = String::new();
+            let lines = rng.below(4) as usize;
+            for _ in 0..lines {
+                match pick_line_kind(&mut rng) {
+                    0 => {
+                        s.push_str("# comment\n");
+                    }
+                    1 => {
+                        s.push_str("# Public Key: ");
+                        s.push_str(pick_hex_piece(&mut rng));
+                        s.push('\n');
+                    }
+                    2 => {
+                        s.push_str(pick_hex_piece(&mut rng));
+                        s.push('\n');
+                    }
+                    3 => {
+                        s.push_str("ab00ff\n");
+                    }
+                    _ => {
+                        s.push('\n');
+                    }
+                }
+            }
+            if let Ok((sig, _)) = parse_signature_file(&s) {
+                assert_eq!(to_hex(&sig.to_bytes()).len(), 128);
+            }
+        }
     }
 }
