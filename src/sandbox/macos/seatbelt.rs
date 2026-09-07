@@ -192,7 +192,6 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Stable read-deny shapes per agent runtime (issue #62).
 ///
 /// Empirical result of the SBPL matrix (`.github/workflows/macos-sbpl-matrix.yml`,
