@@ -258,14 +258,14 @@ mod tests {
     }
 
     #[test]
-    fn no_sbpl_references() {
+    fn no_legacy_policy_refs() {
         // The uniform backend must not depend on the legacy policy language:
-        // grep the source. Split literals so the forbidden tokens do not
-        // appear verbatim in this file (the test reads its own source).
-        let forbidden1 = ["sb", "pl"].concat();
-        let forbidden2 = ["seat", "belt"].concat();
+        // grep the source. Tokens built char-by-char so they never appear
+        // verbatim in this file (the test reads its own source).
+        let legacy1 = ["s", "b", "p", "l"].concat();
+        let legacy2 = ["s", "e", "a", "t", "b", "e", "l", "t"].concat();
         let src = include_str!("sync.rs").to_lowercase();
-        assert!(!src.contains(&forbidden1));
-        assert!(!src.contains(&forbidden2));
+        assert!(!src.contains(&legacy1));
+        assert!(!src.contains(&legacy2));
     }
 }

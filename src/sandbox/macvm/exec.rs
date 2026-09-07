@@ -364,13 +364,14 @@ mod tests {
     }
 
     #[test]
-    fn no_sbpl_references() {
-        // Split literals: the forbidden tokens must not appear verbatim in
-        // this file (the test reads its own source), so build them at runtime.
-        let forbidden1 = ["sb", "pl"].concat();
-        let forbidden2 = ["seat", "belt"].concat();
+    fn no_legacy_policy_refs() {
+        // The uniform backend must not use the legacy macOS policy language.
+        // Token built at runtime so this file stays self-clean under its own
+        // grep (include_str reads this exact source).
+        let legacy1 = ["s", "b", "p", "l"].concat();
+        let legacy2 = ["s", "e", "a", "t", "b", "e", "l", "t"].concat();
         let src = include_str!("exec.rs").to_lowercase();
-        assert!(!src.contains(&forbidden1));
-        assert!(!src.contains(&forbidden2));
+        assert!(!src.contains(&legacy1));
+        assert!(!src.contains(&legacy2));
     }
 }
