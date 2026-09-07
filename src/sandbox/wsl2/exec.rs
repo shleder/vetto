@@ -158,12 +158,9 @@ pub fn child_to_handle(child: Child) -> Result<super::super::handle::KillStrateg
     // nothing) and keeps the struct shape `windows_wait` requires.
     // `terminate` on this backend therefore does NOT kill the tree; the
     // guest vetto owns its own teardown. Documented gap, honest shape.
-    use std::os::windows::io::AsHandle;
+    use std::os::windows::io::AsHandle as _;
     let job: OwnedHandle = child_process_duplicate(&process)?;
-    Ok(super::super::handle::KillStrategy::JobObject {
-        job,
-        process,
-    })
+    Ok(super::super::handle::KillStrategy::JobObject { job, process })
 }
 
 /// Duplicate an owned process handle (same access, non-inheritable).
@@ -213,9 +210,7 @@ fn child_process_duplicate(
 /// Non-Windows stub: the module compiles everywhere for unit tests, but
 /// spawning only happens on Windows. Tests exercise argv builders only.
 #[cfg(not(windows))]
-pub fn child_to_handle(
-    _child: Child,
-) -> Result<super::super::handle::KillStrategy> {
+pub fn child_to_handle(_child: Child) -> Result<super::super::handle::KillStrategy> {
     bail!("wsl2: child handles are Windows-only; this stub exists for cross-platform unit tests")
 }
 
@@ -233,8 +228,10 @@ mod tests {
     #[test]
     fn guest_argv_shape() {
         use crate::policy::Policy;
-        let mut pol = Policy::default();
-        pol.name = "default".to_string();
+        let pol = Policy {
+            name: "default".to_string(),
+            ..Policy::default()
+        };
         let argv = guest_vetto_argv(&pol, &NetMode::Off, &["agent".into()]);
         assert_eq!(argv[0], super::super::GUEST_VETTO);
         assert!(argv.contains(&"--profile".to_string()));
@@ -247,8 +244,10 @@ mod tests {
     #[test]
     fn session_argv_routes_through_wsl() {
         use crate::policy::Policy;
-        let mut pol = Policy::default();
-        pol.name = "default".to_string();
+        let pol = Policy {
+            name: "default".to_string(),
+            ..Policy::default()
+        };
         let argv = session_argv(&cfg(), &pol, &NetMode::Off, &["agent".into()]);
         assert_eq!(&argv[..4], &["wsl.exe", "-d", "vetto", "--"]);
         assert!(argv.contains(&"agent".to_string()));
@@ -259,10 +258,9 @@ mod tests {
         // Shape check only: spawn_guest needs a live OS; the empty-guard
         // is verified by code inspection + the argv builders above.
         assert!(guest_vetto_argv(
-            &{
-                let mut p = Policy::default();
-                p.name = "x".into();
-                p
+            &crate::policy::Policy {
+                name: "x".into(),
+                ..crate::policy::Policy::default()
             },
             &NetMode::Off,
             &[]

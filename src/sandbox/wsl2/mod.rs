@@ -231,7 +231,10 @@ impl Wsl2Sandbox {
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
         self.cfg.validate()?;
         let project = opts.cwd.clone();
-        ensure_inside(&project, &std::env::current_dir().unwrap_or_else(|_| project.clone()))?;
+        ensure_inside(
+            &project,
+            &std::env::current_dir().unwrap_or_else(|_| project.clone()),
+        )?;
 
         // 1. Distro must exist and run.
         distro::ensure_running(&self.cfg)?;

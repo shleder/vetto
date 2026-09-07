@@ -75,7 +75,15 @@ pub fn sync_to_guest(cfg: &Wsl2Config, project: &Path) -> Result<()> {
     let out = std::process::Command::new("robocopy")
         .arg(project)
         .arg(&dst)
-        .args(["/MIR", "/XD", ".vetto-partial", "/R:2", "/W:1", "/NFL", "/NDL"])
+        .args([
+            "/MIR",
+            "/XD",
+            ".vetto-partial",
+            "/R:2",
+            "/W:1",
+            "/NFL",
+            "/NDL",
+        ])
         .output()
         .with_context(|| "wsl2: failed to spawn robocopy push (host → guest)")?;
     // robocopy exit codes 0-7 are success (copied/extra/mismatch classes);

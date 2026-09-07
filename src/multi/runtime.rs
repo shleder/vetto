@@ -343,7 +343,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         post_wait,
         broker_ctrl_fd,
         #[cfg(unix)]
-        relay_port: _relay_port,
+            relay_port: _relay_port,
         notif_listener,
     } = spawned;
 

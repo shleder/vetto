@@ -73,9 +73,7 @@ impl PostWait {
     pub fn run(self) -> anyhow::Result<()> {
         match self {
             #[cfg(target_os = "windows")]
-            PostWait::Wsl2SyncBack { cfg, project } => {
-                wsl2::sync::sync_from_guest(&cfg, &project)
-            }
+            PostWait::Wsl2SyncBack { cfg, project } => wsl2::sync::sync_from_guest(&cfg, &project),
             // Non-VM platform builds: no PostWait variant exists here, so
             // this arm keeps `run` total where the enum is empty.
             #[allow(unreachable_patterns)]
@@ -128,9 +126,7 @@ impl Backend {
                                 cfg.effective_distro()
                             );
                         }
-                        return Ok(Backend::Wsl2(Box::new(wsl2::Wsl2Sandbox::new(
-                            net, cfg,
-                        ))));
+                        return Ok(Backend::Wsl2(Box::new(wsl2::Wsl2Sandbox::new(net, cfg))));
                     }
                     #[cfg(not(target_os = "windows"))]
                     {

@@ -107,10 +107,9 @@ pub fn exec_argv(distro: &str, cmd: &[String]) -> Vec<String> {
 /// True when `wsl.exe` resolves in PATH. Presence only — reachability is
 /// checked separately.
 pub fn wsl_present() -> bool {
-    std::env::var_os("PATH").map_or(false, |paths| {
-        std::env::split_paths(&paths).any(|dir| {
-            dir.join("wsl.exe").exists() || dir.join("wsl").exists()
-        })
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths)
+            .any(|dir| dir.join("wsl.exe").exists() || dir.join("wsl").exists())
     })
 }
 
