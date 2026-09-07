@@ -193,8 +193,11 @@ impl Wsl2Sandbox {
         match load_config() {
             Ok(cfg) => Self::probe_availability_with(&cfg),
             Err(e) => {
-                let first = e.to_string().lines().next().unwrap_or("no distro configured");
-                Availability::missing(format!("{first}"))
+                // E0716 guard: `unwrap_or` on a temporary String borrows a
+                // dead temporary; bind the owned String first.
+                let msg = e.to_string();
+                let first = msg.lines().next().unwrap_or("no distro configured");
+                Availability::missing(first.to_string())
             }
         }
     }
@@ -246,14 +249,14 @@ impl Wsl2Sandbox {
         let root_pid = child.id();
         let handle = exec::child_to_handle(child)?;
         Ok(Spawned {
-            post_wait: None,
+            post_wait: Some(crate::sandbox::PostWait::Wsl2SyncBack {
+                cfg: self.cfg.clone(),
+                project: project.clone(),
+            }),
             handle: SandboxHandle {
                 root_pid,
                 strategy: Some(handle),
             },
-            broker_ctrl_fd: None,
-            relay_port: None,
-            notif_listener: None,
         })
     }
 }

@@ -81,6 +81,7 @@ struct PendingSession {
     policy: policy::Policy,
     bus: EventBus,
     handle: SandboxHandle,
+    post_wait: Option<crate::sandbox::PostWait>,
     stdout_r: OwnedFd,
     stderr_r: OwnedFd,
     broker_ctrl_fd: Option<OwnedFd>,
@@ -341,6 +342,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         handle,
         post_wait,
         broker_ctrl_fd,
+        #[cfg(unix)]
         relay_port: _relay_port,
         notif_listener,
     } = spawned;
@@ -355,6 +357,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         policy,
         bus: EventBus::new(),
         handle,
+        post_wait: Some(post_wait),
         stdout_r,
         stderr_r,
         broker_ctrl_fd,
@@ -379,11 +382,13 @@ fn activate_pending(
         policy,
         bus,
         handle,
+        post_wait,
         stdout_r,
         stderr_r,
         broker_ctrl_fd,
         notif_listener,
         allocated_ports,
+        ..
     } = pending;
     let stats = StatsCollector::spawn(&bus);
     let root_pid = handle.root_pid;
@@ -463,7 +468,8 @@ fn activate_pending(
     }
     // VM sync-back (mac-vm / wsl2): runs on the wait thread right after
     // the agent exits, before unregister. Fail-loud via the event bus.
-    let sync_hook = post_wait;
+    // Unix-only path today (PendingSession/multi is unix-gated).
+    let sync_hook = post_wait.flatten();
     let sync_bus = bus.clone();
 
     let output = Arc::new(Mutex::new(OutputBuffers::default()));
