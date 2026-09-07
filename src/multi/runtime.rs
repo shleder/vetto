@@ -339,6 +339,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         .with_context(|| format!("spawn agent '{}' inside its sandbox", spec.name))?;
     let crate::sandbox::Spawned {
         handle,
+        post_wait,
         broker_ctrl_fd,
         relay_port: _relay_port,
         notif_listener,
@@ -460,6 +461,10 @@ fn activate_pending(
     {
         let _ = (broker_ctrl_fd, notif_listener);
     }
+    // VM sync-back (mac-vm / wsl2): runs on the wait thread right after
+    // the agent exits, before unregister. Fail-loud via the event bus.
+    let sync_hook = post_wait;
+    let sync_bus = bus.clone();
 
     let output = Arc::new(Mutex::new(OutputBuffers::default()));
     spawn_pipe_reader(stdout_r, Arc::clone(&output), true);
@@ -480,6 +485,14 @@ fn activate_pending(
                 .lock()
                 .map(|mut handle| handle.wait())
                 .unwrap_or(-1);
+            if let Some(hook) = sync_hook {
+                if let Err(e) = hook.run() {
+                    wait_bus.publish(Event::Notice {
+                        ts: crate::events::types::now(),
+                        message: format!("workspace sync-back failed: {e:#}"),
+                    });
+                }
+            }
             wait_bus.publish(Event::SessionEnded {
                 ts: crate::events::types::now(),
                 exit_code: code,

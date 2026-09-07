@@ -132,6 +132,7 @@ impl MacosSandbox {
         }
 
         Ok(Spawned {
+        post_wait: None,
             handle: SandboxHandle {
                 root_pid: pid as u32,
                 strategy: Some(KillStrategy::ProcessGroup {
