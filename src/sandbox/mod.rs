@@ -330,15 +330,7 @@ impl Backend {
             #[cfg(target_os = "macos")]
             Backend::Macos(s) => s.spawn(policy, opts),
             #[cfg(target_os = "macos")]
-            Backend::MacVm(s) => {
-                let project = opts.cwd.clone();
-                let mut spawned = s.spawn(policy, opts)?;
-                spawned.post_wait = Some(PostWait::MacVmSyncBack {
-                    cfg: macvm::load_config().unwrap_or_else(|_| macvm::MacVmConfig::default()),
-                    project,
-                });
-                Ok(spawned)
-            }
+            Backend::MacVm(s) => s.spawn(policy, opts),
             #[cfg(target_os = "windows")]
             Backend::Windows(s) => s.spawn(policy, opts),
         }

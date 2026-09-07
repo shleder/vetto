@@ -199,8 +199,10 @@ impl MacVmSandbox {
         match load_config() {
             Ok(cfg) => Self::probe_availability_with(&cfg),
             Err(e) => {
-                let first = e.to_string().lines().next().unwrap_or("no VM configured");
-                Availability::missing(format!("{first}"))
+                // E0716 guard: bind the owned String before borrowing lines.
+                let msg = e.to_string();
+                let first = msg.lines().next().unwrap_or("no VM configured");
+                Availability::missing(first.to_string())
             }
         }
     }
@@ -266,7 +268,10 @@ impl MacVmSandbox {
         // waitpid reaps it — exactly what `SandboxHandle` expects.
         drop(child);
         Ok(Spawned {
-            post_wait: None,
+            post_wait: Some(crate::sandbox::PostWait::MacVmSyncBack {
+                cfg: self.cfg.clone(),
+                project: project.clone(),
+            }),
             handle: SandboxHandle {
                 root_pid,
                 strategy: Some(super::handle::KillStrategy::ProcessGroup {

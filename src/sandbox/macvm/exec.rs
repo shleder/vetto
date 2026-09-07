@@ -247,6 +247,7 @@ pub fn spawn_guest(
             cmd.stderr(unsafe { stdio_from_borrowed(slave) });
         }
         super::super::handle::StdioMode::Captured { stdout_w, stderr_w } => {
+            use std::os::fd::FromRawFd;
             cmd.stdin(Stdio::null());
             // SAFETY: write ends are live pipe descriptors owned by main.
             cmd.stdout(unsafe {
@@ -295,7 +296,7 @@ fn libc_dup(fd: i32) -> i32 {
 /// Build a `Stdio` from a borrowed fd by duping it first.
 /// SAFETY: caller guarantees `fd` is live for this call.
 unsafe fn stdio_from_borrowed(fd: std::os::fd::BorrowedFd<'_>) -> std::process::Stdio {
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd};
     unsafe { std::process::Stdio::from_raw_fd(libc_dup(fd.as_raw_fd())) }
 }
 
