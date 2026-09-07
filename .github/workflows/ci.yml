@@ -113,7 +113,10 @@ jobs:
           targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --all-features
+      # No Linux VM on CI macOS runners: exercise the native Seatbelt path.
       - run: cargo test --all-features --quiet
+        env:
+          VETTO_CI_MAC_NO_VM: "1"
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Intel macOS cross-check
         run: cargo check --target x86_64-apple-darwin --all-features

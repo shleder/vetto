@@ -232,6 +232,8 @@ impl Backend {
         {
             // Uniform default: Tier-1 inside the Linux VM when available;
             // explicit `--backend process` keeps the deprecated Seatbelt path.
+            // CI macOS runners have no VM: fall back to Seatbelt there
+            // (VETTO_CI_MAC_NO_VM=1) so the native boundary stays tested.
             let explicit_process = matches!(
                 backend_name.map(parse_backend_name),
                 Some(Ok(BackendName::Process))
@@ -243,16 +245,21 @@ impl Backend {
                         let _ = observe_seccomp;
                         return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(net, cfg))));
                     }
+                    if std::env::var_os("VETTO_CI_MAC_NO_VM").is_none() {
+                        anyhow::bail!(
+                            "default enforcement requires Tier-1 via mac-vm, but: {}\n\
+                             action: start the VM (`vetto-vz start`), check ssh, or pass explicit `--backend process` (deprecated legacy, Seatbelt write-confinement only); run `vetto doctor` for the enforcement matrix",
+                            avail.reason
+                        );
+                    }
+                    // else: CI fallback to Seatbelt below.
+                } else if std::env::var_os("VETTO_CI_MAC_NO_VM").is_none() {
                     anyhow::bail!(
-                        "default enforcement requires Tier-1 via mac-vm, but: {}\n\
-                         action: start the VM (`vetto-vz start`), check ssh, or pass explicit `--backend process` (deprecated legacy, Seatbelt write-confinement only); run `vetto doctor` for the enforcement matrix",
-                        avail.reason
+                        "default enforcement requires Tier-1 via mac-vm (no VM configured)\n\
+                         action: install the VM helper (`vetto-vz`), create the Linux VM, write ~/.vetto/mac-vm.toml, or pass explicit `--backend process` (deprecated legacy); run `vetto doctor` for the enforcement matrix"
                     );
                 }
-                anyhow::bail!(
-                    "default enforcement requires Tier-1 via mac-vm (no VM configured)\n\
-                     action: install the VM helper (`vetto-vz`), create the Linux VM, write ~/.vetto/mac-vm.toml, or pass explicit `--backend process` (deprecated legacy); run `vetto doctor` for the enforcement matrix"
-                );
+                // else: CI fallback to Seatbelt below.
             }
             let _ = observe_seccomp;
             Ok(Backend::Macos(Box::new(macos::MacosSandbox::new(net))))
