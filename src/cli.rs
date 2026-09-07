@@ -582,6 +582,9 @@ pub enum Command {
         /// Emit machine-readable JSON output
         #[arg(long)]
         json: bool,
+        /// Render the end-of-session security recap instead of the full detail
+        #[arg(long)]
+        recap: bool,
     },
     /// Generate an aggregated daily audit digest from session history.
     #[command(hide = true)]
@@ -1242,6 +1245,18 @@ mod tests {
             Some(Command::Audit {
                 latest: true,
                 json: true,
+                recap: false,
+                ..
+            })
+        ));
+
+        let audit_recap = Cli::try_parse_from(["vetto", "audit", "--latest", "--recap"])
+            .expect("audit recap parsing");
+        assert!(matches!(
+            audit_recap.command,
+            Some(Command::Audit {
+                latest: true,
+                recap: true,
                 ..
             })
         ));

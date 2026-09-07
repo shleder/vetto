@@ -995,6 +995,20 @@ fn build_detail_from_history_record(rec: &AuditRecord) -> SessionAuditDetail {
 }
 
 /// Dispatches the `vetto audit` CLI subcommand with session inspection or listing.
+/// Options for [`run_audit_command`] — struct form avoids too-many-args lint.
+#[derive(Debug, Clone, Copy)]
+pub struct AuditCommandOptions<'a> {
+    pub session_id: Option<&'a str>,
+    pub latest: bool,
+    pub since: Option<&'a str>,
+    pub agent: Option<&'a str>,
+    pub limit: Option<usize>,
+    pub query: Option<&'a str>,
+    pub json_output: bool,
+    pub recap_only: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn run_audit_command(
     session_id: Option<&str>,
     latest: bool,
@@ -1003,6 +1017,7 @@ pub fn run_audit_command(
     limit: Option<usize>,
     query: Option<&str>,
     json_output: bool,
+    recap_only: bool,
 ) -> Result<()> {
     if latest || session_id.is_some() {
         let detail = if latest {
@@ -1023,6 +1038,9 @@ pub fn run_audit_command(
             }
         };
 
+        if recap_only {
+            return render_session_recap(&detail, json_output);
+        }
         if json_output {
             println!("{}", serde_json::to_string_pretty(&detail)?);
         } else {
@@ -1032,6 +1050,78 @@ pub fn run_audit_command(
     }
 
     run_audit(since, agent, limit, query, json_output)
+}
+
+/// Render the end-of-session security recap for a stored audit detail.
+/// Shared formatter with the live exit-path hook (see [`super::recap`]).
+pub fn render_session_recap(detail: &SessionAuditDetail, json_output: bool) -> Result<()> {
+    use super::recap::{format_session_recap, SessionRecapInput};
+    use std::collections::BTreeMap;
+
+    let mut top: BTreeMap<(&str, &str, &str), u64> = BTreeMap::new();
+    for d in &detail.filesystem_denials {
+        *top.entry((d.path.as_str(), d.process.as_str(), d.source.as_str()))
+            .or_insert(0) += d.count;
+    }
+    let mut top_denied: Vec<(String, u64)> = top
+        .into_iter()
+        .map(|((path, _, _), c)| (path.to_string(), c))
+        .collect();
+    top_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+
+    let egress_denied: Vec<(String, u64)> = {
+        let mut m: BTreeMap<String, u64> = BTreeMap::new();
+        for n in &detail.blocked_network {
+            *m.entry(format!("{}:{}", n.host, n.port)).or_insert(0) += n.count;
+        }
+        let mut v: Vec<_> = m.into_iter().collect();
+        v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        v
+    };
+    // Allowed egress is not stored in the audit detail — leave empty post-hoc.
+    let egress_allowed: Vec<String> = Vec::new();
+
+    let input = SessionRecapInput {
+        exit_code: detail.exit_code,
+        duration_secs: detail.duration_secs,
+        events_total: detail.events_total,
+        denials_total: detail.violations_total,
+        top_denied,
+        egress_denied,
+        egress_allowed,
+        op_counts: BTreeMap::new(),
+        files_changed: 0,
+        verify_status: "off".into(),
+    };
+    match format_session_recap(&input) {
+        None => {
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::json!({"recap": null, "note": "clean session, nothing contained"})
+                );
+            } else {
+                println!("vetto: recap: clean session, nothing contained");
+            }
+        }
+        Some(lines) => {
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "session_id": detail.session_id,
+                        "exit_code": detail.exit_code,
+                        "recap": lines,
+                    })
+                );
+            } else {
+                for line in lines {
+                    println!("vetto: recap: {line}");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Formats and renders a detailed session audit to stdout.

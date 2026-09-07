@@ -302,6 +302,7 @@ fn run() -> Result<()> {
             limit,
             query,
             json,
+            recap,
         }) => vetto::audit::run_audit_command(
             session_id.as_deref(),
             *latest,
@@ -310,6 +311,7 @@ fn run() -> Result<()> {
             *limit,
             query.as_deref(),
             *json,
+            *recap,
         ),
         Some(cli::Command::Digest { since, json }) => vetto::audit::run_digest(Some(since), *json),
         Some(cli::Command::DiffSessions {
@@ -1408,6 +1410,53 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         );
         if let Some(hint) = exit_codes::recap_hint(code, blocked_total, timed_out) {
             eprintln!("vetto: recap: {hint}");
+        }
+        // Session security recap: top denied paths, egress split, intent —
+        // from the in-memory snapshot, zero extra I/O. Silent on clean runs.
+        if !cfg.ci {
+            let mut top_denied: Vec<(String, u64)> = snap
+                .blocked_attempts
+                .iter()
+                .map(|b| (b.path.clone(), b.count))
+                .collect();
+            top_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+            let mut egress_map: std::collections::BTreeMap<String, u64> =
+                std::collections::BTreeMap::new();
+            let mut egress_allowed: Vec<String> = Vec::new();
+            for r in &snap.net_requests {
+                if r.allowed {
+                    let h = format!("{}:{}", r.host, r.port);
+                    if !egress_allowed.contains(&h) {
+                        egress_allowed.push(h);
+                    }
+                } else {
+                    *egress_map
+                        .entry(format!("{}:{}", r.host, r.port))
+                        .or_insert(0) += 1;
+                }
+            }
+            let mut egress_denied: Vec<(String, u64)> = egress_map.into_iter().collect();
+            egress_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+            let recap_input = vetto::audit::SessionRecapInput {
+                exit_code,
+                duration_secs,
+                events_total: snap.events_total,
+                top_denied,
+                denials_total: blocked_total,
+                egress_denied,
+                egress_allowed,
+                op_counts: snap.op_counts.clone(),
+                files_changed: diff.total_changed(),
+                verify_status: verify_outcome
+                    .as_ref()
+                    .map(|report| report.status().to_string())
+                    .unwrap_or_else(|| "off".to_string()),
+            };
+            if let Some(lines) = vetto::audit::format_session_recap(&recap_input) {
+                for line in lines {
+                    eprintln!("vetto: recap: {line}");
+                }
+            }
         }
     }
 
