@@ -60,6 +60,7 @@ The Linux backend represents Vetto's reference production architecture, leveragi
 ### Seatbelt (SBPL) & Regression Tracking
 - Vetto dynamically loads Apple's private Seatbelt API (`libsandbox.1.dylib!sandbox_init_with_parameters`), avoiding brittle reliance on the deprecated `/usr/bin/sandbox-exec` CLI wrapper.
 - **Root Cause of dyld SIGABRT Crashes**: On modern macOS releases (macOS 13 Ventura, macOS 14 Sonoma, macOS 15 Sequoia), Apple's dynamic linker (`dyld`) maps system dynamic libraries directly from shared caches (`/System/Library/dyld/dyld_shared_cache_*`). When SBPL policies employ fragmented file-read allowlists (multiple discrete `(allow file-read* (subpath "..."))` clauses), dyld's internal validation routines and memory mappings abort with `SIGABRT` upon first library resolution.
+- **Maximum read shape (issue #62, CLOSED as maximum-achievable)**: the SBPL matrix (`.github/workflows/macos-sbpl-matrix.yml`, `scripts/sbpl-matrix-test.sh`, macos 14/15/15-intel, green) proves ONLY Shape A — single broad `(allow file-read* (subpath "/"))` + trailing secret denies — runs. Every fragmented shape (B naive, C clauses, D require-any, E regex, F allowlist) SIGABRTs ALL binaries including static Go. There is NO per-runtime narrow shape on current macOS: static Go and dynamic Swift/Rust behave identically. Narrow read-deny reopens only if Apple fixes dyld; until then Shape A + tail-deny (`deny_resolved`) is the enforced maximum, constant `SBPL_MAXIMUM_READ_SHAPE` in `src/sandbox/macos/seatbelt.rs`.
 - **Compensating Policy Architecture**: To guarantee process stability while preventing data destruction, Vetto applies broad read access `(allow file-read* (subpath "/"))` alongside tail denials `(deny file-read* (subpath (param "DENY_PATH_...")))`. Write access is strictly constrained to the workspace root and `/tmp`.
 - **Read-Isolation Limitations**: Because Darwin kernels do not expose unprivileged mount namespaces or VFS inode masking, unprivileged read denial on macOS cannot guarantee absolute secrecy against all native binaries. Vetto transparently exposes this platform behavior in `vetto doctor` under the `sbpl-read-fragment` probe.
 - **Network Boundaries**: Darwin kernels lack unprivileged network namespaces (`CLONE_NEWNET`). Egress restriction is limited to `--net=off` via SBPL `(deny network*)` (with a local UNIX domain socket exemption for libSystem/XPC IPC). Per-domain allowlisting is unsupported and fails closed.
@@ -84,6 +85,17 @@ The Windows native backend is designated **Tier 3 (Preview)**. It provides proce
 - The default Windows process sandbox runs under an AppContainer token combined with low integrity (`S-1-16-4096`).
 - When `--lpac` or `lpac = true` is configured, Vetto validates the Less Privileged AppContainer SID (`S-1-15-2-2`, `ALL RESTRICTED APPLICATION PACKAGES`), stripping implicit package capabilities and isolating local IPC/RPC endpoints.
 - `sandbox::windows::probe()` inspects `lpac_api` and reports status in `vetto doctor`.
+- **Hardening review (issue #63)**: maximum-achievable surface — AppContainer default-deny DACL on the workspace, LPAC SID opt-in stripping package capabilities, low-integrity token blocking medium-integrity writes, Job Object kill-on-close for the full tree. No silent elevation anywhere: every path that needs admin fails closed with an actionable message.
+
+### WFP lease: explicit admin opt-in, fail-closed without it
+- Fine-grained per-domain egress via Windows Filtering Platform (`src/sandbox/windows/firewall.rs`: dynamic WFP session, private sub-layer, process-image + pinned TCP/IP conditions, filters removed on lease drop) REQUIRES administrator privileges — WFP engine open + filter install fail without elevation by Windows design.
+- Vetto refuses to demand elevation: `firewall::probe()` reports WFP/token state without requesting it; any lease attempt without admin fails closed (`--net` allowlist on native Windows degrades to AppContainer capability deny, never to silent allow).
+- Maximum-achievable: `--net=off` enforced via AppContainer capabilities unprivileged; per-domain allowlist needs explicit admin opt-in OR WSL2 (where the Linux broker does it unprivileged).
+
+### Authenticode Digital Signing
+- `packaging/windows/sign.ps1` signs `vetto.exe` using `signtool.exe` or `osslsigncode` with SHA-256 and RFC 3161 timestamps (`http://timestamp.digicert.com`).
+- Configured in CI release workflows via `SIGNING_CERT_PFX` and `SIGNING_CERT_PASSWORD`.
+- **Release signing status (issue #63)**: release archives are minisign-signed in `release-train.yml` (threshold-signed key, SLSA-verified); Authenticode `vetto.exe` signing runs when `SIGNING_CERT_PFX` is present, otherwise CI emits an explicit warning and ships the binary unsigned — never silently claimed as signed. `vetto doctor` reports the effective state.
 
 ### Job Object Lifecycle & IO Rate Control
 - Windows Job Objects enforce `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to ensure 100% of descendant processes are terminated when Vetto exits.
