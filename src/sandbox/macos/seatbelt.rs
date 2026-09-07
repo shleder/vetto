@@ -204,6 +204,7 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
 /// (`deny_resolved`) is the maximum enforceable read boundary today.
 pub const SBPL_MAXIMUM_READ_SHAPE: &str = "shape-A-broad-plus-tail-deny";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SbplFragmentStatus {
     Broken,
     Ok,
