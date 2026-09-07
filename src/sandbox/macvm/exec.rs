@@ -109,7 +109,9 @@ pub fn session_ssh_argv(
     agent_cmd: &[String],
 ) -> Vec<String> {
     let mut argv = ssh_base_argv(cfg, 10);
-    argv.push(remote_command_string(&guest_vetto_argv(policy, net, agent_cmd)));
+    argv.push(remote_command_string(&guest_vetto_argv(
+        policy, net, agent_cmd,
+    )));
     argv
 }
 
@@ -195,7 +197,9 @@ pub fn ssh_write_file(cfg: &MacVmConfig, remote: &str, content: &str) -> Result<
         use std::io::Write as _;
         let _ = stdin.write_all(content.as_bytes());
     }
-    let out = child.wait_with_output().with_context(|| "mac-vm: ssh marker write wait failed")?;
+    let out = child
+        .wait_with_output()
+        .with_context(|| "mac-vm: ssh marker write wait failed")?;
     if !out.status.success() {
         bail!(
             "mac-vm: guest marker write failed ({}): {}",
@@ -208,7 +212,7 @@ pub fn ssh_write_file(cfg: &MacVmConfig, remote: &str, content: &str) -> Result<
 
 /// Spawn the guest session as an ssh child with the caller's stdio wiring.
 /// Returns the live child; the caller converts it to a pid-based handle
-/// (mirroring the Seatbelt backend). No threads are spawned here.
+/// (mirroring the legacy macOS backend). No threads are spawned here.
 pub fn spawn_guest(
     cfg: &MacVmConfig,
     project: &Path,
@@ -250,12 +254,8 @@ pub fn spawn_guest(
             use std::os::fd::FromRawFd;
             cmd.stdin(Stdio::null());
             // SAFETY: write ends are live pipe descriptors owned by main.
-            cmd.stdout(unsafe {
-                Stdio::from_raw_fd(libc_dup(stdout_w))
-            });
-            cmd.stderr(unsafe {
-                Stdio::from_raw_fd(libc_dup(stderr_w))
-            });
+            cmd.stdout(unsafe { Stdio::from_raw_fd(libc_dup(stdout_w)) });
+            cmd.stderr(unsafe { Stdio::from_raw_fd(libc_dup(stderr_w)) });
         }
         super::super::handle::StdioMode::Inherit => {
             cmd.stdin(Stdio::inherit());
@@ -264,7 +264,7 @@ pub fn spawn_guest(
         }
     }
     // Put ssh in its own process group so terminate() (kill(-pgid))
-    // never targets vetto's group — same contract as Seatbelt.
+    // never targets vetto's group — same contract as the legacy backend.
     use std::os::unix::process::CommandExt as _;
     unsafe {
         cmd.pre_exec(|| {
@@ -365,8 +365,12 @@ mod tests {
 
     #[test]
     fn no_sbpl_references() {
-        let src = include_str!("exec.rs");
-        assert!(!src.to_lowercase().contains("sbpl"));
-        assert!(!src.to_lowercase().contains("seatbelt"));
+        // Split literals: the forbidden tokens must not appear verbatim in
+        // this file (the test reads its own source), so build them at runtime.
+        let forbidden1 = ["sb", "pl"].concat();
+        let forbidden2 = ["seat", "belt"].concat();
+        let src = include_str!("exec.rs").to_lowercase();
+        assert!(!src.contains(&forbidden1));
+        assert!(!src.contains(&forbidden2));
     }
 }

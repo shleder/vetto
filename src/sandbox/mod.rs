@@ -160,9 +160,7 @@ impl Backend {
                                 avail.reason
                             );
                         }
-                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(
-                            net, cfg,
-                        ))));
+                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(net, cfg))));
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -243,9 +241,7 @@ impl Backend {
                     let avail = macvm::MacVmSandbox::probe_availability_with(&cfg);
                     if avail.available {
                         let _ = observe_seccomp;
-                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(
-                            net, cfg,
-                        ))));
+                        return Ok(Backend::MacVm(Box::new(macvm::MacVmSandbox::new(net, cfg))));
                     }
                     anyhow::bail!(
                         "default enforcement requires Tier-1 via mac-vm, but: {}\n\

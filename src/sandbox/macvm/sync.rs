@@ -259,9 +259,13 @@ mod tests {
 
     #[test]
     fn no_sbpl_references() {
-        // The uniform backend must not depend on SBPL: grep the source.
-        let src = include_str!("sync.rs");
-        assert!(!src.to_lowercase().contains("sbpl"));
-        assert!(!src.to_lowercase().contains("seatbelt"));
+        // The uniform backend must not depend on the legacy policy language:
+        // grep the source. Split literals so the forbidden tokens do not
+        // appear verbatim in this file (the test reads its own source).
+        let forbidden1 = ["sb", "pl"].concat();
+        let forbidden2 = ["seat", "belt"].concat();
+        let src = include_str!("sync.rs").to_lowercase();
+        assert!(!src.contains(&forbidden1));
+        assert!(!src.contains(&forbidden2));
     }
 }

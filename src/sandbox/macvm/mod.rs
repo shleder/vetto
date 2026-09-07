@@ -245,7 +245,10 @@ impl MacVmSandbox {
     pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
         self.cfg.validate()?;
         let project = opts.cwd.clone();
-        ensure_inside(&project, &std::env::current_dir().unwrap_or_else(|_| project.clone()))?;
+        ensure_inside(
+            &project,
+            &std::env::current_dir().unwrap_or_else(|_| project.clone()),
+        )?;
 
         // 1. VM must exist and run; start it (bounded) when stopped.
         vm::ensure_running(&self.cfg)?;
@@ -305,10 +308,7 @@ pub fn ensure_inside(project: &Path, cwd: &Path) -> anyhow::Result<()> {
 
 /// Environment allowlist for the guest: same secret-proxy stripping as the
 /// Seatbelt backend, plus VETTO_* markers. Pure map transform — unit-tested.
-pub fn guest_env(
-    policy: &Policy,
-    extra: &HashMap<String, String>,
-) -> HashMap<String, String> {
+pub fn guest_env(policy: &Policy, extra: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os()
             .filter(|(key, _)| policy.environment.allows(key))
@@ -322,7 +322,12 @@ pub fn guest_env(
     }
     crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
     env.into_iter()
-        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
         .collect()
 }
 
@@ -362,10 +367,8 @@ mod tests {
 
     #[test]
     fn zero_ip_wait_fails_closed() {
-        let err = MacVmConfig::parse_toml(
-            "ssh_target = \"vetto@1.2.3.4\"\nip_wait_secs = 0\n",
-        )
-        .unwrap_err();
+        let err = MacVmConfig::parse_toml("ssh_target = \"vetto@1.2.3.4\"\nip_wait_secs = 0\n")
+            .unwrap_err();
         assert!(err.to_string().contains("ip_wait_secs"), "{err:?}");
     }
 
