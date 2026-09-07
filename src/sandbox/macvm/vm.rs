@@ -68,7 +68,7 @@ pub fn helper_present(helper: &str) -> bool {
     if helper.contains('/') {
         return std::path::Path::new(helper).exists();
     }
-    std::env::var_os("PATH").map_or(false, |paths| {
+    std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths)
             .any(|dir| dir.join(helper).exists() || dir.join(format!("{helper}.exe")).exists())
     })

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::handle::{SandboxHandle, SpawnOptions, StdioMode};
+use super::handle::{SandboxHandle, SpawnOptions};
 use super::Spawned;
 use crate::config::NetMode;
 use crate::policy::{Policy, Tier};
@@ -228,10 +228,10 @@ impl MacVmSandbox {
                 return Availability::missing(format!("VM helper query failed: {e:#}"));
             }
         }
-        match exec::ssh_reachable(&cfg) {
-            Ok(()) => Availability::ok(),
-            Err(e) => Availability::missing(format!("ssh unreachable: {e:#}")),
+        if let Err(e) = exec::ssh_reachable(cfg) {
+            return Availability::missing(format!("ssh unreachable: {e:#}"));
         }
+        Availability::ok()
     }
 
     /// Full provision + run. Called pre-fork from the single-threaded path

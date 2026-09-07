@@ -219,7 +219,6 @@ pub fn spawn_guest(
     opts: &super::super::handle::SpawnOptions,
     guest_cmd: Vec<String>,
 ) -> Result<Child> {
-    use std::os::unix::io::AsRawFd;
     use std::process::Stdio;
 
     if guest_cmd.is_empty() {
@@ -355,8 +354,10 @@ mod tests {
     fn session_argv_is_single_remote_string() {
         use crate::policy::Policy;
         // Minimal policy surface: only name + net label matter here.
-        let mut pol = Policy::default();
-        pol.name = "default".to_string();
+        let pol = Policy {
+            name: "default".to_string(),
+            ..Policy::default()
+        };
         let argv = session_ssh_argv(&cfg(), &pol, &NetMode::Off, &["agent".into()]);
         assert_eq!(argv[0], "ssh");
         // Last element is the whole remote command (one string).
