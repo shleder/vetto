@@ -158,7 +158,6 @@ pub fn child_to_handle(child: Child) -> Result<super::super::handle::KillStrateg
     // nothing) and keeps the struct shape `windows_wait` requires.
     // `terminate` on this backend therefore does NOT kill the tree; the
     // guest vetto owns its own teardown. Documented gap, honest shape.
-    use std::os::windows::io::AsHandle as _;
     let job: OwnedHandle = child_process_duplicate(&process)?;
     Ok(super::super::handle::KillStrategy::JobObject { job, process })
 }
