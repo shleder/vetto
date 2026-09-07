@@ -1,6 +1,6 @@
 <div align="center">
 
-# VETTO — Daemon-less, 0ms sandbox for AI coding agents
+# VETTO — Daemon-less kernel sandbox for AI coding agents
 
 <p align="center">
   <b>Run Claude Code, Codex, and Cursor unattended with zero credential-leak anxiety.</b><br/>
@@ -34,7 +34,7 @@ a single hallucination, rogue bash loop, or prompt injection can exfiltrate your
 **VETTO** wraps Claude Code, Codex, Antigravity, Cursor, and Aider in an OS-level kernel sandbox **before the agent process starts**:
 - **Zero Credential Theft**: `~/.ssh`, `~/.aws`, `~/.gnupg`, and `.env*` are physically unreadable by the agent.
 - **Zero Destructive Writes**: Agent file modifications are strictly confined to your project root and `/tmp`.
-- **Zero Performance Penalty**: **0.002s** startup latency, 0 MB idle RAM, unprivileged execution without Docker.
+- **Zero Performance Penalty**: **~4ms** startup overhead, 0 MB idle RAM, unprivileged execution without Docker.
 
 ---
 
@@ -69,7 +69,7 @@ npx @shledery/vetto doctor
 
 ```yaml
 # In GitHub Actions CI (unattended agent runs, evals, SWE-bench)
-- uses: shleder/vetto@v0.2.13
+- uses: shleder/vetto@v0.2.18
 ```
 
 *Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
@@ -149,7 +149,7 @@ Containers were designed for packaging backend microservices—not for interacti
 
 | Dimension | VETTO | Docker Containers | Why It Matters |
 | :--- | :--- | :--- | :--- |
-| **Startup Overhead** | **0.002s** (effectively 0ms) | **3.5s – 8.0s** | Subagents and test loops execute with zero perceptible latency |
+| **Startup Overhead** | **~4ms** (CI-gated spawn overhead) | **3.5s – 8.0s** | Subagents and test loops execute with zero perceptible latency |
 | **Daemon** | **None** (zero background processes) | `dockerd` background service | No background daemon to crash, stall, or consume idle resources |
 | **RAM Overhead** | **0 MB** | **1.5 GB+** (VM / daemon engine) | Leaves all workstation RAM free for compilation and local models |
 | **Permissions** | **Unprivileged** (no root / no sudo) | Root / `docker` group (root-equivalent) | Completely eliminates root-escalation attack surface on your host |
@@ -165,8 +165,9 @@ Security tooling frequently makes misleading cross-platform claims. Vetto reject
 
 Vetto establishes an immutable 3-tier boundary architecture:
 - **Tier 1 (Production-Grade)**: **Linux (Native)** and **Linux (WSL2)**. Full kernel isolation via Landlock LSM (ABI v1–v6), Seccomp-BPF, private Mount/PID/Network namespaces, and tmpfs secret masking overlays.
-- **Tier 2 (Experimental)**: **macOS (Darwin)**. Apple Seatbelt SBPL (`sandbox_init_with_parameters`) write and execution confinement, kqueue parent-death watchdog process reaping. Broad read permissions required due to Apple dynamic linker (`dyld`) shared cache constraints.
-- **Tier 3 (Preview / Process Guardrails)**: **Windows Native**. Process containment via Job Objects (`KILL_ON_JOB_CLOSE`), Low Integrity tokens (`S-1-16-4096`), and AppContainer DACLs. For production-grade Tier 1 isolation on Windows, running inside WSL2 is strongly recommended.
+- **Tier 1 via VM (Uniform path)**: **macOS → Linux VM** (`mac-vm`, Virtualization.framework) and **Windows → WSL2** (guest vetto + sync-back). Same Tier-1 stack inside the guest; default on macOS/Windows when the VM is configured, fail-closed with an actionable message when it is not.
+- **Tier 2 (Experimental, maximum-achievable)**: **macOS native (Seatbelt)**. Write lock + `--net=off` enforced; reads stay broad — the SBPL matrix proves only Shape A runs (all fragmented shapes SIGABRT incl. static Go), so narrow read-deny is closed until Apple fixes dyld (#62).
+- **Tier 3 (Preview, maximum-achievable)**: **Windows native (AppContainer/LPAC + Job)**. Process guardrails; per-domain WFP needs explicit admin opt-in and fails closed without it; Authenticode when the cert is present, explicit warning otherwise (#63).
 
 ### Canonical 5-Factor Capability Matrix
 
@@ -198,7 +199,7 @@ Native Windows isolation uses Job Objects and Less Privileged AppContainers (LPA
 - For production-grade **Tier 1** protection on Windows workstations, use **WSL2** (`wsl -- vetto ...`), which provides the native Linux kernel Landlock LSM and namespace isolation stack.
 
 ### Scope Closure: Issues #26, #62, #63
-Issue #26 formally closes the gap between marketing assertions and kernel reality, with per-backend tracking in #62 (macOS Seatbelt read-isolation, blocked by Apple `dyld` regression) and #63 (Windows AppContainer/LPAC hardening, WFP lease admin opt-in, release signing status). Vetto permanently repudiates ungrounded claims of cross-platform parity:
+Issue #26 tracks the honest per-OS matrix. #62 (macOS read-isolation) is closed as maximum-achievable: the SBPL matrix proves Shape A is the only runnable shape. #63 (Windows hardening) is closed as maximum-achievable: AppContainer/LPAC + Job at ceiling, WFP admin-gated, signing status explicit. Vetto permanently repudiates ungrounded claims of cross-platform parity:
 1. Platform capabilities are strictly tiered (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows).
 2. All capability claims are continuously verified in CI via automated red-team matrices and diagnostic doctor probes.
 3. Pull requests or features claiming parity without underlying OS kernel enforcement proofs will be rejected.
@@ -238,6 +239,10 @@ vetto policy explain --why ~/.ssh/id_rsa
 # Inspect intercepted security violations and blocked paths from past sessions
 vetto audit
 vetto audit --latest
+
+# End-of-session security recap (top denied paths, egress split, intent)
+# printed automatically after every session; post-hoc on demand:
+vetto audit --latest --recap
 ```
 
 ### Dynamic Policy Grants (No Manual TOML Editing)
@@ -284,7 +289,7 @@ vetto --report html,sarif --jsonl session.jsonl -- cargo test
 - **No root / sudo** — runs completely unprivileged; cannot escalate host permissions.
 - **No TLS interception** — zero MITM, no custom root certificate authority; moves opaque bytes only.
 - **No telemetry or tracking** — completely private by default. No telemetry or project/user data is ever transmitted. The only network calls vetto itself initiates are short, non-blocking version checks against the npm registry and GitHub Releases (24h cache, 2s timeout, silent offline via cache). Self-update never runs unless explicitly opted in, and never in CI (`VETTO_NO_SELF_UPDATE=1` disables everything update-related).
-- **No Docker dependency** — instant 0.002s startup directly on your native OS kernel.
+- **No Docker dependency** — instant ~4ms startup directly on your native OS kernel.
 
 ---
 
@@ -314,7 +319,7 @@ Vetto puts the agent process inside an OS-level sandbox **before the agent proce
 ### 5. Policy Layer Hierarchy
 Policies merge in a deterministic, strict hierarchy where every TOML struct rejects unknown fields:
 ```text
-Host Global (~/etc/vetto/config.toml)
+Host Global (/etc/vetto/config.toml)
   └── User Global (~/.vetto/config.toml)
         └── Built-in Profile (default, strict, paranoid)
               └── Agent Preset (claude, cursor, aider, cline, codex)
