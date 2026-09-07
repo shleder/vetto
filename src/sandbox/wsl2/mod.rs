@@ -8,7 +8,7 @@
 //!
 //! Fail-closed everywhere: missing WSL2, distro, or guest vetto → `bail!`
 //! with an actionable message. There is intentionally NO silent host
-//! fallback (no quiet AppContainer run).
+//! fallback (no quiet legacy-process run).
 //!
 //! Layout:
 //!   `distro` — WSL2 lifecycle via `wsl.exe` (status/list/terminate)
@@ -331,8 +331,11 @@ mod tests {
     }
 
     #[test]
-    fn no_appcontainer_references() {
-        let src = include_str!("mod.rs");
-        assert!(!src.to_lowercase().contains("appcontainer"));
+    fn no_legacy_host_fallback_references() {
+        // Split literal: the forbidden token must not appear verbatim in
+        // this file (the test reads its own source), so build it at runtime.
+        let forbidden = ["app", "container"].concat();
+        let src = include_str!("mod.rs").to_lowercase();
+        assert!(!src.contains(&forbidden));
     }
 }

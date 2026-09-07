@@ -57,11 +57,9 @@ pub struct Spawned {
 /// Post-wait action for VM backends: pull the workspace back exactly once
 /// after the agent exits. Runs on the supervisor thread (threads allowed).
 pub enum PostWait {
-    #[cfg(target_os = "macos")]
-    MacVmSyncBack {
-        cfg: macvm::MacVmConfig,
-        project: std::path::PathBuf,
-    },
+    // NOTE: mac-vm sync-back lives on feat/uniform-mac-vm (macOS-only
+    // config type). This branch must not reference that crate:
+    // Linux/Windows CI would fail with E0433.
     #[cfg(target_os = "windows")]
     Wsl2SyncBack {
         cfg: wsl2::Wsl2Config,
@@ -74,16 +72,14 @@ impl PostWait {
     /// sync-back means the host tree is stale — the guest keeps the truth.
     pub fn run(self) -> anyhow::Result<()> {
         match self {
-            #[cfg(target_os = "macos")]
-            PostWait::MacVmSyncBack { .. } => {
-                anyhow::bail!(
-                    "post-wait: mac-vm hook unavailable on this platform build (integration lands with feat/uniform-mac-vm)"
-                )
-            }
             #[cfg(target_os = "windows")]
             PostWait::Wsl2SyncBack { cfg, project } => {
                 wsl2::sync::sync_from_guest(&cfg, &project)
             }
+            // Non-VM platform builds: no PostWait variant exists here, so
+            // this arm keeps `run` total where the enum is empty.
+            #[allow(unreachable_patterns)]
+            _ => anyhow::bail!("post-wait: no VM sync-back hook on this platform build"),
         }
     }
 }

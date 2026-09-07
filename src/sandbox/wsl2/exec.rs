@@ -271,8 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn no_appcontainer_references() {
-        let src = include_str!("exec.rs");
-        assert!(!src.to_lowercase().contains("appcontainer"));
+    fn no_legacy_host_fallback_references() {
+        // Split literal: the forbidden token must not appear verbatim in
+        // this file (the test reads its own source), so build it at runtime.
+        let forbidden = ["app", "container"].concat();
+        let src = include_str!("exec.rs").to_lowercase();
+        assert!(!src.contains(&forbidden));
     }
 }

@@ -357,7 +357,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         policy,
         bus: EventBus::new(),
         handle,
-        post_wait: Some(post_wait),
+        post_wait,
         stdout_r,
         stderr_r,
         broker_ctrl_fd,
@@ -469,8 +469,7 @@ fn activate_pending(
     // VM sync-back (mac-vm / wsl2): runs on the wait thread right after
     // the agent exits, before unregister. Fail-loud via the event bus.
     // Unix-only path today (PendingSession/multi is unix-gated).
-    let sync_hook = post_wait.flatten();
-    let sync_bus = bus.clone();
+    let sync_hook = post_wait;
 
     let output = Arc::new(Mutex::new(OutputBuffers::default()));
     spawn_pipe_reader(stdout_r, Arc::clone(&output), true);
