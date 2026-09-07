@@ -36,10 +36,7 @@ pub struct SessionRecapInput {
 /// Render the recap lines (without the `vetto: recap: ` prefix).
 /// Returns `None` when the session was fully clean — stay silent like before.
 pub fn format_session_recap(input: &SessionRecapInput) -> Option<Vec<String>> {
-    if input.denials_total == 0
-        && input.egress_denied.is_empty()
-        && input.files_changed == 0
-    {
+    if input.denials_total == 0 && input.egress_denied.is_empty() && input.files_changed == 0 {
         return None;
     }
     let mut lines = Vec::with_capacity(5);
@@ -82,8 +79,12 @@ pub fn format_session_recap(input: &SessionRecapInput) -> Option<Vec<String>> {
             seg.push_str(&format!("denied: {}", denied.join(", ")));
         }
         if !input.egress_allowed.is_empty() {
-            let allowed: Vec<String> =
-                input.egress_allowed.iter().take(RECAP_TOP_N).cloned().collect();
+            let allowed: Vec<String> = input
+                .egress_allowed
+                .iter()
+                .take(RECAP_TOP_N)
+                .cloned()
+                .collect();
             if !seg.is_empty() {
                 seg.push_str("; ");
             }

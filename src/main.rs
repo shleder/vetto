@@ -1419,7 +1419,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 .iter()
                 .map(|b| (b.path.clone(), b.count))
                 .collect();
-            top_denied.sort_by(|a, b| b.1.cmp(&a.1));
+            top_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
             let mut egress_map: std::collections::BTreeMap<String, u64> =
                 std::collections::BTreeMap::new();
             let mut egress_allowed: Vec<String> = Vec::new();
@@ -1435,9 +1435,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                         .or_insert(0) += 1;
                 }
             }
-            let mut egress_denied: Vec<(String, u64)> =
-                egress_map.into_iter().collect();
-            egress_denied.sort_by(|a, b| b.1.cmp(&a.1));
+            let mut egress_denied: Vec<(String, u64)> = egress_map.into_iter().collect();
+            egress_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
             let recap_input = vetto::audit::SessionRecapInput {
                 exit_code,
                 duration_secs,

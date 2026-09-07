@@ -995,6 +995,20 @@ fn build_detail_from_history_record(rec: &AuditRecord) -> SessionAuditDetail {
 }
 
 /// Dispatches the `vetto audit` CLI subcommand with session inspection or listing.
+/// Options for [`run_audit_command`] — struct form avoids too-many-args lint.
+#[derive(Debug, Clone, Copy)]
+pub struct AuditCommandOptions<'a> {
+    pub session_id: Option<&'a str>,
+    pub latest: bool,
+    pub since: Option<&'a str>,
+    pub agent: Option<&'a str>,
+    pub limit: Option<usize>,
+    pub query: Option<&'a str>,
+    pub json_output: bool,
+    pub recap_only: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn run_audit_command(
     session_id: Option<&str>,
     latest: bool,
@@ -1046,14 +1060,14 @@ pub fn render_session_recap(detail: &SessionAuditDetail, json_output: bool) -> R
 
     let mut top: BTreeMap<(&str, &str, &str), u64> = BTreeMap::new();
     for d in &detail.filesystem_denials {
-        *top.entry((d.path.as_str(), d.process.as_str(), d.source.as_str())).or_insert(0) +=
-            d.count;
+        *top.entry((d.path.as_str(), d.process.as_str(), d.source.as_str()))
+            .or_insert(0) += d.count;
     }
     let mut top_denied: Vec<(String, u64)> = top
         .into_iter()
         .map(|((path, _, _), c)| (path.to_string(), c))
         .collect();
-    top_denied.sort_by(|a, b| b.1.cmp(&a.1));
+    top_denied.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
 
     let egress_denied: Vec<(String, u64)> = {
         let mut m: BTreeMap<String, u64> = BTreeMap::new();
@@ -1061,7 +1075,7 @@ pub fn render_session_recap(detail: &SessionAuditDetail, json_output: bool) -> R
             *m.entry(format!("{}:{}", n.host, n.port)).or_insert(0) += n.count;
         }
         let mut v: Vec<_> = m.into_iter().collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
         v
     };
     // Allowed egress is not stored in the audit detail — leave empty post-hoc.
