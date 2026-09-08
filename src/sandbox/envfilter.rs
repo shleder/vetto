@@ -116,7 +116,7 @@ mod envfilter_tests {
 
     #[test]
     fn path_sanitizer_cleans() {
-        assert_eq!(sanitize_path("/a::./~/a"), "/a");
+        assert_eq!(sanitize_path("/a::.:~/x:/a"), "/a");
         assert_eq!(sanitize_path(""), "/usr/bin:/bin");
         assert_eq!(sanitize_path("/b:/a:/b"), "/b:/a");
     }
