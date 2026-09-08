@@ -339,6 +339,7 @@ fn run() -> Result<()> {
                 &net,
             )
         }
+        Some(cli::Command::VerifyNg { json, lint }) => vetto::verify_ng::run_verify_ng(*json, *lint),
         Some(cli::Command::Redteam { json }) => {
             let report = vetto::redteam::run_redteam_battery();
             if *json {
@@ -642,7 +643,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
         Err(e) => {
             if cfg.dry_run && cfg.backend.as_deref().unwrap_or("auto") == "auto" {
-                (None, Some(policy::Tier::Full))
+                // F6: dry-run never fabricates a tier — None renders as
+                // "unknown (dry-run, NOT ENFORCED)", never "full".
+                (None, None)
             } else {
                 return Err(e);
             }
@@ -765,7 +768,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     if cfg.dry_run {
-        return dry_run(&cfg, &pol, &agent_cmd, tier_label(tier));
+        // F6: backend detection failed + dry-run => None tier renders as
+        // "unknown (dry-run)", never a fabricated "full".
+        let label = match tier {
+            Some(_) => tier_label(tier),
+            None => "unknown (dry-run)",
+        };
+        return dry_run(&cfg, &pol, &agent_cmd, label);
     }
 
     let backend = match backend_opt {
@@ -1547,7 +1556,7 @@ fn format_duration(limit: std::time::Duration) -> String {
 }
 
 fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &str) -> Result<()> {
-    println!("vetto dry-run — nothing enforced, nothing executed");
+    println!("vetto dry-run — NOT ENFORCED, nothing executed");
     println!("  tier:  {tier}");
     println!("  net:   {}", cfg.net.label());
     println!("  git ssh: {}", if cfg.git_ssh { "enabled" } else { "off" });
@@ -1586,7 +1595,7 @@ fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &s
             println!("  explicit CLI policy: {count} deny {noun} included above");
         }
     }
-    println!("  agent: {}", agent_cmd.join(" "));
+    println!("  agent: {}", vetto::logger::sanitizer::sanitize_line(&agent_cmd.join(" ")));
     Ok(())
 }
 

@@ -107,4 +107,4 @@ numbers come from `libc::SYS_*`, so x86-64 constants are never reused on ARM64.
   (prompt injection inside allowed tools/APIs, legitimate writes to allowed
   paths, microarchitectural side-channels, compromised kernel/root operator).
 - **No silent downgrade:** when a requested boundary cannot be guaranteed,
-  vetto exits fail-closed (`103`) instead of running unconfined.
+  vetto exits fail-closed (`125`, `EXIT_FAIL_CLOSED`) instead of running unconfined.

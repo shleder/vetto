@@ -1131,6 +1131,14 @@ fn environment_block(policy: &Policy, opts: &SpawnOptions) -> Result<Vec<u16>> {
     for (key, value) in &opts.env_extra {
         env.insert(key.to_lowercase(), (key.clone(), value.clone()));
     }
+    // W2: strip broker-injected proxy secrets like Linux/macOS do (defense
+    // in depth alongside the main.rs bail). Compare case-insensitively:
+    // Windows env names collide regardless of spelling.
+    if !policy.secret_proxies.is_empty() {
+        let proxies_upper: Vec<String> =
+            policy.secret_proxies.iter().map(|p| p.to_uppercase()).collect();
+        env.retain(|norm, _| !proxies_upper.iter().any(|p| p == norm.to_uppercase()));
+    }
     // Windows requires the supplied block to be sorted by variable name using
     // case-insensitive Unicode order. BTreeMap's bytewise ordering is not that
     // contract, so sort the final entries explicitly and use the original name

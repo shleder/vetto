@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.19] — 2026-09-08
+
+### Added
+
+- **`vetto verify-ng` CLI (adversarial harness skeleton)**: new `verify-ng [--json] [--lint]` subcommand wired through `src/cli.rs` + `src/main.rs` + `src/lib.rs` (`pub mod verify_ng`). `--lint` checks the frozen scenario registry (duplicate ids, empty limitations, PARTIAL-without-residual) without spawning; without `--lint` the harness fails closed with typed `VettoError::HarnessUnavailable` → exit 125, never a hollow PASS. Integration traps wired in `tests/integration/main.rs` (`mod verify_ng_traps`).
+- **10 architecture proposals merged** (`arch/all-proposals`): `docs/verify-ng.md` + 26 frozen TOML scenarios + `tests/integration/verify_ng_traps.rs` (P01, incl. Linux/Win/Mac suites, race/stress, fuzzing, differential traps FM-01..FM-12) and 9 design docs — `policy-ir` (P02), `fail-closed` inventory 22 items (P03), `secrets` broker model (P04), `proctree` containment (P05), `network` egress control (P06), `env` boundary audit (P07), `security-levels` (P08), `audit` forensics envelope (P09), `cross-platform` synthesis (CROSS). Docs only, no enforcement changes.
+
+### Fixed
+
+- **P0 fail-closed holes (from P03/P06/P07/P08 audits)**:
+  - `VETTO_SEATBELT_MODE` kill-switch is now debug-only: release builds fail closed (exit 125) on any value instead of silently stripping Seatbelt enforcement (`src/sandbox/macos/mod.rs`).
+  - `strict_allowed` bare-`*` pattern no longer matches everything: `strict:*:port` is rejected, use explicit `*.domain` or exact host (`src/sandbox/linux/net_relay.rs`, P06).
+  - Windows env deny matching is case-insensitive (upper-cased) so `aws_secret_access_key` cannot bypass `deny = ["AWS_SECRET*"]` (W1, `src/policy/types.rs`).
+  - Windows child env now strips broker proxy secrets like Linux/macOS (W2 defense-in-depth, `src/sandbox/windows/mod.rs`).
+  - `dry_run` argv goes through `logger::sanitizer::sanitize_line` so secrets in agent_cmd never print raw (A1, `src/main.rs`).
+  - `RLIMIT_CORE=0` before exec on Linux so env secrets never land in core dumps (C1, `src/sandbox/linux/mod.rs`).
+  - macOS NUL-containing env entries are dropped (`filter_map`), not silently replaced with empty strings (M1, `src/sandbox/macos/mod.rs`).
+  - Proxy vars removed from `DEFAULT_ENV_PASSTHROUGH` — relay injects them via `env_extra`, host passthrough no longer duplicates/leaks (D1, `src/policy/defaults.rs`).
+  - `VETTO_FORCE_TIER` honored only in debug/test builds, ignored in release (P03 downgrade-override).
+  - `dry-run` no longer fabricates `tier: full`: backend-detection failure prints `unknown (dry-run)` + `NOT ENFORCED` banner (F6, `src/main.rs`).
+  - Threat-model exit code corrected `103` → `125` (`docs/threat-model.md`, code is source of truth).
+- **SBPL maximum read shape documented**: `SBPL_MAXIMUM_READ_SHAPE = "shape-A-broad-plus-tail-deny"` constant + platform-backends hardening review (#62/#63 maximum-achievable, WFP admin-gating, Authenticode status).
+
 ## [0.2.18] — 2026-09-06
 
 ### Added

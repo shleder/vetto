@@ -315,6 +315,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Adversarial verification harness: runs the frozen scenario registry
+    /// through host-fact-only oracle judging (measurement only, not part of
+    /// the security boundary).
+    #[command(name = "verify-ng")]
+    VerifyNg {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Lint the frozen scenario registry without executing anything.
+        #[arg(long)]
+        lint: bool,
+    },
     /// Run an agent command under the Vetto sandbox supervisor
     #[command(hide = true)]
     Run {
