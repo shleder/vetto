@@ -28,7 +28,7 @@ impl CleanupExpectation {
         #[cfg(target_os = "windows")]
         {
             let _ = tier_label;
-            return CleanupExpectation::Strong;
+            CleanupExpectation::Strong
         }
         #[cfg(target_os = "linux")]
         {
@@ -42,16 +42,16 @@ impl CleanupExpectation {
         #[cfg(target_os = "macos")]
         {
             let _ = tier_label;
-            return CleanupExpectation::BestEffort {
+            CleanupExpectation::BestEffort {
                 sweep_budget_ms: 2000,
-            };
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = tier_label;
-            return CleanupExpectation::BestEffort {
+            CleanupExpectation::BestEffort {
                 sweep_budget_ms: 2000,
-            };
+            }
         }
     }
 }
