@@ -99,7 +99,7 @@ pub fn new_nonce() -> String {
             *b = ((t >> (8 * (i % 8))) ^ (std::process::id() as u128) ^ (i as u128 * 0x9E37)) as u8;
         }
     }
-    hex_encode(bytes)
+    hex_encode(&bytes)
 }
 
 /// Evaluate the gate-relevant outcome for a poisoned run without spawning

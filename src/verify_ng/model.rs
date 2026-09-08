@@ -70,7 +70,7 @@ impl ClaimStrength {
 }
 
 /// Blocker categories map to the security invariants I1..I6.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {
     /// I1 fail-closed spawn.
