@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 
 use super::tail::resolve_session_path;
 use super::types::{Event, FileAccess};
+use crate::logger::sanitizer;
 
 pub fn run_replay(session_arg: &Path, speed: Option<f64>, json_output: bool) -> Result<()> {
     let path = resolve_session_path(session_arg)?;
@@ -149,7 +150,10 @@ fn describe_replay_event(event: &Event) -> String {
             format!("{comm}[{pid}] {acc} {path}")
         }
         Event::ExecObserved { pid, argv, .. } => {
-            format!("pid={pid} exec: {}", argv.join(" "))
+            format!(
+                "pid={pid} exec: {}",
+                sanitizer::sanitize_line(&argv.join(" "))
+            )
         }
         Event::BlockedAttempt {
             comm,
