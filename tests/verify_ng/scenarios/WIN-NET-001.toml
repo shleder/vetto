@@ -1,0 +1,28 @@
+# WIN-NET-001 — Windows egress: --net=off via AppContainer capabilities (host-fact-only); per-domain без admin UNPROVABLE/fail-closed.
+id = "WIN-NET-001"
+category = "net"
+severity = "blocker"
+required_caps = ["spawn"]
+quorum = 2
+
+[strength]
+windows = "PARTIAL"
+windows-sandbox-vm = "STRONG"
+linux-full = "NOT_APPLICABLE"
+macos = "NOT_APPLICABLE"
+
+known_limitation = "Per-domain egress без admin на Windows — UNPROVABLE (WFP требует elevation); allowlist обязан fail-closed в AppContainer capability deny, никогда silent allow. Полный Strong — только windows-sandbox-vm."
+residual_risk = "На native Windows доказывается только capability-deny, не отсутствие маршрута; strength ceiling PARTIAL. Любой per-domain PASS без admin — баг oracle."
+
+[evidence.host_facts]
+listener-v4 = "host loopback listener (IPv4) stays unconnected for the whole run"
+listener-v6 = "host loopback listener (IPv6) stays unconnected for the whole run"
+no-wfp-claim = "отчёт обязан нести маркер admin-отсутствия; per-domain claims без elevation запрещены"
+
+[evidence.constrained_channel]
+errno_class = "connect/sendto/getaddrinfo обязаны вернуть ACCESS_DENIED/WSAENETUNREACH/timeout с nonce сессии (hint; вердикт по host-фактам)"
+vectors = ["curl", "powershell-net", "python-socket", "native-tcp4", "native-tcp6", "dns", "alt-http-client"]
+
+[evidence.not_applicable]
+linux-full = "Windows-only egress battery"
+macos = "Windows-only egress battery"

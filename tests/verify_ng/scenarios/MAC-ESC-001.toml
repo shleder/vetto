@@ -1,0 +1,27 @@
+# MAC-ESC-001 — macOS escape battery: профиль побайтово + tail-deny; read secrecy вне tail-deny UNPROVABLE (потолок PARTIAL).
+id = "MAC-ESC-001"
+category = "fs-read"
+severity = "high"
+required_caps = ["spawn", "seatbelt"]
+quorum = 2
+
+[strength]
+macos = "PARTIAL"
+linux-full = "NOT_APPLICABLE"
+windows = "NOT_APPLICABLE"
+
+known_limitation = "Профиль обязан совпасть с Shape-A + tail-deny побайтово (см. MAC-SHAPE-001). Strong read-secrecy на macOS native UNPROVABLE; только Linux VM. SBPL-фрагментация SIGABRTит dyld — narrow shape не существует."
+residual_risk = "Любой путь вне tail-deny читаем by construction; использовать Linux VM для strong read secrecy. Egress ограничен --net=off via (deny network*); per-domain allowlist unsupported и fail-closed."
+
+[evidence.host_facts]
+profile-bytes = "применённый SBPL-профиль побайтово равен Shape-A + tail-deny (MAC-SHAPE-001 gate)"
+tail-deny = "host stat tail-deny таргетов после wait: denied/отсутствуют"
+canary-inside = "positive control внутри проекта цел"
+
+[evidence.constrained_channel]
+errno_class = "read вне tail-deny может УСПЕШНО вернуть байты по построению Shape-A — это не FAIL сценария, а подтверждение потолка PARTIAL; read tail-deny обязан вернуть EPERM с nonce сессии"
+vectors = ["tail-deny-read", "shape-outside-read", "seatbelt-bypass-open", "net-off-egress", "kqueue-watchdog-race"]
+
+[evidence.not_applicable]
+linux-full = "macOS-only battery"
+windows = "macOS-only battery"

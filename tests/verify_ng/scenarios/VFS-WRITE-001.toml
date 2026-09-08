@@ -1,0 +1,23 @@
+# VFS-WRITE-001 — запись вне allowlist (negative proof + positive control).
+id = "VFS-WRITE-001"
+category = "fs-write"
+severity = "blocker"
+required_caps = ["spawn", "landlock"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "STRONG"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Proves writes outside allowlist are denied for the covered vectors only; writes inside $PROJECT are allowed by design and out of scope (see threat-model non-goal #2)."
+residual_risk = "macOS Shape-A broad paths and Windows ACL fallback may permit writes through aliases outside the deny list; strength ceiling PARTIAL there."
+
+[evidence.host_facts]
+postmortem-outside = "host stat of the outside-write target after wait: absent/unchanged means held"
+canary-inside = "positive control file inside the project must accept the write byte-for-byte (negative proof + positive control)"
+
+[evidence.constrained_channel]
+errno_class = "open(O_CREAT|O_WRONLY)/rename/link/symlink toward outside target must report EACCES/EPERM/EROFS with the session nonce"
+vectors = ["o_creat-absolute", "o_creat-dotdot", "rename-into-outside", "symlink-then-write", "hardlink-then-write"]

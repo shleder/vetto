@@ -103,13 +103,22 @@ fn kernel_release() -> String {
 
 /// Fail-closed tier selection. `Err` means: the agent does NOT run.
 ///
-/// `VETTO_FORCE_TIER=full|fs-only|seccomp` (testing override) can only select a tier
-/// whose primitives are actually available — it can never bypass fail-closed.
+/// `VETTO_FORCE_TIER=full|fs-only|seccomp` is a testing override honored in
+/// debug/test builds (CI runs `cargo test` unoptimized: `debug_assertions`
+/// on) and ignored in release builds. It can only select a tier whose
+/// primitives are actually available — it can never bypass fail-closed.
+/// Production downgrade requires an explicit CLI opt-in (P03), not env.
 pub fn pick_tier(probe: &Probe) -> Result<Tier> {
-    match std::env::var("VETTO_FORCE_TIER").as_deref() {
-        Ok("seccomp") if probe.seccomp_filter_available => return Ok(Tier::Seccomp),
-        Ok("fs-only") if probe.seccomp_filter_available => return Ok(Tier::FsOnly),
-        Ok("full") if probe.full_tier_available => return Ok(Tier::Full),
+    // Release binaries ignore the override: silent downgrade via inherited
+    // env (CI wrappers, outer vetto) must not weaken enforcement.
+    #[cfg(not(debug_assertions))]
+    let force_tier: Option<String> = None;
+    #[cfg(debug_assertions)]
+    let force_tier: Option<String> = std::env::var("VETTO_FORCE_TIER").ok();
+    match force_tier.as_deref() {
+        Some("seccomp") if probe.seccomp_filter_available => return Ok(Tier::Seccomp),
+        Some("fs-only") if probe.seccomp_filter_available => return Ok(Tier::FsOnly),
+        Some("full") if probe.full_tier_available => return Ok(Tier::Full),
         _ => {}
     }
     if probe.landlock_abi.is_none() {
@@ -702,6 +711,16 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
     }
 
     // SAFETY: execve with NUL-terminated argv/envp vectors built above.
+    // C1: secrets live in env (agent presets!) — disable core dumps before
+    // exec so env never lands in a core file (RLIMIT_CORE=0).
+    {
+        let zero = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: zeroing core limit on our own process before exec.
+        unsafe { libc::setrlimit(libc::RLIMIT_CORE, &zero) };
+    }
     if let Err(error) = limits::apply_before_exec(&policy.limits) {
         let message = format!("[vetto-child] resource limits failed: {error}\n");
         // SAFETY: raw write to stderr for diagnostics before dying.

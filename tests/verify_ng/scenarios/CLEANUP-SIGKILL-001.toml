@@ -1,0 +1,15 @@
+# CLEANUP-SIGKILL-001 — SIGKILL of the harness mid-attack, external observer counts residue.
+id = "CLEANUP-SIGKILL-001"
+category = "proc"
+severity = "high"
+required_caps = ["spawn", "tree-sweep"]
+quorum = 1
+
+[strength]
+linux-full = "STRONG"
+windows = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+
+known_limitation = "Requires an external observer process/VM; cannot be self-proven from inside the harness under test."
+residual_risk = "fs-only/macOS orphans may survive a SIGKILLed harness; suite must run in a disposable VM there."

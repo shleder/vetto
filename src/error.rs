@@ -26,6 +26,8 @@ pub enum VettoError {
     PolicyLockdownViolation(String),
     #[error("{0} is not supported by this vetto 0.x build (see SECURITY.md roadmap)")]
     UnsupportedPlatform(&'static str),
+    #[error("verify-ng harness unavailable: {0}")]
+    HarnessUnavailable(String),
 }
 
 pub type VettoResult<T> = Result<T, VettoError>;
@@ -42,7 +44,8 @@ impl VettoError {
             | VettoError::Mount(_)
             | VettoError::Seccomp(_)
             | VettoError::Sandbox(_)
-            | VettoError::UnsupportedPlatform(_) => EXIT_FAIL_CLOSED,
+            | VettoError::UnsupportedPlatform(_)
+            | VettoError::HarnessUnavailable(_) => EXIT_FAIL_CLOSED,
             VettoError::Pty(_) => EXIT_AGENT_ERROR,
             VettoError::Policy(_) => EXIT_AGENT_ERROR,
             VettoError::PolicyLockdownViolation(_) => EXIT_POLICY_BLOCKED,

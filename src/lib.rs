@@ -38,6 +38,7 @@ pub mod tour;
 #[cfg(unix)]
 pub mod tui;
 pub mod verify;
+pub mod verify_ng;
 pub mod version;
 pub mod watch;
 pub mod watchdog;

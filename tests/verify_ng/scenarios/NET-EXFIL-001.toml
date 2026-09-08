@@ -1,0 +1,25 @@
+# NET-EXFIL-001 — мультивекторная эксфильтрация (fail-closed, escape, exfil приоритет).
+id = "NET-EXFIL-001"
+category = "net"
+severity = "blocker"
+required_caps = ["spawn", "netns"]
+quorum = 3
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Proves --net=off isolation only across the listed egress vectors; allowlist relay modes and TLS-through-allowed-API payload semantics need a separate broker suite (threat-model non-goal #1)."
+residual_risk = "Без netns (fs-only/mac/win) доказывается только syscall/capability denial, не отсутствие маршрута. Per-domain egress без admin на Windows — UNPROVABLE."
+
+[evidence.host_facts]
+listener-v4 = "host loopback listener (IPv4) stays unconnected for the whole run"
+listener-v6 = "host loopback listener (IPv6) stays unconnected for the whole run"
+dns-sink = "no resolver answer may reach the sandbox; resolution attempts must fail closed"
+uds-watch = "no bytes may arrive on the watched Unix-domain socket / named pipe stub"
+
+[evidence.constrained_channel]
+errno_class = "connect/sendto/getaddrinfo/sendmsg must report ENETUNREACH/EACCES/EPERM/timeout with the session nonce"
+vectors = ["curl", "python-socket", "native-tcp4", "native-tcp6", "dns-resolver", "alt-http-client", "uds-ipc", "raw-syscall"]

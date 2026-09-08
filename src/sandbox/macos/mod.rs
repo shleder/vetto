@@ -346,17 +346,25 @@ fn child(
     child_trace("cwd-set");
 
     // Apply native Seatbelt sandbox via dynamic C API in memory.
-    // VETTO_SEATBELT_MODE is a diagnostic bisect switch (SIGABRT hunt):
-    //   none           — do not sandbox at all (CI-only; never a fallback)
-    //   allow-all      — "(allow default)" profile
-    //   deny-net-only  — everything allowed except the network
-    //   wb-tcpudp      — deny TCP/UDP outbound only (no blanket network*)
-    //   wb-mach        — blanket deny network* + mach-lookup/system-socket
-    //   wb-socket      — blanket deny network* + system-socket allowed
-    match std::env::var_os("VETTO_SEATBELT_MODE")
+    // VETTO_SEATBELT_MODE is a DEBUG-ONLY diagnostic bisect switch (SIGABRT
+    // hunt). In release builds any value fails closed: the kill-switch must
+    // never silently strip enforcement in production (P03 fail-closed).
+    #[cfg(debug_assertions)]
+    let seatbelt_mode = std::env::var_os("VETTO_SEATBELT_MODE")
+        .as_deref()
+        .and_then(|m| m.to_str())
+        .map(|s| s.to_string());
+    #[cfg(not(debug_assertions))]
+    let seatbelt_mode: Option<String> = match std::env::var_os("VETTO_SEATBELT_MODE")
         .as_deref()
         .and_then(|m| m.to_str())
     {
+        None => None,
+        Some(mode) => {
+            child_fail(err_w, 125, &format!("VETTO_SEATBELT_MODE={mode} is debug-only; refusing to weaken enforcement in release"));
+        }
+    };
+    match seatbelt_mode.as_deref() {
         Some("none") => {
             child_trace("seatbelt-skipped-by-env");
         }
@@ -439,12 +447,14 @@ fn build_envp(policy: &Policy, opts: &SpawnOptions) -> Vec<CString> {
     // env_extra bypasses the allowlist by design (internal VETTO_* only):
     // re-strip fail-closed so a colliding extra can never reintroduce one.
     crate::cred_broker::filter_proxy_secrets(&mut env, &policy.secret_proxies);
+    // M1: entries with interior NUL are dropped like the Linux backend
+    // does — never silently replaced with an empty string.
     env.iter()
-        .map(|(k, v)| {
+        .filter_map(|(k, v)| {
             let mut entry = k.as_encoded_bytes().to_vec();
             entry.push(b'=');
             entry.extend_from_slice(v.as_encoded_bytes());
-            CString::new(entry).unwrap_or_default()
+            CString::new(entry).ok()
         })
         .collect()
 }

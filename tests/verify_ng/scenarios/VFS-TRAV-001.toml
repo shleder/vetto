@@ -1,0 +1,22 @@
+# VFS-TRAV-001 — symlink/hardlink/dotdot/rename traversal from inside enforcement.
+id = "VFS-TRAV-001"
+category = "fs-read"
+severity = "blocker"
+required_caps = ["spawn", "landlock"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "STRONG"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Covers symlink/hardlink/dotdot/rename vectors present in the payload set; new kernel path aliases need new vectors."
+residual_risk = "macOS Shape-A broad reads and Windows ACL fallback may expose entries outside the tail-deny list; strength ceiling PARTIAL there."
+
+[evidence.host_facts]
+postmortem = "host stat of the secret target after wait: absent/empty means held"
+canary = "positive control file inside the project must be byte-identical"
+
+[evidence.constrained_channel]
+errno_class = "open/read of the secret via each alias must report EACCES/EPERM with the session nonce"

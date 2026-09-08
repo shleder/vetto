@@ -1,0 +1,12 @@
+# WIN-WSL-001 — WSL-interop boundary (unmapped; INCONCLUSIVE baseline).
+id = "WIN-WSL-001"
+category = "fs-read"
+severity = "high"
+required_caps = ["spawn"]
+quorum = 1
+
+[strength]
+windows = "UNSUPPORTED"
+
+known_limitation = "WSL-interop boundary is unmapped; INCONCLUSIVE baseline until researched. Any PASS is an oracle bug."
+residual_risk = ""

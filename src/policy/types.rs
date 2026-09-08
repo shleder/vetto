@@ -204,11 +204,22 @@ pub struct EnvironmentPolicy {
 impl EnvironmentPolicy {
     pub fn allows(&self, key: &OsStr) -> bool {
         let key = key.to_string_lossy();
-        // Deny takes precedence
+        // Deny takes precedence. On Windows env names are case-insensitive
+        // (W1): match upper-cased so `aws_secret_access_key` cannot bypass
+        // `deny = ["AWS_SECRET*"]`.
+        #[cfg(target_os = "windows")]
+        let key_cmp: String = key.to_uppercase();
+        #[cfg(not(target_os = "windows"))]
+        let key_cmp: &str = &key;
         let is_denied = self.deny.iter().any(|pattern| {
-            pattern
-                .strip_suffix('*')
-                .map_or_else(|| pattern == key.as_ref(), |prefix| key.starts_with(prefix))
+            #[cfg(target_os = "windows")]
+            let pattern_cmp: String = pattern.to_uppercase();
+            #[cfg(not(target_os = "windows"))]
+            let pattern_cmp: &str = pattern;
+            pattern_cmp.strip_suffix('*').map_or_else(
+                || pattern_cmp == key_cmp,
+                |prefix| key_cmp.starts_with(prefix),
+            )
         });
         if is_denied {
             return false;

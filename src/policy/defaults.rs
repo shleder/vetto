@@ -58,6 +58,14 @@ pub const AGENT_PROFILE_NAMES: [&str; 21] = [
 /// The list is deliberately small: the parent environment is never inherited
 /// wholesale. A trailing `*` is treated as a prefix pattern by
 /// `EnvironmentPolicy::allows` (used for locale variables only).
+///
+/// D1: the TOML profiles are the single source of truth for the default
+/// baseline (`profiles/default.toml [environment]`). This constant exists
+/// only as a fallback when a builtin profile text has no `[environment]`
+/// section at all — it must stay in sync with that TOML list. Proxy
+/// variables are intentionally ABSENT here: in relay mode the relay injects
+/// them via `env_extra`; host passthrough would duplicate and leak the
+/// host's proxy choice (P07 env proposal).
 pub const DEFAULT_ENV_PASSTHROUGH: &[&str] = &[
     "HOME",
     "PATH",
@@ -77,10 +85,6 @@ pub const DEFAULT_ENV_PASSTHROUGH: &[&str] = &[
     "RUSTUP_HOME",
     "NVM_DIR",
     "NODE_PATH",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY",
     "TMPDIR",
     "PWD",
     "OLDPWD",

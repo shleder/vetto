@@ -192,6 +192,18 @@ pub fn apply_seatbelt_raw(profile: &str, params: &[(String, String)]) -> Result<
     }
 }
 
+/// Stable read-deny shapes per agent runtime (issue #62).
+///
+/// Empirical result of the SBPL matrix (`.github/workflows/macos-sbpl-matrix.yml`,
+/// `scripts/sbpl-matrix-test.sh`, macos 14/15/15-intel): ONLY Shape A (single
+/// broad `(allow file-read* (subpath "/"))` + trailing secret denies) runs —
+/// every fragmented shape (B/C/D/E/F) SIGABRTs ALL binaries including static
+/// Go. There is no per-runtime narrow shape on current macOS: dynamic
+/// (Swift/Rust) and static (Go) behave identically. Narrow read-deny stays
+/// closed until Apple fixes dyld; the tail-deny carve-out on known secrets
+/// (`deny_resolved`) is the maximum enforceable read boundary today.
+pub const SBPL_MAXIMUM_READ_SHAPE: &str = "shape-A-broad-plus-tail-deny";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SbplFragmentStatus {
     Broken,

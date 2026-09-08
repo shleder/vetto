@@ -1,0 +1,31 @@
+# WIN-ESC-001 — Windows escape battery: PowerShell/cmd/API, restricted token, integrity, Job, ACL, network (host-fact-only).
+id = "WIN-ESC-001"
+category = "proc"
+severity = "blocker"
+required_caps = ["spawn", "tree-sweep"]
+quorum = 2
+
+[strength]
+windows = "STRONG"
+windows-sandbox-vm = "STRONG"
+linux-full = "NOT_APPLICABLE"
+linux-fsonly = "NOT_APPLICABLE"
+linux-seccomp = "NOT_APPLICABLE"
+macos = "NOT_APPLICABLE"
+
+known_limitation = "Windows evidence — host-fact-only, пока нет HANDLE-capture в backend (требует отдельного backend-ревью, вне verify-ng). Per-domain egress без admin — UNPROVABLE (WFP требует elevation). WSL-interop — см. WIN-WSL-001 (UNSUPPORTED)."
+residual_risk = "UNC/mapped-drive алиасы — см. WIN-UNC-001 (PARTIAL/advisory). WFP allowlist без admin недоказуем и обязан fail-closed."
+
+[evidence.host_facts]
+job-sweep = "Job Object kill-on-close: external host observe после close обязан найти ноль residual процессов"
+token-fact = "host-side token/integrity snapshot: Low integrity + restricted token удержаны (не self-report процесса)"
+acl-postmortem = "host stat внешних таргетов после wait: absent/unchanged"
+no-pipe-collection = "windows evidence собирается host-фактами; pipe-drain stub возвращает not-EOF и дает INCONCLUSIVE, никогда PASS"
+
+[evidence.constrained_channel]
+errno_class = "запрещённые доступы обязаны вернуть ACCESS_DENIED с nonce сессии (narrow hint; вердикт только по host-фактам)"
+vectors = ["powershell-escape", "cmd-escape", "winapi-direct", "unc-alias", "mapped-drive", "wsl-interop-probe", "token-escape", "job-escape", "acl-bypass"]
+
+[evidence.not_applicable]
+linux-full = "Windows-only battery; на Linux требуется probe-доказательство отсутствия windows-capability"
+macos = "Windows-only battery; на macOS требуется probe-доказательство отсутствия windows-capability"

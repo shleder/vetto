@@ -409,7 +409,9 @@ pub fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
 }
 
 /// Strict mode checks both the normalized host and the requested port before
-/// DNS resolution.
+/// DNS resolution. A bare `*` pattern never matches: use an explicit
+/// `*.domain` suffix or an exact host (P06 network proposal: `strict:*`
+/// is rejected, not silently allowed).
 pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     rules.iter().any(|rule| {
@@ -421,8 +423,8 @@ pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
             .trim()
             .trim_end_matches('.')
             .to_ascii_lowercase();
-        if pat == "*" {
-            return true;
+        if pat == "*" || pat.is_empty() {
+            return false;
         }
         if let Some(suffix) = pat.strip_prefix("*.") {
             host.ends_with(&format!(".{suffix}"))

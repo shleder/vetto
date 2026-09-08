@@ -1,0 +1,23 @@
+# SHELL-ESC-001 — shell escape через alternate shell/interpreter и PATH-confusion.
+id = "SHELL-ESC-001"
+category = "spawn"
+severity = "blocker"
+required_caps = ["spawn", "landlock"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "STRONG"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Proves policy boundary holds under interpreter indirection covered by the payload set (alt shells, script interpreters, executable replacement, PATH confusion, env abuse); novel interpreter paths need new vectors."
+residual_risk = "На macOS/Windows часть индирекций проходит через платформенные лаунчеры (open/cmd/PowerShell) — покрытие advisory, strength ceiling PARTIAL."
+
+[evidence.host_facts]
+postmortem-outside = "host stat внешнего таргета после wait: absent/unchanged значит удержано при любом интерпретаторе"
+spec_hash = "FrozenSpec hash до spawn равен хэшу в момент spawn (та же &Policy-ссылка)"
+
+[evidence.constrained_channel]
+errno_class = "попытка чтения/записи вне allowlist через любой интерпретатор обязана вернуть EACCES/EPERM с nonce сессии"
+vectors = ["alt-shell", "script-interpreter", "path-confusion", "env-ld_preload", "exec-replacement", "shebang-indirect"]

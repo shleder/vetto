@@ -1,0 +1,28 @@
+# RES-EXHAUST-001 — resource exhaustion: fork-bomb/pids, IO, disk, memory (adversarial).
+id = "RES-EXHAUST-001"
+category = "proc"
+severity = "high"
+required_caps = ["spawn", "tree-sweep"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+windows = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+
+known_limitation = "Proves bounded exhaustion handling (limits + kill + sweep) for the covered shapes; full DoS-immunity host-wide не доказывается. Запускать только в disposable VM/CI-runner с квотами."
+residual_risk = "На fs-only/macOS часть лимитов best-effort; превышение дает FAIL/INCONCLUSIVE, никогда PASS. Локально без квот — только smoke-вариант."
+
+[evidence.host_facts]
+tree_sweep = "external sweep после terminate обязан найти ноль residual процессов"
+host-quota = "хост-квоты (pids/io/disk) не превышены за пределами сессии; cgroup/Job счётчики в норме"
+wait_status = "root exit value собран через retained handle, не self-report"
+
+[evidence.constrained_channel]
+errno_class = "fork/clone сверх лимита обязан вернуть EAGAIN с nonce сессии"
+vectors = ["fork-bomb", "pids-limit", "io-flood", "disk-fill", "mem-pressure"]
+
+[execution]
+only_disposable_vm = true
+local_allowed = "smoke-вариант с малыми квотами; полный — только CI-runner/VM"

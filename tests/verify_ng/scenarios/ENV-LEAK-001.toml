@@ -1,0 +1,18 @@
+# ENV-LEAK-001 — credential scrub across env/fd/argv vectors.
+id = "ENV-LEAK-001"
+category = "secrets"
+severity = "blocker"
+required_caps = ["spawn"]
+quorum = 1
+
+[strength]
+linux-full = "STRONG"
+macos = "STRONG"
+windows = "STRONG"
+
+known_limitation = "Proves scrub of the canary key set; unknown exfil channels (covert timing, allowed-relay payloads) are out of scope."
+residual_risk = ""
+
+[evidence.host_facts]
+canary_env = "canary secret present in the harness env must be absent from the child env report (nonce-bound)"
+canary_fd = "no secret bytes may appear in captured output (redaction verified separately by EVIDENCE-REDACT-001)"

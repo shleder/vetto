@@ -1,0 +1,25 @@
+# RACE-TOCTOU-001 — race между policy construction и process start + symlink TOCTOU (stress).
+id = "RACE-TOCTOU-001"
+category = "spawn"
+severity = "blocker"
+required_caps = ["spawn", "landlock"]
+quorum = 3
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Proves freeze-to-spawn continuity and symlink-swap TOCTOU resistance for the covered race shapes; compromised host kernel/scheduler out of scope. Медиана >=3 прогонов, ретраи не превращают FAIL в PASS."
+residual_risk = "На fs-only/macOS часть гонок наблюдается best-effort; расхождение прогонов дает INCONCLUSIVE, destructive-нагрузка только в disposable VM."
+
+[evidence.host_facts]
+spec_hash = "FrozenSpec hash до spawn равен хэшу в момент spawn на каждом прогоне (медиана >=3)"
+postmortem = "host stat внешнего таргета после каждого прогона: absent/unchanged на всех прогонах"
+tier_match = "detected tier равен expected tier на каждом прогоне (single detect per run)"
+
+[stress]
+runs = 5
+median_rule = "вердикт по медиане >=3 согласующихся прогонов; любое расхождение векторов дает INCONCLUSIVE"
+vectors = ["symlink-swap-race", "rename-race", "freeze-spawn-drift", "parallel-spawn-serial", "mount-view-race"]
