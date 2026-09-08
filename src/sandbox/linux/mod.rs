@@ -714,7 +714,10 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
     // C1: secrets live in env (agent presets!) — disable core dumps before
     // exec so env never lands in a core file (RLIMIT_CORE=0).
     {
-        let zero = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let zero = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         // SAFETY: zeroing core limit on our own process before exec.
         unsafe { libc::setrlimit(libc::RLIMIT_CORE, &zero) };
     }

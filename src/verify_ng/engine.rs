@@ -17,9 +17,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::frozen::FrozenSpec;
 use super::frozen::hex_encode;
-use super::model::{Category, ClaimStrength, ScenarioResult, Verdict};
+use super::frozen::FrozenSpec;
+use super::model::{Category, ScenarioResult, Verdict};
 use super::registry::{Scenario, Target};
 
 /// Global spawn serializer (FM-09). Hold from `detect` to fork-return.
@@ -31,8 +31,11 @@ pub fn spawn_serial() -> &'static Mutex<()> {
 
 /// Diagnostic env switches that weaken enforcement. Presence (except an
 /// explicit opt-in for the tier-differential job) poisons the run.
-pub const POISON_ENV: &[&str] =
-    &["VETTO_SEATBELT_MODE", "VETTO_NO_MAC_LIMITS", "VETTO_CHILD_TRACE"];
+pub const POISON_ENV: &[&str] = &[
+    "VETTO_SEATBELT_MODE",
+    "VETTO_NO_MAC_LIMITS",
+    "VETTO_CHILD_TRACE",
+];
 
 /// Detect poisoned diagnostic env. `allow_force_tier` is true only in the
 /// tier-differential CI job, where the actual tier is cross-checked.

@@ -105,16 +105,17 @@ pub fn evaluate_gate(
     for (category, min) in min_pass_per_category() {
         let got = pass_per_category.get(&category).copied().unwrap_or(0);
         if got < min {
-            blocking.push(format!(
-                "{}:only-{got}-pass-min-{min}",
-                category.label()
-            ));
+            blocking.push(format!("{}:only-{got}-pass-min-{min}", category.label()));
         }
     }
 
     // Zero INCONCLUSIVE in blockers (fail-closed): already covered by
     // blocks_release, but stated explicitly for the report.
-    let status = if blocking.is_empty() { "pass" } else { "failed" };
+    let status = if blocking.is_empty() {
+        "pass"
+    } else {
+        "failed"
+    };
     let _ = registry_hash;
     GateReport {
         status: status.to_string(),
@@ -179,8 +180,14 @@ mod exit_tests {
             result("ENV-LEAK-001", Category::Secrets, Verdict::NotApplicable),
         ];
         let mut ev = BTreeMap::new();
-        ev.insert("VFS-TRAV-001".to_string(), vec!["netns: absent (x)".to_string()]);
-        ev.insert("ENV-LEAK-001".to_string(), vec!["spawn: absent (y)".to_string()]);
+        ev.insert(
+            "VFS-TRAV-001".to_string(),
+            vec!["netns: absent (x)".to_string()],
+        );
+        ev.insert(
+            "ENV-LEAK-001".to_string(),
+            vec!["spawn: absent (y)".to_string()],
+        );
         let report = evaluate_gate(&results, &ev, "reg");
         assert_eq!(report.status, "failed");
     }
@@ -189,10 +196,17 @@ mod exit_tests {
     #[test]
     fn na_without_evidence_blocks() {
         let mut results = full_pass_set();
-        results.push(result("WIN-WSL-001", Category::FsRead, Verdict::NotApplicable));
+        results.push(result(
+            "WIN-WSL-001",
+            Category::FsRead,
+            Verdict::NotApplicable,
+        ));
         let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
         assert_eq!(report.status, "failed");
-        assert!(report.blocking.iter().any(|b| b.contains("N/A-without-evidence")));
+        assert!(report
+            .blocking
+            .iter()
+            .any(|b| b.contains("N/A-without-evidence")));
     }
 
     /// Full PASS set with N/A evidence passes.
@@ -201,7 +215,10 @@ mod exit_tests {
         let mut results = full_pass_set();
         results.push(result("WIN-WSL-001", Category::Aux, Verdict::NotApplicable));
         let mut ev = BTreeMap::new();
-        ev.insert("WIN-WSL-001".to_string(), vec!["wsl: absent (unmapped)".to_string()]);
+        ev.insert(
+            "WIN-WSL-001".to_string(),
+            vec!["wsl: absent (unmapped)".to_string()],
+        );
         let report = evaluate_gate(&results, &ev, "reg");
         assert_eq!(report.status, "pass");
         assert_eq!(gate_exit_code(&report), 0);

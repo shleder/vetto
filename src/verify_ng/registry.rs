@@ -88,13 +88,13 @@ impl Scenario {
         if self.known_limitation.trim().is_empty() {
             return Err(format!("{}: known_limitation must be non-empty", self.id));
         }
-        if self
-            .strength
-            .values()
-            .any(|s| *s == ClaimStrength::Partial)
+        if self.strength.values().any(|s| *s == ClaimStrength::Partial)
             && self.residual_risk.trim().is_empty()
         {
-            return Err(format!("{}: PARTIAL target requires residual_risk", self.id));
+            return Err(format!(
+                "{}: PARTIAL target requires residual_risk",
+                self.id
+            ));
         }
         Ok(())
     }
@@ -300,7 +300,7 @@ pub fn registry() -> Vec<Scenario> {
             quorum: 1,
             known_limitation: "Advisory until UNC/namespace-alias coverage is mapped; starts INCONCLUSIVE, never PASS on first implementation."
                 .to_string(),
-            residual_risk: "Alternate path aliases (UNC, \\?\, mapped drives) may bypass ACL-shaped checks.".to_string(),
+            residual_risk: r"Alternate path aliases (UNC, \\?\, mapped drives) may bypass ACL-shaped checks.".to_string(),
         },
         Scenario {
             id: "WIN-WSL-001".to_string(),

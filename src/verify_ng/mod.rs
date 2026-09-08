@@ -37,9 +37,8 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     let scenarios = registry::registry();
     if lint {
         let errors = registry::lint_all(&scenarios);
-        let hash = frozen::registry_hash(
-            &scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-        );
+        let hash =
+            frozen::registry_hash(&scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
         if json {
             println!(
                 "{}",
@@ -51,7 +50,10 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
                 })
             );
         } else if errors.is_empty() {
-            println!("verify-ng lint clean: {} scenarios, registry {hash}", scenarios.len());
+            println!(
+                "verify-ng lint clean: {} scenarios, registry {hash}",
+                scenarios.len()
+            );
         } else {
             println!("verify-ng lint FAILED ({} error(s)):", errors.len());
             for e in &errors {
@@ -75,10 +77,12 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
         results: vec![],
     };
     if json {
-        let hash = frozen::registry_hash(
-            &scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+        let hash =
+            frozen::registry_hash(&scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report::gate_report_json(&report, &hash))?
         );
-        println!("{}", serde_json::to_string_pretty(&report::gate_report_json(&report, &hash))?);
     } else {
         eprintln!("vetto: verify-ng: suite execution not wired yet; failing closed");
         println!("{}", report::render_text(&report));

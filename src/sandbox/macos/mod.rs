@@ -364,8 +364,7 @@ fn child(
             child_fail(err_w, 125, &format!("VETTO_SEATBELT_MODE={mode} is debug-only; refusing to weaken enforcement in release"));
         }
     };
-    match seatbelt_mode.as_deref()
-    {
+    match seatbelt_mode.as_deref() {
         Some("none") => {
             child_trace("seatbelt-skipped-by-env");
         }

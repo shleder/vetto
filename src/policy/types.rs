@@ -216,9 +216,10 @@ impl EnvironmentPolicy {
             let pattern_cmp: String = pattern.to_uppercase();
             #[cfg(not(target_os = "windows"))]
             let pattern_cmp: &str = pattern;
-            pattern_cmp
-                .strip_suffix('*')
-                .map_or_else(|| pattern_cmp == key_cmp, |prefix| key_cmp.starts_with(prefix))
+            pattern_cmp.strip_suffix('*').map_or_else(
+                || pattern_cmp == key_cmp,
+                |prefix| key_cmp.starts_with(prefix),
+            )
         });
         if is_denied {
             return false;

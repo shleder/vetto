@@ -129,8 +129,8 @@ mod redact_tests {
     /// FM-07: secrets and bulk output must not reach the report.
     #[test]
     fn evidence_redact_001() {
-        let evil = "leak: AWS_SECRET_ACCESS_KEY=supersecretvalue123\n".to_string()
-            + &"x".repeat(100_000);
+        let evil =
+            "leak: AWS_SECRET_ACCESS_KEY=supersecretvalue123\n".to_string() + &"x".repeat(100_000);
         let redacted = redact_text(&evil);
         assert!(!redacted.contains("supersecretvalue123"));
         assert!(redacted.len() <= MAX_DETAIL + 32);

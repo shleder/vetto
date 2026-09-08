@@ -34,18 +34,24 @@ impl CleanupExpectation {
         {
             return match tier_label {
                 Some("full") => CleanupExpectation::Strong,
-                _ => CleanupExpectation::BestEffort { sweep_budget_ms: 2000 },
+                _ => CleanupExpectation::BestEffort {
+                    sweep_budget_ms: 2000,
+                },
             };
         }
         #[cfg(target_os = "macos")]
         {
             let _ = tier_label;
-            return CleanupExpectation::BestEffort { sweep_budget_ms: 2000 };
+            return CleanupExpectation::BestEffort {
+                sweep_budget_ms: 2000,
+            };
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = tier_label;
-            return CleanupExpectation::BestEffort { sweep_budget_ms: 2000 };
+            return CleanupExpectation::BestEffort {
+                sweep_budget_ms: 2000,
+            };
         }
     }
 }

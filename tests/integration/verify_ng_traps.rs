@@ -11,7 +11,9 @@
 //! `test_home()`).
 
 use crate::common::*;
-use vetto::verify_ng::{caps, engine, evidence, exit, fixture, frozen, model, oracle, redact, registry, report};
+use vetto::verify_ng::{
+    caps, engine, evidence, exit, fixture, frozen, model, oracle, redact, registry, report,
+};
 
 fn test_scenario(id: &str, category: model::Category, quorum: usize) -> registry::Scenario {
     registry::Scenario {
@@ -58,7 +60,11 @@ fn trap_oracle_deceit_self_report_only_is_not_pass() {
     e.self_report("marker", "PASS PASS PASS".to_string());
     e.constrained("errno", "EACCES".to_string());
     let v = oracle::judge(&oracle_input(&s, &e));
-    assert_eq!(v, model::Verdict::Inconclusive, "deceit payload must not PASS");
+    assert_eq!(
+        v,
+        model::Verdict::Inconclusive,
+        "deceit payload must not PASS"
+    );
 }
 
 /// FM-02 CONTROL-SPLIT-001: control without probe -> INCONCLUSIVE.
@@ -87,7 +93,9 @@ fn trap_fixture_mutation_is_detected() {
     let mut fx = fixture::Fixture::create("trap-mutate").expect("create fixture");
     let p = fx.stage("payload.sh", b"echo attack").expect("stage");
     std::fs::write(&p, b"echo PASS").expect("payload rewrites itself");
-    let mutated = fx.verify_untouched().expect_err("mutation must be detected");
+    let mutated = fx
+        .verify_untouched()
+        .expect_err("mutation must be detected");
     assert_eq!(mutated, vec![p]);
 
     let s = test_scenario("FIXTURE-MUTATE-001", model::Category::Aux, 1);
@@ -133,7 +141,10 @@ fn trap_gate_all_na_fails_without_canaries() {
     };
     let results = vec![mk("WIN-WSL-001")];
     let mut ev = std::collections::BTreeMap::new();
-    ev.insert("WIN-WSL-001".to_string(), vec!["wsl: absent (unmapped)".to_string()]);
+    ev.insert(
+        "WIN-WSL-001".to_string(),
+        vec!["wsl: absent (unmapped)".to_string()],
+    );
     let gate = exit::evaluate_gate(&results, &ev, "reg");
     assert_eq!(gate.status, "failed");
 }
@@ -175,10 +186,7 @@ fn trap_spec_continuity_detects_drift() {
 /// FM-11 WIN-WSL-001: UNSUPPORTED ceiling can never PASS.
 #[test]
 fn trap_unsupported_ceiling_demotes_pass() {
-    let v = oracle::apply_strength_ceiling(
-        model::Verdict::Pass,
-        model::ClaimStrength::Unsupported,
-    );
+    let v = oracle::apply_strength_ceiling(model::Verdict::Pass, model::ClaimStrength::Unsupported);
     assert_eq!(v, model::Verdict::Inconclusive);
 }
 
@@ -231,7 +239,11 @@ fn cli_verify_ng_lint_json_parseable() {
         .unwrap_or_else(|error| panic!("lint --json must emit JSON: {error}\n{text}"));
     assert!(value.get("registry_hash").is_some(), "hash: {value}");
     assert!(
-        value.get("errors").and_then(|e| e.as_array()).map(|e| e.is_empty()).unwrap_or(false),
+        value
+            .get("errors")
+            .and_then(|e| e.as_array())
+            .map(|e| e.is_empty())
+            .unwrap_or(false),
         "errors: {value}"
     );
 }
@@ -307,7 +319,11 @@ fn trap_quorum_one_single_vector_passes() {
     ] {
         let s = test_scenario(id, category, 1);
         let e = full_evidence_host_fact();
-        assert_eq!(oracle::judge(&oracle_input(&s, &e)), model::Verdict::Pass, "{id}");
+        assert_eq!(
+            oracle::judge(&oracle_input(&s, &e)),
+            model::Verdict::Pass,
+            "{id}"
+        );
     }
 }
 
@@ -318,13 +334,18 @@ fn trap_quorum_one_single_vector_passes() {
 fn trap_platform_ceiling_shapes() {
     // SEC-BLOCKS-001 shape: macOS/Windows must be N/A-with-evidence, never PASS.
     // The ceiling function is the enforcement point: UNSUPPORTED + PASS -> INCONCLUSIVE.
-    let v = oracle::apply_strength_ceiling(
-        model::Verdict::Pass,
-        model::ClaimStrength::Unsupported,
+    let v = oracle::apply_strength_ceiling(model::Verdict::Pass, model::ClaimStrength::Unsupported);
+    assert_eq!(
+        v,
+        model::Verdict::Inconclusive,
+        "unsupported ceiling demotes PASS"
     );
-    assert_eq!(v, model::Verdict::Inconclusive, "unsupported ceiling demotes PASS");
     // PARTIAL ceiling keeps the verdict (report carries both axes, no Partial-PASS).
-    for verdict in [model::Verdict::Pass, model::Verdict::Fail, model::Verdict::Inconclusive] {
+    for verdict in [
+        model::Verdict::Pass,
+        model::Verdict::Fail,
+        model::Verdict::Inconclusive,
+    ] {
         assert_eq!(
             oracle::apply_strength_ceiling(verdict, model::ClaimStrength::Partial),
             verdict,
@@ -359,7 +380,10 @@ fn trap_gate_requires_fs_write_minimum() {
         pass("RACE-BINDING-001", model::Category::Spawn),
     ];
     let gate = exit::evaluate_gate(&results, &BTreeMap::new(), "reg");
-    assert_eq!(gate.status, "failed", "gate without fs-write PASS must fail");
+    assert_eq!(
+        gate.status, "failed",
+        "gate without fs-write PASS must fail"
+    );
     assert!(
         gate.blocking.iter().any(|b| b.contains("fs-write")),
         "blocking must name fs-write: {:?}",
@@ -445,7 +469,11 @@ fn trap_env_poison_fails_new_blockers() {
     ] {
         let s = test_scenario(id, category, quorum);
         let r = engine::poisoned_result(&s, target, &poison);
-        assert_eq!(r.verdict, model::Verdict::Fail, "{id}: poisoned blocker must FAIL");
+        assert_eq!(
+            r.verdict,
+            model::Verdict::Fail,
+            "{id}: poisoned blocker must FAIL"
+        );
         assert!(r.blocks_release());
     }
 }

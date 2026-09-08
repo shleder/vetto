@@ -67,8 +67,7 @@ pub fn freeze_spec(
     nonce: &str,
 ) -> FrozenSpec {
     fn sorted(paths: &[PathBuf]) -> Vec<String> {
-        let mut out: Vec<String> =
-            paths.iter().map(|p| p.display().to_string()).collect();
+        let mut out: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
         out.sort();
         out
     }
@@ -157,8 +156,7 @@ mod frozen_tests {
     #[test]
     fn net_mode_label_distinguishes_relay() {
         let off = crate::config::NetMode::Off.label();
-        let allow =
-            crate::config::NetMode::Allowlist(vec!["example.com".to_string()]).label();
+        let allow = crate::config::NetMode::Allowlist(vec!["example.com".to_string()]).label();
         assert_ne!(off, allow);
     }
 }

@@ -34,7 +34,11 @@ pub struct Evidence {
 
 impl Evidence {
     pub fn push(&mut self, tier: EvidenceTier, name: &str, value: String) {
-        self.facts.push(Fact { tier, name: name.to_string(), value });
+        self.facts.push(Fact {
+            tier,
+            name: name.to_string(),
+            value,
+        });
     }
 
     pub fn host_fact(&mut self, name: &str, value: String) {

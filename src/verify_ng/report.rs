@@ -59,8 +59,8 @@ pub fn render_text(report: &GateReport) -> String {
 #[cfg(test)]
 mod report_tests {
     use super::*;
-    use crate::verify_ng::model::{ClaimStrength, Verdict};
     use crate::verify_ng::model::Category;
+    use crate::verify_ng::model::{ClaimStrength, Verdict};
 
     #[test]
     fn json_carries_both_axes() {

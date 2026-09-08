@@ -26,15 +26,16 @@ impl Fixture {
     /// Create a fresh unique fixture root under the system temp dir.
     pub fn create(tag: &str) -> std::io::Result<Self> {
         let n = FIXTURE_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let root = std::env::temp_dir().join(format!(
-            "vetto-vng-{}-{}-{n}",
-            tag,
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("vetto-vng-{}-{}-{n}", tag, std::process::id()));
         let home = root.join("home");
         std::fs::create_dir_all(&root)?;
         std::fs::create_dir_all(&home)?;
-        Ok(Self { root, home, payload_hashes: Vec::new() })
+        Ok(Self {
+            root,
+            home,
+            payload_hashes: Vec::new(),
+        })
     }
 
     pub fn root(&self) -> &Path {

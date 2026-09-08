@@ -339,7 +339,9 @@ fn run() -> Result<()> {
                 &net,
             )
         }
-        Some(cli::Command::VerifyNg { json, lint }) => vetto::verify_ng::run_verify_ng(*json, *lint),
+        Some(cli::Command::VerifyNg { json, lint }) => {
+            vetto::verify_ng::run_verify_ng(*json, *lint)
+        }
         Some(cli::Command::Redteam { json }) => {
             let report = vetto::redteam::run_redteam_battery();
             if *json {
@@ -1595,7 +1597,10 @@ fn dry_run(cfg: &RunConfig, pol: &policy::Policy, agent_cmd: &[String], tier: &s
             println!("  explicit CLI policy: {count} deny {noun} included above");
         }
     }
-    println!("  agent: {}", vetto::logger::sanitizer::sanitize_line(&agent_cmd.join(" ")));
+    println!(
+        "  agent: {}",
+        vetto::logger::sanitizer::sanitize_line(&agent_cmd.join(" "))
+    );
     Ok(())
 }
 

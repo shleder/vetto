@@ -18,11 +18,19 @@ pub struct Capability {
 
 impl Capability {
     pub fn present(name: impl Into<String>, evidence: impl Into<String>) -> Self {
-        Self { name: name.into(), present: true, evidence: evidence.into() }
+        Self {
+            name: name.into(),
+            present: true,
+            evidence: evidence.into(),
+        }
     }
 
     pub fn absent(name: impl Into<String>, evidence: impl Into<String>) -> Self {
-        Self { name: name.into(), present: false, evidence: evidence.into() }
+        Self {
+            name: name.into(),
+            present: false,
+            evidence: evidence.into(),
+        }
     }
 }
 
@@ -83,10 +91,7 @@ impl CapabilitySet {
         {
             let probe = crate::sandbox::linux::probe();
             capabilities.push(if probe.landlock_abi.is_some() {
-                Capability::present(
-                    "landlock",
-                    format!("landlock ABI {:?}", probe.landlock_abi),
-                )
+                Capability::present("landlock", format!("landlock ABI {:?}", probe.landlock_abi))
             } else {
                 Capability::absent("landlock", "no Landlock ABI reported")
             });
@@ -152,7 +157,11 @@ mod caps_tests {
         let set = CapabilitySet {
             capabilities: vec![Capability::absent("netns", "probe said no")],
         };
-        let required = vec!["netns".to_string(), "landlock".to_string(), "spawn".to_string()];
+        let required = vec![
+            "netns".to_string(),
+            "landlock".to_string(),
+            "spawn".to_string(),
+        ];
         let missing = set.missing(&required);
         assert_eq!(missing.len(), 3);
         let ev = set.absence_evidence(&missing);

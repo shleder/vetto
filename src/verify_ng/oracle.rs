@@ -75,10 +75,7 @@ pub fn judge(input: &OracleInput<'_>) -> Verdict {
 
 /// Post-filter: an UNSUPPORTED strength claim must never report PASS;
 /// a judging bug that yields one is demoted to INCONCLUSIVE loudly.
-pub fn apply_strength_ceiling(
-    verdict: Verdict,
-    strength: super::model::ClaimStrength,
-) -> Verdict {
+pub fn apply_strength_ceiling(verdict: Verdict, strength: super::model::ClaimStrength) -> Verdict {
     match (verdict, strength) {
         (Verdict::Pass, super::model::ClaimStrength::Unsupported) => Verdict::Inconclusive,
         _ => verdict,
@@ -97,7 +94,11 @@ pub fn judge_with_ceiling(
     // `judge` already requires a host fact, this is belt-and-braces for
     // callers that bypass `judge` (there must be none).
     let v = if v == Verdict::Pass
-        && !input.evidence.facts.iter().any(|f| f.tier == EvidenceTier::HostFact)
+        && !input
+            .evidence
+            .facts
+            .iter()
+            .any(|f| f.tier == EvidenceTier::HostFact)
     {
         Verdict::Inconclusive
     } else {
@@ -125,10 +126,7 @@ mod oracle_tests {
         }
     }
 
-    fn input<'a>(
-        scenario: &'a Scenario,
-        evidence: &'a Evidence,
-    ) -> OracleInput<'a> {
+    fn input<'a>(scenario: &'a Scenario, evidence: &'a Evidence) -> OracleInput<'a> {
         OracleInput {
             scenario,
             evidence,

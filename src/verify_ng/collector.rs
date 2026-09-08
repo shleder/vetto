@@ -40,7 +40,10 @@ pub fn drain_with_deadline(fd: &OwnedFd, deadline: Instant) -> (Vec<u8>, bool) {
             }
         }
     }
-    let _restore = Restore { fd: raw, flags: orig };
+    let _restore = Restore {
+        fd: raw,
+        flags: orig,
+    };
 
     let mut out = Vec::new();
     let mut buf = [0u8; 8192];
@@ -119,10 +122,7 @@ mod collector_tests {
 
     #[test]
     fn postmortem_present_for_content() {
-        let p = std::env::temp_dir().join(format!(
-            "vetto-vng-pm-{}",
-            std::process::id()
-        ));
+        let p = std::env::temp_dir().join(format!("vetto-vng-pm-{}", std::process::id()));
         std::fs::write(&p, b"leak").expect("write");
         assert_eq!(PostMortem::stat(&p, false), PostMortem::Present);
         let _ = std::fs::remove_file(&p);

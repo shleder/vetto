@@ -1135,8 +1135,11 @@ fn environment_block(policy: &Policy, opts: &SpawnOptions) -> Result<Vec<u16>> {
     // in depth alongside the main.rs bail). Compare case-insensitively:
     // Windows env names collide regardless of spelling.
     if !policy.secret_proxies.is_empty() {
-        let proxies_upper: Vec<String> =
-            policy.secret_proxies.iter().map(|p| p.to_uppercase()).collect();
+        let proxies_upper: Vec<String> = policy
+            .secret_proxies
+            .iter()
+            .map(|p| p.to_uppercase())
+            .collect();
         env.retain(|norm, _| !proxies_upper.iter().any(|p| p == norm.to_uppercase()));
     }
     // Windows requires the supplied block to be sorted by variable name using
