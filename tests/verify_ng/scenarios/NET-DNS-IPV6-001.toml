@@ -1,0 +1,23 @@
+# NET-DNS-IPV6-001 — --net=off isolation across transports.
+id = "NET-DNS-IPV6-001"
+category = "net"
+severity = "blocker"
+required_caps = ["spawn", "netns"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Proves --net=off isolation only; allowlist relay modes need a separate broker suite."
+residual_risk = "Without a network namespace (fs-only/mac/win) only syscall/capability denial is proven, not absence of a route."
+
+[evidence.host_facts]
+listener = "host loopback listener (v4 + v6) stays unconnected for the whole run"
+dns = "no resolver answer may reach the sandbox; resolution attempts must fail closed"
+
+[evidence.constrained_channel]
+errno_class = "connect/sendto/getaddrinfo must report ENETUNREACH/EACCES/EPERM/timeout with the session nonce"
+vectors = ["tcp4", "tcp6", "udp", "dns", "python-socket", "raw-syscall"]

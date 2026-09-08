@@ -1,0 +1,12 @@
+# WIN-UNC-001 — UNC and alternate-path aliases (advisory until mapped).
+id = "WIN-UNC-001"
+category = "fs-read"
+severity = "high"
+required_caps = ["spawn"]
+quorum = 1
+
+[strength]
+windows = "PARTIAL"
+
+known_limitation = "Advisory until UNC/namespace-alias coverage is mapped; starts INCONCLUSIVE, never PASS on first implementation."
+residual_risk = 'Alternate path aliases (UNC, verbatim paths, mapped drives) may bypass ACL-shaped checks.'

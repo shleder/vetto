@@ -1,0 +1,12 @@
+# MAC-SHAPE-001 — enforced profile is Shape-A + tail-deny byte-for-byte.
+id = "MAC-SHAPE-001"
+category = "fs-read"
+severity = "high"
+required_caps = ["spawn", "seatbelt"]
+quorum = 1
+
+[strength]
+macos = "PARTIAL"
+
+known_limitation = "Proves the enforced profile is Shape-A + tail-deny byte-for-byte; read secrecy beyond tail-deny is UNPROVABLE on macOS native."
+residual_risk = "Any path outside the tail-deny list is readable by construction; use a Linux VM for strong read secrecy."

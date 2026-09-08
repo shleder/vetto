@@ -1,0 +1,17 @@
+# RACE-BINDING-001 — spec/tier continuity from freeze to spawn.
+id = "RACE-BINDING-001"
+category = "spawn"
+severity = "blocker"
+required_caps = ["spawn"]
+quorum = 1
+
+[strength]
+linux-full = "STRONG"
+
+known_limitation = "Proves spec/tier binding continuity in-process; a compromised host kernel is out of scope."
+residual_risk = ""
+
+[evidence.host_facts]
+spec_hash = "FrozenSpec hash before spawn equals the hash re-computed from the same references at spawn time"
+tier_match = "detected tier equals the expected tier from the single per-run detect"
+registry_hash = "scenario registry hash pinned in the gate report"

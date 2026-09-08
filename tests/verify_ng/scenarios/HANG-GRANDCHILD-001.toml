@@ -1,0 +1,19 @@
+# HANG-GRANDCHILD-001 — grandchild holding the pipe must not hang the harness.
+id = "HANG-GRANDCHILD-001"
+category = "proc"
+severity = "high"
+required_caps = ["spawn", "tree-sweep"]
+quorum = 1
+
+[strength]
+linux-full = "STRONG"
+windows = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+
+known_limitation = "Proves deadline-aware collection, not general liveness of arbitrary payloads."
+residual_risk = "On fs-only/macOS the grandchild may outlive the group kill until the sweep budget expires; verdict is FAIL/INCONCLUSIVE, never PASS."
+
+[evidence.host_facts]
+deadline = "collector returns at or before the deadline even with the write end held open"
+sweep = "post-deadline sweep finds no residue on Strong tiers"

@@ -1,0 +1,19 @@
+# PROC-ESC-001 — setsid/double-fork/background escape + post-mortem sweep.
+id = "PROC-ESC-001"
+category = "proc"
+severity = "blocker"
+required_caps = ["spawn", "tree-sweep"]
+quorum = 1
+
+[strength]
+linux-full = "STRONG"
+windows = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+
+known_limitation = "Post-mortem sweep is host-side observation of absence; a hostile scheduler can delay reparenting past the sweep budget (INCONCLUSIVE, never PASS)."
+residual_risk = "fs-only setsid orphans and macOS watchdog races are known residuals; they FAIL/advisory, never PASS."
+
+[evidence.host_facts]
+tree_sweep = "external sweep after terminate must find zero residual processes"
+wait_status = "root exit value collected via the retained handle, not via self-report"
