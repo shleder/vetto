@@ -80,7 +80,10 @@ fn redact_pem(input: &str) -> String {
             out.push_str(rest);
             break;
         };
-        let Some(key_end) = rest[begin..].find("-----").map(|i| begin + i + 5) else {
+        let Some(key_end) = rest[begin + "-----BEGIN".len()..]
+            .find("-----")
+            .map(|i| begin + "-----BEGIN".len() + i + "-----".len())
+        else {
             out.push_str(rest);
             break;
         };
@@ -94,7 +97,10 @@ fn redact_pem(input: &str) -> String {
             out.push_str("[REDACTED]");
             break;
         };
-        let Some(end_close) = rest[end..].find("-----").map(|i| end + i + 5) else {
+        let Some(end_close) = rest[end + "-----END".len()..]
+            .find("-----")
+            .map(|i| end + "-----END".len() + i + "-----".len())
+        else {
             out.push_str(&rest[..key_end]);
             out.push_str("[REDACTED]");
             break;

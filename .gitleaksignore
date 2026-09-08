@@ -4,3 +4,4 @@ b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:github-
 b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:github-pat:432
 b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:jwt:413
 b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:pypi-upload-token:412
+77a8f66e23256eb9c340b6e971c95e98ec0848d2:tests/verify_ng/scenarios/FUZZ-CORPUS-001.toml:generic-api-key:18

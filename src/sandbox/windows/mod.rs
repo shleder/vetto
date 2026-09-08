@@ -1140,7 +1140,7 @@ fn environment_block(policy: &Policy, opts: &SpawnOptions) -> Result<Vec<u16>> {
             .iter()
             .map(|p| p.to_uppercase())
             .collect();
-        env.retain(|norm, _| !proxies_upper.iter().any(|p| p == norm.to_uppercase()));
+        env.retain(|norm, _| !proxies_upper.iter().any(|p| p == &norm.to_uppercase()));
     }
     // Windows requires the supplied block to be sorted by variable name using
     // case-insensitive Unicode order. BTreeMap's bytewise ordering is not that

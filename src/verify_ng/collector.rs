@@ -7,7 +7,9 @@
 //!   host-side post-mortem inputs); the oracle decides. The collector never
 //!   judges (FM-14).
 
-use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
