@@ -255,11 +255,14 @@ fn cli_verify_ng_without_suite_never_passes() {
     let proj = TempProject::new("vng-gate");
     let out = run_vetto_in(proj.path(), &["verify-ng"]);
     let text = stdout(&out);
-    assert!(
-        !out.status.success(),
-        "gate without suite execution must fail closed: {text}"
-    );
-    assert!(!text.contains("PASS"), "no hollow PASS: {text}");
+    assert!(!out.status.success(), "gate must fail closed: {text}");
+    // No hollow PASS verdict: check line-level `PASS` verdict tokens, not
+    // substrings (gate strings like `only-0-pass-min-1` legitimately
+    // contain "pass" in the honest INCONCLUSIVE report).
+    for line in text.lines() {
+        let first = line.split_whitespace().next().unwrap_or("");
+        assert_ne!(first, "PASS", "no hollow PASS verdict: {text}");
+    }
 }
 
 /// Capability skeleton: missing required caps surface as NOT_APPLICABLE

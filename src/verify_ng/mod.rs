@@ -29,10 +29,11 @@ pub mod report;
 
 /// CLI entry: `vetto verify-ng [--json] [--lint]`.
 ///
-/// `--lint` checks the frozen scenario registry without spawning anything
-/// and always exits 0/1 via anyhow (lint errors fail the command).
-/// Without `--lint`, no execution engine is wired yet: fail closed with
-/// exit 125 and never emit a PASS.
+/// `--lint` checks the frozen scenario registry without spawning anything.
+/// Without `--lint`: poison-check first (diagnostic env -> per-scenario
+/// FAIL/INCONCLUSIVE, no spawn); otherwise every scenario reports
+/// INCONCLUSIVE without spawning (spawn runner lands separately) and the
+/// gate evaluates honestly — canary minimums keep it red. Never emits PASS.
 pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     let scenarios = registry::registry();
     if lint {
@@ -65,30 +66,54 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
         }
         anyhow::bail!("verify-ng registry lint failed ({} error(s))", errors.len());
     }
-    // No suite execution yet: fail closed with a typed harness error so
-    // the central mapper exits 125 (never a hollow PASS).
-    let report = exit::GateReport {
-        status: "failed".to_string(),
-        passed: 0,
-        failed: 0,
-        inconclusive: 0,
-        not_applicable: 0,
-        blocking: vec!["verify-ng:suite-execution-not-wired".to_string()],
-        results: vec![],
+    // Suite run without spawning: poison -> per-scenario poisoned results;
+    // otherwise every scenario is INCONCLUSIVE (no measurement without the
+    // spawn runner). Gate evaluates honestly; canary minimums keep it red.
+    // Harness stays fail-closed: always exit 125 via the typed error below.
+    use std::collections::BTreeMap;
+    let target = engine::current_target(None);
+    let poison = engine::detect_env_poison(false);
+    let ids: Vec<String> = scenarios.iter().map(|s| s.id.clone()).collect();
+    let hash = frozen::registry_hash(&ids);
+    let results: Vec<model::ScenarioResult> = if poison.is_empty() {
+        scenarios
+            .iter()
+            .map(|s| model::ScenarioResult {
+                id: s.id.clone(),
+                category: s.category,
+                strength: s.strength_for(target),
+                verdict: model::Verdict::Inconclusive,
+                detail: redact::redact_text(&format!(
+                    "no spawn runner yet; failing closed — {}",
+                    s.known_limitation
+                )),
+            })
+            .collect()
+    } else {
+        scenarios
+            .iter()
+            .map(|s| engine::poisoned_result(s, target, &poison))
+            .collect()
     };
+    let report = exit::evaluate_gate(&results, &BTreeMap::new(), &hash);
     if json {
-        let hash =
-            frozen::registry_hash(&scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
         println!(
             "{}",
             serde_json::to_string_pretty(&report::gate_report_json(&report, &hash))?
         );
     } else {
-        eprintln!("vetto: verify-ng: suite execution not wired yet; failing closed");
+        if poison.is_empty() {
+            eprintln!("vetto: verify-ng: no spawn runner yet; failing closed");
+        } else {
+            eprintln!(
+                "vetto: verify-ng: diagnostic env interference ({}); failing closed",
+                poison.join(",")
+            );
+        }
         println!("{}", report::render_text(&report));
     }
     Err(crate::error::VettoError::HarnessUnavailable(
-        "verify-ng suite execution not wired".to_string(),
+        "verify-ng suite execution needs the spawn runner".to_string(),
     )
     .into())
 }

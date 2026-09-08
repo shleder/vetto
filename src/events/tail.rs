@@ -16,6 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use super::types::{Event, FileAccess};
+use crate::logger::sanitizer;
 
 /// Filter predicate for events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,7 +116,7 @@ pub fn format_event_row(event: &Event) -> String {
             )
         }
         Event::ExecObserved { pid, argv, .. } => {
-            let cmd = argv.join(" ");
+            let cmd = sanitizer::sanitize_line(&argv.join(" "));
             format!("{:<10}  {:<16}  pid={:<6}  exec: {}", t, kind, pid, cmd)
         }
         Event::BlockedAttempt {

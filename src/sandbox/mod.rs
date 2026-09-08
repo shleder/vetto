@@ -3,6 +3,7 @@
 //! Rule #1 of vetto: if no enforcement backend can be established, the agent
 //! does NOT run. There is never an unsandboxed fallback.
 
+pub mod envfilter;
 pub mod handle;
 #[cfg(target_os = "linux")]
 pub mod linux;

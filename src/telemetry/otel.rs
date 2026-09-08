@@ -129,7 +129,10 @@ mod inner {
                         ts,
                         vec![
                             KeyValue::new("pid", *pid as i64),
-                            KeyValue::new("argv", argv.join(" ")),
+                            KeyValue::new(
+                                "argv",
+                                crate::logger::sanitizer::sanitize_line(&argv.join(" ")),
+                            ),
                         ],
                     );
                 }

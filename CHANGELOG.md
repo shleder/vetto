@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.20] — 2026-09-08
+
+### Added
+
+- **`src/sandbox/envfilter.rs` (new, ~170 lines)**: shared env-boundary filter — `HARD_DENY_PREFIXES` (35 secret-shaped prefixes, upper-cased compare), `is_hard_denied`, `sanitize_path` (drop empty/`.`/`~`-relative, dedup, `/usr/bin:/bin` fallback), `filter_env` (drop hard-denied + `=`/NUL names + NUL values, optional strict PATH sanitize) + unit tests. Wired as `pub mod envfilter` in `src/sandbox/mod.rs` (backend call sites land separately).
+- **`verify-ng` honest non-lint run**: without `--lint`, every registry scenario now reports INCONCLUSIVE with its `known_limitation` (no spawn runner yet — spawn lands separately), poison env yields per-scenario poisoned results without spawning; gate evaluates honestly (canary minimums keep it red); always exits 125 via typed `HarnessUnavailable` — never a hollow PASS, never an empty report.
+
+### Fixed
+
+- **Secret-sanitizer coverage**: `ExecObserved` argv now goes through `sanitize_line` in all three sinks — `events/tail.rs` (`format_event_row`), `events/replay.rs`, `telemetry/otel.rs` — so API keys on command lines never land raw in human tables, replays, or OTel spans (JSONL sink already sanitized, `dry_run` argv covered in 0.2.19).
+
 ## [0.2.19] — 2026-09-08
 
 ### Added
