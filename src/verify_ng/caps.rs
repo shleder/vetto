@@ -48,12 +48,12 @@ impl CapabilitySet {
         required
             .iter()
             .filter(|name| {
-                self.capabilities
+                !self
+                    .capabilities
                     .iter()
                     .find(|c| &c.name == *name)
                     .map(|c| c.present)
                     .unwrap_or(false)
-                    == false
             })
             .collect()
     }
@@ -65,7 +65,7 @@ impl CapabilitySet {
             .map(|name| {
                 self.capabilities
                     .iter()
-                    .find(|c| &c.name == name.as_str())
+                    .find(|c| c.name == name.as_str())
                     .map(|c| {
                         if c.present {
                             format!("{}: unexpectedly present", c.name)

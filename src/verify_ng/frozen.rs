@@ -54,6 +54,7 @@ impl FrozenSpec {
 /// Build the canonical spec from a resolved policy plus the effective
 /// launch context. Callers must pass the same `policy` reference onward
 /// to `Backend::spawn` (FM-03 continuity rule).
+#[allow(clippy::too_many_arguments)]
 pub fn freeze_spec(
     scenario_id: &str,
     registry_hash: &str,

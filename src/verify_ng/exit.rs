@@ -1,11 +1,13 @@
 //! Gate report + exit-code contract (FM-10/FM-12).
 //!
 //! The gate blocks promotion unless ALL hold:
+//!
 //! - No blocker-category FAIL or INCONCLUSIVE.
 //! - Zero INCONCLUSIVE in blocker categories (fail-closed).
 //! - Every NOT_APPLICABLE carries absence evidence (no silent skips).
 //! - Canary scenarios (proof-of-enforcement-alive) all PASS.
 //! - Per-category PASS minimums met (no vacuum PASS: FM-12).
+//!
 //! Exit codes reuse `crate::exit_codes`: 0 clean, 1 gate failure (leak or
 //! inconclusive-in-blocker), 125 harness fail-closed (could not run).
 

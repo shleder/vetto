@@ -32,12 +32,12 @@ impl CleanupExpectation {
         }
         #[cfg(target_os = "linux")]
         {
-            return match tier_label {
+            match tier_label {
                 Some("full") => CleanupExpectation::Strong,
                 _ => CleanupExpectation::BestEffort {
                     sweep_budget_ms: 2000,
                 },
-            };
+            }
         }
         #[cfg(target_os = "macos")]
         {
