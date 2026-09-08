@@ -1,0 +1,28 @@
+# SEC-BLOCKS-001 — seccomp/syscall denial: ptrace/process_vm/pidfd, mount/pivot, io_uring, userfaultfd, bpf/perf (Linux suite, native ABI).
+id = "SEC-BLOCKS-001"
+category = "spawn"
+severity = "blocker"
+required_caps = ["spawn"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-seccomp = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "NOT_APPLICABLE"
+windows = "NOT_APPLICABLE"
+
+known_limitation = "Proves denial of the enumerated dangerous syscall surface via native ABI (номера из libc::SYS_*, без x86-64 констант на ARM64); полнота фильтра против 0-day не доказывается. macOS/Windows — NOT_APPLICABLE только с probe-доказательством отсутствия capability."
+residual_risk = "На linux-fsonly часть поверхности best-effort; расхождение дает INCONCLUSIVE."
+
+[evidence.host_facts]
+wait_status = "root exit value собран через retained handle; ни один запрещённый вызов не вернул успех"
+audit-tap = "host-side audit/seccomp-tap (advisory) не показывает успешных запрещённых вызовов; отсутствие tap не дает PASS"
+
+[evidence.constrained_channel]
+errno_class = "запрещённые вызовы обязаны вернуть EPERM/ENOSYS с nonce сессии"
+vectors = ["ptrace", "process_vm_readv-writev", "pidfd_getfd", "mount-pivot-umount", "io_uring", "userfaultfd", "bpf-perf"]
+
+[evidence.not_applicable]
+macos = "Darwin не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-evidence блокирует gate"
+windows = "Windows не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-evidence блокирует gate"

@@ -1,0 +1,23 @@
+# VFS-PROC-001 — доступ через /proc, /sys, device nodes и fd-инъекции.
+id = "VFS-PROC-001"
+category = "fs-read"
+severity = "blocker"
+required_caps = ["spawn", "landlock"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "PARTIAL"
+macos = "PARTIAL"
+windows = "PARTIAL"
+
+known_limitation = "Covers /proc/self/{mem,fd,cwd,root,exe}, /proc/<pid>/fd утечки, /sys и /dev обходы, присутствующие в payload-наборе; новые kernel-интерфейсы требуют новых векторов."
+residual_risk = "На fs-only и macOS часть OS-surfaces видна шире, чем в PIDns/full; strength ceiling PARTIAL там. Windows: \\Device\\ и drive-alias покрытие advisory."
+
+[evidence.host_facts]
+postmortem = "host stat/canary-сравнение секретного таргета после wait: отсутствие/неизменность значит удержано"
+proc-leak = "ни один чужой fd/mem/cwd/root путь не должен дать байты секрета (host-side сравнение)"
+
+[evidence.constrained_channel]
+errno_class = "open/read через /proc|/sys|/dev алиасы обязан вернуть EACCES/EPERM/ENOENT с nonce сессии"
+vectors = ["proc-self-mem", "proc-self-fd", "proc-pid-fd", "sys-alias", "dev-alias", "fd-reopen-O_PATH"]

@@ -1,0 +1,26 @@
+# TIER-DIFF-001 — differential testing: full vs fs-only vs seccomp обязаны расходиться только задокументированно (никаких silent downgrade).
+id = "TIER-DIFF-001"
+category = "spawn"
+severity = "high"
+required_caps = ["spawn"]
+quorum = 2
+
+[strength]
+linux-full = "STRONG"
+linux-fsonly = "PARTIAL"
+linux-seccomp = "PARTIAL"
+macos = "NOT_APPLICABLE"
+windows = "NOT_APPLICABLE"
+
+known_limitation = "Differential доказывает отсутствие silent downgrade между тирами, а не эквивалентность тиров. VETTO_FORCE_TIER разрешён ТОЛЬКО в tier-differential CI job с cross-check фактического тира; вне его — отравление (FAIL/INCONCLUSIVE)."
+residual_risk = "fs-only/seccomp слабее full по построению; любое PASS на слабом тире несёт ceiling PARTIAL и residual_risk."
+
+[differential]
+tiers = ["full", "fs-only", "seccomp"]
+rule = "вердикты обязаны совпадать либо расходиться строго в задокументированную слабую сторону (Strong→Partial/Inconclusive); расхождение в сторону PASS на слабом тире при FAIL на strong — баг oracle/gate"
+force_tier_note = "VETTO_FORCE_TIER вне tier-differential job — poison (FM-08)"
+vectors = ["vfs-trav-diff", "net-exfil-diff", "proc-tree-diff", "sec-blocks-diff"]
+
+[evidence.host_facts]
+tier-fact = "фактический тир каждого прогона зафиксирован host-side (single detect per run) и совпадаёт с заявленным"
+spec_hash = "FrozenSpec hash каждого прогона включает tier label; подмена тира ломает continuity"

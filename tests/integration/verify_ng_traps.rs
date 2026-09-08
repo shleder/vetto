@@ -264,3 +264,188 @@ fn caps_missing_requires_evidence_shape() {
     assert!(ev.iter().any(|e| e.contains("no userns")));
     assert!(ev.iter().any(|e| e.contains("never probed")));
 }
+
+/// FM-13 quorum shape: multi-vector scenarios (VFS-TRAV-001 quorum=2,
+/// NET-EXFIL-001 quorum=3) need >= quorum agreeing vectors, else INCONCLUSIVE.
+#[test]
+fn trap_quorum_shape_multivector_needs_agreeing_vectors() {
+    for (id, category, quorum, agreeing) in [
+        ("VFS-TRAV-001", model::Category::FsRead, 2, 1),
+        ("VFS-WRITE-001", model::Category::FsWrite, 2, 1),
+        ("NET-EXFIL-001", model::Category::Net, 3, 2),
+        ("RACE-TOCTOU-001", model::Category::Spawn, 3, 2),
+        ("PROC-TREE-001", model::Category::Proc, 2, 1),
+        ("ENV-SECRETS-001", model::Category::Secrets, 2, 1),
+        ("SEC-BLOCKS-001", model::Category::Spawn, 2, 1),
+    ] {
+        let s = test_scenario(id, category, quorum);
+        let e = full_evidence_host_fact();
+        let mut input = oracle_input(&s, &e);
+        input.agreeing_vectors = agreeing;
+        assert_eq!(
+            oracle::judge(&input),
+            model::Verdict::Inconclusive,
+            "{id}: quorum={quorum} with {agreeing} agreeing must not PASS"
+        );
+        input.agreeing_vectors = quorum;
+        assert_eq!(
+            oracle::judge(&input),
+            model::Verdict::Pass,
+            "{id}: quorum met must PASS"
+        );
+    }
+}
+
+/// FM-13 quorum=1 single-vector scenarios still PASS with one vector.
+#[test]
+fn trap_quorum_one_single_vector_passes() {
+    for (id, category) in [
+        ("PROC-ESC-001", model::Category::Proc),
+        ("ENV-LEAK-001", model::Category::Secrets),
+        ("SHELL-ESC-001", model::Category::Spawn),
+        ("WIN-WSL-001", model::Category::FsRead),
+    ] {
+        let s = test_scenario(id, category, 1);
+        let e = full_evidence_host_fact();
+        assert_eq!(oracle::judge(&oracle_input(&s, &e)), model::Verdict::Pass, "{id}");
+    }
+}
+
+/// FM-11 platform ceilings (static contract): seccomp surface is
+/// NOT_APPLICABLE off Linux; WSL-interop is UNSUPPORTED (never PASS).
+/// Unit-level shape: the ceiling demotes any judging PASS to INCONCLUSIVE.
+#[test]
+fn trap_platform_ceiling_shapes() {
+    // SEC-BLOCKS-001 shape: macOS/Windows must be N/A-with-evidence, never PASS.
+    // The ceiling function is the enforcement point: UNSUPPORTED + PASS -> INCONCLUSIVE.
+    let v = oracle::apply_strength_ceiling(
+        model::Verdict::Pass,
+        model::ClaimStrength::Unsupported,
+    );
+    assert_eq!(v, model::Verdict::Inconclusive, "unsupported ceiling demotes PASS");
+    // PARTIAL ceiling keeps the verdict (report carries both axes, no Partial-PASS).
+    for verdict in [model::Verdict::Pass, model::Verdict::Fail, model::Verdict::Inconclusive] {
+        assert_eq!(
+            oracle::apply_strength_ceiling(verdict, model::ClaimStrength::Partial),
+            verdict,
+            "partial ceiling preserves {verdict:?}"
+        );
+    }
+    // WIN-WSL-001 trap shape: Fail on UNSUPPORTED stays Fail (only PASS demotes).
+    assert_eq!(
+        oracle::apply_strength_ceiling(model::Verdict::Fail, model::ClaimStrength::Unsupported),
+        model::Verdict::Fail
+    );
+}
+
+/// FM-12 gate shape for iteration-2 suites: an fs-write PASS minimum exists,
+/// so a gate without any fs-write PASS must stay red (no vacuum by category).
+#[test]
+fn trap_gate_requires_fs_write_minimum() {
+    use std::collections::BTreeMap;
+    let pass = |id: &str, category: model::Category| model::ScenarioResult {
+        id: id.to_string(),
+        category,
+        strength: model::ClaimStrength::Strong,
+        verdict: model::Verdict::Pass,
+        detail: "x".to_string(),
+    };
+    // Full pass set WITHOUT fs-write: gate must fail on the category minimum.
+    let results = vec![
+        pass("VFS-TRAV-001", model::Category::FsRead),
+        pass("NET-DNS-IPV6-001", model::Category::Net),
+        pass("PROC-ESC-001", model::Category::Proc),
+        pass("ENV-LEAK-001", model::Category::Secrets),
+        pass("RACE-BINDING-001", model::Category::Spawn),
+    ];
+    let gate = exit::evaluate_gate(&results, &BTreeMap::new(), "reg");
+    assert_eq!(gate.status, "failed", "gate without fs-write PASS must fail");
+    assert!(
+        gate.blocking.iter().any(|b| b.contains("fs-write")),
+        "blocking must name fs-write: {:?}",
+        gate.blocking
+    );
+    // Adding VFS-WRITE-001 PASS closes the minimum (canaries still required).
+    let mut closed = results;
+    closed.push(pass("VFS-WRITE-001", model::Category::FsWrite));
+    let gate = exit::evaluate_gate(&closed, &BTreeMap::new(), "reg");
+    assert!(
+        !gate.blocking.iter().any(|b| b.contains("fs-write")),
+        "fs-write minimum closed: {:?}",
+        gate.blocking
+    );
+}
+
+/// FM-01/FM-14 shape for new blocker suites: violation observed by the host
+/// beats any self-report; the collector never judges (oracle-only verdict).
+#[test]
+fn trap_host_violation_beats_self_report_new_suites() {
+    for (id, category, quorum) in [
+        ("VFS-WRITE-001", model::Category::FsWrite, 2),
+        ("VFS-PROC-001", model::Category::FsRead, 2),
+        ("NET-EXFIL-001", model::Category::Net, 3),
+        ("SHELL-ESC-001", model::Category::Spawn, 2),
+        ("ENV-SECRETS-001", model::Category::Secrets, 2),
+        ("PROC-TREE-001", model::Category::Proc, 2),
+        ("WIN-ESC-001", model::Category::Proc, 2),
+        ("WIN-NET-001", model::Category::Net, 2),
+    ] {
+        let s = test_scenario(id, category, quorum);
+        let mut e = full_evidence_host_fact();
+        e.self_report("marker", "PASS PASS PASS".to_string());
+        let mut input = oracle_input(&s, &e);
+        input.agreeing_vectors = quorum;
+        input.violation_observed = true;
+        assert_eq!(
+            oracle::judge(&input),
+            model::Verdict::Fail,
+            "{id}: host violation must FAIL despite self-report"
+        );
+    }
+}
+
+/// FM-06 shape for new suites: mutated payload invalidates every run,
+/// including stress/fuzz/differential shapes.
+#[test]
+fn trap_payload_mutation_invalidates_new_suites() {
+    for (id, category, quorum) in [
+        ("RACE-TOCTOU-001", model::Category::Spawn, 3),
+        ("STRESS-SWEEP-001", model::Category::Proc, 2),
+        ("FUZZ-CORPUS-001", model::Category::Spawn, 2),
+        ("TIER-DIFF-001", model::Category::Spawn, 2),
+        ("SEC-BLOCKS-001", model::Category::Spawn, 2),
+        ("RES-EXHAUST-001", model::Category::Proc, 2),
+    ] {
+        let s = test_scenario(id, category, quorum);
+        let e = full_evidence_host_fact();
+        let mut input = oracle_input(&s, &e);
+        input.agreeing_vectors = quorum;
+        input.payload_intact = false;
+        assert_eq!(
+            oracle::judge(&input),
+            model::Verdict::Inconclusive,
+            "{id}: mutated payload must be INCONCLUSIVE"
+        );
+    }
+}
+
+/// FM-08 shape for new suites: poisoned diagnostic env FAILs blockers,
+/// INCONCLUSIVE on aux — including the new blocker batteries.
+#[test]
+fn trap_env_poison_fails_new_blockers() {
+    let target = engine::current_target(Some("full"));
+    let poison = vec!["VETTO_FORCE_TIER".to_string()];
+    for (id, category, quorum) in [
+        ("VFS-WRITE-001", model::Category::FsWrite, 2),
+        ("NET-EXFIL-001", model::Category::Net, 3),
+        ("SHELL-ESC-001", model::Category::Spawn, 2),
+        ("WIN-ESC-001", model::Category::Proc, 2),
+        ("WIN-NET-001", model::Category::Net, 2),
+        ("SEC-BLOCKS-001", model::Category::Spawn, 2),
+    ] {
+        let s = test_scenario(id, category, quorum);
+        let r = engine::poisoned_result(&s, target, &poison);
+        assert_eq!(r.verdict, model::Verdict::Fail, "{id}: poisoned blocker must FAIL");
+        assert!(r.blocks_release());
+    }
+}

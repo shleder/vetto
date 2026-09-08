@@ -72,6 +72,85 @@ HOME изолирован на прогон. `env_extra` engine-контроли
 минимум PASS по каждой blocker-категории. Пустой сьют — gate FAIL
 (`GATE-VACUUM-001`).
 
+> Итерация 2: gate-минимум по `fs-write` закрывается сценарием
+> `VFS-WRITE-001` (blocker, `linux-full`/`linux-fsonly` STRONG). Без его PASS
+> gate остаётся красным по правилу per-category minimum — vacuum по записи
+> невозможен.
+
+## Сьюты итерации 2 (карта покрытия Prompt 01)
+
+Linux suite (полностью, fail-closed/escape/exfil приоритет):
+
+- `VFS-WRITE-001` (blocker, fs-write) — STRONG на full/fs-only. Закрывает
+  пустую blocker-категорию `fs-write` и правило gate-minimum.
+- `VFS-PROC-001` (blocker, fs-read) — `/proc|/sys|/dev`/fd-инъекции.
+- `NET-EXFIL-001` (blocker, net, quorum 3) — мультивекторная эксфильтрация:
+  curl, python-socket, native TCP4/6, DNS, alt-HTTP, UDS/IPC, raw-syscall.
+- `SHELL-ESC-001` (blocker, spawn) — alt-shell/interpreter/PATH-confusion.
+- `ENV-SECRETS-001` (blocker, secrets) — env/fd/argv/SSH-Git-cloud canary.
+- `PROC-TREE-001` (blocker, proc) — sibling/detached/handles escape.
+- `RACE-TOCTOU-001` (blocker, spawn, quorum 3) — freeze-spawn + symlink-swap
+  TOCTOU, медиана ≥3 прогонов.
+- `SEC-BLOCKS-001` (blocker, spawn) — seccomp/syscall denial по native ABI
+  (ptrace/process_vm/pidfd, mount/pivot, io_uring, userfaultfd, bpf/perf).
+- `RES-EXHAUST-001` (high, proc) — fork/pids/IO/disk/mem; полный вариант
+  только disposable VM.
+- `STRESS-SWEEP-001` (high, proc) — stress/race контракт: медиана, кворум,
+  sweep-бюджеты.
+- `FUZZ-CORPUS-001` (high, spawn) — контракт fuzz-корпуса (path/env/argv/cwd/
+  symlink мутации) и oracle-правила без production-fuzz кода.
+- `TIER-DIFF-001` (high, spawn) — differential full vs fs-only vs seccomp:
+  расхождение только в задокументированную слабую сторону, без silent
+  downgrade.
+
+Windows suite (host-fact-only):
+
+- `WIN-ESC-001` (blocker, proc) — PowerShell/cmd/API, token, integrity, Job,
+  ACL; evidence строго host-fact-only (pipe-drain stub даёт not-EOF →
+  INCONCLUSIVE, никогда PASS).
+- `WIN-NET-001` (blocker, net) — `--net=off` через AppContainer capabilities
+  (PARTIAL); per-domain без admin UNPROVABLE и обязан fail-closed.
+- `WIN-UNC-001` (high, fs-read) — PARTIAL/advisory до маппинга алиасов.
+- `WIN-WSL-001` (high, fs-read) — UNSUPPORTED baseline; любой PASS — баг.
+
+macOS suite (потолок MAC-SHAPE):
+
+- `MAC-ESC-001` (high, fs-read) — Shape-A + tail-deny побайтово; read вне
+  tail-deny успешен по построению (подтверждение потолка PARTIAL, не FAIL).
+- `MAC-PROC-001` (high, proc) — kqueue watchdog + group-kill + sweep 2с
+  (BestEffort); destructive только в VM.
+- `MAC-SHAPE-001` — побайтовый gate профиля.
+
+Уровни запуска: smoke (малые квоты/seed-наборы, локально) → core → platform
+→ destructive/adversarial (только disposable VM/CI-runner) → stress/race
+(медиана) → regression (ловушки) → release-gate. Без elevated privileges
+локально запускается только smoke/core на Strong тирах; всё destructive,
+RES-EXHAUST полный, fuzz-корпус полный — CI-runner/VM.
+
+## Race/stress стратегия
+
+`RACE-TOCTOU-001` + `STRESS-SWEEP-001`: медиана ≥3 (на практике runs=5),
+кворум векторов на прогон, sweep-бюджет 2с на BestEffort тирах, ретраи не
+превращают FAIL в PASS, расхождение прогонов — INCONCLUSIVE (блокирует gate
+в I1–I6 через ноль-INCONCLUSIVE правило). Параллельные spawn только через
+`SPAWN_SERIAL` (detect→fork-возврат); параллелится подготовка и judging.
+
+## Fuzzing стратегия
+
+`FUZZ-CORPUS-001` фиксирует контракт: детерминированные seeds в CI, корпус
+мутаций path/env/argv0/cwd/locale/symlink-forest, oracle-правило
+fail-closed (любое нарушение host-fact границы — FAIL/INCONCLUSIVE).
+Находки обязаны становиться новыми векторами/quorum в реестре; сам fuzzer
+— вне verify-ng (не production-код enforcement).
+
+## Differential testing стратегия
+
+`TIER-DIFF-001` + `SEC-BLOCKS-001[not_applicable]` + `WIN-*/MAC-*` N/A-секции:
+full vs fs-only vs seccomp обязаны совпадать либо слабеть строго
+задокументированно; `VETTO_FORCE_TIER` разрешён только в tier-differential
+CI job. Кросс-OS differential — через N/A с probe-доказательством, без
+молчаливых скипов (иначе `N/A-without-evidence` блокирует gate).
+
 ## Кворум и повторы (FM-13)
 
 Multivector-сценарии требуют ≥quorum независимых согласующихся векторов,
