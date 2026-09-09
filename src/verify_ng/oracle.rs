@@ -65,16 +65,17 @@ pub fn judge(input: &OracleInput<'_>) -> Verdict {
     if !input.payload_intact {
         return Verdict::Inconclusive;
     }
+    // A host-observed violation is a FAIL regardless of self-reports,
+    // regardless of collection completeness, and regardless of nonce
+    // binding (the violation proof is host-observed negative evidence and
+    // needs no positive control to fail closed).
+    if input.violation_observed {
+        return Verdict::Fail;
+    }
     // FM-02: control and probe must be bound to the same session nonce.
     match (input.nonce, input.probe_nonce, input.control_nonce) {
         (Some(n), Some(p), Some(c)) if p == n && c == n => {}
         _ => return Verdict::Inconclusive,
-    }
-    // A host-observed violation is a FAIL regardless of self-reports and
-    // regardless of collection completeness (the violation proof does not
-    // depend on stdio).
-    if input.violation_observed {
-        return Verdict::Fail;
     }
     // PASS on incomplete evidence is impossible: truncated or never-EOF
     // collection degrades to INCONCLUSIVE even with everything else present.
