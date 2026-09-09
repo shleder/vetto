@@ -152,7 +152,7 @@ fn apply_child_plan_linux(
             .map(std::path::PathBuf::from)
             .collect();
         crate::sandbox::linux::landlock::apply_policy(&write_roots, &read_roots, false)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
+            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
     } else {
         // SAFETY: scalar-only prctl; required before any seccomp filter.
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
@@ -171,7 +171,7 @@ fn apply_child_plan_linux(
             socket_policy,
             crate::policy::SeccompProfile::Default,
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
+        .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
     }
     Ok(())
 }
