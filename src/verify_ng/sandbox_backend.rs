@@ -1469,7 +1469,7 @@ mod backend_arch_tests {
             }
             #[cfg(target_os = "linux")]
             {
-                assert_eq!(report.preparation_ok, true);
+                assert!(report.preparation_ok);
             }
         }
         let mut direct = DirectBackend::new();

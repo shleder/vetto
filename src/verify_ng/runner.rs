@@ -458,10 +458,7 @@ pub fn run_one_with_backend(
     // allowlist (transport, bound via the identity — never via policy).
     let canonical = CanonicalPolicy::from_frozen(&spec);
     let control_channel: Option<ControlChannel> = if req.enable_host_control {
-        match ControlChannel::create(&identity) {
-            Ok(ch) => Some(ch),
-            Err(_) => None,
-        }
+        ControlChannel::create(&identity).ok()
     } else {
         None
     };
