@@ -657,11 +657,7 @@ fn test_linux_cpu_limit_001() {
 // ---------------------------------------------------------------------------
 
 const PTRACE_TRACEME_PY: &str = "import ctypes, os, sys\n\
-try:\n\
-    libc = ctypes.CDLL(None, use_errno=True)\n\
-except Exception as e:\n\
-    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
-    os._exit(11)\n\
+libc = ctypes.CDLL(None, use_errno=True)\n\
 r = libc.ptrace(0, 0, 0, 0)\n\
 e = ctypes.get_errno()\n\
 sys.stderr.write('PTRACE r=%r errno=%r\\n' % (r, e))\n\
@@ -709,11 +705,7 @@ fn test_linux_syscall_escape_001() {
     let scen = scenario("TEST-LINUX-SYSCALL-ESCAPE-001", Category::Proc);
     let net = NetMode::Off;
     let script = "import ctypes, os, sys\n\
-try:\n\
-    libc = ctypes.CDLL(None, use_errno=True)\n\
-except Exception as e:\n\
-    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
-    os._exit(11)\n\
+libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
 def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
@@ -807,7 +799,7 @@ fn test_linux_no_new_privs_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "if grep -q 'NoNewPrivs:[[:space:]]*1' /proc/self/status 2>/dev/null; then exit 0; else exit 10; fi\n",
+        "cat /proc/self/status 2>&1 | grep -i nonewprivs >&2; if grep -q 'NoNewPrivs:[[:space:]]*1' /proc/self/status 2>/dev/null; then exit 0; else exit 10; fi\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(15),
@@ -821,7 +813,8 @@ fn test_linux_no_new_privs_001() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "NoNewPrivs must be set; stderr: {}",
+        "NoNewPrivs must be set; stdout: {} stderr: {}",
+        tail_text(&out.stdout, 500),
         tail_text(&out.stderr, 500)
     );
     assert_eq!(
@@ -1063,11 +1056,7 @@ fn test_linux_escape_syscall_001() {
     let scen = scenario("TEST-LINUX-ESCAPE-SYSCALL-001", Category::Proc);
     let net = NetMode::Off;
     let script = "import ctypes, os, sys\n\
-try:\n\
-    libc = ctypes.CDLL(None, use_errno=True)\n\
-except Exception as e:\n\
-    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
-    os._exit(11)\n\
+libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
 def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
@@ -1111,11 +1100,7 @@ fn test_linux_escape_root_001() {
     let scen = scenario("TEST-LINUX-ESCAPE-ROOT-001", Category::FsRead);
     let net = NetMode::Off;
     let script = "import ctypes, os, sys\n\
-try:\n\
-    libc = ctypes.CDLL(None, use_errno=True)\n\
-except Exception as e:\n\
-    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
-    os._exit(11)\n\
+libc = ctypes.CDLL(None, use_errno=True)\n\
 ctypes.set_errno(0)\n\
 r = libc.chroot(b\"/tmp\")\n\
 e = ctypes.get_errno()\n\
