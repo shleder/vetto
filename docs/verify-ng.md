@@ -1,16 +1,18 @@
 # verify-ng — Adversarial Security Verification
 
-> Статус реализации (0.2.25, факт): Stage 2 — host-owned positive control
-> для `Aux`-pipeline сценариев на unix: per-execution FIFO в host-private
-> dir + identity-bound токен (`ExecutionIdentity`: scenario + session nonce
-> + registry hash + frozen hash); только точное прибытие токена на
-> host-конец чеканит `VerifiedControl` → `HOST_FACT control` с provenance.
-> Oracle чист (без IO) и требует совпадения provenance с текущей identity:
-> replay/wrong-scenario/wrong-registry — INCONCLUSIVE. Library pipeline
-> покрыт `TEST-ENGINE-*`, `TEST-CONTROL-SPLIT-001` (A legitimate → PASS,
-> B forged file → INCONCLUSIVE), `TEST-HOST-CONTROL-POSITIVE-001`,
-> `FORGE/REPLAY/WRONG-SCENARIO/WRONG-REGISTRY-001`,
-> `TEST-HOST-EVIDENCE-REPLAY-001`, violation-dominates, blocker-ceiling.
+> Статус реализации (0.2.26, факт): Stage 2 correction — non-self-authorizing
+> challenge-response для `Aux`-pipeline сценариев на unix: host буферит
+> свежий 128-бит challenge в host-downlink pre-spawn и НИЧЕГО PASS-capable
+> в env не выдаёт; child обязан прочитать challenge и вернуть rotation
+> (`challenge`+nonce, последние 8 символов в начало) на host-uplink.
+> Только точный rotated response чеканит `VerifiedControl` → `HOST_FACT
+> control` с provenance (`ExecutionIdentity`: scenario + session nonce +
+> registry + frozen). Echo/challenge/nonce/stale/duplicates — мимо.
+> Oracle чист (без IO): provenance == текущей identity, иначе INCONCLUSIVE.
+> Покрыто: `POSITIVE/ECHO/SELF-AUTH/FORGE/REPLAY/WRONG-SCENARIO/
+> WRONG-REGISTRY/DUPLICATE-001`, `TEST-HOST-EVIDENCE-REPLAY-001`,
+> `CONTROL-SPLIT-001` (A behavior → PASS, B forged file → INCONCLUSIVE),
+> violation-dominates (→ FAIL), blocker-ceiling (→ INCONCLUSIVE).
 > Блокеры на direct-exec остаются INCONCLUSIVE/FAIL (containment не
 > доказывается, direct — не sandbox); non-Unix — control-unobserved.
 > `vetto verify-ng --lint` без спавна; CLI по-прежнему не исполняет
@@ -34,10 +36,12 @@
 ## Уровни evidence
 
 1. `HOST_FACT` — наблюдено доверенным хостом после wait (post-mortem stat,
-   wait-status, sweep, canary-сравнение, spec-hash, verified host-control).
-   Единственный уровень, поддерживающий PASS. Позитивный контроль требует
-   provenance, в точности равной текущей `ExecutionIdentity`, иначе oracle
-   даёт INCONCLUSIVE (replay/wrong-scenario/wrong-registry отвергаются).
+   wait-status, sweep, canary-сравнение, spec-hash, verified
+   challenge-response). Единственный уровень, поддерживающий PASS.
+   Позитивный контроль требует provenance, в точности равной текущей
+   `ExecutionIdentity`, плюс корректно выполненного поведения (rotation
+   свежего challenge, не echo): иначе oracle даёт INCONCLUSIVE
+   (echo/replay/wrong-scenario/wrong-registry отвергаются).
 2. `CONSTRAINED` — узкий nonce-bound сигнал изнутри (errno-класс + nonce).
    Поддерживает FAIL, никогда PASS в одиночку.
 3. `SELF_REPORT` — stdout-маркеры атаки. Только hint для triage.
@@ -193,14 +197,15 @@ Multivector-сценарии требуют ≥quorum независимых с�
 Engine → Killer → Collector / HostEvidence → Oracle (чистая функция, без
 IO) → Reporter. Oracle не управляет сбором и не касается ОС: весь IO —
 в runner/collector/host-evidence, oracle судит готовые структуры.
-Host-owned контроль (Stage 2, unix): `ControlChannel` создаётся до spawn,
-читающий конец держит хост, токен привязан к `ExecutionIdentity`;
-связанные nonce + кворум из verified control собираются только для `Aux`
-pipeline-сценариев. Child-writable пути по-прежнему неавторитетны
-(`control.txt`, HOME-файлы, stdout, env-echo, exit code — не evidence).
-Без verified Aux-контроля `probe_nonce`/`control_nonce` пусты и oracle
+Host-owned контроль (Stage 2 correction, unix): `ControlChannel` создаёт
+до spawn downlink+uplink и буферит свежий challenge; в env — только пути
+FIFO, никакого PASS-значения. Связанные nonce + кворум из verified
+response собираются только для `Aux` pipeline-сценариев. Echo verifier
+material (challenge/nonce/env/stale/duplicates) и child-writable пути
+(`control.txt`, HOME-файлы, stdout, exit code) — не evidence.
+Без verified Aux-ответа `probe_nonce`/`control_nonce` пусты и oracle
 структурно даёт INCONCLUSIVE/FAIL; блокеры на direct-exec — всегда
-INCONCLUSIVE/FAIL (liveness наблюдается, containment — нет).
+INCONCLUSIVE/FAIL (исполнение протокола наблюдается, containment — нет).
 Suite-уровень владения (`SuiteRunner`, один scenario — не более одного
 исполнения) обязателен для любого будущего backend-wired сьюта.
 

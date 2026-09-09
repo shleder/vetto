@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.26] — 2026-09-09
+
+### Fixed
+
+- **verify-ng Stage 2 correction: non-self-authorizing positive evidence (no sandbox changes)**:
+  - Removed the self-authorizing path: the host no longer issues any PASS-capable token via env (`VETTO_VNG_CONTROL_FIFO` / `VETTO_VNG_CONTROL_TOKEN` gone). New `host_evidence::ControlChannel` builds a downlink/uplink FIFO pair, buffers a fresh 128-bit challenge pre-spawn, and verifies only the exact rotated response (`derive_expected_response`: last 8 chars of `challenge + session_nonce` to front). Echoing the challenge/nonce/env/stale/duplicates fails verification by construction.
+  - Oracle untouched in logic (still pure, identity gate unchanged); `ExecutionIdentity` / provenance / Aux-only PASS gating preserved.
+  - **Tests**: rewritten `TEST-HOST-CONTROL-POSITIVE-001` (behavior → PASS), new `TEST-HOST-CONTROL-ECHO-001`, `TEST-HOST-CONTROL-SELF-AUTH-001` (full-env-knowledge copy without rotation → INCONCLUSIVE adversarial pair), extended `TEST-HOST-CONTROL-FORGE-001`, new duplicate-response rejection, kept REPLAY (both directions) / WRONG-SCENARIO / WRONG-REGISTRY / violation-dominates (FAIL) / blocker-ceiling (INCONCLUSIVE).
+
 ## [0.2.25] — 2026-09-09
 
 ### Added

@@ -1,16 +1,18 @@
-//! Stage 2 host-owned evidence: real positive control + identity binding.
+//! Stage 2 challenge-response host evidence: non-self-authorizing control.
 //!
-//! The direct backend answers the positive control over a host-created FIFO
-//! bound to [`ExecutionIdentity`](vetto::verify_ng::evidence::ExecutionIdentity)
-//! (scenario + session nonce + registry hash + frozen-spec hash). These
-//! tests prove the security invariants, not string shapes:
+//! Non-self-authorization invariant: the attacker cannot obtain PASS merely
+//! by replaying or echoing a verifier-issued capability. The host never
+//! issues a PASS-capable value: it buffers a fresh per-execution challenge
+//! into the host downlink pre-spawn, and only the exact rotated response
+//! (`rotate(challenge + session_nonce)`) arriving on the host uplink
+//! verifies. The child receives only FIFO paths plus the run-label nonce.
 //!
-//! - legitimate host-owned control -> PASS-capable (positive path exists);
-//! - forged child-controlled control -> never PASS;
-//! - cross-session replay -> never PASS (TEST-HOST-EVIDENCE-REPLAY-001);
-//! - wrong scenario / wrong registry -> never PASS;
-//! - valid control + host-observed violation -> FAIL (never upgraded);
-//! - blocker categories -> never PASS on direct-exec (no containment).
+//! Adversarial pair (same capabilities, different verdicts):
+//!
+//! - legitimate payload: reads the challenge, rotates, answers -> PASS;
+//! - malicious payload: knows every env var/pathname/contract the verifier
+//!   issues (it reads the challenge too) but only echoes/copies/forwards
+//!   verifier material instead of rotating -> INCONCLUSIVE, never PASS.
 //!
 //! Unix-only: the FIFO channel has no non-Unix backend yet; there the runs
 //! degrade to control-unobserved (INCONCLUSIVE, never PASS) by construction.
@@ -75,13 +77,24 @@ fn request_with_control<'a>(
     }
 }
 
-/// Legitimate answer: speak the exact identity-bound token back over the
-/// host-held FIFO. Nothing else in this script is trusted.
+/// Legitimate positive behavior: read the fresh challenge from the host
+/// downlink, rotate (`challenge` + run-label nonce, last 8 chars to front
+/// via POSIX parameter expansion), answer on the host uplink.
 const POSITIVE_SCRIPT: &str = concat!(
     "echo marker-stdout\n",
-    "if [ -n \"$VETTO_VNG_CONTROL_FIFO\" ] && [ -n \"$VETTO_VNG_CONTROL_TOKEN\" ]; then\n",
-    "  printf %s \"$VETTO_VNG_CONTROL_TOKEN\" > \"$VETTO_VNG_CONTROL_FIFO\"\n",
-    "fi\n",
+    "IFS= read -r C < \"$VETTO_VNG_CONTROL_DOWNLINK\"\n",
+    "S=\"$C$VETTO_VNG_NONCE\"\n",
+    "head=${S%????????}\n",
+    "tail=${S#$head}\n",
+    "printf %s \"$tail$head\" > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
+    "exit 0\n",
+);
+
+/// Literal echo: read the challenge and copy it back unrotated. Must never
+/// verify — echoing is not performing the behavior.
+const ECHO_SCRIPT: &str = concat!(
+    "IFS= read -r C < \"$VETTO_VNG_CONTROL_DOWNLINK\"\n",
+    "printf %s \"$C\" > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
     "exit 0\n",
 );
 
@@ -100,12 +113,13 @@ fn host_fact_values(out: &runner::ExecutionOutcome) -> Vec<&str> {
         .collect()
 }
 
-/// TEST-HOST-CONTROL-POSITIVE-001: valid host-owned control + correct
-/// session identity + complete stdio + intact fixture -> PASS-capable.
-/// This is the first proof the verifier pipeline can reach PASS; it proves
-/// pipeline liveness only, never containment (Aux scenario).
+/// TEST-HOST-CONTROL-POSITIVE-001: the legitimate payload performs the
+/// required behavior (read fresh challenge, rotate, answer); the host
+/// observes the independent consequence (exact rotated response on its own
+/// uplink end); identity correct; payload intact; stdio complete; quorum
+/// met -> PASS. Proves pipeline liveness only, never containment (Aux).
 #[test]
-fn test_host_control_positive_001_legitimate_control_passes() {
+fn test_host_control_positive_001_legitimate_behavior_passes() {
     let scenario = aux_scenario("TEST-HOST-CONTROL-POSITIVE-001");
     let policy = Policy::default();
     let net = NetMode::Off;
@@ -124,9 +138,12 @@ fn test_host_control_positive_001_legitimate_control_passes() {
     assert!(out.stdio_complete, "clean run collects completely");
     assert!(out.payload_intact, "staged script untouched");
     assert!(!out.violation_observed);
-    assert!(out.control_observed, "host must observe the FIFO answer");
+    assert!(
+        out.control_observed,
+        "host must observe the rotated response"
+    );
 
-    // PASS invariants (§10): verdict + strength + identity + quorum inputs.
+    // PASS invariants: verdict + strength + identity + quorum inputs.
     assert_eq!(out.result.verdict, model::Verdict::Pass);
     assert_ne!(out.result.strength, model::ClaimStrength::Unsupported);
     let id = &out.execution_identity;
@@ -158,10 +175,10 @@ fn test_host_control_positive_001_legitimate_control_passes() {
     }
 }
 
-/// CONTROL-SPLIT-001 part A: the same nonce-binding contract over the real
-/// host-owned channel is PASS-capable for the legitimate answer. (Part B —
-/// forged legacy control — stays in `verify_ng_execution.rs` and must remain
-/// INCONCLUSIVE.)
+/// CONTROL-SPLIT-001 part A: the nonce-binding contract over the real
+/// challenge-response channel is PASS-capable for the legitimate answer.
+/// (Part B — forged legacy control — stays in `verify_ng_execution.rs` and
+/// must remain INCONCLUSIVE.)
 #[test]
 fn test_control_split_001_legitimate_host_control_passes() {
     let scenario = aux_scenario("CONTROL-SPLIT-001");
@@ -183,16 +200,105 @@ fn test_control_split_001_legitimate_host_control_passes() {
     assert_eq!(
         out.result.verdict,
         model::Verdict::Pass,
-        "legitimate host-owned control must be PASS-capable"
+        "legitimate challenge-response must be PASS-capable"
     );
 }
 
-/// TEST-HOST-CONTROL-FORGE-001: the child forges control through every
-/// child-controlled medium (legacy control file, HOME file, stdout markers,
-/// wrong token on the real FIFO). None of it may become verified control,
-/// and the verdict must stay INCONCLUSIVE (no independent violation here).
+/// TEST-HOST-CONTROL-ECHO-001: literal echo of the challenge back to the
+/// verifier. Expected: INCONCLUSIVE, never PASS.
 #[test]
-fn test_host_control_forge_001_child_forge_cannot_pass() {
+fn test_host_control_echo_001_challenge_echo_cannot_pass() {
+    let scenario = aux_scenario("TEST-HOST-CONTROL-ECHO-001");
+    let policy = Policy::default();
+    let net = NetMode::Off;
+    let req = request_with_control(
+        &scenario,
+        &policy,
+        &net,
+        ECHO_SCRIPT,
+        Duration::from_secs(15),
+    );
+    let mut log = runner::SpawnLog::new();
+    let out = runner::run_one(&req, &mut log);
+
+    assert_single_spawn(&log, &out);
+    assert_eq!(out.exit_code, Some(0));
+    assert!(out.stdio_complete, "echo attempt itself collects cleanly");
+    assert!(
+        !out.control_observed,
+        "unrotated challenge echo must not verify"
+    );
+    assert!(
+        !out.evidence.has_verified_control(&out.execution_identity),
+        "no verified fact from echoed bytes"
+    );
+    assert_eq!(
+        out.result.verdict,
+        model::Verdict::Inconclusive,
+        "challenge echo must never PASS"
+    );
+}
+
+/// TEST-HOST-CONTROL-SELF-AUTH-001: malicious payload with FULL knowledge
+/// of every env capability the verifier issues (it even reads the fresh
+/// challenge) that only echoes/copies/forwards verifier material and never
+/// performs the rotation. Adversarial pair to POSITIVE-001: same
+/// capabilities, must get a different verdict — INCONCLUSIVE, never PASS.
+#[test]
+fn test_host_control_self_auth_001_copy_without_behavior_cannot_pass() {
+    let scenario = aux_scenario("TEST-HOST-CONTROL-SELF-AUTH-001");
+    let policy = Policy::default();
+    let net = NetMode::Off;
+    let script = concat!(
+        "echo PASS\n",
+        "echo HOST_FACT >&2\n",
+        "echo VERIFIED\n",
+        "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_ROOT/control.txt\"\n",
+        "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_HOME/forge.txt\"\n",
+        // Full-knowledge copy: read the fresh challenge, forward it
+        // literally (twice), leak it to files and stdout — but never rotate.
+        "IFS= read -r C < \"$VETTO_VNG_CONTROL_DOWNLINK\"\n",
+        "printf %s \"$C\" > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
+        "printf %s \"$C\" >> \"$VETTO_VNG_CONTROL_UPLINK\"\n",
+        "printf %s \"$C\" > \"$VETTO_VNG_HOME/challenge.txt\"\n",
+        "echo \"$C\"\n",
+        "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_HOME/uplink\"\n",
+        "exit 0\n",
+    );
+    let req = request_with_control(&scenario, &policy, &net, script, Duration::from_secs(15));
+    let mut log = runner::SpawnLog::new();
+    let out = runner::run_one(&req, &mut log);
+
+    assert_single_spawn(&log, &out);
+    assert_eq!(out.exit_code, Some(0));
+    assert!(out.stdio_complete, "copy attempt itself collects cleanly");
+    assert!(
+        !out.control_observed,
+        "copy/forward without rotation must not verify"
+    );
+    assert!(
+        !out.evidence.has_verified_control(&out.execution_identity),
+        "no verified fact from copied material"
+    );
+    assert_eq!(
+        out.result.verdict,
+        model::Verdict::Inconclusive,
+        "self-authorizing copy must never PASS"
+    );
+    for v in host_fact_values(&out) {
+        assert!(
+            !v.contains("PASS") && !v.contains("VERIFIED"),
+            "child markers must not leak into HOST_FACT: {v:?}"
+        );
+    }
+}
+
+/// TEST-HOST-CONTROL-FORGE-001: every child-controlled medium — stdout,
+/// stderr, HOME files, fixture files, a hardcoded stale response, a write
+/// to a wrong (host-unread) path — without reading the challenge at all.
+/// Nothing here, alone or combined, may yield PASS.
+#[test]
+fn test_host_control_forge_001_child_media_cannot_pass() {
     let scenario = aux_scenario("TEST-HOST-CONTROL-FORGE-001");
     let policy = Policy::default();
     let net = NetMode::Off;
@@ -200,14 +306,10 @@ fn test_host_control_forge_001_child_forge_cannot_pass() {
         "echo PASS\n",
         "echo HOST_FACT >&2\n",
         "echo VERIFIED\n",
-        "ctl=\"${VETTO_VNG_CONTROL:-$VETTO_VNG_ROOT/control.txt}\"\n",
-        "printf %s \"$VETTO_VNG_NONCE\" > \"$ctl\"\n",
+        "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_ROOT/control.txt\"\n",
         "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_HOME/forge.txt\"\n",
-        // Even the GENUINE token exfiltrated into child-controlled files and
-        // stdio must not verify: the host reads only its own FIFO end.
-        "printf %s \"$VETTO_VNG_CONTROL_TOKEN\" > \"$VETTO_VNG_ROOT/control.txt\"\n",
-        "echo \"$VETTO_VNG_CONTROL_TOKEN\"\n",
-        "printf 'forged-token' > \"$VETTO_VNG_CONTROL_FIFO\"\n",
+        "printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
+        "printf %s \"$VETTO_VNG_NONCE\" > \"$VETTO_VNG_HOME/uplink\"\n",
         "exit 0\n",
     );
     let req = request_with_control(&scenario, &policy, &net, script, Duration::from_secs(15));
@@ -219,7 +321,7 @@ fn test_host_control_forge_001_child_forge_cannot_pass() {
     assert!(out.stdio_complete, "forge attempt itself collects cleanly");
     assert!(
         !out.control_observed,
-        "wrong token must not verify as host control"
+        "stale/wrong-medium bytes must not verify"
     );
     assert!(
         !out.evidence.has_verified_control(&out.execution_identity),
@@ -238,9 +340,43 @@ fn test_host_control_forge_001_child_forge_cannot_pass() {
     }
 }
 
+/// Correct response written twice: exact-match verification rejects the
+/// 128-byte concatenation. Prefix/content acceptance would be a
+/// self-authorization hole; only the exact rotation verifies.
+#[test]
+fn test_host_control_duplicate_response_rejected() {
+    let scenario = aux_scenario("TEST-HOST-CONTROL-DUPLICATE-001");
+    let policy = Policy::default();
+    let net = NetMode::Off;
+    let script = concat!(
+        "IFS= read -r C < \"$VETTO_VNG_CONTROL_DOWNLINK\"\n",
+        "S=\"$C$VETTO_VNG_NONCE\"\n",
+        "head=${S%????????}\n",
+        "tail=${S#$head}\n",
+        "R=\"$tail$head\"\n",
+        "printf %s \"$R$R\" > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
+        "exit 0\n",
+    );
+    let req = request_with_control(&scenario, &policy, &net, script, Duration::from_secs(15));
+    let mut log = runner::SpawnLog::new();
+    let out = runner::run_one(&req, &mut log);
+
+    assert_single_spawn(&log, &out);
+    assert!(
+        !out.control_observed,
+        "duplicated correct response must not verify"
+    );
+    assert_ne!(
+        out.result.verdict,
+        model::Verdict::Pass,
+        "duplicate write must never PASS"
+    );
+}
+
 /// TEST-HOST-EVIDENCE-REPLAY-001 + TEST-HOST-CONTROL-REPLAY-001: valid
 /// evidence from execution A used in execution B must be INCONCLUSIVE/FAIL,
-/// never PASS — in both directions.
+/// never PASS — in both directions. The fresh per-execution challenge makes
+/// cross-session responses mismatch even before the provenance gate.
 #[test]
 fn test_host_evidence_replay_001_cross_session_replay_rejected() {
     let run = || {
@@ -405,17 +541,19 @@ fn test_host_control_wrong_registry_001_rejected() {
     }
 }
 
-/// Even VALID host control cannot turn a host-observed violation into PASS:
-/// sentinel trip + correct FIFO answer must still FAIL.
+/// Even a CORRECTLY performed behavior cannot turn a host-observed
+/// violation into PASS: sentinel trip + valid rotated response must FAIL.
 #[test]
-fn test_host_control_valid_control_cannot_mask_violation() {
+fn test_host_control_valid_response_cannot_mask_violation() {
     let scenario = aux_scenario("TEST-HOST-CONTROL-VIOLATION-001");
     let policy = Policy::default();
     let net = NetMode::Off;
     let script = concat!(
-        "if [ -n \"$VETTO_VNG_CONTROL_FIFO\" ] && [ -n \"$VETTO_VNG_CONTROL_TOKEN\" ]; then\n",
-        "  printf %s \"$VETTO_VNG_CONTROL_TOKEN\" > \"$VETTO_VNG_CONTROL_FIFO\"\n",
-        "fi\n",
+        "IFS= read -r C < \"$VETTO_VNG_CONTROL_DOWNLINK\"\n",
+        "S=\"$C$VETTO_VNG_NONCE\"\n",
+        "head=${S%????????}\n",
+        "tail=${S#$head}\n",
+        "printf %s \"$tail$head\" > \"$VETTO_VNG_CONTROL_UPLINK\"\n",
         "echo pwned > \"$VETTO_VNG_ROOT/canary.txt\"\n",
     );
     let mut req = request_with_control(&scenario, &policy, &net, script, Duration::from_secs(15));
@@ -425,16 +563,16 @@ fn test_host_control_valid_control_cannot_mask_violation() {
 
     assert_single_spawn(&log, &out);
     assert!(out.violation_observed);
-    assert!(out.control_observed, "liveness was genuinely observed");
+    assert!(out.control_observed, "response was genuinely correct");
     assert_eq!(
         out.result.verdict,
         model::Verdict::Fail,
-        "host-observed violation must FAIL despite valid control"
+        "host-observed violation must FAIL despite correct behavior"
     );
 }
 
-/// Direct backend proves no containment: a blocker-category run with valid
-/// host control and no violation must stay INCONCLUSIVE, never PASS.
+/// Direct backend proves no containment: a blocker-category run with the
+/// correct behavior and no violation must stay INCONCLUSIVE, never PASS.
 #[test]
 fn test_host_control_blocker_stays_inconclusive_on_direct() {
     let scenario = blocker_scenario("TEST-HOST-CONTROL-BLOCKER-001");
@@ -453,7 +591,7 @@ fn test_host_control_blocker_stays_inconclusive_on_direct() {
     assert_single_spawn(&log, &out);
     assert_eq!(out.exit_code, Some(0));
     assert!(!out.violation_observed);
-    assert!(out.control_observed, "liveness observed even for blockers");
+    assert!(out.control_observed, "behavior observed even for blockers");
     assert_ne!(
         out.result.verdict,
         model::Verdict::Pass,
@@ -467,16 +605,25 @@ fn test_host_control_blocker_stays_inconclusive_on_direct() {
 }
 
 /// Unit shape of the attestation boundary through the public API: only the
-/// exact token mints; the stamped fact matches exactly one identity.
+/// exact rotated response mints; echoes of challenge/nonce/concatenation,
+/// duplicates, and foreign identities never do.
 #[test]
 fn test_host_control_attest_boundary_shapes() {
     let id = ExecutionIdentity::new("S", "n", "r", "f");
-    let token = evidence::derive_control_token("secret", &id);
-    assert!(evidence::attest_control(&id, &token, token.as_bytes()).is_some());
-    assert!(evidence::attest_control(&id, &token, b"").is_none());
-    assert!(evidence::attest_control(&id, &token, b"nope").is_none());
+    let challenge = "0123456789abcdef0123456789abcdef";
+    let expected = evidence::derive_expected_response(challenge, "n");
+    assert!(evidence::attest_control(&id, &expected, expected.as_bytes()).is_some());
+    // Every echo/copy shape fails.
+    assert!(evidence::attest_control(&id, &expected, challenge.as_bytes()).is_none());
+    assert!(evidence::attest_control(&id, &expected, b"n").is_none());
+    let plain = format!("{challenge}n");
+    assert!(evidence::attest_control(&id, &expected, plain.as_bytes()).is_none());
+    assert!(evidence::attest_control(&id, &expected, b"").is_none());
+    let mut doubled = expected.as_bytes().to_vec();
+    doubled.extend_from_slice(expected.as_bytes());
+    assert!(evidence::attest_control(&id, &expected, doubled.as_slice()).is_none());
 
-    let verified = evidence::attest_control(&id, &token, token.as_bytes()).expect("mint");
+    let verified = evidence::attest_control(&id, &expected, expected.as_bytes()).expect("mint");
     let mut e = Evidence::default();
     assert!(!e.has_verified_control(&id));
     e.host_control_fact(&verified);

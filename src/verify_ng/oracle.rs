@@ -193,9 +193,12 @@ mod oracle_tests {
     /// tests for deceit/absence keep the legacy helper above.
     fn verified_setup(scenario_id: &str) -> (ExecutionIdentity, Evidence) {
         let id = ExecutionIdentity::new(scenario_id, "n", "reg-test", "frozen-test");
-        let token = crate::verify_ng::evidence::derive_control_token("test-secret", &id);
-        let verified = crate::verify_ng::evidence::attest_control(&id, &token, token.as_bytes())
-            .expect("test attestation must mint");
+        // Test stand-in for a host-fresh challenge response: the value is
+        // host-derived here, never issued to any child.
+        let expected = crate::verify_ng::evidence::derive_expected_response("test-challenge", "n");
+        let verified =
+            crate::verify_ng::evidence::attest_control(&id, &expected, expected.as_bytes())
+                .expect("test attestation must mint");
         let mut e = Evidence::default();
         e.host_fact("postmortem", "absent".to_string());
         e.host_control_fact(&verified);

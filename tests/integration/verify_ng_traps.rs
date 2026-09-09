@@ -65,8 +65,10 @@ fn verified_setup(
     scenario: &registry::Scenario,
 ) -> (evidence::ExecutionIdentity, evidence::Evidence) {
     let id = evidence::ExecutionIdentity::new(&scenario.id, "nonce-1", "reg-test", "frozen-test");
-    let token = evidence::derive_control_token("test-secret", &id);
-    let verified = evidence::attest_control(&id, &token, token.as_bytes())
+    // Test stand-in for a host-fresh challenge response (host-derived,
+    // never issued to any child).
+    let expected = evidence::derive_expected_response("test-challenge", "nonce-1");
+    let verified = evidence::attest_control(&id, &expected, expected.as_bytes())
         .expect("test attestation must mint");
     let mut e = evidence::Evidence::default();
     e.host_fact("postmortem", "absent".to_string());

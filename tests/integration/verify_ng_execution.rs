@@ -381,9 +381,11 @@ fn test_collector_completeness_001_incomplete_cannot_pass() {
         "reg-test",
         "frozen-test",
     );
-    let token = vetto::verify_ng::evidence::derive_control_token("test-secret", &identity);
-    let verified = vetto::verify_ng::evidence::attest_control(&identity, &token, token.as_bytes())
-        .expect("test attestation must mint");
+    let expected =
+        vetto::verify_ng::evidence::derive_expected_response("test-challenge", "nonce-1");
+    let verified =
+        vetto::verify_ng::evidence::attest_control(&identity, &expected, expected.as_bytes())
+            .expect("test attestation must mint");
     let mut evidence = Evidence::default();
     evidence.host_fact("wait-status", "exit=0".to_string());
     evidence.host_control_fact(&verified);

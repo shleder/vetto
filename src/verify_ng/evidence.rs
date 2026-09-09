@@ -15,12 +15,20 @@
 //! (scenario + session nonce + registry hash + frozen-spec hash) over the
 //! host-created channel [`HOST_CONTROL_CHANNEL`]. The only way to mint the
 //! [`VerifiedControl`] capability that stamps such a fact is
-//! [`attest_control`] with the exact identity-bound token the host read from
+//! [`attest_control`] with the exact expected response the host read from
 //! its own channel end — there is no constructor that wraps an arbitrary
 //! child-supplied value into a verified fact.
+//!
+//! Non-self-authorization invariant (Stage 2 correction): the host NEVER
+//! issues a value whose mere echo satisfies the control. The expected
+//! response is [`derive_expected_response`] of a host-fresh challenge the
+//! child never receives except by actively reading the host downlink, plus
+//! a rotation transform the child must apply. Replaying or echoing any
+//! verifier-issued capability (env values, the challenge itself, stale
+//! responses) fails verification: PASS requires performing the
+//! challenge-response behavior, not copying bytes.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceTier {
@@ -32,7 +40,7 @@ pub enum EvidenceTier {
 /// Host-owned positive-control channel label. Only facts stamped over this
 /// channel (by [`Evidence::host_control_fact`], which requires a
 /// [`VerifiedControl`]) can satisfy the oracle's identity gate.
-pub const HOST_CONTROL_CHANNEL: &str = "host-fifo-v1";
+pub const HOST_CONTROL_CHANNEL: &str = "host-challenge-v1";
 /// Fact name for the verified host-owned positive control.
 pub const HOST_CONTROL_FACT: &str = "control";
 
@@ -110,48 +118,55 @@ impl VerifiedControl {
     }
 }
 
-/// Derive the per-execution control token binding the channel secret to the
-/// full execution identity. Pure function (no I/O): the host computes the
-/// expected value before spawn, hands it to the child as a capability, and
-/// re-derives nothing afterwards — verification is exact comparison in
-/// [`attest_control`].
-pub fn derive_control_token(channel_secret: &str, identity: &ExecutionIdentity) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"vng-control-v1;");
-    hasher.update(b"secret=");
-    hasher.update(channel_secret.as_bytes());
-    hasher.update(b";scenario=");
-    hasher.update(identity.scenario_id.as_bytes());
-    hasher.update(b";nonce=");
-    hasher.update(identity.session_nonce.as_bytes());
-    hasher.update(b";registry=");
-    hasher.update(identity.registry_hash.as_bytes());
-    hasher.update(b";frozen=");
-    hasher.update(identity.frozen_hash.as_bytes());
-    super::frozen::hex_encode(&hasher.finalize())
+/// Derive the expected challenge response from the host-fresh `challenge`
+/// plus the session nonce. Pure function (no I/O).
+///
+/// Response = rotation of (`challenge` + `session_nonce`): the last 8
+/// characters move to the front (short inputs pass through unchanged).
+/// The rotation is deliberately trivial to verify and deliberately NOT
+/// computable from env-issued material alone: `challenge` is fresh
+/// per execution and reaches the child ONLY through the host downlink,
+/// never through env. Echoing the challenge, the nonce, or any stale
+/// response therefore differs from the expected value.
+///
+/// ASCII-only contract: challenge and nonce are hex; byte rotation is safe.
+pub fn derive_expected_response(challenge: &str, session_nonce: &str) -> String {
+    let combined = format!("{challenge}{session_nonce}");
+    let bytes = combined.as_bytes();
+    if bytes.len() <= 8 {
+        return combined;
+    }
+    let (head, tail) = combined.split_at(bytes.len() - 8);
+    format!("{tail}{head}")
 }
 
 /// Host-side verification (pure, no I/O): mint the [`VerifiedControl`]
-/// capability only when the bytes the host read from its own channel end
-/// exactly equal the expected identity-bound token AND the identity is
-/// well-formed. Anything else — wrong token, forged file content, stdout
-/// markers, replayed bytes from another session/scenario/registry — yields
-/// `None`, so no verified fact can ever be stamped from it.
+/// capability only when the bytes the host read from its own uplink end
+/// exactly equal the expected challenge response AND the identity is
+/// well-formed.
+///
+/// Critical: `expected` MUST be host-derived from a never-issued challenge
+/// (see [`derive_expected_response`]). It must never be a value the child
+/// was given, otherwise verification degrades to self-authorization.
+/// Anything else — echoed challenge, copied env, forged file content,
+/// stdout markers, duplicated/stale responses, replayed bytes from another
+/// session/scenario/registry — yields `None`, so no verified fact can ever
+/// be stamped from it.
 pub fn attest_control(
     identity: &ExecutionIdentity,
-    expected_token: &str,
+    expected: &str,
     received: &[u8],
 ) -> Option<VerifiedControl> {
     if !identity.is_well_formed() {
         return None;
     }
-    if expected_token.is_empty() {
+    if expected.is_empty() {
         return None;
     }
-    if received.len() != expected_token.len() {
+    if received.len() != expected.len() {
         return None;
     }
-    if received != expected_token.as_bytes() {
+    if received != expected.as_bytes() {
         return None;
     }
     Some(VerifiedControl {
@@ -262,72 +277,89 @@ mod evidence_tests {
         ExecutionIdentity::new("SCEN-A", "nonce-a", "reg-a", "frozen-a")
     }
 
-    #[test]
-    fn control_token_binds_full_identity() {
+    /// Test stand-in for a host-fresh challenge (production challenges come
+    /// from the host RNG and never appear in env).
+    const TEST_CHALLENGE: &str = "0123456789abcdef0123456789abcdef";
+
+    fn test_expected() -> (ExecutionIdentity, String) {
         let id = test_identity();
-        let base = derive_control_token("secret", &id);
-        assert_eq!(base.len(), 64);
-        // Every bound field flips the token; pure re-derivation is stable.
-        assert_eq!(derive_control_token("secret", &id), base);
-        assert_ne!(
-            derive_control_token("other", &id),
-            base,
-            "channel secret binds"
-        );
-        let mut mutated = id.clone();
-        mutated.scenario_id = "SCEN-B".to_string();
-        assert_ne!(derive_control_token("secret", &mutated), base);
-        let mut mutated = id.clone();
-        mutated.session_nonce = "nonce-b".to_string();
-        assert_ne!(derive_control_token("secret", &mutated), base);
-        let mut mutated = id.clone();
-        mutated.registry_hash = "reg-b".to_string();
-        assert_ne!(derive_control_token("secret", &mutated), base);
-        let mut mutated = id.clone();
-        mutated.frozen_hash = "frozen-b".to_string();
-        assert_ne!(derive_control_token("secret", &mutated), base);
+        let expected = derive_expected_response(TEST_CHALLENGE, &id.session_nonce);
+        (id, expected)
     }
 
     #[test]
-    fn attest_mints_only_on_exact_match() {
-        let id = test_identity();
-        let token = derive_control_token("secret", &id);
-        assert!(attest_control(&id, &token, token.as_bytes()).is_some());
-        // Forged / truncated / extended / empty payloads never mint.
-        assert!(attest_control(&id, &token, b"forged").is_none());
-        assert!(attest_control(&id, &token, b"").is_none());
-        let mut short = token.as_bytes().to_vec();
+    fn response_rotates_challenge_plus_nonce() {
+        // "0123..def" (32) + "nonce-a" (7) = 39 chars; last 8 to front.
+        let r = derive_expected_response(TEST_CHALLENGE, "nonce-a");
+        let s = format!("{TEST_CHALLENGE}nonce-a");
+        assert_eq!(r.len(), s.len());
+        assert_eq!(r, format!("{}{}", &s[s.len() - 8..], &s[..s.len() - 8]));
+        // Rotation is stable and sensitive to both inputs.
+        assert_eq!(derive_expected_response(TEST_CHALLENGE, "nonce-a"), r);
+        assert_ne!(
+            derive_expected_response("fedcba9876543210fedcba9876543210", "nonce-a"),
+            r
+        );
+        assert_ne!(derive_expected_response(TEST_CHALLENGE, "nonce-b"), r);
+    }
+
+    #[test]
+    fn echo_is_never_the_response() {
+        // Literal echo of every verifier-visible value differs: echoing is
+        // not performing the behavior. This is the self-authorization kill.
+        let r = derive_expected_response(TEST_CHALLENGE, "nonce-a");
+        assert_ne!(TEST_CHALLENGE, r, "challenge echo is not the response");
+        assert_ne!("nonce-a", r, "nonce echo is not the response");
+        assert_ne!(
+            format!("{TEST_CHALLENGE}nonce-a"),
+            r,
+            "unrotated concatenation is not the response"
+        );
+    }
+
+    #[test]
+    fn attest_mints_only_on_exact_response() {
+        let (id, expected) = test_expected();
+        assert!(attest_control(&id, &expected, expected.as_bytes()).is_some());
+        // Echoed challenge / nonce / concatenation never mint.
+        assert!(attest_control(&id, &expected, TEST_CHALLENGE.as_bytes()).is_none());
+        assert!(attest_control(&id, &expected, b"nonce-a").is_none());
+        let plain = format!("{TEST_CHALLENGE}nonce-a");
+        assert!(attest_control(&id, &expected, plain.as_bytes()).is_none());
+        // Forged / truncated / extended / duplicated / empty never mint.
+        assert!(attest_control(&id, &expected, b"forged").is_none());
+        assert!(attest_control(&id, &expected, b"").is_none());
+        let mut short = expected.as_bytes().to_vec();
         short.pop();
-        assert!(attest_control(&id, &token, &short).is_none());
-        let mut long = token.as_bytes().to_vec();
-        long.push(b'x');
-        assert!(attest_control(&id, &token, &long).is_none());
-        // Malformed identity never mints, even with a matching token.
+        assert!(attest_control(&id, &expected, &short).is_none());
+        let mut doubled = expected.as_bytes().to_vec();
+        doubled.extend_from_slice(expected.as_bytes());
+        assert!(attest_control(&id, &expected, &doubled).is_none());
+        // Malformed identity never mints, even with a matching response.
         let bad = ExecutionIdentity::new("", "n", "r", "f");
         assert!(!bad.is_well_formed());
-        assert!(attest_control(&bad, &token, token.as_bytes()).is_none());
-        assert!(attest_control(&id, "", token.as_bytes()).is_none());
+        assert!(attest_control(&bad, &expected, expected.as_bytes()).is_none());
+        assert!(attest_control(&id, "", expected.as_bytes()).is_none());
     }
 
     #[test]
     fn verified_control_fact_matches_only_own_identity() {
-        let id = test_identity();
-        let token = derive_control_token("secret", &id);
-        let verified = attest_control(&id, &token, token.as_bytes()).expect("mint");
+        let (id, expected) = test_expected();
+        let verified = attest_control(&id, &expected, expected.as_bytes()).expect("mint");
         let mut e = Evidence::default();
         // Legacy facts alone never satisfy the identity gate.
         e.host_fact("wait-status", "exit=0".to_string());
         assert!(!e.has_verified_control(&id));
         e.host_control_fact(&verified);
         assert!(e.has_verified_control(&id));
-        // The stamped value carries no secret material.
+        // The stamped value carries no challenge/response material.
         let fact = e
             .facts
             .iter()
             .find(|f| f.name == HOST_CONTROL_FACT)
             .expect("control fact");
-        assert!(!fact.value.contains(&token));
-        assert!(!fact.value.contains("secret"));
+        assert!(!fact.value.contains(&expected));
+        assert!(!fact.value.contains(TEST_CHALLENGE));
         // Any identity drift rejects: replay, wrong scenario, wrong registry.
         let mut other = id.clone();
         other.session_nonce = "nonce-b".to_string();

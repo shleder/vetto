@@ -14,36 +14,35 @@
 //! -> oracle (pure) -> redacted ScenarioResult
 //! ```
 //!
-//! Provenance rules (Blocker 1 audit + Stage 2 identity binding):
+//! Provenance rules (Blocker 1 audit + Stage 2 challenge-response):
 //! - HOST_FACT is only what the host observes independently of
 //!   attacker-controlled reporting: wait status (kernel), kill outcome
 //!   (own poll loop), payload/sentinel hashes (host-held pre-images), and
-//!   the verified host-owned control (exact identity-bound token arriving
-//!   on the host-held FIFO end, see [`super::host_evidence`]).
+//!   the verified challenge response (exact rotated response arriving on
+//!   the host-held uplink end, see [`super::host_evidence`]).
 //! - NOT HOST_FACT: stdout, stderr, child env, files created by the child
 //!   (including any `control.txt` the child writes anywhere it can reach),
-//!   child-written markers, hashes over attacker-only post-run data, and the
-//!   control env capabilities (`VETTO_VNG_CONTROL_FIFO` /
-//!   `VETTO_VNG_CONTROL_TOKEN`) on their own — a token echoed anywhere but
-//!   the host FIFO is ignored.
-//! - The direct backend's host-owned control channel is the per-execution
-//!   FIFO from [`super::host_evidence::ControlChannel`]: created before
-//!   spawn, read end held by the host across the spawn, verified after
-//!   collection. Only a successful verification mints a `VerifiedControl`
-//!   and stamps the identity-bound `control` HOST_FACT; the oracle then
-//!   requires that fact's provenance to equal the current
-//!   [`super::evidence::ExecutionIdentity`]. `probe_nonce`/`control_nonce`
-//!   are `Some` only on that verified path (and only for `Aux` pipeline
-//!   scenarios — see below); otherwise they stay `None` and PASS is
-//!   structurally unreachable: the best honest outcome is INCONCLUSIVE, or
-//!   FAIL on host-observed violation.
-//! - PASS-capability gate: the FIFO proves pipeline liveness, never
-//!   containment. PASS-capable oracle input (bound nonces + quorum vector)
-//!   is assembled from a verified control for `Aux` scenarios only. Blocker
-//!   categories keep `probe_nonce`/`control_nonce` at `None` and
-//!   `agreeing_vectors` at 0 on direct-exec, so they stay INCONCLUSIVE (or
-//!   FAIL on violation) no matter what the child writes — direct execution
-//!   is not a sandbox and claims no containment.
+//!   child-written markers, hashes over attacker-only post-run data, the
+//!   control FIFO path capabilities on their own, and the challenge echoed
+//!   back unrotated — echoing verifier material anywhere is ignored.
+//! - Non-self-authorization invariant: the host NEVER issues a value whose
+//!   echo counts as control. The expected response derives from a fresh
+//!   per-execution challenge the child only obtains by reading the host
+//!   downlink, plus a rotation the child must apply. Only a successful
+//!   verification mints a `VerifiedControl` and stamps the identity-bound
+//!   `control` HOST_FACT; the oracle then requires that fact's provenance
+//!   to equal the current [`super::evidence::ExecutionIdentity`].
+//!   `probe_nonce`/`control_nonce` are `Some` only on that verified path
+//!   (and only for `Aux` pipeline scenarios — see below); otherwise they
+//!   stay `None` and PASS is structurally unreachable: the best honest
+//!   outcome is INCONCLUSIVE, or FAIL on host-observed violation.
+//! - PASS-capability gate: the protocol proves live challenge-response
+//!   execution, never containment. PASS-capable oracle input (bound nonces
+//!   + quorum vector) is assembled from a verified response for `Aux`
+//!   scenarios only. Blocker categories keep `probe_nonce`/`control_nonce`
+//!   at `None` and `agreeing_vectors` at 0 on direct-exec, so they stay
+//!   INCONCLUSIVE (or FAIL on violation) no matter what the child writes —
+//!   direct execution is not a sandbox and claims no containment.
 //!
 //! Hard rules:
 //! - No retries: a failed collection stays INCONCLUSIVE (or FAIL when the
@@ -95,11 +94,12 @@ pub const MAX_STDIO_BYTES: usize = 1 << 20;
 /// Harness <-> child contract: env names (see `harness_env` below).
 /// `VETTO_VNG_NONCE` is a run label, not a secret and not proof: nothing
 /// host-side trusts a child-presented nonce on this backend. The Stage 2
-/// control capabilities (`VETTO_VNG_CONTROL_FIFO` /
-/// `VETTO_VNG_CONTROL_TOKEN`, see [`super::host_evidence`]) are transport,
+/// control capabilities (`VETTO_VNG_CONTROL_DOWNLINK` /
+/// `VETTO_VNG_CONTROL_UPLINK`, see [`super::host_evidence`]) are transport,
 /// not proof either: no child-reachable pathname or env value is
-/// authoritative for the verdict — only arrival of the exact identity-bound
-/// token on the host-held FIFO end counts, after host-side verification.
+/// authoritative for the verdict — only arrival of the exact rotated
+/// challenge response on the host-held uplink end counts, after host-side
+/// verification. No PASS-capable value is ever issued via env.
 pub const ENV_NONCE: &str = "VETTO_VNG_NONCE";
 pub const ENV_HOME: &str = "VETTO_VNG_HOME";
 pub const ENV_ROOT: &str = "VETTO_VNG_ROOT";
@@ -147,13 +147,14 @@ pub struct ExecutionRequest<'a> {
     pub env_extra: BTreeMap<String, String>,
     /// Execution deadline for the wait/kill stage.
     pub deadline: Duration,
-    /// Opt in to the host-owned positive-control channel (Stage 2). When
-    /// true, the host creates a per-execution FIFO + identity-bound token
-    /// before spawn and verifies arrival after collection. The child is
-    /// expected to answer via `$VETTO_VNG_CONTROL_FIFO` /
-    /// `$VETTO_VNG_CONTROL_TOKEN`; answers via any other medium are
-    /// ignored. PASS-capable oracle input is assembled from a verified
-    /// control for `Aux` pipeline scenarios only — blocker categories stay
+    /// Opt in to the host-owned challenge-response channel (Stage 2). When
+    /// true, the host creates a per-execution downlink/uplink FIFO pair +
+    /// fresh challenge before spawn and verifies the rotated response after
+    /// collection. The child is expected to read `$VETTO_VNG_CONTROL_DOWNLINK`,
+    /// rotate per the documented transform, and answer via
+    /// `$VETTO_VNG_CONTROL_UPLINK`; echoing verifier material via any medium
+    /// is ignored. PASS-capable oracle input is assembled from a verified
+    /// response for `Aux` pipeline scenarios only — blocker categories stay
     /// INCONCLUSIVE/FAIL on direct-exec by construction.
     pub enable_host_control: bool,
 }
@@ -180,8 +181,8 @@ pub struct ExecutionOutcome {
     pub evidence: Evidence,
     pub payload_intact: bool,
     pub sentinel_mutated: Vec<String>,
-    /// True only when the exact identity-bound token arrived on the
-    /// host-held FIFO end before the deadline (Stage 2). False when the
+    /// True only when the exact rotated challenge response arrived on the
+    /// host-held uplink end before the deadline (Stage 2). False when the
     /// channel is disabled, creation failed, or verification failed.
     /// For non-`Aux` scenarios a `true` here still never yields PASS on
     /// direct-exec (no containment proof); it records observed liveness.
@@ -385,9 +386,10 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         spec.hash().as_str(),
     );
     // Frozen env snapshot for the FM-03 continuity re-freeze below: the
-    // control capabilities are transport merged AFTER the freeze, so both
-    // freezes cover the same pre-channel launch context while the token
-    // binds the frozen hash in the other direction (token -> frozen).
+    // control path capabilities are transport merged AFTER the freeze, so
+    // both freezes cover the same pre-channel launch context while the
+    // response binds the session nonce and the stamped provenance binds
+    // the frozen hash in the other direction.
     let spec_env = env.clone();
     // Host-owned control channel, created BEFORE spawn when opted in. The
     // read end stays with the host across the spawn; failure to create
@@ -564,24 +566,27 @@ fn finish_run(
         evidence.host_fact("sentinel", format!("mutated:{rel}"));
     }
 
-    // Stage 2 host-owned control verification. All channel I/O stays here
+    // Stage 2 challenge-response verification. All channel I/O stays here
     // on the host side; the oracle only ever sees the stamped fact plus the
     // identity, never the channel. Provenance: `verify` reads the host-held
-    // FIFO end and mints the capability only on exact arrival of the
-    // identity-bound token. Child bytes anywhere else (HOME/fixture files,
-    // stdio, env echo, exit code) are not consulted and cannot stamp a fact.
-    // PASS-capability gate: the FIFO proves pipeline liveness, never
-    // containment, so bound nonces + the quorum vector are assembled from a
-    // verified control for `Aux` scenarios only. Without a verified Aux
-    // control both nonce slots stay None and agreeing_vectors stays 0, and
-    // the oracle structurally yields INCONCLUSIVE (or FAIL on host-observed
-    // violation) — PASS is unreachable there by construction, not by luck.
+    // uplink end and mints the capability only on exact arrival of the
+    // rotated challenge response — never issued via env, so echoing
+    // verifier material cannot verify. Child bytes anywhere else
+    // (HOME/fixture files, stdio, env echo, exit code, challenge echo)
+    // are not consulted and cannot stamp a fact.
+    // PASS-capability gate: the protocol proves live challenge-response
+    // execution, never containment, so bound nonces + the quorum vector are
+    // assembled from a verified response for `Aux` scenarios only. Without
+    // a verified Aux response both nonce slots stay None and
+    // agreeing_vectors stays 0, and the oracle structurally yields
+    // INCONCLUSIVE (or FAIL on host-observed violation) — PASS is
+    // unreachable there by construction, not by luck.
     // Blocker 2: completeness is structured oracle input, not a detail
     // string.
     let pass_capable = req.enable_host_control && req.scenario.category == Category::Aux;
     let mut control_observed = false;
     let mut control_state = if req.enable_host_control {
-        "host-fifo:unverified"
+        "challenge:unverified"
     } else {
         "disabled"
     };
@@ -590,11 +595,11 @@ fn finish_run(
             evidence.host_control_fact(&verified);
             control_observed = true;
             control_state = if pass_capable {
-                "host-fifo:verified"
+                "challenge:verified"
             } else {
                 // Liveness observed, but direct-exec proves no containment:
                 // blocker verdicts stay INCONCLUSIVE/FAIL below regardless.
-                "host-fifo:verified(non-aux,no-pass)"
+                "challenge:verified(non-aux,no-pass)"
             };
         }
     }
