@@ -23,21 +23,24 @@
 //! `Verified`, `Unsupported`, and `Failed`, and must never claim enforcement
 //! merely because it accepted a configuration.
 //!
-//! Stage 3A honesty contract:
+//! Stage honesty contract:
 //!
 //! ```text
-//! Stage 3A is architecture only.
-//! Actual Linux enforcement remains unimplemented.
-//! macOS/Windows enforcement remains unimplemented.
+//! Stage 3A was architecture only.
+//! Stage 3B implements real Linux enforcement (landlock + seccomp + rlimit
+//!   + process-group/tree sweep); macOS/Windows remain placeholders.
 //! ```
 //!
-//! The placeholder backends below therefore report `Unsupported` for every
-//! containment capability and never return `Enforced`/`Verified` without
-//! actual kernel enforcement. `DirectBackend` (the pre-existing direct-exec
-//! plumbing) enforces only `HostEvidence` (wait-status/kill/sentinel
-//! observation) and nothing else. Fail-closed gating
-//! ([`apply_backend_ceiling`]) demotes any `PASS` whose mandatory
-//! capabilities are not actually enforced to `INCONCLUSIVE`, never to `PASS`.
+//! Backends report `Unsupported` for every capability they cannot actually
+//! install and never return `Enforced`/`Verified` without real enforcement.
+//! `DirectBackend` (the pre-existing direct-exec plumbing) enforces only
+//! `HostEvidence` (wait-status/kill/sentinel observation) and nothing else.
+//! `LinuxBackend::prepare` reports at most `Configured` (probed, planned,
+//! not yet installed); only a successful backend-controlled spawn promotes
+//! to `Enforced`, and only host-observed `/proc` evidence promotes to
+//! `Verified`. Fail-closed gating ([`apply_backend_ceiling`]) demotes any
+//! `PASS` whose mandatory capabilities are not actually enforced to
+//! `INCONCLUSIVE`, never to `PASS`.
 //!
 //! The oracle itself is untouched by this module: [`apply_backend_ceiling`]
 //! and [`allows_pass`] are pure functions over already-structured reports,
@@ -422,10 +425,100 @@ pub struct EnforcementFact {
     pub backend: BackendKind,
 }
 
+/// Extra host-side context for preparation that is transport, not policy:
+/// paths the child legitimately needs (e.g. the host-owned control-channel
+/// directory) which the canonical policy must not absorb. Bound to the run
+/// via the execution identity like everything else.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareContext {
+    pub extra_rw: Vec<std::path::PathBuf>,
+}
+
+/// Child-side enforcement plan built by `prepare` (parent-side, where
+/// allocation is safe) and installed by the forked child before `exec`.
+///
+/// Pure data: the runner applies it through `Command::pre_exec`, so the
+/// spawn itself is backend-controlled — a backend can only reach `Enforced`
+/// for a child that actually ran this plan. `None` (via
+/// [`SandboxBackend::pre_exec_plan`]) means no child-side enforcement.
+#[derive(Debug, Clone)]
+pub struct ChildEnforcementPlan {
+    /// Landlock ruleset available on this kernel.
+    pub landlock: bool,
+    /// Execution root confined read/write (the fixture root).
+    pub exec_root: std::path::PathBuf,
+    /// Extra read/write roots (host control-channel dir).
+    pub extra_rw: Vec<std::path::PathBuf>,
+    /// System roots confined read-only (interpreter, loader, configs).
+    pub system_ro: Vec<std::path::PathBuf>,
+    /// Deny non-`AF_UNIX` sockets (`--net=off` only).
+    pub net_deny: bool,
+    /// Install the seccomp hardening denylist.
+    pub harden_syscalls: bool,
+    /// `setrlimit` ceilings (lowering only).
+    pub rlimit_as: Option<u64>,
+    pub rlimit_nproc: Option<u64>,
+    pub rlimit_cpu: Option<u64>,
+    pub rlimit_fsize: Option<u64>,
+    /// Join a new process group for tree-wide signalling.
+    pub new_pgroup: bool,
+}
+
+/// Host-observed verification of a live confined child, read from `/proc`
+/// without trusting any child output. Any flag the host could not observe
+/// stays false: the capability remains `Enforced`, never `Verified`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostVerification {
+    pub seccomp_filter: bool,
+    pub no_new_privs: bool,
+    pub pgroup_separate: bool,
+    pub rlimit_as_ok: bool,
+    pub rlimit_nproc_ok: bool,
+    pub rlimit_cpu_ok: bool,
+    pub rlimit_fsize_ok: bool,
+    pub subreaper_ok: bool,
+}
+
+impl HostVerification {
+    pub fn none() -> Self {
+        HostVerification {
+            seccomp_filter: false,
+            no_new_privs: false,
+            pgroup_separate: false,
+            rlimit_as_ok: false,
+            rlimit_nproc_ok: false,
+            rlimit_cpu_ok: false,
+            rlimit_fsize_ok: false,
+            subreaper_ok: false,
+        }
+    }
+
+    /// True when every installed mechanism was host-observed.
+    pub fn all_observed(&self) -> bool {
+        self.seccomp_filter
+            && self.no_new_privs
+            && self.pgroup_separate
+            && self.rlimit_as_ok
+            && self.rlimit_nproc_ok
+            && self.rlimit_cpu_ok
+            && self.rlimit_fsize_ok
+            && self.subreaper_ok
+    }
+}
+
 /// Minimal backend contract for Stage 3B Linux enforcement and later
 /// macOS/Windows implementations. Every security-relevant operation has a
-/// clear failure mode: [`prepare`] reports per-capability states instead
-/// of error strings, and [`teardown`] is idempotent best-effort cleanup.
+/// clear failure mode: [`prepare`](SandboxBackend::prepare) reports
+/// per-capability states instead of error strings, and
+/// [`teardown`](SandboxBackend::teardown) is idempotent best-effort
+/// cleanup.
+///
+/// Spawn-authority rule (Stage 3B): enforcement lives in the
+/// [`ChildEnforcementPlan`] the runner installs via `pre_exec`. `prepare`
+/// reports at most `Configured`; only [`note_spawned`](SandboxBackend::note_spawned)
+/// (spawn succeeded, so the plan ran without error) promotes to `Enforced`,
+/// and only [`note_host_verified`](SandboxBackend::note_host_verified)
+/// (host-observed proof) promotes to `Verified`.
 pub trait SandboxBackend {
     /// Which implementation this is (matrix row + report attribution).
     fn kind(&self) -> BackendKind;
@@ -447,15 +540,51 @@ pub trait SandboxBackend {
             .collect()
     }
 
-    /// Record intent, install whatever enforcement exists, and return the
-    /// structured outcome. Must never return `Enforced`/`Verified` without
-    /// actual installed enforcement. Pure bookkeeping in Stage 3A (no
-    /// kernel calls); Stage 3B implements real installation here.
+    /// Record intent, probe the kernel, build the child-side plan, and
+    /// return the structured outcome. Reports at most `Configured` for
+    /// available mechanisms (`Unsupported` otherwise); must never return
+    /// `Enforced`/`Verified` — nothing is installed yet. Read-only probing
+    /// only (no confinement of the calling process).
     fn prepare(
         &mut self,
         policy: &CanonicalPolicy,
         identity: &ExecutionIdentity,
     ) -> EnforcementReport;
+
+    /// Same as [`prepare`](SandboxBackend::prepare) with extra host-side
+    /// transport context (control-channel dir). Defaults to ignoring the
+    /// context; the Linux backend honors it.
+    fn prepare_with_context(
+        &mut self,
+        policy: &CanonicalPolicy,
+        identity: &ExecutionIdentity,
+        ctx: &PrepareContext,
+    ) -> EnforcementReport {
+        let _ = ctx;
+        self.prepare(policy, identity)
+    }
+
+    /// Child-side plan to install via `pre_exec`, if any. `None` means the
+    /// spawn path carries no backend enforcement.
+    fn pre_exec_plan(&self) -> Option<ChildEnforcementPlan> {
+        None
+    }
+
+    /// Record a successful spawn: the `pre_exec` plan ran without error, so
+    /// `Configured` capabilities promote to `Enforced`.
+    fn note_spawned(&mut self, _pid: u32) {}
+
+    /// Record host-observed verification: matching capabilities promote
+    /// from `Enforced` to `Verified`. Unobserved stays `Enforced`.
+    fn note_host_verified(&mut self, _verification: &HostVerification) {}
+
+    /// Record a setup failure: affected capabilities become `Failed` and
+    /// the report fails closed (`preparation_ok == false`).
+    fn note_failed(&mut self, _kind: PreparationFailureKind) {}
+
+    /// Record the post-run tree-sweep outcome: a clean sweep promotes
+    /// `ProcessTreeContainment` to `Verified`; residuals fail it closed.
+    fn note_tree_clean(&mut self, _clean: bool) {}
 
     /// Last preparation outcome, if any.
     fn enforcement(&self) -> Option<&EnforcementReport>;
@@ -553,18 +682,57 @@ impl SandboxBackend for DirectBackend {
     }
 }
 
-/// Stage 3A Linux placeholder. Reports `Unsupported` for every capability,
-/// including containment that Stage 3B will implement (Landlock, seccomp,
-/// namespaces, cgroups, network isolation, process-tree containment). Must
-/// never return `Enforced` without actual kernel enforcement.
+/// Stage 3B Linux backend: real unprivileged enforcement (Landlock
+/// filesystem allowlist, seccomp-BPF socket policy + hardening denylist,
+/// `setrlimit` ceilings, `NO_NEW_PRIVS`, new process group, nonce-targeted
+/// tree sweep). No namespaces, no cgroups, no mounts: anything requiring
+/// privilege stays `Unsupported`, never faked.
+///
+/// State machine per run: `prepare` probes and reports at most `Configured`;
+/// a successful backend-controlled spawn promotes to `Enforced`;
+/// host-observed `/proc` evidence promotes to `Verified`. Off Linux every
+/// capability stays `Unsupported`.
 #[derive(Debug, Clone, Default)]
 pub struct LinuxBackend {
     report: Option<EnforcementReport>,
+    plan: Option<ChildEnforcementPlan>,
 }
 
 impl LinuxBackend {
     pub fn new() -> Self {
-        LinuxBackend { report: None }
+        LinuxBackend {
+            report: None,
+            plan: None,
+        }
+    }
+
+    /// Upgrade every `Configured` record to `Enforced` in the stored report.
+    fn promote_configured_to_enforced(&mut self) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                if record.state == EnforcementState::Configured {
+                    record.state = EnforcementState::Enforced;
+                }
+            }
+        }
+    }
+
+    /// Fail every installed-or-planned record with `kind` and fail closed.
+    fn fail_installed(&mut self, kind: PreparationFailureKind) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                match record.state {
+                    EnforcementState::Configured
+                    | EnforcementState::Enforced
+                    | EnforcementState::Verified => {
+                        record.state = EnforcementState::Failed;
+                        record.failure = Some(kind);
+                    }
+                    _ => {}
+                }
+            }
+            report.preparation_ok = false;
+        }
     }
 }
 
@@ -574,11 +742,28 @@ impl SandboxBackend for LinuxBackend {
     }
 
     fn name(&self) -> &'static str {
-        "linux (Stage 3A placeholder; no enforcement yet)"
+        "linux (landlock+seccomp+rlimit+pgroup; no userns)"
     }
 
-    fn supports(&self, _capability: SecurityCapability) -> bool {
-        false
+    fn supports(&self, capability: SecurityCapability) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            match capability {
+                SecurityCapability::FilesystemIsolation
+                | SecurityCapability::NetworkIsolation
+                | SecurityCapability::ProcessIsolation
+                | SecurityCapability::ProcessTreeContainment
+                | SecurityCapability::ResourceLimits
+                | SecurityCapability::SyscallRestriction
+                | SecurityCapability::ExecutionRootIsolation
+                | SecurityCapability::HostEvidence => true,
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = capability;
+            false
+        }
     }
 
     fn prepare(
@@ -586,10 +771,183 @@ impl SandboxBackend for LinuxBackend {
         policy: &CanonicalPolicy,
         identity: &ExecutionIdentity,
     ) -> EnforcementReport {
-        let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
-            .into_iter()
-            .map(|c| (c, EnforcementState::Unsupported))
-            .collect();
+        self.prepare_with_context(policy, identity, &PrepareContext::default())
+    }
+
+    fn prepare_with_context(
+        &mut self,
+        policy: &CanonicalPolicy,
+        identity: &ExecutionIdentity,
+        ctx: &PrepareContext,
+    ) -> EnforcementReport {
+        self.plan = None;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = ctx;
+            let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+                .into_iter()
+                .map(|c| (c, EnforcementState::Unsupported))
+                .collect();
+            let report = EnforcementReport::build(
+                BackendKind::Linux,
+                policy,
+                identity,
+                &states,
+                &BTreeMap::new(),
+                true,
+            );
+            self.report = Some(report.clone());
+            return report;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.prepare_linux(policy, identity, ctx)
+        }
+    }
+
+    fn pre_exec_plan(&self) -> Option<ChildEnforcementPlan> {
+        self.plan.clone()
+    }
+
+    fn note_spawned(&mut self, _pid: u32) {
+        self.promote_configured_to_enforced();
+    }
+
+    fn note_host_verified(&mut self, verification: &HostVerification) {
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
+        let mut verified = |cap: SecurityCapability, observed: bool| {
+            if observed {
+                if let Some(record) = report.records.iter_mut().find(|r| r.capability == cap) {
+                    if record.state == EnforcementState::Enforced {
+                        record.state = EnforcementState::Verified;
+                    }
+                }
+            }
+        };
+        verified(
+            SecurityCapability::SyscallRestriction,
+            verification.seccomp_filter,
+        );
+        verified(
+            SecurityCapability::ProcessIsolation,
+            verification.no_new_privs && verification.pgroup_separate,
+        );
+        verified(
+            SecurityCapability::ResourceLimits,
+            verification.rlimit_as_ok
+                && verification.rlimit_nproc_ok
+                && verification.rlimit_cpu_ok
+                && verification.rlimit_fsize_ok,
+        );
+    }
+
+    fn note_failed(&mut self, kind: PreparationFailureKind) {
+        self.fail_installed(kind);
+    }
+
+    fn note_tree_clean(&mut self, clean: bool) {
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
+        if let Some(record) = report
+            .records
+            .iter_mut()
+            .find(|r| r.capability == SecurityCapability::ProcessTreeContainment)
+        {
+            match record.state {
+                EnforcementState::Enforced if clean => {
+                    record.state = EnforcementState::Verified;
+                }
+                EnforcementState::Enforced | EnforcementState::Configured if !clean => {
+                    record.state = EnforcementState::Failed;
+                    record.failure = Some(PreparationFailureKind::VerificationUnavailable);
+                    report.preparation_ok = false;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn enforcement(&self) -> Option<&EnforcementReport> {
+        self.report.as_ref()
+    }
+
+    fn teardown(&mut self) {
+        self.report = None;
+        self.plan = None;
+    }
+}
+
+/// Linux-only preparation: probe, plan, report at most `Configured`.
+#[cfg(target_os = "linux")]
+impl LinuxBackend {
+    fn prepare_linux(
+        &mut self,
+        policy: &CanonicalPolicy,
+        identity: &ExecutionIdentity,
+        ctx: &PrepareContext,
+    ) -> EnforcementReport {
+        // Best-effort sub-reaper so post-run orphans reparent to us where
+        // the targeted sweep can see them. Failure is not fatal here: the
+        // sweep reports not-clean and the run fails closed instead.
+        let _ = crate::multi::isolation::set_subreaper();
+
+        let landlock_ok = crate::sandbox::linux::landlock::abi_version().is_some();
+        let seccomp_ok = crate::sandbox::linux::seccomp_netblock::probe_available();
+        // Only `--net=off` is isolatable without a relay backend; any other
+        // mode keeps NetworkIsolation honestly Unsupported.
+        let net_off = policy.net_mode == "off";
+
+        let mut states = BTreeMap::new();
+        let mut set = |cap: SecurityCapability, ok: bool| {
+            states.insert(
+                cap,
+                if ok {
+                    EnforcementState::Configured
+                } else {
+                    EnforcementState::Unsupported
+                },
+            );
+        };
+        set(SecurityCapability::FilesystemIsolation, landlock_ok);
+        set(SecurityCapability::ExecutionRootIsolation, landlock_ok);
+        set(SecurityCapability::NetworkIsolation, net_off && seccomp_ok);
+        set(SecurityCapability::SyscallRestriction, seccomp_ok);
+        // Process group + NO_NEW_PRIVS need no kernel features beyond
+        // baseline Linux; the tree sweep additionally needs our sub-reaper,
+        // which is attempted above and re-checked at sweep time.
+        set(SecurityCapability::ProcessIsolation, true);
+        set(SecurityCapability::ProcessTreeContainment, true);
+        set(SecurityCapability::ResourceLimits, true);
+        states.insert(SecurityCapability::HostEvidence, EnforcementState::Enforced);
+
+        // Child-side plan mirrors the report: disabled mechanisms are
+        // omitted, never stubbed. Without Landlock there is no filesystem
+        // plan at all (fail-closed per capability, not a fake filter).
+        let system_ro: Vec<std::path::PathBuf> = if landlock_ok {
+            super::linux_enforce::SYSTEM_ROOTS
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.plan = Some(ChildEnforcementPlan {
+            landlock: landlock_ok,
+            exec_root: policy.cwd.clone(),
+            extra_rw: ctx.extra_rw.clone(),
+            system_ro,
+            net_deny: net_off,
+            harden_syscalls: seccomp_ok,
+            rlimit_as: Some(super::linux_enforce::DEFAULT_RLIMIT_AS_BYTES),
+            rlimit_nproc: Some(super::linux_enforce::DEFAULT_RLIMIT_NPROC),
+            rlimit_cpu: Some(super::linux_enforce::DEFAULT_RLIMIT_CPU_SECS),
+            rlimit_fsize: Some(super::linux_enforce::DEFAULT_RLIMIT_FSIZE_BYTES),
+            new_pgroup: true,
+        });
+
         let report = EnforcementReport::build(
             BackendKind::Linux,
             policy,
@@ -600,14 +958,6 @@ impl SandboxBackend for LinuxBackend {
         );
         self.report = Some(report.clone());
         report
-    }
-
-    fn enforcement(&self) -> Option<&EnforcementReport> {
-        self.report.as_ref()
-    }
-
-    fn teardown(&mut self) {
-        self.report = None;
     }
 }
 
@@ -726,8 +1076,8 @@ impl SandboxBackend for WindowsBackend {
     }
 }
 
-/// Select a backend implementation by kind. Stage 3B replaces the
-/// placeholder constructors with enforcing ones behind the same boundary.
+/// Select a backend implementation by kind. Stage 3B wires real Linux
+/// enforcement behind this boundary; macOS/Windows stay placeholders.
 pub fn select_backend(kind: BackendKind) -> Box<dyn SandboxBackend> {
     match kind {
         BackendKind::Direct => Box::new(DirectBackend::new()),
@@ -810,8 +1160,10 @@ impl PlatformMatrix {
 /// `Aux` plumbing scenarios require only [`HostEvidence`], preserving the
 /// Stage 2 Unix Aux live-protocol PASS while every containment claim stays
 /// fail-closed on unimplemented backends. `ResourceLimits` and
-/// `SyscallRestriction` are tracked in reports and the matrix but do not
-/// yet gate PASS; Stage 3B wires them per scenario once enforcement lands.
+/// `SyscallRestriction` are really enforced and host-verified on Linux
+/// (Stage 3B) and asserted per-test; the PASS gate stays on the primary
+/// containment caps plus `HostEvidence` because blocker verdicts additionally
+/// require Aux-only bound nonces and can never PASS off-Aux regardless.
 pub fn required_capabilities(scenario: &Scenario) -> Vec<SecurityCapability> {
     match scenario.category {
         Category::Aux => vec![SecurityCapability::HostEvidence],
@@ -1079,10 +1431,13 @@ mod backend_arch_tests {
     }
 
     /// TEST-BACKEND-NO-FAKE-ENFORCEMENT-001: unsupported is never enforced.
+    /// Stage 3B: `prepare` reports at most `Configured` (never `Enforced`
+    /// or `Verified` — nothing is installed until a backend-controlled
+    /// spawn); macOS/Windows placeholders stay fully `Unsupported`.
     #[test]
     fn test_backend_no_fake_enforcement_001() {
         let (policy, identity) = test_policy_and_identity();
-        for kind in [BackendKind::Linux, BackendKind::Macos, BackendKind::Windows] {
+        for kind in [BackendKind::Macos, BackendKind::Windows] {
             let mut backend = select_backend(kind);
             let report = backend.prepare(&policy, &identity);
             for cap in SecurityCapability::all() {
@@ -1097,6 +1452,25 @@ mod backend_arch_tests {
                 report.state(SecurityCapability::FilesystemIsolation),
                 EnforcementState::Unsupported
             );
+        }
+        // Linux `prepare` probes and plans but installs nothing: states are
+        // `Configured` or `Unsupported`, never `Enforced`/`Verified`, so no
+        // PASS is possible before a real spawn.
+        {
+            let mut backend = select_backend(BackendKind::Linux);
+            let report = backend.prepare(&policy, &identity);
+            for cap in SecurityCapability::all() {
+                assert!(
+                    !report.is_enforced(cap),
+                    "Linux {cap:?} must not be enforced before spawn"
+                );
+                assert_ne!(report.state(cap), EnforcementState::Enforced);
+                assert_ne!(report.state(cap), EnforcementState::Verified);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                assert_eq!(report.preparation_ok, true);
+            }
         }
         let mut direct = DirectBackend::new();
         let report = direct.prepare(&policy, &identity);

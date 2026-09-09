@@ -64,16 +64,35 @@ fn test_backend_capability_001_reports_explicitly() {
             );
         }
     }
-    for kind in [BackendKind::Linux, BackendKind::Macos, BackendKind::Windows] {
+    // Stage 3B: Linux really enforces (landlock+seccomp+rlimit+tree) on
+    // Linux; macOS/Windows stay placeholders with no support anywhere.
+    #[cfg(target_os = "linux")]
+    for cap in SecurityCapability::all() {
+        assert!(
+            matrix.supports(BackendKind::Linux, cap),
+            "Linux {cap:?} must be supported in Stage 3B"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    for cap in SecurityCapability::all() {
+        assert!(
+            !matrix.supports(BackendKind::Linux, cap),
+            "Linux {cap:?} must be unsupported off Linux"
+        );
+    }
+    for kind in [BackendKind::Macos, BackendKind::Windows] {
         for cap in SecurityCapability::all() {
             assert!(
                 !matrix.supports(kind, cap),
-                "{kind:?} {cap:?} must be unsupported in Stage 3A"
+                "{kind:?} {cap:?} must be unsupported"
             );
         }
     }
     let rendered = matrix.render();
     assert!(rendered.contains("direct host-evidence supported"));
+    #[cfg(target_os = "linux")]
+    assert!(rendered.contains("linux filesystem supported"));
+    #[cfg(not(target_os = "linux"))]
     assert!(rendered.contains("linux filesystem unsupported"));
 }
 

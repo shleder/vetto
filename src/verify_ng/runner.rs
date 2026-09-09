@@ -8,20 +8,25 @@
 //! poison check (no spawn when poisoned)
 //! -> fixture + isolated HOME + FrozenSpec (full-registry hash)
 //! -> CanonicalPolicy (platform-independent projection of FrozenSpec)
-//! -> SandboxBackend::prepare (structured enforcement report, fail-closed)
-//! -> spawn exactly once (single call site below)
+//! -> control channel (host-owned, before prepare so its dir is confinable)
+//! -> SandboxBackend::prepare_with_context (structured report, fail-closed)
+//! -> backend-controlled spawn exactly once (pre_exec plan, single site)
+//! -> host verification from /proc while the child lives
 //! -> killer: deadline poll via `kill_on_deadline_with` (never blocking wait)
 //! -> collector: drain stdio with deadline, re-observe exit status
+//! -> tree sweep (confined runs: nonce-targeted sub-reaper sweep)
 //! -> post-mortem: payload integrity, sentinel sweep (host reads)
 //! -> teardown (backend cleanup, idempotent)
 //! -> host evidence -> oracle (pure) + backend ceiling -> redacted ScenarioResult
 //! ```
 //!
-//! Stage 3A is architecture only: [`run_one`] runs through
-//! [`super::sandbox_backend::DirectBackend`] (explicitly non-contained) and
-//! [`run_one_with_backend`] accepts any [`super::sandbox_backend::SandboxBackend`]
-//! placeholder. Actual Linux/macOS/Windows enforcement lands in Stage 3B+
-//! behind the same trait; the oracle stays pure throughout.
+//! [`run_one`] runs through [`super::sandbox_backend::DirectBackend`]
+//! (explicitly non-contained); [`run_one_with_backend`] accepts any
+//! [`super::sandbox_backend::SandboxBackend`]. Stage 3B wires real Linux
+//! enforcement (landlock + seccomp + rlimit + process-group/tree sweep)
+//! behind the same trait; macOS/Windows stay placeholders. The oracle stays
+//! pure throughout: every Linux fact is collected host-side and judged as
+//! structured data.
 //!
 //! Provenance rules (Blocker 1 audit + Stage 2 challenge-response):
 //! - HOST_FACT is only what the host observes independently of
@@ -63,11 +68,15 @@
 //!   never `HOST_FACT`. No verdict branch reads child text.
 //! - PASS additionally requires complete collection (`eof && !truncated`);
 //!   the oracle enforces this itself via `stdio_complete`.
-//! - Direct-exec backend: the child runs without sandbox enforcement (that
-//!   binding lands with the backend-wired suite). There is no tree kill and
-//!   no sweep here: orphaned grandchildren are a documented residual in the
-//!   same class as the FS-ONLY BestEffort residual. The drain deadline still
-//!   bounds collection, so a grandchild holding the pipe cannot hang us.
+//! - Direct-exec backend: the child runs without sandbox enforcement. There
+//!   is no tree kill and no sweep here: orphaned grandchildren are a
+//!   documented residual in the same class as the FS-ONLY BestEffort
+//!   residual. The drain deadline still bounds collection, so a grandchild
+//!   holding the pipe cannot hang us.
+//! - Linux backend (Stage 3B): the child installs the backend plan in
+//!   `pre_exec` (landlock + seccomp + rlimits + new process group) and the
+//!   host group-kills plus nonce-sweeps after reaping, so lingering
+//!   grandchildren are killed and observed instead of documented away.
 //! - Env base passes through the existing `envfilter` boundary; `HOME` is
 //!   always a fresh per-run directory, never shared. That is distinctness,
 //!   not filesystem isolation: direct execution proves no containment.
@@ -215,13 +224,18 @@ pub struct ExecutionOutcome {
     pub duplicate_rejected: bool,
 }
 
-/// Direct-exec child handle: owns `std::process::Child`, single process
-/// only (no tree kill — documented residual). Pipes are taken at spawn so
-/// the collector stage owns them outright.
+/// Child handle: owns `std::process::Child`. Pipes are taken at spawn so
+/// the collector stage owns them outright. `pgid` is `Some` only for
+/// backend-confined runs (Stage 3B Linux joins a new process group in
+/// `pre_exec`): termination then signals the whole group, and the caller
+/// re-issues it after a clean exit so lingering children cannot hold the
+/// pipes or survive the run. `None` keeps the historical single-process
+/// behavior (documented residual, same class as FS-ONLY BestEffort).
 struct DirectChild {
     child: std::process::Child,
     stdout: Option<std::process::ChildStdout>,
     stderr: Option<std::process::ChildStderr>,
+    pgid: Option<i32>,
 }
 
 impl WaitKill for DirectChild {
@@ -234,6 +248,13 @@ impl WaitKill for DirectChild {
     }
 
     fn terminate(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            // SAFETY: SIGKILL to the sandbox process group we spawned.
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
     }
 }
@@ -276,10 +297,11 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
 
 /// Run one scenario through an explicit [`SandboxBackend`]:
 /// Engine -> Policy/FrozenSpec -> CanonicalPolicy -> `backend.prepare` ->
-/// spawn -> collect -> teardown -> host evidence -> Oracle + backend
-/// ceiling. Stage 3A keeps the actual spawn on the direct-exec path (no
-/// containment claimed); Stage 3B moves spawn behind the backend boundary.
-/// Preparation failure fails closed with no spawn and no PASS.
+/// backend-controlled spawn -> collect -> teardown -> host evidence ->
+/// Oracle + backend ceiling. The child-side plan (when the backend provides
+/// one) is installed via `pre_exec`, so `Enforced` is unreachable for a
+/// child that bypassed setup. Preparation or spawn-setup failure fails
+/// closed with no spawn logged and no PASS.
 pub fn run_one_with_backend(
     req: &ExecutionRequest<'_>,
     spawn_log: &mut SpawnLog,
@@ -428,21 +450,47 @@ pub fn run_one_with_backend(
         registry_hash.as_str(),
         spec.hash().as_str(),
     );
-    // Stage 3A backend boundary: project FrozenSpec into the
-    // platform-independent CanonicalPolicy and prepare the backend. The
-    // preparation report is the only enforcement claim the verifier trusts;
-    // policy text alone never implies containment.
+    // Backend boundary: project FrozenSpec into the platform-independent
+    // CanonicalPolicy and prepare the backend. The preparation report is
+    // the only enforcement claim the verifier trusts; policy text alone
+    // never implies containment. The host-owned control channel is created
+    // BEFORE preparation so its directory can join the confinement
+    // allowlist (transport, bound via the identity — never via policy).
     let canonical = CanonicalPolicy::from_frozen(&spec);
-    let backend_report = backend.prepare(&canonical, &identity);
+    let control_channel: Option<ControlChannel> = if req.enable_host_control {
+        match ControlChannel::create(&identity) {
+            Ok(ch) => Some(ch),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    let mut extra_rw = Vec::new();
+    if let Some(channel) = control_channel.as_ref() {
+        for (k, v) in channel.env_entries() {
+            if k == super::host_evidence::ENV_CONTROL_UPLINK {
+                let path = std::path::Path::new(&v);
+                if let Some(parent) = path.parent() {
+                    extra_rw.push(parent.to_path_buf());
+                }
+            }
+        }
+    }
+    let prepare_ctx = super::sandbox_backend::PrepareContext { extra_rw };
+    backend.prepare_with_context(&canonical, &identity, &prepare_ctx);
     let backend_kind = backend.kind();
-    if !backend_report.preparation_ok || !backend_report.binds_identity(&identity) {
+    let prepared_ok = backend
+        .enforcement()
+        .map(|report| report.preparation_ok && report.binds_identity(&identity))
+        .unwrap_or(false);
+    if !prepared_ok {
         let detail = format!(
             "backend preparation failed (fail-closed, no spawn): backend={} {}",
             backend_kind.label(),
             req.scenario.known_limitation,
         );
         let mut outcome = fail_closed(detail, home);
-        outcome.backend_report = Some(backend_report);
+        outcome.backend_report = backend.enforcement().cloned();
         outcome.backend_kind = backend_kind;
         backend.teardown();
         return outcome;
@@ -453,22 +501,31 @@ pub fn run_one_with_backend(
     // response binds the session nonce and the stamped provenance binds
     // the frozen hash in the other direction.
     let spec_env = env.clone();
-    // Host-owned control channel, created BEFORE spawn when opted in. The
-    // read end stays with the host across the spawn; failure to create
-    // degrades to control-unobserved (INCONCLUSIVE, never PASS).
-    let control_channel: Option<ControlChannel> = if req.enable_host_control {
-        match ControlChannel::create(&identity) {
-            Ok(ch) => {
-                for (k, v) in ch.env_entries() {
-                    env.insert(k, v);
-                }
-                Some(ch)
-            }
-            Err(_) => None,
+    // Merge the control transport now (host holds the read end across the
+    // spawn; creation failure degrades to control-unobserved, never PASS).
+    // Dropping the channel here would remove the FIFOs, so it is moved
+    // into the post-spawn stage below.
+    if let Some(channel) = control_channel.as_ref() {
+        for (k, v) in channel.env_entries() {
+            env.insert(k, v);
         }
-    } else {
-        None
-    };
+    }
+    // Backend-controlled spawn plan: installed in the forked child before
+    // exec, so `Enforced` is unreachable for a child that bypassed setup.
+    let child_plan = backend.pre_exec_plan();
+    #[cfg(not(unix))]
+    if child_plan.is_some() {
+        let detail = format!(
+            "backend plan without unix spawn support (fail-closed): backend={} {}",
+            backend_kind.label(),
+            req.scenario.known_limitation,
+        );
+        let mut outcome = fail_closed(detail, home);
+        outcome.backend_report = backend.enforcement().cloned();
+        outcome.backend_kind = backend_kind;
+        backend.teardown();
+        return outcome;
+    }
 
     // THE single spawn site for this pipeline: one run_one = one spawn.
     // No retry path exists below; every failure after this point degrades
@@ -481,6 +538,18 @@ pub fn run_one_with_backend(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        if let Some(plan) = child_plan {
+            // SAFETY: the hook runs in the forked child before exec and
+            // performs syscalls only (plus small transient buffers); it
+            // never spawns threads. Any error aborts the spawn fail-closed.
+            unsafe {
+                cmd.pre_exec(move || super::linux_enforce::apply_child_plan(&plan));
+            }
+        }
+    }
     let spawn_res = {
         let _serial = engine::spawn_serial().lock().unwrap();
         cmd.spawn()
@@ -488,7 +557,12 @@ pub fn run_one_with_backend(
     let mut child = match spawn_res {
         Ok(c) => c,
         Err(e) => {
-            return fail_closed(format!("spawn failed (no retry): {e}"), home);
+            backend.note_failed(super::sandbox_backend::PreparationFailureKind::SpawnRefused);
+            let mut outcome = fail_closed(format!("spawn failed (no retry): {e}"), home);
+            outcome.backend_report = backend.enforcement().cloned();
+            outcome.backend_kind = backend_kind;
+            backend.teardown();
+            return outcome;
         }
     };
     let pid = child.id();
@@ -497,6 +571,12 @@ pub fn run_one_with_backend(
         pid,
     });
     RUNNER_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
+    // Spawn succeeded, so the child-side plan ran without error: promote
+    // `Configured` to `Enforced`. Then verify host-observable state from
+    // /proc while the child lives (unobserved stays `Enforced`).
+    backend.note_spawned(pid);
+    let verification = super::linux_enforce::verify_child_host(pid);
+    backend.note_host_verified(&verification);
 
     // FM-03 continuity: the spec re-frozen from the same policy reference
     // after fork-return must hash identically; drift fails closed. Both
@@ -519,10 +599,19 @@ pub fn run_one_with_backend(
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    // The confined child joins a new process group in `pre_exec`, so its
+    // pgid equals its pid; otherwise no group kill applies. Off unix no
+    // plan ever exists, so this is always `None` there.
+    let confined_pgroup = backend.pre_exec_plan().is_some();
     let direct = DirectChild {
         child,
         stdout,
         stderr,
+        pgid: if confined_pgroup {
+            Some(pid as i32)
+        } else {
+            None
+        },
     };
 
     let outcome = finish_run(
@@ -537,8 +626,7 @@ pub fn run_one_with_backend(
         spec_ok,
         direct,
         pid,
-        backend_report,
-        backend_kind,
+        backend,
     );
     // Teardown releases backend-held state (idempotent). The cloned report
     // stays on the outcome for audit; teardown never upgrades the verdict.
@@ -546,9 +634,10 @@ pub fn run_one_with_backend(
     outcome
 }
 
-/// Stages after spawn: killer -> collector -> post-mortem -> oracle +
-/// backend ceiling. The oracle stays pure; the backend report (pure data)
-/// demotes any PASS whose mandatory capabilities are not actually enforced.
+/// Stages after spawn: killer -> collector -> tree sweep -> post-mortem ->
+/// oracle + backend ceiling. The oracle stays pure; the backend report
+/// (pure data, final state after the sweep) demotes any PASS whose
+/// mandatory capabilities are not actually enforced.
 #[allow(clippy::too_many_arguments)]
 fn finish_run(
     req: &ExecutionRequest<'_>,
@@ -562,13 +651,18 @@ fn finish_run(
     spec_ok: bool,
     mut direct: DirectChild,
     pid: u32,
-    backend_report: EnforcementReport,
-    backend_kind: BackendKind,
+    backend: &mut dyn SandboxBackend,
 ) -> ExecutionOutcome {
     // Killer stage: deadline poll, terminate once on expiry (no blocking wait).
     let deadline = Instant::now() + req.deadline;
     let (kill, code) = killer::kill_on_deadline_with(&mut direct, deadline, EXIT_POLL);
     let timed_out = kill == KillOutcome::KilledOnDeadline;
+    // Confined runs joined a private process group: re-signal it after the
+    // root is reaped so lingering children release the pipes and die here
+    // instead of outliving the run. Single-process runs skip this.
+    if direct.pgid.is_some() {
+        direct.terminate();
+    }
 
     // Collector stage: drain stdio with a post-termination budget.
     let stdout = direct.stdout.take();
@@ -586,6 +680,16 @@ fn finish_run(
 
     // Re-observe the exit status after the drain (never blocking).
     let exit_code = direct.try_wait().or(Some(code));
+
+    // Tree sweep (confined runs only): kill nonce-matching orphans the
+    // group signal could not reach (setsid escapers) and record whether
+    // the tree is observably clean. Unconfined runs keep the historical
+    // behavior exactly (no sweep). `None` off Linux: no claim either way.
+    if direct.pgid.is_some() {
+        if let Some(clean) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
+            backend.note_tree_clean(clean);
+        }
+    }
 
     // Post-mortem, all host-side: payload integrity and sentinels.
     // Provenance audit per HOST_FACT below:
@@ -698,9 +802,23 @@ fn finish_run(
     };
     let strength = req.scenario.strength_for(target);
     let judged = oracle::judge_with_ceiling(&input, strength, None);
-    // Stage 3A fail-closed ceiling: PASS without actually enforced
-    // mandatory backend capabilities demotes to INCONCLUSIVE. Never
-    // upgrades; FAIL/INCONCLUSIVE/NOT_APPLICABLE pass through unchanged.
+    // Fail-closed ceiling over the FINAL report (post-sweep): PASS without
+    // actually enforced mandatory backend capabilities demotes to
+    // INCONCLUSIVE. Never upgrades; FAIL/INCONCLUSIVE/NOT_APPLICABLE pass
+    // through unchanged.
+    let backend_kind = backend.kind();
+    let backend_report = backend.enforcement().cloned().unwrap_or_else(|| {
+        super::sandbox_backend::EnforcementReport {
+            backend: backend_kind,
+            scenario_id: identity.scenario_id.clone(),
+            session_nonce: nonce.clone(),
+            registry_hash: identity.registry_hash.clone(),
+            frozen_hash: identity.frozen_hash.clone(),
+            policy_hash: String::new(),
+            preparation_ok: false,
+            records: Vec::new(),
+        }
+    });
     let verdict =
         super::sandbox_backend::apply_backend_ceiling(judged, &backend_report, req.scenario);
     let backend_summary = backend_report.render_deterministic();

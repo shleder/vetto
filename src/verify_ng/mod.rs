@@ -22,6 +22,7 @@ pub mod fixture;
 pub mod frozen;
 pub mod host_evidence;
 pub mod killer;
+pub mod linux_enforce;
 pub mod model;
 pub mod oracle;
 pub mod redact;

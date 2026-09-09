@@ -57,6 +57,8 @@ mod verify_ng_backend_arch;
 mod verify_ng_execution;
 #[cfg(unix)]
 mod verify_ng_host_evidence;
+#[cfg(target_os = "linux")]
+mod verify_ng_linux_enforce;
 mod verify_ng_traps;
 mod windows_enforcement;
 mod windows_sandbox;
