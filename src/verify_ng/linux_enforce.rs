@@ -264,6 +264,14 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
 }
 
 /// Nonce-targeted orphan sweep (see [`sweep_tree_by_nonce`]).
+///
+/// Scans the ENTIRE `/proc` process set on every pass and selects solely by
+/// the exact run nonce in `/proc/<pid>/environ` (never by ancestry: double
+/// fork, `setsid` and multi-level chains all keep the inherited environ).
+/// Kill pass -> nonblocking reap -> short poll -> rescan, until the final
+/// scan finds zero nonce bearers (`clean=true`) or the budget expires.
+/// Read races (`ENOENT`/`ESRCH`) and zombies are tolerated; a live process
+/// with an unreadable environ is `blind` (fail-closed).
 #[cfg(target_os = "linux")]
 fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     use std::time::{Duration, Instant};
@@ -285,74 +293,24 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     let needle = nonce.as_bytes();
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
-        let mut matched = Vec::new();
-        let mut blind = false;
-        if let Ok(entries) = std::fs::read_dir("/proc") {
-            for entry in entries.flatten() {
-                let Ok(name) = entry.file_name().into_string() else {
-                    continue;
-                };
-                let Ok(pid) = name.parse::<i32>() else {
-                    continue;
-                };
-                if pid <= 0 || pid as u32 == root_pid || pid as u32 == me {
-                    continue;
-                }
-                let status_path = format!("/proc/{pid}/status");
-                let Ok(status) = std::fs::read_to_string(&status_path) else {
-                    continue;
-                };
-                if crate::sandbox::linux::proctrack::ppid_from_status(&status) != Some(me) {
-                    continue;
-                }
-                // Environ is unreadable for zombies (reaped below if
-                // ours) or mid-exit races (ENOENT/ESRCH — the process is
-                // going away): never blocking clean. Only a hard read
-                // error on a live, un-reaped child (EACCES/hidepid) is
-                // blindness (fail-closed).
-                let env = match std::fs::read(format!("/proc/{pid}/environ")) {
-                    Ok(env) => env,
-                    Err(e)
-                        if e.raw_os_error() == Some(libc::ENOENT)
-                            || e.raw_os_error() == Some(libc::ESRCH) =>
-                    {
-                        continue;
-                    }
-                    Err(_) => {
-                        if pid_is_zombie(&status) {
-                            let mut st = 0i32;
-                            // SAFETY: non-blocking waitpid on our own child.
-                            unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
-                            continue;
-                        }
-                        blind = true;
-                        continue;
-                    }
-                };
-                if contains_slice(&env, needle) {
-                    matched.push(pid);
-                }
-            }
-        }
+        let (matched, blind) = scan_nonce_pids(needle, root_pid, me);
         if blind {
             outcome.residual = last_nonce_pids(nonce, root_pid, me);
             return outcome;
         }
         if matched.is_empty() {
-            if root_gone_or_zombie(root_pid, me) {
-                outcome.clean = true;
-                return outcome;
+            // Final complete scan already shows zero nonce bearers.
+            outcome.clean = true;
+            return outcome;
+        }
+        for pid in &matched {
+            // SAFETY: SIGKILL only to a nonce-matching pid of this run.
+            if unsafe { libc::kill(*pid, libc::SIGKILL) } == 0 {
+                outcome.killed += 1;
             }
-        } else {
-            for pid in matched {
-                // SAFETY: SIGKILL to a direct child carrying our run nonce.
-                if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
-                    outcome.killed += 1;
-                }
-                let mut status = 0i32;
-                // SAFETY: non-blocking waitpid on our own child.
-                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-            }
+            let mut status = 0i32;
+            // SAFETY: non-blocking waitpid (reaps only our children).
+            unsafe { libc::waitpid(*pid, &mut status, libc::WNOHANG) };
         }
         if Instant::now() >= deadline {
             outcome.residual = last_nonce_pids(nonce, root_pid, me);
@@ -360,6 +318,68 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// One full `/proc` scan for pids whose environ carries this run's nonce.
+///
+/// Returns `(matched, blind)`. `blind=true` means a live process with an
+/// unreadable environ was observed — the scan cannot claim clean.
+#[cfg(target_os = "linux")]
+fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32) -> (Vec<i32>, bool) {
+    let mut matched = Vec::new();
+    let mut blind = false;
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        // Cannot observe at all: fail closed, never a false clean.
+        return (matched, true);
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Ok(pid) = name.parse::<i32>() else {
+            continue;
+        };
+        if pid <= 0 || pid as u32 == root_pid || pid as u32 == me {
+            continue;
+        }
+        let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
+            Ok(s) => s,
+            Err(e)
+                if e.raw_os_error() == Some(libc::ENOENT)
+                    || e.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                continue;
+            }
+            Err(_) => continue,
+        };
+        // Environ is unreadable for zombies (reap below if ours) or
+        // mid-exit races (ENOENT/ESRCH — the process is going away): never
+        // blocking clean. Only a hard read error on a live, un-reaped
+        // process (EACCES/hidepid) is blindness (fail-closed).
+        let env = match std::fs::read(format!("/proc/{pid}/environ")) {
+            Ok(env) => env,
+            Err(e)
+                if e.raw_os_error() == Some(libc::ENOENT)
+                    || e.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                continue;
+            }
+            Err(_) => {
+                if pid_is_zombie(&status) {
+                    let mut st = 0i32;
+                    // SAFETY: non-blocking waitpid (reaps only our children).
+                    unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
+                    continue;
+                }
+                blind = true;
+                continue;
+            }
+        };
+        if contains_slice(&env, needle) {
+            matched.push(pid);
+        }
+    }
+    (matched, blind)
 }
 
 /// Final best-effort listing of surviving nonce-matching pids for the
@@ -401,20 +421,6 @@ fn pid_is_zombie(status: &str) -> bool {
         }
     }
     false
-}
-
-/// True when the root can no longer produce new orphans: gone, reaped,
-/// reparented away from us, or a zombie (the kernel already reparented its
-/// children at termination).
-#[cfg(target_os = "linux")]
-fn root_gone_or_zombie(root_pid: u32, me: u32) -> bool {
-    let Ok(status) = std::fs::read_to_string(format!("/proc/{root_pid}/status")) else {
-        return true;
-    };
-    if crate::sandbox::linux::proctrack::ppid_from_status(&status) != Some(me) {
-        return true;
-    }
-    pid_is_zombie(&status)
 }
 
 /// True while `kill(pid, 0)` succeeds (process exists and we may signal it).
