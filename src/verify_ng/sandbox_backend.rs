@@ -586,6 +586,16 @@ pub trait SandboxBackend {
     /// `ProcessTreeContainment` to `Verified`; residuals fail it closed.
     fn note_tree_clean(&mut self, _clean: bool) {}
 
+    /// Store a one-line diagnostic for the run detail string (sweep
+    /// counts, never verdict input). Defaults to ignoring it.
+    fn note_diagnostic(&mut self, _diag: String) {}
+
+    /// Optional one-line diagnostic for the run detail string (sweep
+    /// counts, never verdict input). Defaults to none.
+    fn diagnostic(&self) -> Option<String> {
+        None
+    }
+
     /// Last preparation outcome, if any.
     fn enforcement(&self) -> Option<&EnforcementReport>;
 
@@ -696,6 +706,7 @@ impl SandboxBackend for DirectBackend {
 pub struct LinuxBackend {
     report: Option<EnforcementReport>,
     plan: Option<ChildEnforcementPlan>,
+    tree_diag: Option<String>,
 }
 
 impl LinuxBackend {
@@ -703,6 +714,7 @@ impl LinuxBackend {
         LinuxBackend {
             report: None,
             plan: None,
+            tree_diag: None,
         }
     }
 
@@ -797,7 +809,7 @@ impl SandboxBackend for LinuxBackend {
                 true,
             );
             self.report = Some(report.clone());
-            return report;
+            report
         }
         #[cfg(target_os = "linux")]
         {
@@ -861,13 +873,25 @@ impl SandboxBackend for LinuxBackend {
                     record.state = EnforcementState::Verified;
                 }
                 EnforcementState::Enforced | EnforcementState::Configured if !clean => {
+                    // Post-run sweep outcome, not a preparation failure:
+                    // only the tree capability fails. `preparation_ok`
+                    // stays untouched so one dirty tree cannot demote
+                    // unrelated enforced caps; Proc scenarios still fail
+                    // closed via `tree == Failed` in the PASS ceiling.
                     record.state = EnforcementState::Failed;
                     record.failure = Some(PreparationFailureKind::VerificationUnavailable);
-                    report.preparation_ok = false;
                 }
                 _ => {}
             }
         }
+    }
+
+    fn note_diagnostic(&mut self, diag: String) {
+        self.tree_diag = Some(diag);
+    }
+
+    fn diagnostic(&self) -> Option<String> {
+        self.tree_diag.clone()
     }
 
     fn enforcement(&self) -> Option<&EnforcementReport> {
@@ -877,6 +901,7 @@ impl SandboxBackend for LinuxBackend {
     fn teardown(&mut self) {
         self.report = None;
         self.plan = None;
+        self.tree_diag = None;
     }
 }
 

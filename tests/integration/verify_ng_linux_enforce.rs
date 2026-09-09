@@ -139,6 +139,11 @@ fn report_of(out: &runner::ExecutionOutcome) -> &EnforcementReport {
 
 /// If `cap` is `Unsupported` on this kernel, assert fail-closed and stop:
 /// the honest outcome on weak kernels. Returns true when enforced.
+///
+/// Uses the raw `state` (not `is_enforced`, which additionally requires
+/// `preparation_ok`): a dirty tree in an unrelated capability must not
+/// demote this cap's installed state. Tree health is asserted separately
+/// by the proc/tree tests.
 fn require_enforced_or_skip(out: &runner::ExecutionOutcome, cap: SecurityCapability) -> bool {
     let report = report_of(out);
     if report.state(cap) == EnforcementState::Unsupported {
@@ -146,7 +151,7 @@ fn require_enforced_or_skip(out: &runner::ExecutionOutcome, cap: SecurityCapabil
         return false;
     }
     assert!(
-        report.is_enforced(cap),
+        report.state(cap).is_enforced(),
         "{cap:?} must be enforced, got {:?}: {}",
         report.state(cap),
         report.render_deterministic()
@@ -159,6 +164,19 @@ fn assert_host_fact_wait(out: &runner::ExecutionOutcome) {
         out.evidence.has_host_fact(),
         "run must carry host-observed facts"
     );
+}
+
+/// Last bytes of a stream for failure diagnostics (child text is evidence
+/// for debugging only, never for the verdict). Declared before first use
+/// so every filesystem assertion can attach child stderr on failure.
+fn tail_text(bytes: &[u8], max: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.as_ref();
+    if text.len() <= max {
+        text.to_string()
+    } else {
+        text[text.len() - max..].to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +203,12 @@ fn test_linux_fs_read_deny_001() {
     if !require_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         return;
     }
-    assert_eq!(out.exit_code, Some(0), "forbidden read must be denied");
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "forbidden read must be denied; stderr: {}",
+        tail_text(&out.stderr, 500)
+    );
     assert_eq!(forbid_bytes(&forbid), before, "canary intact (host-read)");
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     assert_host_fact_wait(&out);
@@ -633,10 +656,16 @@ fn test_linux_cpu_limit_001() {
 // Syscall restriction (seccomp hardening denylist)
 // ---------------------------------------------------------------------------
 
-const PTRACE_TRACEME_PY: &str = "import ctypes, os\n\
+const PTRACE_TRACEME_PY: &str = "import os, sys\n\
+try:\n\
+    import ctypes\n\
+except Exception as e:\n\
+    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
+    os._exit(11)\n\
 libc = ctypes.CDLL(None, use_errno=True)\n\
 r = libc.ptrace(0, 0, 0, 0)\n\
 e = ctypes.get_errno()\n\
+sys.stderr.write('PTRACE r=%r errno=%r\\n' % (r, e))\n\
 os._exit(0 if (r == -1 and e == 1) else 10)\n";
 
 /// TEST-LINUX-SYSCALL-DENY-001: ptrace(TRACEME) is denied with EPERM.
@@ -662,7 +691,8 @@ fn test_linux_syscall_deny_001() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "ptrace must be denied with EPERM by the filter"
+        "ptrace must be denied with EPERM by the filter; stderr: {}",
+        tail_text(&out.stderr, 500)
     );
     assert_eq!(
         report.state(SecurityCapability::SyscallRestriction),
@@ -679,18 +709,25 @@ fn test_linux_syscall_escape_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-SYSCALL-ESCAPE-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import ctypes, os\n\
+    let script = "import os, sys\n\
+try:\n\
+    import ctypes\n\
+except Exception as e:\n\
+    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
+    os._exit(11)\n\
 libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
-def denied(fn):\n\
+def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
     r = fn()\n\
-    return r == -1 and ctypes.get_errno() == 1\n\
+    e = ctypes.get_errno()\n\
+    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n\
+    return r == -1 and e == 1\n\
 \n\
 ok = True\n\
-ok = denied(lambda: libc.ptrace(0, 0, 0, 0)) and ok\n\
-ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-x\", b\"tmpfs\", 0, None)) and ok\n\
-ok = denied(lambda: libc.chroot(b\"/tmp\")) and ok\n\
+ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n\
+ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-x\", b\"tmpfs\", 0, None), 'mount') and ok\n\
+ok = denied(lambda: libc.chroot(b\"/tmp\"), 'chroot') and ok\n\
 os._exit(0 if ok else 10)\n";
     let (out, log) = run_linux(
         &scen,
@@ -709,7 +746,8 @@ os._exit(0 if ok else 10)\n";
     assert_eq!(
         out.exit_code,
         Some(0),
-        "mount/chroot/ptrace escapes must be denied"
+        "mount/chroot/ptrace escapes must be denied; stderr: {}",
+        tail_text(&out.stderr, 500)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
@@ -903,7 +941,12 @@ fn test_linux_escape_fs_001() {
     if !require_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         return;
     }
-    assert_eq!(out.exit_code, Some(0), "symlink write-escape denied");
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "symlink write-escape denied; stderr: {}",
+        tail_text(&out.stderr, 500)
+    );
     assert_eq!(forbid_bytes(&forbid), before, "canary intact (host-read)");
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
@@ -1009,18 +1052,25 @@ fn test_linux_escape_syscall_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-SYSCALL-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import ctypes, os\n\
+    let script = "import os, sys\n\
+try:\n\
+    import ctypes\n\
+except Exception as e:\n\
+    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
+    os._exit(11)\n\
 libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
-def denied(fn):\n\
+def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
     r = fn()\n\
-    return r == -1 and ctypes.get_errno() == 1\n\
+    e = ctypes.get_errno()\n\
+    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n\
+    return r == -1 and e == 1\n\
 \n\
 ok = True\n\
-ok = denied(lambda: libc.ptrace(0, 0, 0, 0)) and ok\n\
-ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-y\", b\"tmpfs\", 0, None)) and ok\n\
-ok = denied(lambda: libc.chroot(b\"/\")) and ok\n\
+ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n\
+ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-y\", b\"tmpfs\", 0, None), 'mount') and ok\n\
+ok = denied(lambda: libc.chroot(b\"/\"), 'chroot') and ok\n\
 os._exit(0 if ok else 10)\n";
     let (out, log) = run_linux(
         &scen,
@@ -1036,7 +1086,12 @@ os._exit(0 if ok else 10)\n";
         assert_no_pass(&out);
         return;
     }
-    assert_eq!(out.exit_code, Some(0), "hardened syscalls stay denied");
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "hardened syscalls stay denied; stderr: {}",
+        tail_text(&out.stderr, 500)
+    );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
 
@@ -1046,11 +1101,17 @@ fn test_linux_escape_root_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-ROOT-001", Category::FsRead);
     let net = NetMode::Off;
-    let script = "import ctypes, os\n\
+    let script = "import os, sys\n\
+try:\n\
+    import ctypes\n\
+except Exception as e:\n\
+    sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
+    os._exit(11)\n\
 libc = ctypes.CDLL(None, use_errno=True)\n\
 ctypes.set_errno(0)\n\
 r = libc.chroot(b\"/tmp\")\n\
 e = ctypes.get_errno()\n\
+sys.stderr.write('chroot r=%r errno=%r\\n' % (r, e))\n\
 os._exit(0 if (r == -1 and e == 1) else 10)\n";
     let (out, log) = run_linux(
         &scen,
@@ -1064,7 +1125,12 @@ os._exit(0 if (r == -1 and e == 1) else 10)\n";
     if !require_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         return;
     }
-    assert_eq!(out.exit_code, Some(0), "chroot escape denied");
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "chroot escape denied; stderr: {}",
+        tail_text(&out.stderr, 500)
+    );
     // Belt and braces at the shell level too: `/` itself is not listable.
     let scen2 = scenario("TEST-LINUX-ESCAPE-ROOT-001B", Category::FsRead);
     let (out2, _) = run_linux(
@@ -1075,7 +1141,12 @@ os._exit(0 if (r == -1 and e == 1) else 10)\n";
         BTreeMap::new(),
         Duration::from_secs(15),
     );
-    assert_eq!(out2.exit_code, Some(0), "`/` listing denied");
+    assert_eq!(
+        out2.exit_code,
+        Some(0),
+        "`/` listing denied; stderr: {}",
+        tail_text(&out2.stderr, 500)
+    );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
 

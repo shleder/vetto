@@ -682,9 +682,15 @@ fn finish_run(
     // group signal could not reach (setsid escapers) and record whether
     // the tree is observably clean. Unconfined runs keep the historical
     // behavior exactly (no sweep). `None` off Linux: no claim either way.
+    // The diagnostic joins the detail string so a dirty tree is debuggable
+    // from the report alone.
     if direct.pgid.is_some() {
-        if let Some(clean) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
-            backend.note_tree_clean(clean);
+        if let Some(outcome) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
+            backend.note_tree_clean(outcome.clean);
+            backend.note_diagnostic(format!(
+                "tree-sweep clean={} killed={} residual={:?} subreaper={}",
+                outcome.clean, outcome.killed, outcome.residual, outcome.subreaper
+            ));
         }
     }
 
@@ -818,7 +824,11 @@ fn finish_run(
     });
     let verdict =
         super::sandbox_backend::apply_backend_ceiling(judged, &backend_report, req.scenario);
-    let backend_summary = backend_report.render_deterministic();
+    let mut backend_summary = backend_report.render_deterministic();
+    if let Some(diag) = backend.diagnostic() {
+        backend_summary.push('|');
+        backend_summary.push_str(&diag);
+    }
 
     let detail = redact::redact_text(&redact::mask_home(
         &format!(

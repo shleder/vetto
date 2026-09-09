@@ -100,14 +100,27 @@ pub fn verify_child_host(pid: u32) -> super::sandbox_backend::HostVerification {
     }
 }
 
+/// Outcome of one nonce-targeted tree sweep, with diagnostics for the
+/// run detail string (never a verdict input by itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepOutcome {
+    /// True when no process carrying this run's session nonce survives.
+    pub clean: bool,
+    /// Total SIGKILLs delivered across all passes.
+    pub killed: usize,
+    /// Nonce-matching pids still present at the deadline (empty when clean).
+    pub residual: Vec<i32>,
+    /// Whether our sub-reaper flag was observed (blind without it).
+    pub subreaper: bool,
+}
+
 /// Sweep this run's residual processes after the root was reaped.
 ///
-/// Returns `Some(true)` when no process carrying this run's session nonce
-/// survives, `Some(false)` when residuals remain or the sweep cannot see
-/// them (no sub-reaper — orphans would reparent to init instead of us),
-/// and `None` off Linux. Only nonce-matching processes are signalled, so
-/// parallel runs are never disturbed.
-pub fn sweep_tree_by_nonce(nonce: &str, root_pid: u32) -> Option<bool> {
+/// Returns `None` off Linux. Only nonce-matching processes are signalled,
+/// so parallel runs are never disturbed. `clean == false` covers both
+/// surviving residuals and a blind sweep (no sub-reaper — orphans would
+/// reparent to init instead of us): both fail the tree claim closed.
+pub fn sweep_tree_by_nonce(nonce: &str, root_pid: u32) -> Option<SweepOutcome> {
     #[cfg(target_os = "linux")]
     {
         Some(sweep_tree_by_nonce_linux(nonce, root_pid))
@@ -161,6 +174,8 @@ fn apply_child_plan_linux(
     }
 
     // Seccomp: network socket policy plus the hardening denylist.
+    // `AgentMin` additionally denies `chroot(2)` (absent from the Default
+    // denylist); the syscall-escape tests require it, so install AgentMin.
     if plan.harden_syscalls {
         let socket_policy = if plan.net_deny {
             crate::sandbox::linux::seccomp_netblock::SocketPolicy::UnixOnly
@@ -169,7 +184,7 @@ fn apply_child_plan_linux(
         };
         crate::sandbox::linux::seccomp_netblock::install_for_profile(
             socket_policy,
-            crate::policy::SeccompProfile::Default,
+            crate::policy::SeccompProfile::AgentMin,
         )
         .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
     }
@@ -244,13 +259,20 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
 
 /// Nonce-targeted orphan sweep (see [`sweep_tree_by_nonce`]).
 #[cfg(target_os = "linux")]
-fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> bool {
+fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     use std::time::{Duration, Instant};
+    // SAFETY: scalar prctl query on our own process.
+    let subreaper = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) } == 1;
+    let mut outcome = SweepOutcome {
+        clean: false,
+        killed: 0,
+        residual: Vec::new(),
+        subreaper,
+    };
     // Without our sub-reaper flag, escapers reparent to init and this scan
     // is blind — report not-clean (fail-closed) instead of a false clean.
-    // SAFETY: scalar prctl query on our own process.
-    if unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) } != 1 {
-        return false;
+    if !subreaper {
+        return outcome;
     }
     // SAFETY: scalar getpid.
     let me = unsafe { libc::getpid() } as u32;
@@ -258,6 +280,7 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> bool {
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
         let mut matched = Vec::new();
+        let mut blind = false;
         if let Ok(entries) = std::fs::read_dir("/proc") {
             for entry in entries.flatten() {
                 let Ok(name) = entry.file_name().into_string() else {
@@ -276,32 +299,102 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> bool {
                 if crate::sandbox::linux::proctrack::ppid_from_status(&status) != Some(me) {
                     continue;
                 }
-                let Ok(env) = std::fs::read(format!("/proc/{pid}/environ")) else {
-                    continue;
+                // Environ is unreadable for zombies (reaped below if
+                // ours) or mid-exit races (ENOENT/ESRCH — the process is
+                // going away): never blocking clean. Only a hard read
+                // error on a live, un-reaped child (EACCES/hidepid) is
+                // blindness (fail-closed).
+                let env = match std::fs::read(format!("/proc/{pid}/environ")) {
+                    Ok(env) => env,
+                    Err(e)
+                        if e.raw_os_error() == Some(libc::ENOENT)
+                            || e.raw_os_error() == Some(libc::ESRCH) =>
+                    {
+                        continue;
+                    }
+                    Err(_) => {
+                        if pid_is_zombie(&status) {
+                            let mut st = 0i32;
+                            // SAFETY: non-blocking waitpid on our own child.
+                            unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
+                            continue;
+                        }
+                        blind = true;
+                        continue;
+                    }
                 };
                 if contains_slice(&env, needle) {
                     matched.push(pid);
                 }
             }
         }
+        if blind {
+            outcome.residual = last_nonce_pids(nonce, root_pid, me);
+            return outcome;
+        }
         if matched.is_empty() {
             if root_gone_or_zombie(root_pid, me) {
-                return true;
+                outcome.clean = true;
+                return outcome;
             }
         } else {
             for pid in matched {
                 // SAFETY: SIGKILL to a direct child carrying our run nonce.
-                unsafe { libc::kill(pid, libc::SIGKILL) };
+                if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
+                    outcome.killed += 1;
+                }
                 let mut status = 0i32;
                 // SAFETY: non-blocking waitpid on our own child.
                 unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
             }
         }
         if Instant::now() >= deadline {
-            return false;
+            outcome.residual = last_nonce_pids(nonce, root_pid, me);
+            return outcome;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Final best-effort listing of surviving nonce-matching pids for the
+/// diagnostic string (no signalling here).
+#[cfg(target_os = "linux")]
+fn last_nonce_pids(nonce: &str, root_pid: u32, me: u32) -> Vec<i32> {
+    let mut out = Vec::new();
+    let needle = nonce.as_bytes();
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let Ok(pid) = name.parse::<i32>() else {
+                continue;
+            };
+            if pid <= 0 || pid as u32 == root_pid || pid as u32 == me {
+                continue;
+            }
+            let Ok(env) = std::fs::read(format!("/proc/{pid}/environ")) else {
+                continue;
+            };
+            if contains_slice(&env, needle) {
+                out.push(pid);
+            }
+        }
+    }
+    out.sort_unstable();
+    out.truncate(8);
+    out
+}
+
+/// True when a `/proc/<pid>/status` body describes a zombie.
+#[cfg(target_os = "linux")]
+fn pid_is_zombie(status: &str) -> bool {
+    for line in status.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("State:") {
+            return rest.trim_start().starts_with('Z');
+        }
+    }
+    false
 }
 
 /// True when the root can no longer produce new orphans: gone, reaped,
@@ -315,12 +408,7 @@ fn root_gone_or_zombie(root_pid: u32, me: u32) -> bool {
     if crate::sandbox::linux::proctrack::ppid_from_status(&status) != Some(me) {
         return true;
     }
-    for line in status.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("State:") {
-            return rest.trim_start().starts_with('Z');
-        }
-    }
-    false
+    pid_is_zombie(&status)
 }
 
 /// True while `kill(pid, 0)` succeeds (process exists and we may signal it).
