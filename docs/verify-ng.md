@@ -1,5 +1,18 @@
 # verify-ng — Adversarial Security Verification
 
+> Статус реализации (0.2.23, факт): wired — `vetto verify-ng --lint`
+> (проверка frozen registry без спавна, exit 0/1) и честный non-lint ран:
+> каждый сценарий отчитывается INCONCLUSIVE (или poisoned при diagnostic
+> env) без спавна, gate оценивается честно, выход всегда `125` через
+> `HarnessUnavailable` — hollow PASS невозможен. Library execution pipeline
+> (`verify_ng::runner`, direct-exec: один scenario — ровно один child,
+> deadline через общий killer-path, drain с deadline, verdict из
+> существующего oracle, stdout только SELF_REPORT) покрыт unix-тестами
+> `TEST-ENGINE-001..006`. CLI по-прежнему не исполняет registry-suite
+> (нужны per-scenario payloads и sandbox-binding), backend-wired сьюты —
+> следующий этап. Всё ниже про PASS-вердикты блокеров описывает дизайн,
+> а не текущее поведение CLI.
+
 Измерительный harness поверх sandbox-бэкендов. Enforcement остаётся в
 `src/sandbox/*`; этот модуль только измеряет и отчитывается. Не является
 частью security boundary.
@@ -33,8 +46,10 @@ Engine выдаёт nonce сессии. Негативная проба и по�
 
 Один `detect` на сценарий; хэш считается один раз из той же `&Policy`-ссылки,
 что уходит в `Backend::spawn`; сериализация каноническая (сортировка,
-`NetMode::label`, tier, backend-describe, argv/env/cwd, nonce, хэш реестра).
-Повторная заморозка перед spawn обязана совпасть (`verify_spec_continuity`).
+`NetMode::label`, tier, backend-describe, argv/env/cwd, nonce, хэш реестра,
+плюс `policy_bytes` — канонический рендеринг всей `Policy`, а не только
+разложенных path-списков). Повторная заморозка перед spawn обязана совпасть
+(`verify_spec_continuity`).
 
 ## Spawn-контракт (FM-09)
 

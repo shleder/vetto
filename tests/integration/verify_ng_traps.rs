@@ -178,6 +178,7 @@ fn trap_spec_continuity_detects_drift() {
         deny_write: vec![],
         deny_resolved: vec![],
         nonce: nonce.to_string(),
+        policy_bytes: vec![],
     };
     assert!(engine::verify_spec_continuity(&mk("n"), &mk("n")));
     assert!(!engine::verify_spec_continuity(&mk("n"), &mk("m")));

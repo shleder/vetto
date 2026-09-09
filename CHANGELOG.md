@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.23] — 2026-09-09
+
+### Added
+
+- **`src/verify_ng/runner.rs` (new, execution pipeline)**: minimal real `Engine → Killer → Collector → Oracle` runner — `run_one` executes one scenario as exactly one spawned child (single spawn site, caller-owned `SpawnLog` ledger, no retries, no blocking `wait()`), deadline kill via the shared `killer::kill_on_deadline_with` path (`WaitKill` trait now implemented by both `SandboxHandle` and the direct child handle), deadline-aware stdio drain (`collector::collect_child_stdio`), post-mortem payload/sentinel/control checks from host-observed state only, verdict from the existing oracle with stdout/stderr pinned to `SELF_REPORT` + unit-tested evidence mapping. Direct-exec backend (no sandbox enforcement, no tree kill — documented residual); backend-wired registry suite lands separately.
+- **`FrozenSpec.policy_bytes`**: canonical deterministic rendering of the full `Policy` (`canonical_policy_bytes` — sorted collections, fixed field order, version tag) hashed as part of the spec; reordering-stable, enforcement-change-sensitive + unit tests.
+- **`tests/integration/verify_ng_execution.rs` (new, unix)**: TEST-ENGINE-001 (success path), 002 (deadline kill, prompt return, never PASS), 003 (attacker stdout never HOST_FACT), 004 (exactly one spawn via ledger), 005 (sentinel mutation → FAIL), 006 (isolated non-reused HOME).
+
 ## [0.2.22] — 2026-09-09
 
 ### Added

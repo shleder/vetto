@@ -26,13 +26,16 @@ pub mod oracle;
 pub mod redact;
 pub mod registry;
 pub mod report;
+pub mod runner;
 
 /// CLI entry: `vetto verify-ng [--json] [--lint]`.
 ///
 /// `--lint` checks the frozen scenario registry without spawning anything.
 /// Without `--lint`: poison-check first (diagnostic env -> per-scenario
 /// FAIL/INCONCLUSIVE, no spawn); otherwise every scenario reports
-/// INCONCLUSIVE without spawning (spawn runner lands separately) and the
+/// INCONCLUSIVE without spawning (the direct-exec library runner in
+/// [`runner`] covers single-scenario execution; full registry-suite wiring
+/// lands separately) and the
 /// gate evaluates honestly — canary minimums keep it red. Never emits PASS.
 pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     let scenarios = registry::registry();

@@ -86,6 +86,110 @@ pub fn drain_with_deadline(
     (Vec::new(), false)
 }
 
+/// Captured stdio of one child plus collection metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectedStdio {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    /// True only if both streams reached EOF before the deadline. `false`
+    /// (e.g. a grandchild holding the write end, or the Windows fallback
+    /// timing out) degrades the run toward INCONCLUSIVE, never PASS.
+    pub eof: bool,
+    /// True if either stream was cut at `max_bytes`.
+    pub truncated: bool,
+}
+
+/// Collect a reaped (or killed) child's piped stdout/stderr with a deadline.
+///
+/// Must be called after the child was terminated/reaped via the killer stage:
+/// with no live writer the pipes hit EOF immediately; a surviving grandchild
+/// holding the write end cannot hang the harness past `deadline` (FM-04
+/// HANG-GRANDCHILD-001). Never judges: bytes are returned raw for the
+/// caller to store as `SELF_REPORT` evidence.
+pub fn collect_child_stdio(
+    stdout: std::process::ChildStdout,
+    stderr: std::process::ChildStderr,
+    deadline: Instant,
+    max_bytes: usize,
+) -> CollectedStdio {
+    #[cfg(unix)]
+    {
+        let out_fd: OwnedFd = stdout.into();
+        let err_fd: OwnedFd = stderr.into();
+        let (mut out, out_eof) = drain_with_deadline(&out_fd, deadline);
+        let (mut err, err_eof) = drain_with_deadline(&err_fd, deadline);
+        let mut truncated = false;
+        for buf in [&mut out, &mut err] {
+            if buf.len() > max_bytes {
+                buf.truncate(max_bytes);
+                truncated = true;
+            }
+        }
+        CollectedStdio {
+            stdout: out,
+            stderr: err,
+            eof: out_eof && err_eof,
+            truncated,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        collect_child_stdio_threaded(stdout, stderr, deadline, max_bytes)
+    }
+}
+
+/// Non-Unix fallback: reader threads + `recv_timeout` so a hung pipe still
+/// respects the deadline. Late bytes are lost; the caller sees `eof=false`
+/// and must degrade to INCONCLUSIVE/FAIL, never PASS (same contract as the
+/// [`drain_with_deadline`] Windows stub).
+#[cfg(not(unix))]
+fn collect_child_stdio_threaded(
+    mut stdout: std::process::ChildStdout,
+    mut stderr: std::process::ChildStderr,
+    deadline: Instant,
+    max_bytes: usize,
+) -> CollectedStdio {
+    use std::io::Read;
+    let (tx_out, rx_out) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (tx_err, rx_err) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx_out.send(buf);
+    });
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        let _ = tx_err.send(buf);
+    });
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut eof = true;
+    let mut truncated = false;
+    for (rx, slot) in [(rx_out, &mut out), (rx_err, &mut err)] {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(wait) {
+            Ok(bytes) => {
+                let mut bytes = bytes;
+                if bytes.len() > max_bytes {
+                    bytes.truncate(max_bytes);
+                    truncated = true;
+                }
+                *slot = bytes;
+            }
+            Err(_) => {
+                eof = false;
+            }
+        }
+    }
+    CollectedStdio {
+        stdout: out,
+        stderr: err,
+        eof,
+        truncated,
+    }
+}
+
 /// Post-mortem filesystem probe result observed by the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostMortem {
