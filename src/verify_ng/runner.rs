@@ -163,10 +163,10 @@ pub struct ExecutionRequest<'a> {
 pub struct ExecutionOutcome {
     pub result: ScenarioResult,
     pub nonce: String,
-    /// Session identity this execution ran under (scenario + session nonce
-    /// + registry hash + frozen-spec hash), immutable since before spawn.
-    /// Verified control facts in [`ExecutionOutcome::evidence`] are stamped
-    /// against exactly this identity.
+    /// Session identity for this execution: scenario, session nonce,
+    /// registry hash and frozen-spec hash; immutable since before spawn.
+    /// Verified control facts in [`ExecutionOutcome::evidence`] are
+    /// stamped against exactly this identity.
     pub execution_identity: ExecutionIdentity,
     pub exit_code: Option<i32>,
     pub timed_out: bool,

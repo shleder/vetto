@@ -408,7 +408,7 @@ mod oracle_tests {
     fn mutated_payload_is_inconclusive() {
         let s = scenario();
         let (id, e) = verified_setup(&s.id);
-        let mut i = OracleInput {
+        let i = OracleInput {
             scenario: &s,
             evidence: &e,
             nonce: Some("n"),

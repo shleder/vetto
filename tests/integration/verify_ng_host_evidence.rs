@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
-use vetto::verify_ng::evidence::{Evidence, EvidenceTier, ExecutionIdentity};
+use vetto::verify_ng::evidence::{self, Evidence, EvidenceTier, ExecutionIdentity};
 use vetto::verify_ng::oracle::{self, OracleInput};
 use vetto::verify_ng::registry::{Scenario, Severity};
 use vetto::verify_ng::{engine, model, runner};
