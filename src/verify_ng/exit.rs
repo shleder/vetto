@@ -4,7 +4,8 @@
 //!
 //! - No blocker-category FAIL or INCONCLUSIVE.
 //! - Zero INCONCLUSIVE in blocker categories (fail-closed).
-//! - Every NOT_APPLICABLE carries absence evidence (no silent skips).
+//! - Every NOT_APPLICABLE carries structured absence evidence.
+//! - Scenario IDs are unique (one scenario result per registry entry).
 //! - Canary scenarios (proof-of-enforcement-alive) all PASS.
 //! - Per-category PASS minimums met (no vacuum PASS: FM-12).
 //!
@@ -53,8 +54,16 @@ impl GateReport {
     }
 }
 
-/// Evaluate the gate. `na_evidence` maps scenario id -> absence evidence
-/// strings for NOT_APPLICABLE results; entries missing evidence fail the gate.
+fn valid_absence_evidence(entries: &[String]) -> bool {
+    !entries.is_empty()
+        && entries
+            .iter()
+            .all(|e| e.contains(": absent (") && e.ends_with(')'))
+}
+
+/// Evaluate the gate. `na_evidence` maps scenario id -> structured capability
+/// absence evidence for NOT_APPLICABLE results; entries missing proof, or
+/// evidence not matching the capability-absence shape, fail the gate.
 pub fn evaluate_gate(
     results: &[ScenarioResult],
     na_evidence: &BTreeMap<String, Vec<String>>,
@@ -66,9 +75,12 @@ pub fn evaluate_gate(
     let mut inconclusive = 0;
     let mut not_applicable = 0;
     let mut pass_per_category: BTreeMap<Category, usize> = BTreeMap::new();
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
 
     for r in results {
+        if !seen.insert(r.id.clone()) {
+            blocking.push(format!("{}:duplicate-result", r.id));
+        }
         match r.verdict {
             Verdict::Pass => {
                 passed += 1;
@@ -84,13 +96,12 @@ pub fn evaluate_gate(
         if r.verdict == Verdict::NotApplicable {
             let has_evidence = na_evidence
                 .get(&r.id)
-                .map(|e| !e.is_empty())
+                .map(|e| valid_absence_evidence(e))
                 .unwrap_or(false);
             if !has_evidence {
-                blocking.push(format!("{}:N/A-without-evidence", r.id));
+                blocking.push(format!("{}:N/A-without-absence-evidence", r.id));
             }
         }
-        seen.insert(r.id.as_str());
     }
 
     // Canary rule: every canary that ran must PASS; a canary that did not
@@ -208,7 +219,35 @@ mod exit_tests {
         assert!(report
             .blocking
             .iter()
-            .any(|b| b.contains("N/A-without-evidence")));
+            .any(|b| b.contains("N/A-without-absence-evidence")));
+    }
+
+    /// Arbitrary non-absence evidence must not justify NOT_APPLICABLE.
+    #[test]
+    fn malformed_na_evidence_blocks() {
+        let mut results = full_pass_set();
+        results.push(result(
+            "WIN-WSL-001",
+            Category::FsRead,
+            Verdict::NotApplicable,
+        ));
+        let mut ev = BTreeMap::new();
+        ev.insert("WIN-WSL-001".to_string(), vec!["looks absent".to_string()]);
+        let report = evaluate_gate(&results, &ev, "reg");
+        assert_eq!(report.status, "failed");
+    }
+
+    /// Duplicate scenario results cannot satisfy the gate.
+    #[test]
+    fn duplicate_result_id_blocks() {
+        let mut results = full_pass_set();
+        results.push(result("VFS-TRAV-001", Category::FsRead, Verdict::Pass));
+        let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
+        assert_eq!(report.status, "failed");
+        assert!(report
+            .blocking
+            .iter()
+            .any(|b| b == "VFS-TRAV-001:duplicate-result"));
     }
 
     /// Full PASS set with N/A evidence passes.

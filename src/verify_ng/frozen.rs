@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::registry::Scenario;
+
 /// Canonical, hashable snapshot of everything that defines a scenario run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrozenSpec {
@@ -37,10 +39,10 @@ pub struct FrozenSpec {
 }
 
 impl FrozenSpec {
-    /// Canonical bytes: JSON with sorted keys over normalized strings.
+    /// Canonical bytes: deterministic struct-field order plus BTreeMap-ordered
+    /// environment keys; callers construct policy/path vectors through
+    /// `freeze_spec`, which sorts those sets before serialization.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        // BTreeMap + sorted Vecs + explicit fields make serde_json output
-        // deterministic for a fixed struct layout.
         serde_json::to_vec(self).unwrap_or_default()
     }
 
@@ -96,14 +98,17 @@ pub fn freeze_spec(
     }
 }
 
-/// Hash of the compiled scenario registry (binding scenarios to results).
-pub fn registry_hash(ids: &[String]) -> String {
-    let mut sorted = ids.to_vec();
-    sorted.sort();
+/// Hash of the compiled scenario registry (binding scenario semantics, not
+/// only their identifiers, to verifier results). The registry is canonicalized
+/// by scenario ID and each serialized record is length-delimited before hashing.
+pub fn registry_hash(scenarios: &[Scenario]) -> String {
+    let mut canonical = scenarios.to_vec();
+    canonical.sort_by(|a, b| a.id.cmp(&b.id));
     let mut hasher = Sha256::new();
-    for id in sorted {
-        hasher.update(id.as_bytes());
-        hasher.update([0u8]);
+    for scenario in canonical {
+        let bytes = serde_json::to_vec(&scenario).unwrap_or_default();
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
     }
     hex_encode(&hasher.finalize())
 }
@@ -159,5 +164,23 @@ mod frozen_tests {
         let off = crate::config::NetMode::Off.label();
         let allow = crate::config::NetMode::Allowlist(vec!["example.com".to_string()]).label();
         assert_ne!(off, allow);
+    }
+
+    #[test]
+    fn registry_hash_binds_scenario_semantics() {
+        let mut scenarios = vec![Scenario {
+            id: "A".to_string(),
+            category: crate::verify_ng::model::Category::FsRead,
+            severity: crate::verify_ng::registry::Severity::High,
+            required_caps: vec!["spawn".to_string()],
+            strength: BTreeMap::new(),
+            quorum: 1,
+            known_limitation: "x".to_string(),
+            residual_risk: String::new(),
+        }];
+        let a = registry_hash(&scenarios);
+        scenarios[0].quorum = 2;
+        let b = registry_hash(&scenarios);
+        assert_ne!(a, b);
     }
 }
