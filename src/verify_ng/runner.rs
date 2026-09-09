@@ -38,11 +38,12 @@
 //!   outcome is INCONCLUSIVE, or FAIL on host-observed violation.
 //! - PASS-capability gate: the protocol proves live challenge-response
 //!   execution, never containment. PASS-capable oracle input (bound nonces
-//!   + quorum vector) is assembled from a verified response for `Aux`
-//!   scenarios only. Blocker categories keep `probe_nonce`/`control_nonce`
-//!   at `None` and `agreeing_vectors` at 0 on direct-exec, so they stay
-//!   INCONCLUSIVE (or FAIL on violation) no matter what the child writes —
-//!   direct execution is not a sandbox and claims no containment.
+//!   and the quorum vector) is assembled from a verified response for
+//!   `Aux` scenarios only. Blocker categories keep `probe_nonce` and
+//!   `control_nonce` at `None` with `agreeing_vectors` at 0 on direct-exec,
+//!   so they stay INCONCLUSIVE (or FAIL on violation) no matter what the
+//!   child writes. Direct execution is not a sandbox and claims no
+//!   containment.
 //!
 //! Hard rules:
 //! - No retries: a failed collection stays INCONCLUSIVE (or FAIL when the
