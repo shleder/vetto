@@ -28,6 +28,7 @@ pub mod redact;
 pub mod registry;
 pub mod report;
 pub mod runner;
+pub mod sandbox_backend;
 
 /// CLI entry: `vetto verify-ng [--json] [--lint]`.
 ///

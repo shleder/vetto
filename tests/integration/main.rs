@@ -52,6 +52,7 @@ mod shim_interception;
 mod tier3_files_secrets;
 mod tier8_release;
 mod tier9_friction;
+mod verify_ng_backend_arch;
 #[cfg(unix)]
 mod verify_ng_execution;
 #[cfg(unix)]

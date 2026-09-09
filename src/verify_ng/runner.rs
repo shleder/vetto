@@ -1,18 +1,27 @@
-//! Engine -> Killer -> Collector -> Oracle execution pipeline.
+//! Engine -> Policy -> SandboxBackend -> Execution -> Oracle pipeline.
 //!
 //! Minimal real runner: one [`run_one`] call executes exactly one scenario
 //! as exactly one spawned child and hands host-observed facts to the
-//! existing oracle. Pipeline order per scenario:
+//! existing oracle. Pipeline order per scenario (Stage 3A backend boundary):
 //!
 //! ```text
 //! poison check (no spawn when poisoned)
 //! -> fixture + isolated HOME + FrozenSpec (full-registry hash)
+//! -> CanonicalPolicy (platform-independent projection of FrozenSpec)
+//! -> SandboxBackend::prepare (structured enforcement report, fail-closed)
 //! -> spawn exactly once (single call site below)
 //! -> killer: deadline poll via `kill_on_deadline_with` (never blocking wait)
 //! -> collector: drain stdio with deadline, re-observe exit status
 //! -> post-mortem: payload integrity, sentinel sweep (host reads)
-//! -> oracle (pure) -> redacted ScenarioResult
+//! -> teardown (backend cleanup, idempotent)
+//! -> host evidence -> oracle (pure) + backend ceiling -> redacted ScenarioResult
 //! ```
+//!
+//! Stage 3A is architecture only: [`run_one`] runs through
+//! [`super::sandbox_backend::DirectBackend`] (explicitly non-contained) and
+//! [`run_one_with_backend`] accepts any [`super::sandbox_backend::SandboxBackend`]
+//! placeholder. Actual Linux/macOS/Windows enforcement lands in Stage 3B+
+//! behind the same trait; the oracle stays pure throughout.
 //!
 //! Provenance rules (Blocker 1 audit + Stage 2 challenge-response):
 //! - HOST_FACT is only what the host observes independently of
@@ -79,6 +88,7 @@ use super::killer::{self, KillOutcome, WaitKill};
 use super::model::{Category, ScenarioResult};
 use super::oracle;
 use super::redact;
+use super::sandbox_backend::{BackendKind, CanonicalPolicy, EnforcementReport, SandboxBackend};
 
 /// Backend label for direct (unsandboxed) plumbing runs.
 pub const DIRECT_BACKEND: &str = "direct-exec (no sandbox; plumbing only)";
@@ -170,6 +180,12 @@ pub struct ExecutionOutcome {
     /// Verified control facts in [`ExecutionOutcome::evidence`] are
     /// stamped against exactly this identity.
     pub execution_identity: ExecutionIdentity,
+    /// Structured backend preparation outcome for this execution, when a
+    /// backend was prepared. `None` only on pre-preparation failures
+    /// (poison, fixture errors) and duplicate rejections.
+    pub backend_report: Option<EnforcementReport>,
+    /// Which backend implementation prepared this execution.
+    pub backend_kind: BackendKind,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub kill: Option<KillOutcome>,
@@ -249,10 +265,26 @@ fn harness_env(
     env
 }
 
-/// Run one scenario as exactly one child process. See module docs for the
-/// stage order and hard rules. Never panics on harness failures: setup or
-/// spawn errors degrade to INCONCLUSIVE with no spawn logged.
+/// Run one scenario as exactly one child process through the direct-exec
+/// plumbing backend. See module docs for the stage order and hard rules.
+/// Never panics on harness failures: setup or spawn errors degrade to
+/// INCONCLUSIVE with no spawn logged.
 pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> ExecutionOutcome {
+    let mut backend = super::sandbox_backend::DirectBackend::new();
+    run_one_with_backend(req, spawn_log, &mut backend)
+}
+
+/// Run one scenario through an explicit [`SandboxBackend`]:
+/// Engine -> Policy/FrozenSpec -> CanonicalPolicy -> `backend.prepare` ->
+/// spawn -> collect -> teardown -> host evidence -> Oracle + backend
+/// ceiling. Stage 3A keeps the actual spawn on the direct-exec path (no
+/// containment claimed); Stage 3B moves spawn behind the backend boundary.
+/// Preparation failure fails closed with no spawn and no PASS.
+pub fn run_one_with_backend(
+    req: &ExecutionRequest<'_>,
+    spawn_log: &mut SpawnLog,
+    backend: &mut dyn SandboxBackend,
+) -> ExecutionOutcome {
     let target = engine::current_target(None);
     // FM-08: poisoned diagnostic env invalidates before any spawn.
     let poison = engine::detect_env_poison(false);
@@ -263,6 +295,8 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
             nonce: String::new(),
             // Malformed by construction (no session ran): can never PASS.
             execution_identity: ExecutionIdentity::new(&req.scenario.id, "", "", ""),
+            backend_report: None,
+            backend_kind: backend.kind(),
             exit_code: None,
             timed_out: false,
             kill: None,
@@ -284,6 +318,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
     }
 
     let nonce = engine::new_nonce();
+    let backend_kind_snapshot = backend.kind();
     let fail_closed = |detail: String, home: PathBuf| ExecutionOutcome {
         result: ScenarioResult {
             id: req.scenario.id.clone(),
@@ -295,6 +330,8 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         nonce: nonce.clone(),
         // Setup/spawn never completed: malformed identity, never PASS-capable.
         execution_identity: ExecutionIdentity::new(&req.scenario.id, nonce.as_str(), "", ""),
+        backend_report: None,
+        backend_kind: backend_kind_snapshot,
         exit_code: None,
         timed_out: false,
         kill: None,
@@ -352,6 +389,9 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
     }
 
     // FrozenSpec over the exact argv/env/cwd about to spawn (FM-03).
+    // The backend label binds which backend was requested without making
+    // FrozenSpec OS-specific (still plain strings); the canonical policy
+    // below stays platform-independent.
     let mut argv = req.interpreter.clone();
     if argv.is_empty() || req.script.is_empty() {
         return fail_closed(
@@ -362,6 +402,8 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
     argv.push(staged.display().to_string());
     argv.extend(req.script_args.iter().cloned());
     let cwd = fixture.root().to_path_buf();
+    let backend_label = backend.name().to_string();
+    let tier_label = DIRECT_TIER.to_string();
     // Full-registry binding (Blocker 3): the hash covers the complete
     // compiled registry semantics, never just this scenario's id.
     let registry_hash = super::registry::registry_hash_full(&super::registry::registry());
@@ -369,9 +411,9 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         &req.scenario.id,
         &registry_hash,
         req.policy,
-        DIRECT_TIER,
+        &tier_label,
         req.net_mode,
-        DIRECT_BACKEND,
+        &backend_label,
         &argv,
         &env,
         &cwd,
@@ -386,6 +428,25 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         registry_hash.as_str(),
         spec.hash().as_str(),
     );
+    // Stage 3A backend boundary: project FrozenSpec into the
+    // platform-independent CanonicalPolicy and prepare the backend. The
+    // preparation report is the only enforcement claim the verifier trusts;
+    // policy text alone never implies containment.
+    let canonical = CanonicalPolicy::from_frozen(&spec);
+    let backend_report = backend.prepare(&canonical, &identity);
+    let backend_kind = backend.kind();
+    if !backend_report.preparation_ok || !backend_report.binds_identity(&identity) {
+        let detail = format!(
+            "backend preparation failed (fail-closed, no spawn): backend={} {}",
+            backend_kind.label(),
+            req.scenario.known_limitation,
+        );
+        let mut outcome = fail_closed(detail, home);
+        outcome.backend_report = Some(backend_report);
+        outcome.backend_kind = backend_kind;
+        backend.teardown();
+        return outcome;
+    }
     // Frozen env snapshot for the FM-03 continuity re-freeze below: the
     // control path capabilities are transport merged AFTER the freeze, so
     // both freezes cover the same pre-channel launch context while the
@@ -446,9 +507,9 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         &req.scenario.id,
         &registry_hash,
         req.policy,
-        DIRECT_TIER,
+        &tier_label,
         req.net_mode,
-        DIRECT_BACKEND,
+        &backend_label,
         &argv,
         &spec_env,
         &cwd,
@@ -464,7 +525,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         stderr,
     };
 
-    finish_run(
+    let outcome = finish_run(
         req,
         target,
         nonce,
@@ -476,10 +537,18 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         spec_ok,
         direct,
         pid,
-    )
+        backend_report,
+        backend_kind,
+    );
+    // Teardown releases backend-held state (idempotent). The cloned report
+    // stays on the outcome for audit; teardown never upgrades the verdict.
+    backend.teardown();
+    outcome
 }
 
-/// Stages after spawn: killer -> collector -> post-mortem -> oracle.
+/// Stages after spawn: killer -> collector -> post-mortem -> oracle +
+/// backend ceiling. The oracle stays pure; the backend report (pure data)
+/// demotes any PASS whose mandatory capabilities are not actually enforced.
 #[allow(clippy::too_many_arguments)]
 fn finish_run(
     req: &ExecutionRequest<'_>,
@@ -493,6 +562,8 @@ fn finish_run(
     spec_ok: bool,
     mut direct: DirectChild,
     pid: u32,
+    backend_report: EnforcementReport,
+    backend_kind: BackendKind,
 ) -> ExecutionOutcome {
     // Killer stage: deadline poll, terminate once on expiry (no blocking wait).
     let deadline = Instant::now() + req.deadline;
@@ -626,11 +697,18 @@ fn finish_run(
         execution_identity: Some(&identity),
     };
     let strength = req.scenario.strength_for(target);
-    let verdict = oracle::judge_with_ceiling(&input, strength, None);
+    let judged = oracle::judge_with_ceiling(&input, strength, None);
+    // Stage 3A fail-closed ceiling: PASS without actually enforced
+    // mandatory backend capabilities demotes to INCONCLUSIVE. Never
+    // upgrades; FAIL/INCONCLUSIVE/NOT_APPLICABLE pass through unchanged.
+    let verdict =
+        super::sandbox_backend::apply_backend_ceiling(judged, &backend_report, req.scenario);
+    let backend_summary = backend_report.render_deterministic();
 
     let detail = redact::redact_text(&redact::mask_home(
         &format!(
-            "direct-exec run exit={} timeout={} stdout={}B stderr={}B eof={} trunc={} complete={} control={} sentinel_mut={} payload_intact={} spec_ok={} — {}",
+            "backend={} run exit={} timeout={} stdout={}B stderr={}B eof={} trunc={} complete={} control={} sentinel_mut={} payload_intact={} spec_ok={} backend=[{}] — {}",
+            backend_kind.label(),
             exit_code.map_or("-".to_string(), |c| c.to_string()),
             timed_out,
             collected.stdout.len(),
@@ -642,6 +720,7 @@ fn finish_run(
             sentinel_mutated.len(),
             payload_intact,
             spec_ok,
+            backend_summary,
             req.scenario.known_limitation,
         ),
         &home.display().to_string(),
@@ -657,6 +736,8 @@ fn finish_run(
         },
         nonce,
         execution_identity: identity,
+        backend_report: Some(backend_report),
+        backend_kind,
         exit_code,
         timed_out,
         kill: Some(kill),
@@ -705,6 +786,18 @@ impl SuiteRunner {
 
     /// Execute one scenario unless it already ran in this suite.
     pub fn run(&mut self, req: &ExecutionRequest<'_>) -> ExecutionOutcome {
+        let mut backend = super::sandbox_backend::DirectBackend::new();
+        self.run_with_backend(req, &mut backend)
+    }
+
+    /// Suite execution through an explicit backend. The first call for a
+    /// scenario id executes via [`run_one_with_backend`]; duplicates are
+    /// rejected pre-spawn exactly like [`SuiteRunner::run`].
+    pub fn run_with_backend(
+        &mut self,
+        req: &ExecutionRequest<'_>,
+        backend: &mut dyn SandboxBackend,
+    ) -> ExecutionOutcome {
         if !self.executed.insert(req.scenario.id.clone()) {
             let target = engine::current_target(None);
             let strength = req.scenario.strength_for(target);
@@ -723,6 +816,8 @@ impl SuiteRunner {
                 nonce: String::new(),
                 // Rejected pre-spawn: malformed identity, never PASS-capable.
                 execution_identity: ExecutionIdentity::new(&req.scenario.id, "", "", ""),
+                backend_report: None,
+                backend_kind: backend.kind(),
                 exit_code: None,
                 timed_out: false,
                 kill: None,
@@ -744,7 +839,7 @@ impl SuiteRunner {
             self.results.push(outcome.result.clone());
             return outcome;
         }
-        let outcome = run_one(req, &mut self.ledger);
+        let outcome = run_one_with_backend(req, &mut self.ledger, backend);
         self.results.push(outcome.result.clone());
         outcome
     }
