@@ -44,9 +44,8 @@
 //! module and the runner. The oracle stays a pure decision function and
 //! only sees the already-verified capability's stamped fact.
 
-use std::path::Path;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::evidence::ExecutionIdentity;
