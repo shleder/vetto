@@ -656,13 +656,12 @@ fn test_linux_cpu_limit_001() {
 // Syscall restriction (seccomp hardening denylist)
 // ---------------------------------------------------------------------------
 
-const PTRACE_TRACEME_PY: &str = "import os, sys\n\
+const PTRACE_TRACEME_PY: &str = "import ctypes, os, sys\n\
 try:\n\
-    import ctypes\n\
+    libc = ctypes.CDLL(None, use_errno=True)\n\
 except Exception as e:\n\
     sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
     os._exit(11)\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
 r = libc.ptrace(0, 0, 0, 0)\n\
 e = ctypes.get_errno()\n\
 sys.stderr.write('PTRACE r=%r errno=%r\\n' % (r, e))\n\
@@ -709,13 +708,12 @@ fn test_linux_syscall_escape_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-SYSCALL-ESCAPE-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import os, sys\n\
+    let script = "import ctypes, os, sys\n\
 try:\n\
-    import ctypes\n\
+    libc = ctypes.CDLL(None, use_errno=True)\n\
 except Exception as e:\n\
     sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
     os._exit(11)\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
 def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
@@ -820,7 +818,12 @@ fn test_linux_no_new_privs_001() {
         assert_no_pass(&out);
         return;
     }
-    assert_eq!(out.exit_code, Some(0), "NoNewPrivs must be set");
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "NoNewPrivs must be set; stderr: {}",
+        tail_text(&out.stderr, 500)
+    );
     assert_eq!(
         report.state(SecurityCapability::ProcessIsolation),
         EnforcementState::Verified,
@@ -893,7 +896,14 @@ fn test_linux_partial_enforcement_001() {
         "partial run must name what is enforced: {}",
         report.render_deterministic()
     );
-    assert!(!allows_pass(report, &scen));
+    // FsRead requires filesystem + exec-root + host-evidence; the allowlist
+    // run leaves network Unsupported, so the report must not allow PASS
+    // even now that the tree no longer poisons `preparation_ok`.
+    assert!(
+        !allows_pass(report, &scen),
+        "allowlist run must not allow PASS: {}",
+        report.render_deterministic()
+    );
     assert_no_pass(&out);
 }
 
@@ -1052,13 +1062,12 @@ fn test_linux_escape_syscall_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-SYSCALL-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import os, sys\n\
+    let script = "import ctypes, os, sys\n\
 try:\n\
-    import ctypes\n\
+    libc = ctypes.CDLL(None, use_errno=True)\n\
 except Exception as e:\n\
     sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
     os._exit(11)\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
 \n\
 def denied(fn, name):\n\
     ctypes.set_errno(0)\n\
@@ -1101,13 +1110,12 @@ fn test_linux_escape_root_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-ROOT-001", Category::FsRead);
     let net = NetMode::Off;
-    let script = "import os, sys\n\
+    let script = "import ctypes, os, sys\n\
 try:\n\
-    import ctypes\n\
+    libc = ctypes.CDLL(None, use_errno=True)\n\
 except Exception as e:\n\
     sys.stderr.write('NO_CTYPES:%r\\n' % (e,))\n\
     os._exit(11)\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
 ctypes.set_errno(0)\n\
 r = libc.chroot(b\"/tmp\")\n\
 e = ctypes.get_errno()\n\
