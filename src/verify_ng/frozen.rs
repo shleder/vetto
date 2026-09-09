@@ -325,12 +325,16 @@ mod frozen_tests {
 
     #[test]
     fn policy_bytes_stable_under_reordering() {
-        let mut a = crate::policy::Policy::default();
-        a.allow_read = vec![PathBuf::from("/b"), PathBuf::from("/a")];
+        let mut a = crate::policy::Policy {
+            allow_read: vec![PathBuf::from("/b"), PathBuf::from("/a")],
+            ..Default::default()
+        };
         a.net_quota.insert("x.example".to_string(), 10);
         a.net_quota.insert("a.example".to_string(), 5);
-        let mut b = crate::policy::Policy::default();
-        b.allow_read = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        let mut b = crate::policy::Policy {
+            allow_read: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            ..Default::default()
+        };
         b.net_quota.insert("a.example".to_string(), 5);
         b.net_quota.insert("x.example".to_string(), 10);
         assert_eq!(canonical_policy_bytes(&a), canonical_policy_bytes(&b));
@@ -339,11 +343,15 @@ mod frozen_tests {
     #[test]
     fn policy_bytes_flip_on_enforcement_change() {
         let a = crate::policy::Policy::default();
-        let mut b = crate::policy::Policy::default();
-        b.deny_network = true;
+        let b = crate::policy::Policy {
+            deny_network: true,
+            ..Default::default()
+        };
         assert_ne!(canonical_policy_bytes(&a), canonical_policy_bytes(&b));
-        let mut c = crate::policy::Policy::default();
-        c.allow_write = vec![PathBuf::from("/tmp/evil")];
+        let c = crate::policy::Policy {
+            allow_write: vec![PathBuf::from("/tmp/evil")],
+            ..Default::default()
+        };
         assert_ne!(canonical_policy_bytes(&a), canonical_policy_bytes(&c));
     }
 }
