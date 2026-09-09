@@ -37,13 +37,17 @@
 //! promotes to `Verified`.
 
 /// System roots the confined child may read (interpreter, loader, configs,
-/// devices, `/tmp` for the dynamic loader, `/dev` symlinks and Python
-/// stdlib temp use). Everything else — host home, the dedicated denied
-/// sibling dirs, `/root`, `/opt`, `/srv`, `/mnt` — is denied by Landlock
-/// default-deny.
+/// devices). Everything else — host home, `/tmp` siblings (including the
+/// dedicated denied canary dirs), `/root`, `/opt`, `/srv`, `/mnt` — is
+/// denied by Landlock default-deny.
+///
+/// NOTE: `/tmp` and `/dev/null` stay DENIED. The dynamic loader, shell and
+/// Python must therefore run without them: shell payloads redirect into
+/// `$VETTO_VNG_ROOT` files, and no payload may rely on `/dev/null`,
+/// `/dev/zero` or `/tmp` scratch space.
 #[cfg(target_os = "linux")]
 pub const SYSTEM_ROOTS: &[&str] = &[
-    "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/dev", "/proc", "/tmp",
+    "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/dev", "/proc",
 ];
 
 /// Default ceilings applied to every Linux-backend run (lowered via

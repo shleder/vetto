@@ -301,10 +301,9 @@ fn test_linux_fs_root_isolation_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" /; do\n\
+        "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" / /tmp; do\n\
          if ls \"$p\" >\"$VETTO_VNG_ROOT/ls.out\" 2>&1; then exit 10; fi\n\
          done\n\
-         ls /tmp >\"$VETTO_VNG_ROOT/ls.out\" 2>&1 || exit 10\n\
          exit 0\n",
         &net,
         env,
@@ -621,7 +620,8 @@ fn test_linux_pid_limit_001() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "the process ceiling must stop unbounded forking"
+        "the process ceiling must stop unbounded forking; stderr: {}",
+        tail_text(&out.stderr, 500)
     );
     assert_eq!(
         report.state(SecurityCapability::ResourceLimits),
@@ -801,7 +801,8 @@ fn test_linux_priv_escape_001() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "privilege escalation must be impossible"
+        "privilege escalation must be impossible; stderr: {}",
+        tail_text(&out.stderr, 500)
     );
     assert_eq!(
         report.state(SecurityCapability::ProcessIsolation),
