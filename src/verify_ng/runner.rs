@@ -6,27 +6,46 @@
 //!
 //! ```text
 //! poison check (no spawn when poisoned)
-//! -> fixture + isolated HOME + FrozenSpec
+//! -> fixture + isolated HOME + FrozenSpec (full-registry hash)
 //! -> spawn exactly once (single call site below)
 //! -> killer: deadline poll via `kill_on_deadline_with` (never blocking wait)
 //! -> collector: drain stdio with deadline, re-observe exit status
-//! -> post-mortem: payload integrity, sentinel sweep, control file (host reads)
+//! -> post-mortem: payload integrity, sentinel sweep (host reads)
 //! -> oracle (pure) -> redacted ScenarioResult
 //! ```
+//!
+//! Provenance rules (Blocker 1 audit):
+//! - HOST_FACT is only what the host observes independently of
+//!   attacker-controlled reporting: wait status (kernel), kill outcome
+//!   (own poll loop), payload/sentinel hashes (host-held pre-images).
+//! - NOT HOST_FACT: stdout, stderr, child env, files created by the child,
+//!   child-written markers, hashes over attacker-only post-run data.
+//! - The direct backend has NO host-owned control channel: the child could
+//!   write any nonce anywhere it can reach, so no child-presented value can
+//!   bind the positive control. `probe_nonce`/`control_nonce` are therefore
+//!   always `None` here and PASS is structurally unreachable on direct-exec:
+//!   the best honest outcome is INCONCLUSIVE, or FAIL on host-observed
+//!   violation. A future sandboxed backend with a supervisor-observed
+//!   channel supplies real nonces; the oracle already knows how to judge
+//!   them (untouched).
 //!
 //! Hard rules:
 //! - No retries: a failed collection stays INCONCLUSIVE (or FAIL when the
 //!   oracle already holds host-observed violation proof). Never spawn again
-//!   to turn a failure into a PASS.
+//!   to turn a failure into a PASS. Suite-level ownership lives in
+//!   [`SuiteRunner`]: one scenario id executes at most once per suite.
 //! - stdout/stderr are attacker-controlled: stored as `SELF_REPORT` only,
 //!   never `HOST_FACT`. No verdict branch reads child text.
+//! - PASS additionally requires complete collection (`eof && !truncated`);
+//!   the oracle enforces this itself via `stdio_complete`.
 //! - Direct-exec backend: the child runs without sandbox enforcement (that
 //!   binding lands with the backend-wired suite). There is no tree kill and
 //!   no sweep here: orphaned grandchildren are a documented residual in the
 //!   same class as the FS-ONLY BestEffort residual. The drain deadline still
 //!   bounds collection, so a grandchild holding the pipe cannot hang us.
 //! - Env base passes through the existing `envfilter` boundary; `HOME` is
-//!   always the scenario-isolated directory, never shared.
+//!   always a fresh per-run directory, never shared. That is distinctness,
+//!   not filesystem isolation: direct execution proves no containment.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -57,15 +76,17 @@ pub const DRAIN_BUDGET: Duration = Duration::from_secs(5);
 /// Per-stream capture cap.
 pub const MAX_STDIO_BYTES: usize = 1 << 20;
 /// Harness <-> child contract: env names (see `harness_env` below).
+/// `VETTO_VNG_NONCE` is a run label, not a secret and not proof: nothing
+/// host-side trusts a child-presented nonce on this backend. There is
+/// deliberately NO control-path variable: no child-reachable pathname is
+/// authoritative for the verdict.
 pub const ENV_NONCE: &str = "VETTO_VNG_NONCE";
 pub const ENV_HOME: &str = "VETTO_VNG_HOME";
 pub const ENV_ROOT: &str = "VETTO_VNG_ROOT";
-pub const ENV_CONTROL: &str = "VETTO_VNG_CONTROL";
 /// Fixture-relative path of the staged payload script.
 pub const PAYLOAD_REL: &str = "run.sh";
-/// Fixture-relative path of the nonce-bound control file the child creates.
-pub const CONTROL_REL: &str = "control.txt";
-/// HOME-relative path the child uses for the isolation marker probe.
+/// HOME-relative path the child uses for the distinctness marker probe.
+/// Host-read for plumbing diagnostics only; never evidence.
 pub const HOME_MARKER_REL: &str = "marker.txt";
 
 /// Host-observable count of runner spawns in this process (ops counter).
@@ -120,15 +141,24 @@ pub struct ExecutionOutcome {
     pub stderr: Vec<u8>,
     pub stdio_eof: bool,
     pub stdio_truncated: bool,
+    /// Collection completeness as fed to the oracle: `eof && !truncated`.
+    pub stdio_complete: bool,
     pub evidence: Evidence,
     pub payload_intact: bool,
     pub sentinel_mutated: Vec<String>,
+    /// Always false on direct-exec: no host-owned control source exists,
+    /// so there is no positive control to observe. Retained as an explicit
+    /// field so the absence is machine-visible, not implicit.
     pub control_observed: bool,
     pub violation_observed: bool,
     /// Content of `$HOME/marker.txt` as host-read after the run, if present.
+    /// Plumbing diagnostic only; never evidence.
     pub home_marker: Option<Vec<u8>>,
     pub home: PathBuf,
     pub spawn_pid: Option<u32>,
+    /// True when a [`SuiteRunner`] rejected this run as a duplicate without
+    /// spawning. A rejected run never upgrades an earlier verdict.
+    pub duplicate_rejected: bool,
 }
 
 /// Direct-exec child handle: owns `std::process::Child`, single process
@@ -167,9 +197,10 @@ fn decode_exit(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(-1)
 }
 
-/// Harness contract env: isolated HOME plus nonce/root/control pointers.
-/// Built on top of [`engine::run_env`]; the caller merges it over the
-/// `envfilter`-scrubbed base.
+/// Harness contract env: fresh per-run HOME plus run-label nonce and the
+/// fixture root pointer. Built on top of [`engine::run_env`]; the caller
+/// merges it over the `envfilter`-scrubbed base. No control pathname is
+/// exposed: there is no child-reachable location the verdict trusts.
 fn harness_env(
     home: &std::path::Path,
     root: &std::path::Path,
@@ -177,10 +208,6 @@ fn harness_env(
 ) -> BTreeMap<String, String> {
     let mut env = engine::run_env(home, nonce);
     env.insert(ENV_ROOT.to_string(), root.display().to_string());
-    env.insert(
-        ENV_CONTROL.to_string(),
-        root.join(CONTROL_REL).display().to_string(),
-    );
     env
 }
 
@@ -203,6 +230,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
             stderr: Vec::new(),
             stdio_eof: false,
             stdio_truncated: false,
+            stdio_complete: false,
             evidence: Evidence::default(),
             payload_intact: true,
             sentinel_mutated: Vec::new(),
@@ -211,6 +239,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
             home_marker: None,
             home: PathBuf::new(),
             spawn_pid: None,
+            duplicate_rejected: false,
         };
     }
 
@@ -231,6 +260,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         stderr: Vec::new(),
         stdio_eof: false,
         stdio_truncated: false,
+        stdio_complete: false,
         evidence: Evidence::default(),
         payload_intact: false,
         sentinel_mutated: Vec::new(),
@@ -239,6 +269,7 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
         home_marker: None,
         home,
         spawn_pid: None,
+        duplicate_rejected: false,
     };
 
     // Prepare: fixture (isolated HOME), staged payload + sentinels.
@@ -289,7 +320,9 @@ pub fn run_one(req: &ExecutionRequest<'_>, spawn_log: &mut SpawnLog) -> Executio
     argv.push(staged.display().to_string());
     argv.extend(req.script_args.iter().cloned());
     let cwd = fixture.root().to_path_buf();
-    let registry_hash = frozen::registry_hash(&[req.scenario.id.clone()]);
+    // Full-registry binding (Blocker 3): the hash covers the complete
+    // compiled registry semantics, never just this scenario's id.
+    let registry_hash = super::registry::registry_hash_full(&super::registry::registry());
     let spec = frozen::freeze_spec(
         &req.scenario.id,
         &registry_hash,
@@ -403,7 +436,18 @@ fn finish_run(
     // Re-observe the exit status after the drain (never blocking).
     let exit_code = direct.try_wait().or(Some(code));
 
-    // Post-mortem, all host-side: payload integrity, sentinels, control.
+    // Post-mortem, all host-side: payload integrity and sentinels.
+    // Provenance audit per HOST_FACT below:
+    // - payload hash: pre-image held by the host (stage), post-image read
+    //   by the host. Genuinely host-observed either way the bit falls.
+    // - sentinel hashes: same; the child is EXPECTED to be able to reach
+    //   the tripwire (that is what makes it a tripwire); the mismatch
+    //   against the host-held pre-image is host-observed violation proof.
+    // - wait-status/kill: kernel wait / own poll loop. Host-observed.
+    // - stdio bytes: attacker-controlled transport AND content ->
+    //   SELF_REPORT only, forever.
+    // Deliberately absent: any control file. A child-writable pathname can
+    // never be authoritative, so none is read for the verdict.
     let payload_intact = fixture.verify_untouched().is_ok() && spec_ok;
     let mut sentinel_mutated = Vec::new();
     for (abs, before) in &sentinel_pre {
@@ -418,18 +462,12 @@ fn finish_run(
             sentinel_mutated.push(rel);
         }
     }
-    let control_path = fixture.root().join(CONTROL_REL);
-    let control_content = std::fs::read(&control_path).ok();
-    let control_observed = control_content
-        .as_deref()
-        .map(|b| b == nonce.as_bytes())
-        .unwrap_or(false);
     let violation_observed = !sentinel_mutated.is_empty();
     let home_marker = std::fs::read(home.join(HOME_MARKER_REL)).ok();
 
     // Evidence: stdio is SELF_REPORT only. HOST_FACT comes solely from
-    // host-observed state (wait status, kill outcome, control file bytes,
-    // sentinel hashes). No branch below inspects child text for judging.
+    // host-observed state (wait status, kill outcome, sentinel hashes).
+    // No branch below inspects child text for judging.
     let mut evidence = Evidence::default();
     if let Some(c) = exit_code {
         evidence.host_fact("wait-status", format!("exit={c}"));
@@ -445,48 +483,43 @@ fn finish_run(
         "stderr",
         String::from_utf8_lossy(&collected.stderr).into_owned(),
     );
-    if control_observed {
-        evidence.host_fact("control", "nonce-bound side effect observed".to_string());
-    }
     for rel in &sentinel_mutated {
         evidence.host_fact("sentinel", format!("mutated:{rel}"));
     }
 
-    let bound = if control_observed {
-        Some(nonce.as_str())
-    } else {
-        None
-    };
-    let agreeing_vectors = if control_observed && !violation_observed {
-        1
-    } else {
-        0
-    };
+    // Blocker 1: no host-owned control source exists on direct-exec, so
+    // both nonce slots stay None and agreeing_vectors stays 0. The oracle's
+    // nonce-binding rule then structurally yields INCONCLUSIVE (or FAIL on
+    // violation) — PASS is unreachable here, by construction, not by luck.
+    // Blocker 2: completeness is structured oracle input, not a detail
+    // string.
+    let stdio_complete = collected.eof && !collected.truncated;
     let input = oracle::OracleInput {
         scenario: req.scenario,
         evidence: &evidence,
         nonce: Some(nonce.as_str()),
-        probe_nonce: bound,
-        control_nonce: bound,
+        probe_nonce: None,
+        control_nonce: None,
         payload_intact,
         env_poisoned: false,
-        agreeing_vectors,
+        agreeing_vectors: 0,
         violation_observed,
-        control_observed,
+        control_observed: false,
+        stdio_complete,
     };
     let strength = req.scenario.strength_for(target);
     let verdict = oracle::judge_with_ceiling(&input, strength, None);
 
     let detail = redact::redact_text(&redact::mask_home(
         &format!(
-            "direct-exec run exit={} timeout={} stdout={}B stderr={}B eof={} trunc={} control={} sentinel_mut={} payload_intact={} spec_ok={} — {}",
+            "direct-exec run exit={} timeout={} stdout={}B stderr={}B eof={} trunc={} complete={} control=unavailable(direct-backend) sentinel_mut={} payload_intact={} spec_ok={} — {}",
             exit_code.map_or("-".to_string(), |c| c.to_string()),
             timed_out,
             collected.stdout.len(),
             collected.stderr.len(),
             collected.eof,
             collected.truncated,
-            control_observed,
+            stdio_complete,
             sentinel_mutated.len(),
             payload_intact,
             spec_ok,
@@ -511,13 +544,102 @@ fn finish_run(
         stderr: collected.stderr,
         stdio_eof: collected.eof,
         stdio_truncated: collected.truncated,
+        stdio_complete,
         evidence,
         payload_intact,
         sentinel_mutated,
-        control_observed,
+        control_observed: false,
         violation_observed,
         home_marker,
         home,
         spawn_pid: Some(pid),
+        duplicate_rejected: false,
+    }
+}
+
+/// Suite-level execution owner (Blocker 5): the smallest practical ledger
+/// proving `one scenario -> at most one execution` per suite invocation.
+///
+/// - Owns the spawn ledger: every accepted run appends its [`SpawnEvent`]
+///   (run nonce + pid) here; nothing else in the suite path spawns.
+/// - The FIRST call for a scenario id executes via [`run_one`]; any further
+///   call for the same id is rejected BEFORE any fixture/spawn work with an
+///   INCONCLUSIVE outcome marked [`ExecutionOutcome::duplicate_rejected`].
+///   Rejection is recorded in `results()` (fail-closed for blockers).
+/// - There is no retry API: a rejected duplicate can never upgrade an
+///   earlier FAIL/INCONCLUSIVE into a PASS, because it never executes.
+pub struct SuiteRunner {
+    executed: std::collections::HashSet<String>,
+    ledger: SpawnLog,
+    results: Vec<ScenarioResult>,
+}
+
+impl SuiteRunner {
+    pub fn new() -> Self {
+        SuiteRunner {
+            executed: std::collections::HashSet::new(),
+            ledger: Vec::new(),
+            results: Vec::new(),
+        }
+    }
+
+    /// Execute one scenario unless it already ran in this suite.
+    pub fn run(&mut self, req: &ExecutionRequest<'_>) -> ExecutionOutcome {
+        if !self.executed.insert(req.scenario.id.clone()) {
+            let target = engine::current_target(None);
+            let strength = req.scenario.strength_for(target);
+            let detail = redact::redact_text(&format!(
+                "duplicate execution rejected, no spawn; earlier verdict stands — {}",
+                req.scenario.known_limitation,
+            ));
+            let outcome = ExecutionOutcome {
+                result: ScenarioResult {
+                    id: req.scenario.id.clone(),
+                    category: req.scenario.category,
+                    strength,
+                    verdict: super::model::Verdict::Inconclusive,
+                    detail,
+                },
+                nonce: String::new(),
+                exit_code: None,
+                timed_out: false,
+                kill: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdio_eof: false,
+                stdio_truncated: false,
+                stdio_complete: false,
+                evidence: Evidence::default(),
+                payload_intact: true,
+                sentinel_mutated: Vec::new(),
+                control_observed: false,
+                violation_observed: false,
+                home_marker: None,
+                home: PathBuf::new(),
+                spawn_pid: None,
+                duplicate_rejected: true,
+            };
+            self.results.push(outcome.result.clone());
+            return outcome;
+        }
+        let outcome = run_one(req, &mut self.ledger);
+        self.results.push(outcome.result.clone());
+        outcome
+    }
+
+    /// Suite-owned spawn ledger: one entry per accepted execution.
+    pub fn ledger(&self) -> &[SpawnEvent] {
+        &self.ledger
+    }
+
+    /// Per-scenario results in execution order, rejections included.
+    pub fn results(&self) -> &[ScenarioResult] {
+        &self.results
+    }
+}
+
+impl Default for SuiteRunner {
+    fn default() -> Self {
+        SuiteRunner::new()
     }
 }

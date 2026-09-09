@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.24] — 2026-09-09
+
+### Fixed
+
+- **verify-ng Stage 1B integrity repair (no sandbox changes)**:
+  - Control provenance: removed the forgeable `VETTO_VNG_CONTROL` / `control.txt` HOST_FACT path — no child-reachable pathname is authoritative anymore. `probe_nonce`/`control_nonce` stay `None` on direct-exec, so PASS is structurally unreachable there (INCONCLUSIVE by default, FAIL on sentinel trip). Oracle untouched.
+  - Collection completeness is now structured oracle input (`stdio_complete = eof && !truncated`); PASS on incomplete evidence is impossible at the oracle boundary, violation FAIL preserved.
+  - Registry identity: `FrozenSpec.registry_hash` now binds the full canonical registry (`registry_hash_full`: id/category/severity/caps/strength/quorum/limitation/residual, sorted, version-tagged) instead of bare scenario ids; the id-only hash helper is removed.
+  - Gate machine-distinguishes strength: `partial_pass` / `unsupported_pass` in `GateReport` + JSON/text; any UNSUPPORTED PASS fails the gate outright (defense in depth behind the oracle ceiling); verdict/strength axes stay orthogonal.
+  - Suite-level one-spawn ownership: new `SuiteRunner` (suite-owned ledger with run nonce + pid, duplicate scenario execution rejected pre-spawn as INCONCLUSIVE, no retry API).
+- **Tests**: `TEST-CONTROL-SPLIT-001` (forged nonce file + PASS markers cannot PASS), `TEST-COLLECTOR-COMPLETENESS-001` (truncation + oracle boundary), `TEST-FROZEN-IDENTITY-001` (7 semantic mutations flip the hash, reorder stable), `TEST-GATE-STRENGTH-001` (STRONG/PARTIAL/UNSUPPORTED machine output), `TEST-SPAWN-LEDGER-001` (duplicate rejected, FAIL never upgrades); TEST-ENGINE-001/004/005 expectations corrected (no self-awarded PASS), 006 claims corrected to HOME distinctness.
+
 ## [0.2.23] — 2026-09-09
 
 ### Added

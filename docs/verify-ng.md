@@ -1,17 +1,24 @@
 # verify-ng — Adversarial Security Verification
 
-> Статус реализации (0.2.23, факт): wired — `vetto verify-ng --lint`
+> Статус реализации (0.2.24, факт): wired — `vetto verify-ng --lint`
 > (проверка frozen registry без спавна, exit 0/1) и честный non-lint ран:
 > каждый сценарий отчитывается INCONCLUSIVE (или poisoned при diagnostic
 > env) без спавна, gate оценивается честно, выход всегда `125` через
 > `HarnessUnavailable` — hollow PASS невозможен. Library execution pipeline
-> (`verify_ng::runner`, direct-exec: один scenario — ровно один child,
-> deadline через общий killer-path, drain с deadline, verdict из
-> существующего oracle, stdout только SELF_REPORT) покрыт unix-тестами
-> `TEST-ENGINE-001..006`. CLI по-прежнему не исполняет registry-suite
-> (нужны per-scenario payloads и sandbox-binding), backend-wired сьюты —
-> следующий этап. Всё ниже про PASS-вердикты блокеров описывает дизайн,
-> а не текущее поведение CLI.
+> (`verify_ng::runner`, direct-exec: один scenario — не более одного child
+> через suite-owned ledger, deadline через общий killer-path, drain с
+> deadline, verdict из существующего oracle, stdout только SELF_REPORT)
+> покрыт unix-тестами `TEST-ENGINE-*` + `TEST-CONTROL-SPLIT-001`,
+> `TEST-COLLECTOR-COMPLETENESS-001`, `TEST-SPAWN-LEDGER-001`;
+> `TEST-FROZEN-IDENTITY-001` и `TEST-GATE-STRENGTH-001` — кроссплатформенно.
+> Direct-backend: host-owned control-канала нет, поэтому PASS недостижим
+> по построению (INCONCLUSIVE без нарушений, FAIL по sentinel-trip);
+> completeness сбора (`eof && !truncated`) — структурный вход oracle;
+> хэш реестра — по полной семантике сценариев; gate машинно различает
+> STRONG/PARTIAL/UNSUPPORTED (UNSUPPORTED-PASS всегда красный). CLI
+> по-прежнему не исполняет registry-suite, backend-wired сьюты — следующий
+> этап. Всё ниже про PASS-вердикты блокеров описывает дизайн, а не текущее
+> поведение CLI.
 
 Измерительный harness поверх sandbox-бэкендов. Enforcement остаётся в
 `src/sandbox/*`; этот модуль только измеряет и отчитывается. Не является
@@ -186,7 +193,11 @@ Multivector-сценарии требуют ≥quorum независимых с�
 `Engine` — единственный владелец `SandboxHandle`:
 Engine → Killer → Collector → Oracle (чистая функция, без IO) → Reporter.
 Oracle не управляет сбором: collector всегда собирает фиксированный
-суперсет фактов.
+суперсет фактов. На direct-backend позитивный контроль недоступен
+(child-writable пути неавторитетны), поэтому `probe_nonce`/`control_nonce`
+пусты и oracle структурно даёт INCONCLUSIVE/FAIL; suite-уровень владения
+(`SuiteRunner`, один scenario — не более одного исполнения) обязателен
+для любого будущего backend-wired сьюта.
 
 ## Что всё ещё нельзя доказать
 

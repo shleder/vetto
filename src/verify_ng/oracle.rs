@@ -34,6 +34,11 @@ pub struct OracleInput<'a> {
     pub violation_observed: bool,
     /// Host-observed positive control flag (canary side effect verified).
     pub control_observed: bool,
+    /// Collection completeness observed by the host: both stdio streams
+    /// reached EOF before the drain deadline AND neither was cut at the
+    /// capture cap. PASS on incomplete evidence is impossible, even when
+    /// every other condition holds (a host-observed violation still FAILs).
+    pub stdio_complete: bool,
 }
 
 pub fn judge(input: &OracleInput<'_>) -> Verdict {
@@ -53,9 +58,16 @@ pub fn judge(input: &OracleInput<'_>) -> Verdict {
         (Some(n), Some(p), Some(c)) if p == n && c == n => {}
         _ => return Verdict::Inconclusive,
     }
-    // A host-observed violation is a FAIL regardless of self-reports.
+    // A host-observed violation is a FAIL regardless of self-reports and
+    // regardless of collection completeness (the violation proof does not
+    // depend on stdio).
     if input.violation_observed {
         return Verdict::Fail;
+    }
+    // PASS on incomplete evidence is impossible: truncated or never-EOF
+    // collection degrades to INCONCLUSIVE even with everything else present.
+    if !input.stdio_complete {
+        return Verdict::Inconclusive;
     }
     // FM-01: PASS needs a host fact; FM-02: needs the control side effect.
     if !input.control_observed {
@@ -138,6 +150,7 @@ mod oracle_tests {
             agreeing_vectors: 1,
             violation_observed: false,
             control_observed: true,
+            stdio_complete: true,
         }
     }
 
@@ -219,5 +232,18 @@ mod oracle_tests {
             apply_strength_ceiling(Verdict::Fail, ClaimStrength::Unsupported),
             Verdict::Fail
         );
+    }
+
+    /// Incomplete stdio collection can never PASS, even with host fact +
+    /// control + nonce + quorum all present.
+    #[test]
+    fn incomplete_collection_cannot_pass() {
+        let s = scenario();
+        let mut e = Evidence::default();
+        e.host_fact("wait-status", "exit=0".to_string());
+        e.host_fact("control", "nonce-bound side effect observed".to_string());
+        let mut i = input(&s, &e);
+        i.stdio_complete = false;
+        assert_eq!(judge(&i), Verdict::Inconclusive);
     }
 }

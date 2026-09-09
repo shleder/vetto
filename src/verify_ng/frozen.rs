@@ -269,18 +269,6 @@ pub fn canonical_policy_bytes(policy: &crate::policy::Policy) -> Vec<u8> {
     out.into_bytes()
 }
 
-/// Hash of the compiled scenario registry (binding scenarios to results).
-pub fn registry_hash(ids: &[String]) -> String {
-    let mut sorted = ids.to_vec();
-    sorted.sort();
-    let mut hasher = Sha256::new();
-    for id in sorted {
-        hasher.update(id.as_bytes());
-        hasher.update([0u8]);
-    }
-    hex_encode(&hasher.finalize())
-}
-
 /// Minimal hex encoding (no new dependency; mirrors
 /// `sandbox::linux::debug_guard`).
 pub fn hex_encode(data: &[u8]) -> String {

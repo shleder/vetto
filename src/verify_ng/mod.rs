@@ -41,8 +41,7 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     let scenarios = registry::registry();
     if lint {
         let errors = registry::lint_all(&scenarios);
-        let hash =
-            frozen::registry_hash(&scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
+        let hash = registry::registry_hash_full(&scenarios);
         if json {
             println!(
                 "{}",
@@ -76,8 +75,7 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
     let target = engine::current_target(None);
     let poison = engine::detect_env_poison(false);
-    let ids: Vec<String> = scenarios.iter().map(|s| s.id.clone()).collect();
-    let hash = frozen::registry_hash(&ids);
+    let hash = registry::registry_hash_full(&scenarios);
     let results: Vec<model::ScenarioResult> = if poison.is_empty() {
         scenarios
             .iter()

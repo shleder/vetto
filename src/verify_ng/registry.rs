@@ -36,6 +36,18 @@ impl Target {
     }
 }
 
+/// Severity labels for the canonical registry rendering.
+impl Severity {
+    pub fn label(self) -> &'static str {
+        match self {
+            Severity::Blocker => "blocker",
+            Severity::High => "high",
+            Severity::Medium => "medium",
+            Severity::Low => "low",
+        }
+    }
+}
+
 /// Severity if this scenario FAILs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -314,6 +326,51 @@ pub fn registry() -> Vec<Scenario> {
             residual_risk: String::new(),
         },
     ]
+}
+
+/// Canonical rendering of the full compiled registry into deterministic
+/// bytes: every semantically meaningful scenario field (id, category,
+/// severity, required caps, strength map, quorum, known limitation,
+/// residual risk) in a fixed order with an explicit version tag, scenarios
+/// sorted by id. Any security-relevant registry change flips the bytes;
+/// pure reordering does not. This is what [`FrozenSpec`] binds to — never
+/// a bare list of scenario ids.
+pub fn canonical_registry_bytes(scenarios: &[Scenario]) -> Vec<u8> {
+    let mut sorted: Vec<&Scenario> = scenarios.iter().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut out = String::from("vng-registry-v1;");
+    for s in sorted {
+        let mut caps = s.required_caps.clone();
+        caps.sort();
+        let mut strength: Vec<(&String, &super::model::ClaimStrength)> =
+            s.strength.iter().collect();
+        strength.sort_by(|a, b| a.0.cmp(b.0));
+        let strength_s = strength
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.label()))
+            .collect::<Vec<_>>()
+            .join(",");
+        out.push_str(&format!(
+            "scenario[id={}|cat={}|sev={}|caps=[{}]|strength=[{}]|quorum={}|limit={}|residual={}];",
+            s.id,
+            s.category.label(),
+            s.severity.label(),
+            caps.join(","),
+            strength_s,
+            s.quorum,
+            s.known_limitation,
+            s.residual_risk
+        ));
+    }
+    out.into_bytes()
+}
+
+/// Registry hash over the full canonical registry rendering.
+pub fn registry_hash_full(scenarios: &[Scenario]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_registry_bytes(scenarios));
+    super::frozen::hex_encode(&hasher.finalize())
 }
 
 /// Lint the whole registry. Used by tests and the `verify-ng lint` path.

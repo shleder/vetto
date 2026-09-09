@@ -42,6 +42,18 @@ pub struct GateReport {
     pub not_applicable: usize,
     pub blocking: Vec<String>,
     pub results: Vec<ScenarioResult>,
+    /// Machine-readable strength accounting (Blocker 4): ids of PASS
+    /// verdicts on PARTIAL claims. A PARTIAL PASS keeps its verdict (axes
+    /// stay orthogonal) but is never silently equal to a STRONG PASS in
+    /// machine output.
+    #[serde(default)]
+    pub partial_pass: Vec<String>,
+    /// Ids of PASS verdicts on UNSUPPORTED claims. Must always be empty in
+    /// practice (the oracle ceiling demotes them before the gate); any
+    /// entry here fails the gate outright as defense in depth, so an
+    /// UNSUPPORTED claim can never masquerade as a valid PASS.
+    #[serde(default)]
+    pub unsupported_pass: Vec<String>,
 }
 
 impl GateReport {
@@ -67,12 +79,26 @@ pub fn evaluate_gate(
     let mut not_applicable = 0;
     let mut pass_per_category: BTreeMap<Category, usize> = BTreeMap::new();
     let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut partial_pass = Vec::new();
+    let mut unsupported_pass = Vec::new();
 
     for r in results {
         match r.verdict {
             Verdict::Pass => {
                 passed += 1;
                 *pass_per_category.entry(r.category).or_insert(0) += 1;
+                // Strength accounting: a PASS on a weak claim keeps its
+                // verdict (orthogonal axes) but is recorded explicitly so
+                // machine consumers never confuse it with a STRONG PASS.
+                match r.strength {
+                    super::model::ClaimStrength::Partial => {
+                        partial_pass.push(r.id.clone());
+                    }
+                    super::model::ClaimStrength::Unsupported => {
+                        unsupported_pass.push(r.id.clone());
+                    }
+                    super::model::ClaimStrength::Strong => {}
+                }
             }
             Verdict::Fail => failed += 1,
             Verdict::Inconclusive => inconclusive += 1,
@@ -113,6 +139,13 @@ pub fn evaluate_gate(
 
     // Zero INCONCLUSIVE in blockers (fail-closed): already covered by
     // blocks_release, but stated explicitly for the report.
+    // Defense in depth behind the oracle ceiling: a PASS on an UNSUPPORTED
+    // claim must never make the suite green even if a judging bug let one
+    // through (the oracle demotes such verdicts first; the gate refuses
+    // them independently).
+    for id in &unsupported_pass {
+        blocking.push(format!("{id}:unsupported-pass"));
+    }
     let status = if blocking.is_empty() {
         "pass"
     } else {
@@ -127,6 +160,8 @@ pub fn evaluate_gate(
         not_applicable,
         blocking,
         results: results.to_vec(),
+        partial_pass,
+        unsupported_pass,
     }
 }
 
