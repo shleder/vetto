@@ -1453,13 +1453,19 @@ mod backend_arch_tests {
                 EnforcementState::Unsupported
             );
         }
-        // Linux `prepare` probes and plans but installs nothing: states are
-        // `Configured` or `Unsupported`, never `Enforced`/`Verified`, so no
-        // PASS is possible before a real spawn.
+        // Linux `prepare` probes and plans but installs no confinement:
+        // containment states are `Configured` or `Unsupported`, never
+        // `Enforced`/`Verified`, so no PASS is possible before a real
+        // spawn. `HostEvidence` (wait/kill/sentinel observation machinery)
+        // is `Enforced` at prepare like on Direct — it needs no child
+        // setup to exist.
         {
             let mut backend = select_backend(BackendKind::Linux);
             let report = backend.prepare(&policy, &identity);
             for cap in SecurityCapability::all() {
+                if cap == SecurityCapability::HostEvidence {
+                    continue;
+                }
                 assert!(
                     !report.is_enforced(cap),
                     "Linux {cap:?} must not be enforced before spawn"

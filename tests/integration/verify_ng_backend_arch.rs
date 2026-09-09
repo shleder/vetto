@@ -286,7 +286,10 @@ fn test_backend_no_fake_enforcement_001() {
         "reg-test",
         policy.frozen_hash.as_str(),
     );
-    for kind in [BackendKind::Linux, BackendKind::Macos, BackendKind::Windows] {
+    // Stage 3B: Linux `prepare` reports at most `Configured` for
+    // confinement (`HostEvidence` is `Enforced` at prepare, like Direct);
+    // macOS/Windows stay fully `Unsupported`.
+    for kind in [BackendKind::Macos, BackendKind::Windows] {
         let mut backend = select_backend(kind);
         let report = backend.prepare(&policy, &identity);
         assert!(
@@ -294,6 +297,18 @@ fn test_backend_no_fake_enforcement_001() {
             "{kind:?} must enforce nothing"
         );
         for cap in SecurityCapability::all() {
+            assert!(!report.is_enforced(cap));
+            assert_ne!(report.state(cap), EnforcementState::Enforced);
+            assert_ne!(report.state(cap), EnforcementState::Verified);
+        }
+    }
+    {
+        let mut backend = select_backend(BackendKind::Linux);
+        let report = backend.prepare(&policy, &identity);
+        for cap in SecurityCapability::all() {
+            if cap == SecurityCapability::HostEvidence {
+                continue;
+            }
             assert!(!report.is_enforced(cap));
             assert_ne!(report.state(cap), EnforcementState::Enforced);
             assert_ne!(report.state(cap), EnforcementState::Verified);
