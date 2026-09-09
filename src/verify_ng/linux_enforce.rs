@@ -146,7 +146,11 @@ fn apply_child_plan_linux(
     if plan.landlock {
         let mut write_roots = vec![plan.exec_root.clone()];
         write_roots.extend(plan.extra_rw.iter().cloned());
-        let read_roots: Vec<PathBuf> = plan.system_ro.iter().map(PathBuf::from).collect();
+        let read_roots: Vec<std::path::PathBuf> = plan
+            .system_ro
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
         crate::sandbox::linux::landlock::apply_policy(&write_roots, &read_roots, false)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
     } else {
