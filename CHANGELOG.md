@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.22] — 2026-09-09
+
+### Added
+
+- **`src/audit/chain.rs` (new, P3 slice)**: hash-chain envelope over audit records — `seq` + `prev_hash` + content hash (SHA-256), `append` (genesis `GENESIS` for seq 0), `verify_chain` failing closed on seq gaps, prev-hash breaks, and content tampering (reorder/edit detected; tail truncation visible as missing seq when length is known) + unit tests. Collection/storage stay in `audit::history`.
+- **`src/proctree.rs` (new, P3 slice)**: cleanup state machine GRACEFUL → ESCALATE → VERIFY — `plan_kill` always emits all three steps (skipping VERIFY hides survivors), `advance` (survivors after GRACEFUL force ESCALATE), `cleanup_ok` true only on VERIFY with zero survivors + unit tests. Planning only — signalling stays in sandbox backends, destructive runs only in disposable VMs.
+
 ## [0.2.21] — 2026-09-08
 
 ### Added

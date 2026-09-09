@@ -26,6 +26,7 @@ pub mod notify;
 pub mod onboard;
 pub mod policy;
 pub mod policy_ir;
+pub mod proctree;
 pub mod profile;
 pub mod pty;
 pub mod redteam;
