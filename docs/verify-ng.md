@@ -1,24 +1,21 @@
 # verify-ng — Adversarial Security Verification
 
-> Статус реализации (0.2.24, факт): wired — `vetto verify-ng --lint`
-> (проверка frozen registry без спавна, exit 0/1) и честный non-lint ран:
-> каждый сценарий отчитывается INCONCLUSIVE (или poisoned при diagnostic
-> env) без спавна, gate оценивается честно, выход всегда `125` через
-> `HarnessUnavailable` — hollow PASS невозможен. Library execution pipeline
-> (`verify_ng::runner`, direct-exec: один scenario — не более одного child
-> через suite-owned ledger, deadline через общий killer-path, drain с
-> deadline, verdict из существующего oracle, stdout только SELF_REPORT)
-> покрыт unix-тестами `TEST-ENGINE-*` + `TEST-CONTROL-SPLIT-001`,
-> `TEST-COLLECTOR-COMPLETENESS-001`, `TEST-SPAWN-LEDGER-001`;
-> `TEST-FROZEN-IDENTITY-001` и `TEST-GATE-STRENGTH-001` — кроссплатформенно.
-> Direct-backend: host-owned control-канала нет, поэтому PASS недостижим
-> по построению (INCONCLUSIVE без нарушений, FAIL по sentinel-trip);
-> completeness сбора (`eof && !truncated`) — структурный вход oracle;
-> хэш реестра — по полной семантике сценариев; gate машинно различает
-> STRONG/PARTIAL/UNSUPPORTED (UNSUPPORTED-PASS всегда красный). CLI
-> по-прежнему не исполняет registry-suite, backend-wired сьюты — следующий
-> этап. Всё ниже про PASS-вердикты блокеров описывает дизайн, а не текущее
-> поведение CLI.
+> Статус реализации (0.2.25, факт): Stage 2 — host-owned positive control
+> для `Aux`-pipeline сценариев на unix: per-execution FIFO в host-private
+> dir + identity-bound токен (`ExecutionIdentity`: scenario + session nonce
+> + registry hash + frozen hash); только точное прибытие токена на
+> host-конец чеканит `VerifiedControl` → `HOST_FACT control` с provenance.
+> Oracle чист (без IO) и требует совпадения provenance с текущей identity:
+> replay/wrong-scenario/wrong-registry — INCONCLUSIVE. Library pipeline
+> покрыт `TEST-ENGINE-*`, `TEST-CONTROL-SPLIT-001` (A legitimate → PASS,
+> B forged file → INCONCLUSIVE), `TEST-HOST-CONTROL-POSITIVE-001`,
+> `FORGE/REPLAY/WRONG-SCENARIO/WRONG-REGISTRY-001`,
+> `TEST-HOST-EVIDENCE-REPLAY-001`, violation-dominates, blocker-ceiling.
+> Блокеры на direct-exec остаются INCONCLUSIVE/FAIL (containment не
+> доказывается, direct — не sandbox); non-Unix — control-unobserved.
+> `vetto verify-ng --lint` без спавна; CLI по-прежнему не исполняет
+> registry-suite, backend-wired сьюты — следующий этап. Всё ниже про
+> PASS-вердикты блокеров описывает дизайн, а не текущее поведение CLI.
 
 Измерительный harness поверх sandbox-бэкендов. Enforcement остаётся в
 `src/sandbox/*`; этот модуль только измеряет и отчитывается. Не является
@@ -37,8 +34,10 @@
 ## Уровни evidence
 
 1. `HOST_FACT` — наблюдено доверенным хостом после wait (post-mortem stat,
-   wait-status, sweep, canary-сравнение, spec-hash). Единственный уровень,
-   поддерживающий PASS.
+   wait-status, sweep, canary-сравнение, spec-hash, verified host-control).
+   Единственный уровень, поддерживающий PASS. Позитивный контроль требует
+   provenance, в точности равной текущей `ExecutionIdentity`, иначе oracle
+   даёт INCONCLUSIVE (replay/wrong-scenario/wrong-registry отвергаются).
 2. `CONSTRAINED` — узкий nonce-bound сигнал изнутри (errno-класс + nonce).
    Поддерживает FAIL, никогда PASS в одиночку.
 3. `SELF_REPORT` — stdout-маркеры атаки. Только hint для triage.
@@ -191,13 +190,19 @@ Multivector-сценарии требуют ≥quorum независимых с�
 ## Pipeline (FM-14)
 
 `Engine` — единственный владелец `SandboxHandle`:
-Engine → Killer → Collector → Oracle (чистая функция, без IO) → Reporter.
-Oracle не управляет сбором: collector всегда собирает фиксированный
-суперсет фактов. На direct-backend позитивный контроль недоступен
-(child-writable пути неавторитетны), поэтому `probe_nonce`/`control_nonce`
-пусты и oracle структурно даёт INCONCLUSIVE/FAIL; suite-уровень владения
-(`SuiteRunner`, один scenario — не более одного исполнения) обязателен
-для любого будущего backend-wired сьюта.
+Engine → Killer → Collector / HostEvidence → Oracle (чистая функция, без
+IO) → Reporter. Oracle не управляет сбором и не касается ОС: весь IO —
+в runner/collector/host-evidence, oracle судит готовые структуры.
+Host-owned контроль (Stage 2, unix): `ControlChannel` создаётся до spawn,
+читающий конец держит хост, токен привязан к `ExecutionIdentity`;
+связанные nonce + кворум из verified control собираются только для `Aux`
+pipeline-сценариев. Child-writable пути по-прежнему неавторитетны
+(`control.txt`, HOME-файлы, stdout, env-echo, exit code — не evidence).
+Без verified Aux-контроля `probe_nonce`/`control_nonce` пусты и oracle
+структурно даёт INCONCLUSIVE/FAIL; блокеры на direct-exec — всегда
+INCONCLUSIVE/FAIL (liveness наблюдается, containment — нет).
+Suite-уровень владения (`SuiteRunner`, один scenario — не более одного
+исполнения) обязателен для любого будущего backend-wired сьюта.
 
 ## Что всё ещё нельзя доказать
 

@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.25] — 2026-09-09
+
+### Added
+
+- **verify-ng Stage 2 host-owned positive evidence (no sandbox changes)**:
+  - `ExecutionIdentity` (scenario + session nonce + registry hash + frozen-spec hash, immutable after spawn) in `evidence.rs`; per-execution control token (`derive_control_token`) binds the full identity.
+  - New `host_evidence::ControlChannel` (unix FIFO in a host-private dir, read end held by the host across spawn): created before spawn, verified after collection. Only exact arrival of the identity-bound token mints `VerifiedControl`, and only that capability stamps the `control` HOST_FACT with provenance — `HostFact::new(child_value)` without verification is unrepresentable. Env/HOME/stdio/exit-code echoes are never control.
+  - Oracle stays pure (string comparison only, no I/O) and now requires the verified control fact's provenance to equal the current execution identity: cross-session replay, wrong-scenario and wrong-registry evidence judge INCONCLUSIVE, never PASS.
+  - Runner assembles PASS-capable oracle input (bound nonces + quorum) from a verified control for `Aux` pipeline scenarios only; blocker categories stay INCONCLUSIVE/FAIL on direct-exec (no containment claimed, direct backend is not a sandbox). Non-Unix degrades to control-unobserved.
+- **Tests**: `TEST-HOST-CONTROL-POSITIVE-001` (legitimate control → PASS with full invariant bundle), `CONTROL-SPLIT-001` part A (legitimate → PASS; part B forged file stays INCONCLUSIVE), `TEST-HOST-CONTROL-FORGE-001`, `TEST-HOST-EVIDENCE-REPLAY-001` + `TEST-HOST-CONTROL-REPLAY-001` (both directions), `TEST-HOST-CONTROL-WRONG-SCENARIO-001`, `TEST-HOST-CONTROL-WRONG-REGISTRY-001` (registry + frozen), violation-dominates-valid-control (→ FAIL), blocker-ceiling (→ INCONCLUSIVE); oracle unit tests for the identity gate; legacy trap helpers updated to identity-bound inputs where they assert PASS.
+
 ## [0.2.24] — 2026-09-09
 
 ### Fixed

@@ -57,6 +57,10 @@ fn request<'a>(
         sentinels: Vec::new(),
         env_extra: BTreeMap::new(),
         deadline,
+        // Stage 1B behavior by default: no host-owned control channel, so
+        // PASS is unreachable here (INCONCLUSIVE/FAIL). Stage 2 tests opt
+        // in explicitly via `request_with_control`.
+        enable_host_control: false,
     }
 }
 
@@ -361,10 +365,21 @@ fn test_collector_completeness_001_incomplete_cannot_pass() {
         "exit 0 with truncated collection must not PASS"
     );
 
-    // Oracle boundary: everything for PASS except completeness.
+    // Oracle boundary: everything for PASS except completeness — with a
+    // genuine identity-bound verified control, so the refusal is the
+    // completeness gate itself and not the identity gate.
+    let identity = vetto::verify_ng::evidence::ExecutionIdentity::new(
+        "TEST-COLLECTOR-COMPLETENESS-001",
+        "nonce-1",
+        "reg-test",
+        "frozen-test",
+    );
+    let token = vetto::verify_ng::evidence::derive_control_token("test-secret", &identity);
+    let verified = vetto::verify_ng::evidence::attest_control(&identity, &token, token.as_bytes())
+        .expect("test attestation must mint");
     let mut evidence = Evidence::default();
     evidence.host_fact("wait-status", "exit=0".to_string());
-    evidence.host_fact("control", "supervisor-observed".to_string());
+    evidence.host_control_fact(&verified);
     let input = OracleInput {
         scenario: &scenario,
         evidence: &evidence,
@@ -377,6 +392,7 @@ fn test_collector_completeness_001_incomplete_cannot_pass() {
         violation_observed: false,
         control_observed: true,
         stdio_complete: false,
+        execution_identity: Some(&identity),
     };
     assert_eq!(
         oracle::judge(&input),

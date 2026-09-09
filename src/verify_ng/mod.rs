@@ -20,6 +20,7 @@ pub mod evidence;
 pub mod exit;
 pub mod fixture;
 pub mod frozen;
+pub mod host_evidence;
 pub mod killer;
 pub mod model;
 pub mod oracle;

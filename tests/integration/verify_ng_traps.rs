@@ -50,6 +50,52 @@ fn oracle_input<'a>(
         violation_observed: false,
         control_observed: true,
         stdio_complete: true,
+        // Legacy shape (no identity): can never PASS. Tests that need a
+        // PASS-capable input use `verified_setup` below.
+        execution_identity: None,
+    }
+}
+
+/// Identity-bound verified setup mirroring the host runner: derives and
+/// attests the control token for (`scenario.id`, "nonce-1", "reg-test",
+/// "frozen-test") and stamps the verified control fact. Returns the owned
+/// identity + evidence; callers wire them into `oracle::OracleInput` with
+/// matching nonces in the same scope.
+fn verified_setup(
+    scenario: &registry::Scenario,
+) -> (evidence::ExecutionIdentity, evidence::Evidence) {
+    let id = evidence::ExecutionIdentity::new(&scenario.id, "nonce-1", "reg-test", "frozen-test");
+    let token = evidence::derive_control_token("test-secret", &id);
+    let verified = evidence::attest_control(&id, &token, token.as_bytes())
+        .expect("test attestation must mint");
+    let mut e = evidence::Evidence::default();
+    e.host_fact("postmortem", "absent".to_string());
+    e.host_control_fact(&verified);
+    (id, e)
+}
+
+/// PASS-shaped input with explicit identity wiring for `scenario` + the
+/// `verified_setup` pair built from the same scenario.
+#[allow(clippy::too_many_arguments)]
+fn verified_input<'a>(
+    scenario: &'a registry::Scenario,
+    ev: &'a evidence::Evidence,
+    id: &'a evidence::ExecutionIdentity,
+    agreeing: usize,
+) -> oracle::OracleInput<'a> {
+    oracle::OracleInput {
+        scenario,
+        evidence: ev,
+        nonce: Some("nonce-1"),
+        probe_nonce: Some("nonce-1"),
+        control_nonce: Some("nonce-1"),
+        payload_intact: true,
+        env_poisoned: false,
+        agreeing_vectors: agreeing,
+        violation_observed: false,
+        control_observed: true,
+        stdio_complete: true,
+        execution_identity: Some(id),
     }
 }
 
@@ -286,6 +332,8 @@ fn caps_missing_requires_evidence_shape() {
 
 /// FM-13 quorum shape: multi-vector scenarios (VFS-TRAV-001 quorum=2,
 /// NET-EXFIL-001 quorum=3) need >= quorum agreeing vectors, else INCONCLUSIVE.
+/// Uses identity-bound verified control so the verdict turns on the quorum
+/// itself, not the Stage 2 identity gate.
 #[test]
 fn trap_quorum_shape_multivector_needs_agreeing_vectors() {
     for (id, category, quorum, agreeing) in [
@@ -298,24 +346,22 @@ fn trap_quorum_shape_multivector_needs_agreeing_vectors() {
         ("SEC-BLOCKS-001", model::Category::Spawn, 2, 1),
     ] {
         let s = test_scenario(id, category, quorum);
-        let e = full_evidence_host_fact();
-        let mut input = oracle_input(&s, &e);
-        input.agreeing_vectors = agreeing;
+        let (vid, ve) = verified_setup(&s);
         assert_eq!(
-            oracle::judge(&input),
+            oracle::judge(&verified_input(&s, &ve, &vid, agreeing)),
             model::Verdict::Inconclusive,
             "{id}: quorum={quorum} with {agreeing} agreeing must not PASS"
         );
-        input.agreeing_vectors = quorum;
         assert_eq!(
-            oracle::judge(&input),
+            oracle::judge(&verified_input(&s, &ve, &vid, quorum)),
             model::Verdict::Pass,
             "{id}: quorum met must PASS"
         );
     }
 }
 
-/// FM-13 quorum=1 single-vector scenarios still PASS with one vector.
+/// FM-13 quorum=1 single-vector scenarios still PASS with one vector
+/// (identity-bound verified control).
 #[test]
 fn trap_quorum_one_single_vector_passes() {
     for (id, category) in [
@@ -325,9 +371,9 @@ fn trap_quorum_one_single_vector_passes() {
         ("WIN-WSL-001", model::Category::FsRead),
     ] {
         let s = test_scenario(id, category, 1);
-        let e = full_evidence_host_fact();
+        let (vid, ve) = verified_setup(&s);
         assert_eq!(
-            oracle::judge(&oracle_input(&s, &e)),
+            oracle::judge(&verified_input(&s, &ve, &vid, 1)),
             model::Verdict::Pass,
             "{id}"
         );

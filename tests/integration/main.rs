@@ -54,6 +54,8 @@ mod tier8_release;
 mod tier9_friction;
 #[cfg(unix)]
 mod verify_ng_execution;
+#[cfg(unix)]
+mod verify_ng_host_evidence;
 mod verify_ng_traps;
 mod windows_enforcement;
 mod windows_sandbox;
