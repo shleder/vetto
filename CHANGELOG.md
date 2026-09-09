@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.21] — 2026-09-08
+
+### Added
+
+- **`src/policy_ir.rs` (new, P2 slice)**: requested → compile → validate pipeline. `SecurityLevel` (STRICT/STANDARD/PERMISSIVE — how much the policy *asks for*, orthogonal to enforcement tier), `compile` (normalize: trim/dedup/sort; fail-closed lint: `/` in `allow_write` rejected at any level, `/` in `allow_read` requires PERMISSIVE), `validate` (every write root must sit under a read root, boundary-aware prefix check — `/proj2` is not under `/proj`) + unit tests. Wired as `pub mod policy_ir`; enforcement stays in sandbox backends (IR produces a checked plan, never executes).
+
 ## [0.2.20] — 2026-09-08
 
 ### Added
