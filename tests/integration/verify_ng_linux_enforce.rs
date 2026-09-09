@@ -197,7 +197,7 @@ fn test_linux_fs_read_deny_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "if cat \"$VETTO_VNG_TEST_FORBID\" >/dev/null 2>&1; then exit 10; else exit 0; fi\n",
+        "if cat \"$VETTO_VNG_TEST_FORBID\" >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; else exit 0; fi\n",
         &net,
         test_env_forbid(&forbid),
         Duration::from_secs(15),
@@ -232,8 +232,8 @@ fn test_linux_fs_write_deny_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "if printf pwned > \"$VETTO_VNG_TEST_FORBID\" 2>/dev/null; then exit 10; fi\n\
-         if mkdir \"$VETTO_VNG_TEST_FORBID.dir\" 2>/dev/null; then exit 10; fi\n\
+        "if printf pwned > \"$VETTO_VNG_TEST_FORBID\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
+         if mkdir \"$VETTO_VNG_TEST_FORBID.dir\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
          exit 0\n",
         &net,
         test_env_forbid(&forbid),
@@ -261,11 +261,11 @@ fn test_linux_fs_escape_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "ln -sf \"$VETTO_VNG_TEST_FORBID\" \"$VETTO_VNG_ROOT/link\" 2>/dev/null\n\
-         if cat \"$VETTO_VNG_ROOT/link\" >/dev/null 2>&1; then exit 10; fi\n\
-         if cat \"/proc/self/root$VETTO_VNG_TEST_FORBID\" >/dev/null 2>&1; then exit 10; fi\n\
+        "ln -sf \"$VETTO_VNG_TEST_FORBID\" \"$VETTO_VNG_ROOT/link\" 2>\"$VETTO_VNG_ROOT/e\"\n\
+         if cat \"$VETTO_VNG_ROOT/link\" >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
+         if cat \"/proc/self/root$VETTO_VNG_TEST_FORBID\" >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
          trav=\"$VETTO_VNG_ROOT/../$(basename \"$(dirname \"$VETTO_VNG_TEST_FORBID\")\")/$(basename \"$VETTO_VNG_TEST_FORBID\")\"\n\
-         if cat \"$trav\" >/dev/null 2>&1; then exit 10; fi\n\
+         if cat \"$trav\" >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
          exit 0\n",
         &net,
         test_env_forbid(&forbid),
@@ -302,9 +302,9 @@ fn test_linux_fs_root_isolation_001() {
         &scen,
         &["sh"],
         "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" /; do\n\
-         if ls \"$p\" >/dev/null 2>&1; then exit 10; fi\n\
+         if ls \"$p\" >\"$VETTO_VNG_ROOT/ls.out\" 2>&1; then exit 10; fi\n\
          done\n\
-         ls /tmp >/dev/null 2>&1 || exit 10\n\
+         ls /tmp >\"$VETTO_VNG_ROOT/ls.out\" 2>&1 || exit 10\n\
          exit 0\n",
         &net,
         env,
@@ -347,7 +347,7 @@ fn test_linux_net_deny_001() {
         &scen,
         &["bash"],
         "port=\"$VETTO_VNG_TEST_PORT\"\n\
-         if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null; then printf hi >&3; exec 3>&-; exit 10; else exit 0; fi\n",
+         if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>\"$VETTO_VNG_ROOT/e\"; then printf hi >&3; exec 3>&-; exit 10; else exit 0; fi\n",
         &net,
         env,
         Duration::from_secs(15),
@@ -380,8 +380,8 @@ fn test_linux_net_escape_001() {
         &scen,
         &["bash"],
         "port=\"$VETTO_VNG_TEST_PORT\"\n\
-         if unshare -Urn bash -c \"(exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null\" 2>/dev/null; then exit 10; fi\n\
-         if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null; then exit 10; else exit 0; fi\n",
+         if unshare -Urn bash -c \"(exec 3<>/dev/tcp/127.0.0.1/$port) 2>\\\"$VETTO_VNG_ROOT/e\\\"\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
+         if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; else exit 0; fi\n",
         &net,
         env,
         Duration::from_secs(15),
@@ -438,7 +438,7 @@ fn test_linux_proc_escape_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "setsid sleep 30 >/dev/null 2>&1 < /dev/null &\nexit 0\n",
+        "setsid sleep 30 >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\" <\"$VETTO_VNG_ROOT/e\" &\nexit 0\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(20),
@@ -571,7 +571,7 @@ fn test_linux_mem_limit_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "awk 'BEGIN{ s=\"x\"; while (length(s) < 400000000) s = s s \"xxxxxxxxxxxxxxxx\"; print length(s) }' >/dev/null 2>&1\nexit $?\n",
+        "awk 'BEGIN{ s=\"x\"; while (length(s) < 400000000) s = s s \"xxxxxxxxxxxxxxxx\"; print length(s) }' >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"\nexit $?\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(20),
@@ -605,7 +605,7 @@ fn test_linux_pid_limit_001() {
         &scen,
         &["sh"],
         "n=0\n\
-         while [ $n -lt 300 ]; do sleep 20 & n=$((n + 1)); done 2>/dev/null\n\
+         while [ $n -lt 300 ]; do sleep 20 & n=$((n + 1)); done 2>\"$VETTO_VNG_ROOT/e\"\n\
          c=$(jobs | wc -l | tr -d ' ')\n\
          if [ \"$c\" -ge 300 ]; then exit 10; else exit 0; fi\n",
         &net,
@@ -783,9 +783,9 @@ fn test_linux_priv_escape_001() {
         &scen,
         &["sh"],
         "fail=0\n\
-         su root -c true 2>/dev/null && fail=1\n\
-         sudo -n true 2>/dev/null && fail=1\n\
-         if unshare -rm sh -c \"cat \\\"$VETTO_VNG_TEST_FORBID\\\"\" 2>/dev/null; then fail=1; fi\n\
+         su root -c true 2>\"$VETTO_VNG_ROOT/e\" && fail=1\n\
+         sudo -n true 2>\"$VETTO_VNG_ROOT/e\" && fail=1\n\
+         if unshare -rm sh -c \"cat \\\"$VETTO_VNG_TEST_FORBID\\\"\" 2>\"$VETTO_VNG_ROOT/e\"; then fail=1; fi\n\
          if [ \"$(id -u)\" != \"$(id -ru)\" ]; then fail=1; fi\n\
          exit $fail\n",
         &net,
@@ -957,9 +957,9 @@ fn test_linux_escape_fs_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "ln -sf \"$VETTO_VNG_TEST_FORBID\" \"$VETTO_VNG_ROOT/wlink\" 2>/dev/null\n\
-         if printf x > \"$VETTO_VNG_ROOT/wlink\" 2>/dev/null; then exit 10; fi\n\
-         if printf x >> \"$VETTO_VNG_TEST_FORBID\" 2>/dev/null; then exit 10; fi\n\
+        "ln -sf \"$VETTO_VNG_TEST_FORBID\" \"$VETTO_VNG_ROOT/wlink\" 2>\"$VETTO_VNG_ROOT/e\"\n\
+         if printf x > \"$VETTO_VNG_ROOT/wlink\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
+         if printf x >> \"$VETTO_VNG_TEST_FORBID\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
          exit 0\n",
         &net,
         test_env_forbid(&forbid),
@@ -999,7 +999,7 @@ fn test_linux_escape_net_001() {
         &scen,
         &["bash"],
         "port=\"$VETTO_VNG_TEST_PORT\"\n\
-         if unshare -Ur bash -c \"(exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null\" 2>/dev/null; then exit 10; fi\n\
+         if unshare -Ur bash -c \"(exec 3<>/dev/tcp/127.0.0.1/$port) 2>\\\"$VETTO_VNG_ROOT/e\\\"\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; fi\n\
          exit 0\n",
         &net,
         env,
@@ -1026,7 +1026,7 @@ fn test_linux_escape_proc_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "( (setsid sleep 30 >/dev/null 2>&1 < /dev/null &) & )\nexit 0\n",
+        "( (setsid sleep 30 >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\" <\"$VETTO_VNG_ROOT/e\" &) & )\nexit 0\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(20),
@@ -1059,7 +1059,7 @@ fn test_linux_escape_priv_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "if unshare -rm cat \"$VETTO_VNG_TEST_FORBID\" >/dev/null 2>&1; then exit 10; else exit 0; fi\n",
+        "if unshare -rm cat \"$VETTO_VNG_TEST_FORBID\" >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; else exit 0; fi\n",
         &net,
         test_env_forbid(&forbid),
         Duration::from_secs(15),
@@ -1164,7 +1164,7 @@ fn test_linux_escape_root_001() {
     let (out2, _) = run_linux(
         &scen2,
         &["sh"],
-        "if ls / >/dev/null 2>&1; then exit 10; else exit 0; fi\n",
+        "if ls / >\"$VETTO_VNG_ROOT/o\" 2>\"$VETTO_VNG_ROOT/e\"; then exit 10; else exit 0; fi\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(15),
