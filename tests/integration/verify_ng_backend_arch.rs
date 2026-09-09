@@ -14,8 +14,7 @@ use vetto::verify_ng::model::{Category, ClaimStrength, Verdict};
 use vetto::verify_ng::registry::{Scenario, Severity};
 use vetto::verify_ng::sandbox_backend::{
     allows_pass, apply_backend_ceiling, required_capabilities, select_backend, BackendKind,
-    CanonicalPolicy, EnforcementReport, EnforcementState, PlatformMatrix, PreparationFailureKind,
-    SandboxBackend, SecurityCapability,
+    CanonicalPolicy, EnforcementState, PlatformMatrix, SecurityCapability,
 };
 
 fn scenario(id: &str, category: Category) -> Scenario {
@@ -181,6 +180,9 @@ fn test_backend_fail_closed_001_no_spawn_on_prepare_failure() {
     use vetto::config::NetMode;
     use vetto::policy::Policy;
     use vetto::verify_ng::runner;
+    use vetto::verify_ng::sandbox_backend::{
+        EnforcementReport, PreparationFailureKind, SandboxBackend,
+    };
 
     struct FailingBackend {
         report: Option<EnforcementReport>,
