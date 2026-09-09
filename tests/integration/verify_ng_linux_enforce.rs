@@ -301,8 +301,11 @@ fn test_linux_fs_root_isolation_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" / /tmp; do\n\
-         if ls \"$p\" >\"$VETTO_VNG_ROOT/ls.out\" 2>&1; then exit 10; fi\n\
+        "echo \"sibling=$VETTO_VNG_TEST_SIBLING\" >\"$VETTO_VNG_ROOT/dbg\" 2>&1\n\
+         ls \"$VETTO_VNG_TEST_SIBLING\" >\"$VETTO_VNG_ROOT/dbg\" 2>&1; echo \"sibling-ls=$?\" >>\"$VETTO_VNG_ROOT/dbg\" 2>&1\n\
+         ls /tmp >\"$VETTO_VNG_ROOT/dbg\" 2>&1; echo \"tmp-ls=$?\" >>\"$VETTO_VNG_ROOT/dbg\" 2>&1\n\
+         for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" / /tmp; do\n\
+         if ls \"$p\" >\"$VETTO_VNG_ROOT/ls.out\" 2>&1; then echo \"LEAK:$p\" >>\"$VETTO_VNG_ROOT/dbg\" 2>&1; exit 10; fi\n\
          done\n\
          exit 0\n",
         &net,
