@@ -1,5 +1,5 @@
 Name:           vetto
-Version: 0.2.20
+Version: 0.2.21
 Release:        1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
