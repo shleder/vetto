@@ -67,12 +67,16 @@ fn require_tool(name: &str) {
     );
 }
 
-/// Create a forbidden canary file OUTSIDE any fixture root (sibling temp
-/// path, unique per test). The confined child must never read/write it.
+/// Create a forbidden canary file OUTSIDE any fixture root AND outside
+/// `/tmp` (a dedicated sibling dir under the temp root, unique per test).
+/// `/tmp` itself must stay reachable (dynamic loader, `/dev` symlinks,
+/// Python stdlib), so the canary lives in a denied sibling instead.
+/// The confined child must never read/write it.
 fn forbid_file(tag: &str) -> std::path::PathBuf {
     let n = FORBID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path =
-        std::env::temp_dir().join(format!("vetto-vng-forbid-{}-{n}-{tag}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vetto-vng-denied-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create denied canary dir");
+    let path = dir.join(format!("forbid-{tag}"));
     std::fs::write(&path, format!("top-secret-{tag}-{n}\n")).expect("write forbid canary");
     path
 }
@@ -213,6 +217,9 @@ fn test_linux_fs_read_deny_001() {
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     assert_host_fact_wait(&out);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-FS-WRITE-DENY-001: writes outside the allowlist are denied.
@@ -240,6 +247,9 @@ fn test_linux_fs_write_deny_001() {
     assert_eq!(forbid_bytes(&forbid), before, "canary intact (host-read)");
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-FS-ESCAPE-001: symlink / /proc/self/root / dotdot escapes fail.
@@ -272,6 +282,9 @@ fn test_linux_fs_escape_001() {
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-FS-ROOT-ISOLATION-001: host roots outside the allowlist unreadable.
@@ -288,9 +301,10 @@ fn test_linux_fs_root_isolation_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" / /tmp; do\n\
+        "for p in /root/.profile /home /opt /srv /mnt \"$VETTO_VNG_TEST_SIBLING\" /; do\n\
          if ls \"$p\" >/dev/null 2>&1; then exit 10; fi\n\
          done\n\
+         ls /tmp >/dev/null 2>&1 || exit 10\n\
          exit 0\n",
         &net,
         env,
@@ -303,10 +317,14 @@ fn test_linux_fs_root_isolation_001() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "host roots outside the allowlist must be unreadable"
+        "host roots outside the allowlist must be unreadable; stderr: {}",
+        tail_text(&out.stderr, 500)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&sibling);
+    if let Some(parent) = sibling.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +807,9 @@ fn test_linux_priv_escape_001() {
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-NO-NEW-PRIVS-001: NoNewPrivs flag observably set.
@@ -799,7 +820,7 @@ fn test_linux_no_new_privs_001() {
     let (out, log) = run_linux(
         &scen,
         &["sh"],
-        "cat /proc/self/status 2>&1 | grep -i nonewprivs >&2; if grep -q 'NoNewPrivs:[[:space:]]*1' /proc/self/status 2>/dev/null; then exit 0; else exit 10; fi\n",
+        "cat /proc/self/status | grep -i nonewprivs; if grep -q 'NoNewPrivs:[[:space:]]*1' /proc/self/status; then exit 0; else exit 10; fi\n",
         &net,
         BTreeMap::new(),
         Duration::from_secs(15),
@@ -953,6 +974,9 @@ fn test_linux_escape_fs_001() {
     assert_eq!(forbid_bytes(&forbid), before, "canary intact (host-read)");
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-ESCAPE-NET-001: connect from inside a fresh userns still blocked.
@@ -1047,6 +1071,9 @@ fn test_linux_escape_priv_001() {
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
     let _ = std::fs::remove_file(&forbid);
+    if let Some(parent) = forbid.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 /// TEST-LINUX-ESCAPE-SYSCALL-001: raw-syscall hardening escape denied.

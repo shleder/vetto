@@ -37,11 +37,13 @@
 //! promotes to `Verified`.
 
 /// System roots the confined child may read (interpreter, loader, configs,
-/// devices). Everything else — host home, sibling temp dirs, `/root`,
-/// `/opt`, `/srv`, `/mnt` — is denied by Landlock default-deny.
+/// devices, `/tmp` for the dynamic loader, `/dev` symlinks and Python
+/// stdlib temp use). Everything else — host home, the dedicated denied
+/// sibling dirs, `/root`, `/opt`, `/srv`, `/mnt` — is denied by Landlock
+/// default-deny.
 #[cfg(target_os = "linux")]
 pub const SYSTEM_ROOTS: &[&str] = &[
-    "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/dev", "/proc",
+    "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/dev", "/proc", "/tmp",
 ];
 
 /// Default ceilings applied to every Linux-backend run (lowered via
