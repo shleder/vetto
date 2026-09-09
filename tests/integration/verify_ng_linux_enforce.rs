@@ -674,12 +674,14 @@ fn test_linux_cpu_limit_001() {
 // Syscall restriction (seccomp hardening denylist)
 // ---------------------------------------------------------------------------
 
-const PTRACE_TRACEME_PY: &str = "import ctypes, os, sys\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
-r = libc.ptrace(0, 0, 0, 0)\n\
-e = ctypes.get_errno()\n\
-sys.stderr.write('PTRACE r=%r errno=%r\\n' % (r, e))\n\
-os._exit(0 if (r == -1 and e == 1) else 10)\n";
+const PTRACE_TRACEME_PY: &str = concat!(
+    "import ctypes, os, sys\n",
+    "libc = ctypes.CDLL(None, use_errno=True)\n",
+    "r = libc.ptrace(0, 0, 0, 0)\n",
+    "e = ctypes.get_errno()\n",
+    "sys.stderr.write('PTRACE r=%r errno=%r\\n' % (r, e))\n",
+    "os._exit(0 if (r == -1 and e == 1) else 10)\n",
+);
 
 /// TEST-LINUX-SYSCALL-DENY-001: ptrace(TRACEME) is denied with EPERM.
 #[test]
@@ -722,21 +724,23 @@ fn test_linux_syscall_escape_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-SYSCALL-ESCAPE-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import ctypes, os, sys\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
-\n\
-def denied(fn, name):\n\
-    ctypes.set_errno(0)\n\
-    r = fn()\n\
-    e = ctypes.get_errno()\n\
-    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n\
-    return r == -1 and e == 1\n\
-\n\
-ok = True\n\
-ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n\
-ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-x\", b\"tmpfs\", 0, None), 'mount') and ok\n\
-ok = denied(lambda: libc.chroot(b\"/tmp\"), 'chroot') and ok\n\
-os._exit(0 if ok else 10)\n";
+    let script = concat!(
+        "import ctypes, os, sys\n",
+        "libc = ctypes.CDLL(None, use_errno=True)\n",
+        "\n",
+        "def denied(fn, name):\n",
+        "    ctypes.set_errno(0)\n",
+        "    r = fn()\n",
+        "    e = ctypes.get_errno()\n",
+        "    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n",
+        "    return r == -1 and e == 1\n",
+        "\n",
+        "ok = True\n",
+        "ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n",
+        "ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-x\", b\"tmpfs\", 0, None), 'mount') and ok\n",
+        "ok = denied(lambda: libc.chroot(b\"/tmp\"), 'chroot') and ok\n",
+        "os._exit(0 if ok else 10)\n",
+    );
     let (out, log) = run_linux(
         &scen,
         &["python3"],
@@ -1082,21 +1086,23 @@ fn test_linux_escape_syscall_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-SYSCALL-001", Category::Proc);
     let net = NetMode::Off;
-    let script = "import ctypes, os, sys\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
-\n\
-def denied(fn, name):\n\
-    ctypes.set_errno(0)\n\
-    r = fn()\n\
-    e = ctypes.get_errno()\n\
-    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n\
-    return r == -1 and e == 1\n\
-\n\
-ok = True\n\
-ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n\
-ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-y\", b\"tmpfs\", 0, None), 'mount') and ok\n\
-ok = denied(lambda: libc.chroot(b\"/\"), 'chroot') and ok\n\
-os._exit(0 if ok else 10)\n";
+    let script = concat!(
+        "import ctypes, os, sys\n",
+        "libc = ctypes.CDLL(None, use_errno=True)\n",
+        "\n",
+        "def denied(fn, name):\n",
+        "    ctypes.set_errno(0)\n",
+        "    r = fn()\n",
+        "    e = ctypes.get_errno()\n",
+        "    sys.stderr.write('%s r=%r errno=%r\\n' % (name, r, e))\n",
+        "    return r == -1 and e == 1\n",
+        "\n",
+        "ok = True\n",
+        "ok = denied(lambda: libc.ptrace(0, 0, 0, 0), 'ptrace') and ok\n",
+        "ok = denied(lambda: libc.mount(b\"none\", b\"/tmp/vetto-mnt-y\", b\"tmpfs\", 0, None), 'mount') and ok\n",
+        "ok = denied(lambda: libc.chroot(b\"/\"), 'chroot') and ok\n",
+        "os._exit(0 if ok else 10)\n",
+    );
     let (out, log) = run_linux(
         &scen,
         &["python3"],
@@ -1126,13 +1132,15 @@ fn test_linux_escape_root_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-ESCAPE-ROOT-001", Category::FsRead);
     let net = NetMode::Off;
-    let script = "import ctypes, os, sys\n\
-libc = ctypes.CDLL(None, use_errno=True)\n\
-ctypes.set_errno(0)\n\
-r = libc.chroot(b\"/tmp\")\n\
-e = ctypes.get_errno()\n\
-sys.stderr.write('chroot r=%r errno=%r\\n' % (r, e))\n\
-os._exit(0 if (r == -1 and e == 1) else 10)\n";
+    let script = concat!(
+        "import ctypes, os, sys\n",
+        "libc = ctypes.CDLL(None, use_errno=True)\n",
+        "ctypes.set_errno(0)\n",
+        "r = libc.chroot(b\"/tmp\")\n",
+        "e = ctypes.get_errno()\n",
+        "sys.stderr.write('chroot r=%r errno=%r\\n' % (r, e))\n",
+        "os._exit(0 if (r == -1 and e == 1) else 10)\n",
+    );
     let (out, log) = run_linux(
         &scen,
         &["python3"],
