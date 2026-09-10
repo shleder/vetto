@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.26] — 2026-09-09
+
+### Fixed
+
+- **verify-ng Stage 2 correction: non-self-authorizing positive evidence (no sandbox changes)**:
+  - Removed the self-authorizing path: the host no longer issues any PASS-capable token via env (`VETTO_VNG_CONTROL_FIFO` / `VETTO_VNG_CONTROL_TOKEN` gone). New `host_evidence::ControlChannel` builds a downlink/uplink FIFO pair, buffers a fresh 128-bit challenge pre-spawn, and verifies only the exact rotated response (`derive_expected_response`: last 8 chars of `challenge + session_nonce` to front). Echoing the challenge/nonce/env/stale/duplicates fails verification by construction.
+  - Oracle untouched in logic (still pure, identity gate unchanged); `ExecutionIdentity` / provenance / Aux-only PASS gating preserved.
+  - **Tests**: rewritten `TEST-HOST-CONTROL-POSITIVE-001` (behavior → PASS), new `TEST-HOST-CONTROL-ECHO-001`, `TEST-HOST-CONTROL-SELF-AUTH-001` (full-env-knowledge copy without rotation → INCONCLUSIVE adversarial pair), extended `TEST-HOST-CONTROL-FORGE-001`, new duplicate-response rejection, kept REPLAY (both directions) / WRONG-SCENARIO / WRONG-REGISTRY / violation-dominates (FAIL) / blocker-ceiling (INCONCLUSIVE).
+
+## [0.2.25] — 2026-09-09
+
+### Added
+
+- **verify-ng Stage 2 host-owned positive evidence (no sandbox changes)**:
+  - `ExecutionIdentity` (scenario + session nonce + registry hash + frozen-spec hash, immutable after spawn) in `evidence.rs`; per-execution control token (`derive_control_token`) binds the full identity.
+  - New `host_evidence::ControlChannel` (unix FIFO in a host-private dir, read end held by the host across spawn): created before spawn, verified after collection. Only exact arrival of the identity-bound token mints `VerifiedControl`, and only that capability stamps the `control` HOST_FACT with provenance — `HostFact::new(child_value)` without verification is unrepresentable. Env/HOME/stdio/exit-code echoes are never control.
+  - Oracle stays pure (string comparison only, no I/O) and now requires the verified control fact's provenance to equal the current execution identity: cross-session replay, wrong-scenario and wrong-registry evidence judge INCONCLUSIVE, never PASS.
+  - Runner assembles PASS-capable oracle input (bound nonces + quorum) from a verified control for `Aux` pipeline scenarios only; blocker categories stay INCONCLUSIVE/FAIL on direct-exec (no containment claimed, direct backend is not a sandbox). Non-Unix degrades to control-unobserved.
+- **Tests**: `TEST-HOST-CONTROL-POSITIVE-001` (legitimate control → PASS with full invariant bundle), `CONTROL-SPLIT-001` part A (legitimate → PASS; part B forged file stays INCONCLUSIVE), `TEST-HOST-CONTROL-FORGE-001`, `TEST-HOST-EVIDENCE-REPLAY-001` + `TEST-HOST-CONTROL-REPLAY-001` (both directions), `TEST-HOST-CONTROL-WRONG-SCENARIO-001`, `TEST-HOST-CONTROL-WRONG-REGISTRY-001` (registry + frozen), violation-dominates-valid-control (→ FAIL), blocker-ceiling (→ INCONCLUSIVE); oracle unit tests for the identity gate; legacy trap helpers updated to identity-bound inputs where they assert PASS.
+
+## [0.2.24] — 2026-09-09
+
+### Fixed
+
+- **verify-ng Stage 1B integrity repair (no sandbox changes)**:
+  - Control provenance: removed the forgeable `VETTO_VNG_CONTROL` / `control.txt` HOST_FACT path — no child-reachable pathname is authoritative anymore. `probe_nonce`/`control_nonce` stay `None` on direct-exec, so PASS is structurally unreachable there (INCONCLUSIVE by default, FAIL on sentinel trip). Oracle untouched.
+  - Collection completeness is now structured oracle input (`stdio_complete = eof && !truncated`); PASS on incomplete evidence is impossible at the oracle boundary, violation FAIL preserved.
+  - Registry identity: `FrozenSpec.registry_hash` now binds the full canonical registry (`registry_hash_full`: id/category/severity/caps/strength/quorum/limitation/residual, sorted, version-tagged) instead of bare scenario ids; the id-only hash helper is removed.
+  - Gate machine-distinguishes strength: `partial_pass` / `unsupported_pass` in `GateReport` + JSON/text; any UNSUPPORTED PASS fails the gate outright (defense in depth behind the oracle ceiling); verdict/strength axes stay orthogonal.
+  - Suite-level one-spawn ownership: new `SuiteRunner` (suite-owned ledger with run nonce + pid, duplicate scenario execution rejected pre-spawn as INCONCLUSIVE, no retry API).
+- **Tests**: `TEST-CONTROL-SPLIT-001` (forged nonce file + PASS markers cannot PASS), `TEST-COLLECTOR-COMPLETENESS-001` (truncation + oracle boundary), `TEST-FROZEN-IDENTITY-001` (7 semantic mutations flip the hash, reorder stable), `TEST-GATE-STRENGTH-001` (STRONG/PARTIAL/UNSUPPORTED machine output), `TEST-SPAWN-LEDGER-001` (duplicate rejected, FAIL never upgrades); TEST-ENGINE-001/004/005 expectations corrected (no self-awarded PASS), 006 claims corrected to HOME distinctness.
+
+## [0.2.23] — 2026-09-09
+
+### Added
+
+- **`src/verify_ng/runner.rs` (new, execution pipeline)**: minimal real `Engine → Killer → Collector → Oracle` runner — `run_one` executes one scenario as exactly one spawned child (single spawn site, caller-owned `SpawnLog` ledger, no retries, no blocking `wait()`), deadline kill via the shared `killer::kill_on_deadline_with` path (`WaitKill` trait now implemented by both `SandboxHandle` and the direct child handle), deadline-aware stdio drain (`collector::collect_child_stdio`), post-mortem payload/sentinel/control checks from host-observed state only, verdict from the existing oracle with stdout/stderr pinned to `SELF_REPORT` + unit-tested evidence mapping. Direct-exec backend (no sandbox enforcement, no tree kill — documented residual); backend-wired registry suite lands separately.
+- **`FrozenSpec.policy_bytes`**: canonical deterministic rendering of the full `Policy` (`canonical_policy_bytes` — sorted collections, fixed field order, version tag) hashed as part of the spec; reordering-stable, enforcement-change-sensitive + unit tests.
+- **`tests/integration/verify_ng_execution.rs` (new, unix)**: TEST-ENGINE-001 (success path), 002 (deadline kill, prompt return, never PASS), 003 (attacker stdout never HOST_FACT), 004 (exactly one spawn via ledger), 005 (sentinel mutation → FAIL), 006 (isolated non-reused HOME).
+
 ## [0.2.22] — 2026-09-09
 
 ### Added

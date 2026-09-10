@@ -46,12 +46,20 @@ mod policy_loading;
 mod policy_overlays;
 mod policy_parity;
 mod policy_tools;
+mod prod_stage3c;
 mod rescue;
 mod secret_masking;
 mod shim_interception;
 mod tier3_files_secrets;
 mod tier8_release;
 mod tier9_friction;
+mod verify_ng_backend_arch;
+#[cfg(unix)]
+mod verify_ng_execution;
+#[cfg(unix)]
+mod verify_ng_host_evidence;
+#[cfg(target_os = "linux")]
+mod verify_ng_linux_enforce;
 mod verify_ng_traps;
 mod windows_enforcement;
 mod windows_sandbox;

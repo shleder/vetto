@@ -178,6 +178,7 @@ mod engine_tests {
             deny_write: vec![],
             deny_resolved: vec![],
             nonce: nonce.to_string(),
+            policy_bytes: vec![],
         };
         assert!(verify_spec_continuity(&mk("n"), &mk("n")));
         assert!(!verify_spec_continuity(&mk("n"), &mk("m")));

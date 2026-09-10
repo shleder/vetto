@@ -20,26 +20,31 @@ pub mod evidence;
 pub mod exit;
 pub mod fixture;
 pub mod frozen;
+pub mod host_evidence;
 pub mod killer;
+pub mod linux_enforce;
 pub mod model;
 pub mod oracle;
 pub mod redact;
 pub mod registry;
 pub mod report;
+pub mod runner;
+pub mod sandbox_backend;
 
 /// CLI entry: `vetto verify-ng [--json] [--lint]`.
 ///
 /// `--lint` checks the frozen scenario registry without spawning anything.
 /// Without `--lint`: poison-check first (diagnostic env -> per-scenario
 /// FAIL/INCONCLUSIVE, no spawn); otherwise every scenario reports
-/// INCONCLUSIVE without spawning (spawn runner lands separately) and the
+/// INCONCLUSIVE without spawning (the direct-exec library runner in
+/// [`runner`] covers single-scenario execution; full registry-suite wiring
+/// lands separately) and the
 /// gate evaluates honestly — canary minimums keep it red. Never emits PASS.
 pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     let scenarios = registry::registry();
     if lint {
         let errors = registry::lint_all(&scenarios);
-        let hash =
-            frozen::registry_hash(&scenarios.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
+        let hash = registry::registry_hash_full(&scenarios);
         if json {
             println!(
                 "{}",
@@ -73,8 +78,7 @@ pub fn run_verify_ng(json: bool, lint: bool) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
     let target = engine::current_target(None);
     let poison = engine::detect_env_poison(false);
-    let ids: Vec<String> = scenarios.iter().map(|s| s.id.clone()).collect();
-    let hash = frozen::registry_hash(&ids);
+    let hash = registry::registry_hash_full(&scenarios);
     let results: Vec<model::ScenarioResult> = if poison.is_empty() {
         scenarios
             .iter()

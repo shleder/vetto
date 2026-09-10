@@ -1,5 +1,24 @@
 # verify-ng — Adversarial Security Verification
 
+> Статус реализации (0.2.26, факт): Stage 2 correction — non-self-authorizing
+> challenge-response для `Aux`-pipeline сценариев на unix: host буферит
+> свежий 128-бит challenge в host-downlink pre-spawn и НИЧЕГО PASS-capable
+> в env не выдаёт; child обязан прочитать challenge и вернуть rotation
+> (`challenge`+nonce, последние 8 символов в начало) на host-uplink.
+> Только точный rotated response чеканит `VerifiedControl` → `HOST_FACT
+> control` с provenance (`ExecutionIdentity`: scenario + session nonce +
+> registry + frozen). Echo/challenge/nonce/stale/duplicates — мимо.
+> Oracle чист (без IO): provenance == текущей identity, иначе INCONCLUSIVE.
+> Покрыто: `POSITIVE/ECHO/SELF-AUTH/FORGE/REPLAY/WRONG-SCENARIO/
+> WRONG-REGISTRY/DUPLICATE-001`, `TEST-HOST-EVIDENCE-REPLAY-001`,
+> `CONTROL-SPLIT-001` (A behavior → PASS, B forged file → INCONCLUSIVE),
+> violation-dominates (→ FAIL), blocker-ceiling (→ INCONCLUSIVE).
+> Блокеры на direct-exec остаются INCONCLUSIVE/FAIL (containment не
+> доказывается, direct — не sandbox); non-Unix — control-unobserved.
+> `vetto verify-ng --lint` без спавна; CLI по-прежнему не исполняет
+> registry-suite, backend-wired сьюты — следующий этап. Всё ниже про
+> PASS-вердикты блокеров описывает дизайн, а не текущее поведение CLI.
+
 Измерительный harness поверх sandbox-бэкендов. Enforcement остаётся в
 `src/sandbox/*`; этот модуль только измеряет и отчитывается. Не является
 частью security boundary.
@@ -17,8 +36,12 @@
 ## Уровни evidence
 
 1. `HOST_FACT` — наблюдено доверенным хостом после wait (post-mortem stat,
-   wait-status, sweep, canary-сравнение, spec-hash). Единственный уровень,
-   поддерживающий PASS.
+   wait-status, sweep, canary-сравнение, spec-hash, verified
+   challenge-response). Единственный уровень, поддерживающий PASS.
+   Позитивный контроль требует provenance, в точности равной текущей
+   `ExecutionIdentity`, плюс корректно выполненного поведения (rotation
+   свежего challenge, не echo): иначе oracle даёт INCONCLUSIVE
+   (echo/replay/wrong-scenario/wrong-registry отвергаются).
 2. `CONSTRAINED` — узкий nonce-bound сигнал изнутри (errno-класс + nonce).
    Поддерживает FAIL, никогда PASS в одиночку.
 3. `SELF_REPORT` — stdout-маркеры атаки. Только hint для triage.
@@ -33,8 +56,10 @@ Engine выдаёт nonce сессии. Негативная проба и по�
 
 Один `detect` на сценарий; хэш считается один раз из той же `&Policy`-ссылки,
 что уходит в `Backend::spawn`; сериализация каноническая (сортировка,
-`NetMode::label`, tier, backend-describe, argv/env/cwd, nonce, хэш реестра).
-Повторная заморозка перед spawn обязана совпасть (`verify_spec_continuity`).
+`NetMode::label`, tier, backend-describe, argv/env/cwd, nonce, хэш реестра,
+плюс `policy_bytes` — канонический рендеринг всей `Policy`, а не только
+разложенных path-списков). Повторная заморозка перед spawn обязана совпасть
+(`verify_spec_continuity`).
 
 ## Spawn-контракт (FM-09)
 
@@ -169,9 +194,20 @@ Multivector-сценарии требуют ≥quorum независимых с�
 ## Pipeline (FM-14)
 
 `Engine` — единственный владелец `SandboxHandle`:
-Engine → Killer → Collector → Oracle (чистая функция, без IO) → Reporter.
-Oracle не управляет сбором: collector всегда собирает фиксированный
-суперсет фактов.
+Engine → Killer → Collector / HostEvidence → Oracle (чистая функция, без
+IO) → Reporter. Oracle не управляет сбором и не касается ОС: весь IO —
+в runner/collector/host-evidence, oracle судит готовые структуры.
+Host-owned контроль (Stage 2 correction, unix): `ControlChannel` создаёт
+до spawn downlink+uplink и буферит свежий challenge; в env — только пути
+FIFO, никакого PASS-значения. Связанные nonce + кворум из verified
+response собираются только для `Aux` pipeline-сценариев. Echo verifier
+material (challenge/nonce/env/stale/duplicates) и child-writable пути
+(`control.txt`, HOME-файлы, stdout, exit code) — не evidence.
+Без verified Aux-ответа `probe_nonce`/`control_nonce` пусты и oracle
+структурно даёт INCONCLUSIVE/FAIL; блокеры на direct-exec — всегда
+INCONCLUSIVE/FAIL (исполнение протокола наблюдается, containment — нет).
+Suite-уровень владения (`SuiteRunner`, один scenario — не более одного
+исполнения) обязателен для любого будущего backend-wired сьюта.
 
 ## Что всё ещё нельзя доказать
 
@@ -179,3 +215,40 @@ Oracle не управляет сбором: collector всегда собира
 `$PROJECT` внутри, side-channels, kernel-0day, полнота логов, привязка хэша
 к живому процессу (только непрерывность владения до fork), полнота sweep
 при SIGKILL на FS-ONLY/macOS, UDS/IPC-exfil на mac/Win, статистика CI-таймингов.
+
+## Stage 3C — production-интеграция (факт, только доказанное тестами)
+
+Единственный прод-путь: `src/sandbox/production.rs` (`ProductionRunner`).
+Прод-спавны (`src/main.rs supervise`, `src/multi/runtime.rs`,
+`src/mcp/wrap.rs`) идут только через `spawn_authoritative` /
+`execute_simple` / `execute_with_backend`; прямого `Backend::spawn` вне
+`production.rs` в прод-коде нет. Таймаут — только проверенный killer-путь
+(deadline → kill → bounded re-wait → nonce sweep), без голого blocking
+`wait()` без последующей printer-friendly sweep-очистки. Отчётность —
+только типизированные `EnforcementState`, никогда `sandboxed/secure`.
+
+### PROVEN IN PRODUCTION (через реальный прод-раннер, Linux, net=off)
+
+Filesystem (Landlock allowlist, deny/symlink/proc-root/dotdot/root-escape),
+network off (seccomp UnixOnly, TCP connect + namespace-escape), process
+(pgroup + NO_NEW_PRIVS, host-verified через /proc), tree (group-kill +
+nonce sub-reaper sweep, grandchild/reaped, deadline tree-kill),
+resources (RLIMIT_AS/NPROC/CPU/FSIZE, host-verified через /proc/limits),
+syscalls (seccomp hardening deny ptrace), fail-closed (preparation failure
+→ spawn_count==0), no-direct-bypass (backend entered ровно 1 раз),
+identity (policy cwd == FrozenSpec cwd == exec_root == child cwd, nonce
+уникален, env не реинтродуцирует секреты).
+
+### VERIFY-NG ONLY (harness доказывает, прод не заявляет паритет)
+
+Relay allowlist/strict/ask: прод сохраняет существующую relay-архитектуру
+(netns+broker); 3B `UnixOnly` не выдаётся за allowlist relay, через 3B
+границу сеть честно `unsupported`. Full-tier namespaces/mounts/pidns живут
+в существующем `Backend::spawn` (не ослаблены), 3B даёт отчётность +
+верификацию + sweep поверх.
+
+### UNSUPPORTED
+
+macOS/Windows enforcement через 3B-границу (плейсхолдеры, всё
+`Unsupported`); cgroups/PID/user/mount-неймспейсы как новые примитивы 3C
+не добавлялись; daemon/root/containers/VM/новый policy-язык не вводились.

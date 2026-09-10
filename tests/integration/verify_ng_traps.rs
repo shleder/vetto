@@ -49,6 +49,55 @@ fn oracle_input<'a>(
         agreeing_vectors: 1,
         violation_observed: false,
         control_observed: true,
+        stdio_complete: true,
+        // Legacy shape (no identity): can never PASS. Tests that need a
+        // PASS-capable input use `verified_setup` below.
+        execution_identity: None,
+    }
+}
+
+/// Identity-bound verified setup mirroring the host runner: derives and
+/// attests the control token for (`scenario.id`, "nonce-1", "reg-test",
+/// "frozen-test") and stamps the verified control fact. Returns the owned
+/// identity + evidence; callers wire them into `oracle::OracleInput` with
+/// matching nonces in the same scope.
+fn verified_setup(
+    scenario: &registry::Scenario,
+) -> (evidence::ExecutionIdentity, evidence::Evidence) {
+    let id = evidence::ExecutionIdentity::new(&scenario.id, "nonce-1", "reg-test", "frozen-test");
+    // Test stand-in for a host-fresh challenge response (host-derived,
+    // never issued to any child).
+    let expected = evidence::derive_expected_response("test-challenge", "nonce-1");
+    let verified = evidence::attest_control(&id, &expected, expected.as_bytes())
+        .expect("test attestation must mint");
+    let mut e = evidence::Evidence::default();
+    e.host_fact("postmortem", "absent".to_string());
+    e.host_control_fact(&verified);
+    (id, e)
+}
+
+/// PASS-shaped input with explicit identity wiring for `scenario` + the
+/// `verified_setup` pair built from the same scenario.
+#[allow(clippy::too_many_arguments)]
+fn verified_input<'a>(
+    scenario: &'a registry::Scenario,
+    ev: &'a evidence::Evidence,
+    id: &'a evidence::ExecutionIdentity,
+    agreeing: usize,
+) -> oracle::OracleInput<'a> {
+    oracle::OracleInput {
+        scenario,
+        evidence: ev,
+        nonce: Some("nonce-1"),
+        probe_nonce: Some("nonce-1"),
+        control_nonce: Some("nonce-1"),
+        payload_intact: true,
+        env_poisoned: false,
+        agreeing_vectors: agreeing,
+        violation_observed: false,
+        control_observed: true,
+        stdio_complete: true,
+        execution_identity: Some(id),
     }
 }
 
@@ -178,6 +227,7 @@ fn trap_spec_continuity_detects_drift() {
         deny_write: vec![],
         deny_resolved: vec![],
         nonce: nonce.to_string(),
+        policy_bytes: vec![],
     };
     assert!(engine::verify_spec_continuity(&mk("n"), &mk("n")));
     assert!(!engine::verify_spec_continuity(&mk("n"), &mk("m")));
@@ -208,6 +258,8 @@ fn trap_report_carries_both_axes() {
             verdict: model::Verdict::Inconclusive,
             detail: "d".to_string(),
         }],
+        partial_pass: Vec::new(),
+        unsupported_pass: Vec::new(),
     };
     let v = report::gate_report_json(&gate, "reg");
     assert_eq!(v["results"][0]["verdict"], "INCONCLUSIVE");
@@ -282,6 +334,8 @@ fn caps_missing_requires_evidence_shape() {
 
 /// FM-13 quorum shape: multi-vector scenarios (VFS-TRAV-001 quorum=2,
 /// NET-EXFIL-001 quorum=3) need >= quorum agreeing vectors, else INCONCLUSIVE.
+/// Uses identity-bound verified control so the verdict turns on the quorum
+/// itself, not the Stage 2 identity gate.
 #[test]
 fn trap_quorum_shape_multivector_needs_agreeing_vectors() {
     for (id, category, quorum, agreeing) in [
@@ -294,24 +348,22 @@ fn trap_quorum_shape_multivector_needs_agreeing_vectors() {
         ("SEC-BLOCKS-001", model::Category::Spawn, 2, 1),
     ] {
         let s = test_scenario(id, category, quorum);
-        let e = full_evidence_host_fact();
-        let mut input = oracle_input(&s, &e);
-        input.agreeing_vectors = agreeing;
+        let (vid, ve) = verified_setup(&s);
         assert_eq!(
-            oracle::judge(&input),
+            oracle::judge(&verified_input(&s, &ve, &vid, agreeing)),
             model::Verdict::Inconclusive,
             "{id}: quorum={quorum} with {agreeing} agreeing must not PASS"
         );
-        input.agreeing_vectors = quorum;
         assert_eq!(
-            oracle::judge(&input),
+            oracle::judge(&verified_input(&s, &ve, &vid, quorum)),
             model::Verdict::Pass,
             "{id}: quorum met must PASS"
         );
     }
 }
 
-/// FM-13 quorum=1 single-vector scenarios still PASS with one vector.
+/// FM-13 quorum=1 single-vector scenarios still PASS with one vector
+/// (identity-bound verified control).
 #[test]
 fn trap_quorum_one_single_vector_passes() {
     for (id, category) in [
@@ -321,9 +373,9 @@ fn trap_quorum_one_single_vector_passes() {
         ("WIN-WSL-001", model::Category::FsRead),
     ] {
         let s = test_scenario(id, category, 1);
-        let e = full_evidence_host_fact();
+        let (vid, ve) = verified_setup(&s);
         assert_eq!(
-            oracle::judge(&oracle_input(&s, &e)),
+            oracle::judge(&verified_input(&s, &ve, &vid, 1)),
             model::Verdict::Pass,
             "{id}"
         );
@@ -479,4 +531,156 @@ fn trap_env_poison_fails_new_blockers() {
         );
         assert!(r.blocks_release());
     }
+}
+
+/// TEST-FROZEN-IDENTITY-001: the registry hash binds full scenario
+/// semantics, not bare ids. Reordering is stable; every security-relevant
+/// mutation (quorum, caps, severity, category, strength, limitation,
+/// residual) flips the hash and therefore the FrozenSpec identity.
+#[test]
+fn test_frozen_identity_001_registry_hash_binds_semantics() {
+    let base = registry::registry();
+    assert!(base.len() >= 10);
+    let base_hash = registry::registry_hash_full(&base);
+
+    let mut reordered = base.clone();
+    reordered.reverse();
+    assert_eq!(
+        registry::registry_hash_full(&reordered),
+        base_hash,
+        "pure reordering must not change identity"
+    );
+
+    let mutate = |f: &dyn Fn(&mut registry::Scenario)| {
+        let mut reg = base.clone();
+        f(&mut reg[0]);
+        registry::registry_hash_full(&reg)
+    };
+    let cases: Vec<(&str, Box<dyn Fn(&mut registry::Scenario)>)> = vec![
+        ("quorum", Box::new(|s| s.quorum += 1)),
+        (
+            "required_caps",
+            Box::new(|s| s.required_caps.push("novel-cap".to_string())),
+        ),
+        (
+            "severity",
+            Box::new(|s| s.severity = registry::Severity::Low),
+        ),
+        ("category", Box::new(|s| s.category = model::Category::Net)),
+        (
+            "strength",
+            Box::new(|s| {
+                s.strength
+                    .insert("test-target".to_string(), model::ClaimStrength::Unsupported);
+            }),
+        ),
+        (
+            "known_limitation",
+            Box::new(|s| s.known_limitation.push_str(" (amended)")),
+        ),
+        (
+            "residual_risk",
+            Box::new(|s| s.residual_risk.push_str(" (amended)")),
+        ),
+    ];
+    for (name, f) in &cases {
+        assert_ne!(
+            mutate(f.as_ref()),
+            base_hash,
+            "mutating {name} must change registry identity"
+        );
+    }
+
+    // FrozenSpec identity follows the registry hash: same scenario with a
+    // different registry hash is a different frozen identity.
+    let mk_spec = |registry_hash: &str| frozen::FrozenSpec {
+        scenario_id: "TEST-FROZEN-IDENTITY-001".to_string(),
+        registry_hash: registry_hash.to_string(),
+        tier: "direct".to_string(),
+        net_mode: "off".to_string(),
+        backend: "b".to_string(),
+        argv: vec!["/bin/sh".to_string()],
+        env: Default::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
+        allow_read: vec![],
+        allow_write: vec![],
+        deny_read: vec![],
+        deny_write: vec![],
+        deny_resolved: vec![],
+        nonce: "n".to_string(),
+        policy_bytes: vec![],
+    };
+    assert_ne!(mk_spec(&base_hash).hash(), mk_spec("other").hash());
+}
+
+/// TEST-GATE-STRENGTH-001: the gate machine-distinguishes strength.
+///
+/// 1. All-STRONG PASS suite -> green, empty strength lists.
+/// 2. Same suite with one PARTIAL PASS -> still green (orthogonal axes)
+///    BUT partial_pass names it in machine output.
+/// 3. A PASS on UNSUPPORTED (simulated oracle bypass) -> gate FAILED with
+///    an unsupported-pass blocker; an UNSUPPORTED claim can never
+///    masquerade as a valid PASS.
+#[test]
+fn test_gate_strength_001_machine_distinguishes_strength() {
+    use std::collections::BTreeMap;
+    let pass = |id: &str, category: model::Category, strength: model::ClaimStrength| {
+        model::ScenarioResult {
+            id: id.to_string(),
+            category,
+            strength,
+            verdict: model::Verdict::Pass,
+            detail: "x".to_string(),
+        }
+    };
+    let strong = model::ClaimStrength::Strong;
+    let suite = || {
+        vec![
+            pass("VFS-TRAV-001", model::Category::FsRead, strong),
+            pass("VFS-W-1", model::Category::FsWrite, strong),
+            pass("NET-DNS-IPV6-001", model::Category::Net, strong),
+            pass("PROC-ESC-001", model::Category::Proc, strong),
+            pass("ENV-LEAK-001", model::Category::Secrets, strong),
+            pass("RACE-BINDING-001", model::Category::Spawn, strong),
+        ]
+    };
+
+    // 1. All strong.
+    let gate = exit::evaluate_gate(&suite(), &BTreeMap::new(), "reg");
+    assert_eq!(gate.status, "pass");
+    assert!(gate.partial_pass.is_empty());
+    assert!(gate.unsupported_pass.is_empty());
+
+    // 2. One partial PASS: green but explicitly listed.
+    let mut partial_suite = suite();
+    partial_suite[2] = pass(
+        "NET-DNS-IPV6-001",
+        model::Category::Net,
+        model::ClaimStrength::Partial,
+    );
+    let gate = exit::evaluate_gate(&partial_suite, &BTreeMap::new(), "reg");
+    assert_eq!(gate.status, "pass", "verdict axis stays orthogonal");
+    assert_eq!(gate.partial_pass, vec!["NET-DNS-IPV6-001".to_string()]);
+    assert!(gate.unsupported_pass.is_empty());
+    let json = report::gate_report_json(&gate, "reg");
+    assert_eq!(json["partial_pass"][0], "NET-DNS-IPV6-001");
+
+    // 3. Unsupported PASS: gate red, loudly.
+    let mut unsupported_suite = suite();
+    unsupported_suite[2] = pass(
+        "NET-DNS-IPV6-001",
+        model::Category::Net,
+        model::ClaimStrength::Unsupported,
+    );
+    let gate = exit::evaluate_gate(&unsupported_suite, &BTreeMap::new(), "reg");
+    assert_eq!(gate.status, "failed");
+    assert_eq!(exit::gate_exit_code(&gate), 1);
+    assert_eq!(gate.unsupported_pass, vec!["NET-DNS-IPV6-001".to_string()]);
+    assert!(
+        gate.blocking.iter().any(|b| b.contains("unsupported-pass")),
+        "blocking must name it: {:?}",
+        gate.blocking
+    );
+    let json = report::gate_report_json(&gate, "reg");
+    assert_eq!(json["unsupported_pass"][0], "NET-DNS-IPV6-001");
 }

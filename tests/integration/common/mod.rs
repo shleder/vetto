@@ -35,6 +35,50 @@ pub fn have_landlock() -> bool {
     detected_tier().is_some()
 }
 
+/// True when a session log proves the host monotonic clock jumped while the
+/// agent ran (VM time-sync step): the wall gap between `session_started`
+/// and `session_ended` is under a second while the monotonic
+/// `duration_secs` claims a full session. Then every timer fired early
+/// (sleeps return instantly, deadlines trip at once) and any
+/// timing-dependent assertion — poller windows, live-process samplers,
+/// sleeps — is unmeasurable.
+///
+/// Both conditions are required so a genuinely instant session (wall AND
+/// duration near zero, i.e. a real product bug) still FAILS instead of
+/// skipping: only their DIVERGENCE proves host pathology. Same spirit as
+/// `have_landlock`: skipping an unmeasurable environment is not a pass.
+pub fn session_clock_jumped(jsonl: &str) -> bool {
+    let (mut started, mut ended, mut duration) = (None, None, None);
+    for line in jsonl.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match value.get("event").and_then(|e| e.as_str()) {
+            Some("session_started") => {
+                started = value.get("ts").and_then(|t| t.as_str()).map(str::to_string);
+            }
+            Some("session_ended") => {
+                ended = value.get("ts").and_then(|t| t.as_str()).map(str::to_string);
+                duration = value.get("duration_secs").and_then(|d| d.as_i64());
+            }
+            _ => {}
+        }
+    }
+    let (Some(started), Some(ended), Some(duration)) = (started, ended, duration) else {
+        return false;
+    };
+    let parse = |s: &str| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.timestamp_millis())
+    };
+    let (Some(a), Some(b)) = (parse(&started), parse(&ended)) else {
+        return false;
+    };
+    let wall_secs = (b - a) as f64 / 1000.0;
+    wall_secs < 1.0 && duration as f64 > wall_secs
+}
+
 /// Force a tier for the duration of one vetto run (testing override).
 pub fn run_vetto_env_in(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
     Command::new(vetto_bin())

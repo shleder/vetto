@@ -200,7 +200,7 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
         stdio: StdioMode::Inherit,
     };
 
-    let spawned = backend.spawn(&policy, opts)?;
+    let spawned = sandbox::production::spawn_authoritative(backend, &policy, opts)?;
     let mut handle = spawned.handle;
 
     #[cfg(target_os = "linux")]

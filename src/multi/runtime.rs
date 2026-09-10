@@ -86,6 +86,8 @@ struct PendingSession {
     broker_ctrl_fd: Option<OwnedFd>,
     notif_listener: Option<OwnedFd>,
     allocated_ports: Vec<u16>,
+    /// Stage 3C per-run identity: unique nonce per agent, never shared.
+    prod_nonce: String,
 }
 
 #[cfg(unix)]
@@ -325,17 +327,24 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
     let backend = backend.ok_or_else(|| anyhow::anyhow!("sandbox backend was consumed"))?;
     let (stdout_r, stdout_w) = pipe2()?;
     let (stderr_r, stderr_w) = pipe2()?;
+    // Stage 3C: one spawn = one scenario. Fresh nonce per agent; no backend
+    // state, fixture root alias, or nonce is ever shared across agents.
+    let prod_nonce = crate::verify_ng::engine::new_nonce();
+    let mut extra = relay_env(&net);
+    extra.insert(
+        crate::sandbox::production::PROD_NONCE_ENV.to_string(),
+        prod_nonce.clone(),
+    );
     let options = SpawnOptions {
         agent_cmd: command,
         cwd: project.to_path_buf(),
-        env_extra: relay_env(&net),
+        env_extra: extra,
         stdio: StdioMode::Captured {
             stdout_w: stdout_w.as_raw_fd(),
             stderr_w: stderr_w.as_raw_fd(),
         },
     };
-    let spawned = backend
-        .spawn(&policy, options)
+    let spawned = crate::sandbox::production::spawn_authoritative(backend, &policy, options)
         .with_context(|| format!("spawn agent '{}' inside its sandbox", spec.name))?;
     let crate::sandbox::Spawned {
         handle,
@@ -359,6 +368,7 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         broker_ctrl_fd,
         notif_listener,
         allocated_ports,
+        prod_nonce,
     })
 }
 
@@ -383,7 +393,12 @@ fn activate_pending(
         broker_ctrl_fd,
         notif_listener,
         allocated_ports,
+        prod_nonce,
     } = pending;
+    // Per-run nonce is consumed by the Linux tree sweep below; on other
+    // platforms there is no sweep, so release it explicitly.
+    #[cfg(not(target_os = "linux"))]
+    let _ = prod_nonce;
     let stats = StatsCollector::spawn(&bus);
     let root_pid = handle.root_pid;
 
@@ -478,8 +493,26 @@ fn activate_pending(
         .spawn(move || {
             let code = wait_handle
                 .lock()
-                .map(|mut handle| handle.wait())
+                .map(|mut handle| {
+                    // Proven path: bounded poll loop instead of a bare
+                    // blocking wait; per-run nonce sweep after reaping.
+                    let deadline = Instant::now() + std::time::Duration::from_secs(3600 * 24);
+                    let (outcome, c) = crate::verify_ng::killer::kill_on_deadline_with(
+                        &mut *handle,
+                        deadline,
+                        std::time::Duration::from_millis(100),
+                    );
+                    let _ = outcome;
+                    c
+                })
                 .unwrap_or(-1);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = crate::verify_ng::linux_enforce::sweep_tree_by_nonce(
+                    prod_nonce.as_str(),
+                    root_pid,
+                );
+            }
             wait_bus.publish(Event::SessionEnded {
                 ts: crate::events::types::now(),
                 exit_code: code,

@@ -65,11 +65,43 @@ pub enum KillOutcome {
     KilledOnDeadline,
 }
 
+/// Minimal wait/kill surface the deadline loop needs. Implemented by
+/// [`crate::sandbox::SandboxHandle`] (sandboxed runs) and by the
+/// direct-exec child handle in [`super::runner`] (plumbing runs): both go
+/// through the same [`kill_on_deadline_with`] code path, never blocking
+/// `wait()`.
+pub trait WaitKill {
+    /// Non-blocking poll: `Some(code)` once the child is reaped.
+    fn try_wait(&mut self) -> Option<i32>;
+    /// Issue termination (SIGKILL / `Child::kill`). Idempotent.
+    fn terminate(&mut self);
+}
+
+impl WaitKill for crate::sandbox::SandboxHandle {
+    fn try_wait(&mut self) -> Option<i32> {
+        crate::sandbox::SandboxHandle::try_wait(self)
+    }
+
+    fn terminate(&mut self) {
+        crate::sandbox::SandboxHandle::terminate(self);
+    }
+}
+
 /// Poll `try_wait` until `deadline`; on expiry call `terminate` once and do
 /// a final bounded re-wait so the caller always gets an exit value.
 /// Blocking `wait()` is never used here (FM-04).
 pub fn kill_on_deadline(
     handle: &mut crate::sandbox::SandboxHandle,
+    deadline: Instant,
+    poll: Duration,
+) -> (KillOutcome, i32) {
+    kill_on_deadline_with(handle, deadline, poll)
+}
+
+/// Generic deadline loop over any [`WaitKill`] handle. Same contract as
+/// [`kill_on_deadline`]: poll, terminate once on expiry, bounded re-wait.
+pub fn kill_on_deadline_with<H: WaitKill>(
+    handle: &mut H,
     deadline: Instant,
     poll: Duration,
 ) -> (KillOutcome, i32) {
@@ -98,6 +130,52 @@ pub fn kill_on_deadline(
 #[cfg(test)]
 mod killer_tests {
     use super::*;
+    use std::collections::VecDeque;
+
+    /// In-memory [`WaitKill`] double with a scripted exit schedule.
+    struct FakeHandle {
+        polls: VecDeque<Option<i32>>,
+        terminates: usize,
+    }
+
+    impl WaitKill for FakeHandle {
+        fn try_wait(&mut self) -> Option<i32> {
+            self.polls.pop_front().flatten()
+        }
+
+        fn terminate(&mut self) {
+            self.terminates += 1;
+            // A SIGKILLed child becomes reaped on the next poll.
+            self.polls.push_front(Some(-9));
+        }
+    }
+
+    #[test]
+    fn exits_before_deadline_without_terminate() {
+        let mut h = FakeHandle {
+            polls: vec![None, None, Some(0)].into(),
+            terminates: 0,
+        };
+        let (outcome, code) = kill_on_deadline_with(
+            &mut h,
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_millis(1),
+        );
+        assert_eq!((outcome, code), (KillOutcome::Exited, 0));
+        assert_eq!(h.terminates, 0);
+    }
+
+    #[test]
+    fn deadline_kills_exactly_once_and_reaps() {
+        let mut h = FakeHandle {
+            polls: vec![None].into(),
+            terminates: 0,
+        };
+        let (outcome, code) =
+            kill_on_deadline_with(&mut h, Instant::now(), Duration::from_millis(1));
+        assert_eq!((outcome, code), (KillOutcome::KilledOnDeadline, -9));
+        assert_eq!(h.terminates, 1);
+    }
 
     #[test]
     fn expectation_matrix() {

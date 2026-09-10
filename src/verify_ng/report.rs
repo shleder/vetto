@@ -18,6 +18,8 @@ pub fn gate_report_json(report: &GateReport, registry_hash: &str) -> serde_json:
         "inconclusive": report.inconclusive,
         "not_applicable": report.not_applicable,
         "blocking": report.blocking,
+        "partial_pass": report.partial_pass,
+        "unsupported_pass": report.unsupported_pass,
         "results": report.results.iter().map(scenario_json).collect::<Vec<_>>(),
     })
 }
@@ -53,6 +55,18 @@ pub fn render_text(report: &GateReport) -> String {
             out.push_str(&format!("  - {b}\n"));
         }
     }
+    if !report.partial_pass.is_empty() {
+        out.push_str("partial-pass (weak claims, not strong):\n");
+        for b in &report.partial_pass {
+            out.push_str(&format!("  - {b}\n"));
+        }
+    }
+    if !report.unsupported_pass.is_empty() {
+        out.push_str("unsupported-pass (never valid):\n");
+        for b in &report.unsupported_pass {
+            out.push_str(&format!("  - {b}\n"));
+        }
+    }
     out
 }
 
@@ -78,6 +92,8 @@ mod report_tests {
                 verdict: Verdict::Fail,
                 detail: "d".to_string(),
             }],
+            partial_pass: Vec::new(),
+            unsupported_pass: Vec::new(),
         };
         let v = gate_report_json(&report, "reg");
         assert_eq!(v["results"][0]["verdict"], "FAIL");

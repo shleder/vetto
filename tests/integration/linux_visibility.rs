@@ -28,6 +28,10 @@ fn jsonl_contains_lifecycle_events() {
     let log = std::fs::read_to_string(&jsonl).expect("jsonl written");
     assert!(log.contains("\"session_started\""), "{log}");
     assert!(log.contains("\"session_ended\""), "{log}");
+    if session_clock_jumped(&log) {
+        eprintln!("SKIP: host monotonic clock jumped during session; poller window unmeasurable");
+        return;
+    }
     // Best-effort observation: with a 1.5s agent there is ample time for the
     // 100ms poller to notice at least one process.
     assert!(
