@@ -333,7 +333,11 @@ fn test_prod_backend_called_001() {
     let mut log = ProdSpawnLog::new();
     let out = execute_with_backend(
         &Policy::default(),
-        vec!["/bin/true".to_string()],
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 0".to_string(),
+        ],
         tmp.clone(),
         HashMap::new(),
         NetMode::Off,

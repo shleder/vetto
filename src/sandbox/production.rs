@@ -597,6 +597,7 @@ pub fn execute_with_backend(
 
 /// Real headless production execution: fresh `LinuxBackend` per run, no
 /// shared backend state, one spawn per call, no retry FAIL->PASS.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_simple(
     policy: &Policy,
     argv: Vec<String>,
@@ -868,10 +869,19 @@ mod production_unit_tests {
         };
         let tmp = std::env::temp_dir().join(format!("vetto-prod-called-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
+        // No /bin/true on macOS/Windows: use the platform shell.
+        #[cfg(unix)]
+        let argv = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 0".to_string(),
+        ];
+        #[cfg(windows)]
+        let argv = vec!["cmd".to_string(), "/C".to_string(), "exit 0".to_string()];
         let mut log = ProdSpawnLog::new();
         let out = execute_with_backend(
             &test_policy(),
-            vec!["/bin/true".to_string()],
+            argv,
             tmp.clone(),
             HashMap::new(),
             NetMode::Off,
