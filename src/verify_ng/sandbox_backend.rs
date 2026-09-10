@@ -926,7 +926,11 @@ impl LinuxBackend {
         // sweep reports not-clean and the run fails closed instead. The
         // outcome is recorded for the tree-sweep diagnostic string.
         self.subreaper_prepare = Some(match crate::multi::isolation::set_subreaper() {
-            Ok(()) => "ok".to_string(),
+            Ok(()) => {
+                // SAFETY: scalar prctl query on our own process.
+                let get = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) };
+                format!("ok/get={get}")
+            }
             Err(e) => format!("ERR:{e:?}"),
         });
 
