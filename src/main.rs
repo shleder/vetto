@@ -22,6 +22,7 @@ use vetto::events::{Event, EventBus};
 use vetto::pty;
 #[cfg(unix)]
 use vetto::tui;
+use vetto::verify_ng::sandbox_backend::SandboxBackend;
 use vetto::{
     cli, daemon, events, exit_codes, history, logger, mcp, multi, policy, profile, remote, report,
     rescue, sandbox, shim, watchdog,
