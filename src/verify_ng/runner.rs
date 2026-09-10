@@ -688,8 +688,8 @@ fn finish_run(
         if let Some(outcome) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
             backend.note_tree_clean(outcome.clean);
             backend.note_diagnostic(format!(
-                "tree-sweep clean={} killed={} residual={:?} subreaper={}",
-                outcome.clean, outcome.killed, outcome.residual, outcome.subreaper
+                "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
+                outcome.clean, outcome.killed, outcome.residual, outcome.subreaper, outcome.blind
             ));
         }
     }

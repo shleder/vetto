@@ -118,14 +118,17 @@ pub struct SweepOutcome {
     pub residual: Vec<i32>,
     /// Whether our sub-reaper flag was observed (blind without it).
     pub subreaper: bool,
+    /// True when a same-UID live process had an unreadable environ, so the
+    /// scan could not prove clean (fail-closed, diagnostic only).
+    pub blind: bool,
 }
 
 /// Sweep this run's residual processes after the root was reaped.
 ///
 /// Returns `None` off Linux. Only nonce-matching processes are signalled,
-/// so parallel runs are never disturbed. `clean == false` covers both
-/// surviving residuals and a blind sweep (no sub-reaper — orphans would
-/// reparent to init instead of us): both fail the tree claim closed.
+/// so parallel runs are never disturbed. `clean == false` covers surviving
+/// residuals and blind sweeps (no sub-reaper, or a same-UID live process
+/// with an unreadable environ): both fail the tree claim closed.
 pub fn sweep_tree_by_nonce(nonce: &str, root_pid: u32) -> Option<SweepOutcome> {
     #[cfg(target_os = "linux")]
     {
@@ -270,8 +273,10 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
 /// fork, `setsid` and multi-level chains all keep the inherited environ).
 /// Kill pass -> nonblocking reap -> short poll -> rescan, until the final
 /// scan finds zero nonce bearers (`clean=true`) or the budget expires.
-/// Read races (`ENOENT`/`ESRCH`) and zombies are tolerated; a live process
-/// with an unreadable environ is `blind` (fail-closed).
+/// Read races (`ENOENT`/`ESRCH`) and zombies are tolerated; a same-UID live
+/// process with an unreadable environ is `blind` (fail-closed). Foreign-UID
+/// processes can never carry our nonce (children inherit our UID and
+/// `NO_NEW_PRIVS` blocks transitions), so they are skipped without blinding.
 #[cfg(target_os = "linux")]
 fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     use std::time::{Duration, Instant};
@@ -282,19 +287,23 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
         killed: 0,
         residual: Vec::new(),
         subreaper,
+        blind: false,
     };
     // Without our sub-reaper flag, escapers reparent to init and this scan
     // is blind — report not-clean (fail-closed) instead of a false clean.
     if !subreaper {
+        outcome.blind = true;
         return outcome;
     }
-    // SAFETY: scalar getpid.
+    // SAFETY: scalar getpid/geteuid.
     let me = unsafe { libc::getpid() } as u32;
+    let me_uid = unsafe { libc::geteuid() };
     let needle = nonce.as_bytes();
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
-        let (matched, blind) = scan_nonce_pids(needle, root_pid, me);
+        let (matched, blind) = scan_nonce_pids(needle, root_pid, me, me_uid);
         if blind {
+            outcome.blind = true;
             outcome.residual = last_nonce_pids(nonce, root_pid, me);
             return outcome;
         }
@@ -322,10 +331,13 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
 
 /// One full `/proc` scan for pids whose environ carries this run's nonce.
 ///
-/// Returns `(matched, blind)`. `blind=true` means a live process with an
-/// unreadable environ was observed — the scan cannot claim clean.
+/// Returns `(matched, blind)`. `blind=true` means a same-UID live process
+/// with an unreadable environ was observed — the scan cannot claim clean.
+/// Foreign-UID processes are skipped (they cannot carry our nonce), so
+/// system daemons never blind the sweep. Only nonce-matching pids are ever
+/// signalled by the caller.
 #[cfg(target_os = "linux")]
-fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32) -> (Vec<i32>, bool) {
+fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -> (Vec<i32>, bool) {
     let mut matched = Vec::new();
     let mut blind = false;
     let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -352,6 +364,15 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32) -> (Vec<i32>, bool) {
             }
             Err(_) => continue,
         };
+        // Foreign-UID processes can never be our descendants (same UID is
+        // inherited, transitions are blocked by NO_NEW_PRIVS): skip without
+        // blinding, so root daemons never fail the sweep. Unparsable Uid
+        // stays conservative and proceeds to the environ attempt below.
+        if let Some(uid) = status_uid(&status) {
+            if uid != me_uid {
+                continue;
+            }
+        }
         // Environ is unreadable for zombies (reap below if ours) or
         // mid-exit races (ENOENT/ESRCH — the process is going away): never
         // blocking clean. Only a hard read error on a live, un-reaped
@@ -477,6 +498,18 @@ pub fn contains_slice(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
+/// Real UID from a `/proc/<pid>/status` body (`"Uid:\t1000\t1000..."`,
+/// first column). `None` when the field is missing or malformed.
+pub fn status_uid(status_body: &str) -> Option<u32> {
+    for line in status_body.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("Uid:") {
+            let first = rest.split_whitespace().next().unwrap_or("");
+            return first.parse::<u32>().ok();
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod linux_enforce_tests {
     use super::*;
@@ -524,5 +557,15 @@ mod linux_enforce_tests {
         assert!(!contains_slice(env, b"other"));
         assert!(!contains_slice(env, b""));
         assert!(!contains_slice(b"short", b"much-longer-needle"));
+    }
+
+    #[test]
+    fn status_uid_parses_first_column() {
+        let body = "Name:\tsleep\nState:\tS (sleeping)\nUid:\t1000\t1000\t1000\t1000\n";
+        assert_eq!(status_uid(body), Some(1000));
+        assert_eq!(status_uid("Uid:\t0\t0\t0\t0\n"), Some(0));
+        assert_eq!(status_uid("Name:\tx\nState:\tR (running)\n"), None);
+        assert_eq!(status_uid(""), None);
+        assert_eq!(status_uid("Uid:\tnot-a-number\n"), None);
     }
 }
