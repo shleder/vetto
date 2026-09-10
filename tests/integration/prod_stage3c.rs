@@ -316,8 +316,11 @@ fn test_prod_backend_fail_closed_001() {
         Duration::from_secs(5),
         Box::new(FailBackend { report: None }),
         &mut log,
-    )
-    .expect_err("preparation failure must not produce an execution");
+    );
+    let err = match err {
+        Ok(_) => panic!("preparation failure must not produce an execution"),
+        Err(e) => e,
+    };
     assert!(log.is_empty(), "spawn ledger unchanged: no child spawned");
     assert!(
         !canary.exists(),
@@ -877,11 +880,10 @@ fn test_prod_linux_fail_closed_001() {
         "PROD-LINUX".to_string(),
     );
     let err = unprepared.prepare();
-    assert!(
-        err.is_err(),
-        "relay on FsOnly must fail closed with no spawn"
-    );
-    let err = err.unwrap_err();
+    let err = match err {
+        Ok(_) => panic!("relay on FsOnly must fail closed with no spawn"),
+        Err(e) => e,
+    };
     assert!(
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"
@@ -966,7 +968,7 @@ fn test_prod_real_child_stage3b_001() {
     let prepared = unprepared.prepare().expect("prepare real child");
     let nonce = prepared.nonce().to_string();
     let identity = prepared.identity().clone();
-    let mut spawned = prepared.spawn().expect("spawn real child");
+    let spawned = prepared.spawn().expect("spawn real child");
     let pid = spawned.pid();
     assert!(pid > 0, "real child PID observed");
     // Host-observed state of the SAME child PID (not a probe child).
@@ -1100,11 +1102,10 @@ fn test_prod_prepare_fail_no_spawn_001() {
     // uses; the failure returns `Err` with NO execution object, so no
     // `spawn` method exists to call and no PID can exist.
     let err = unprepared.prepare_with_backend(Box::new(FailBackend { report: None }));
-    assert!(
-        err.is_err(),
-        "preparation failure must yield Err, never an execution"
-    );
-    let err = err.unwrap_err();
+    let err = match err {
+        Ok(_) => panic!("preparation failure must yield Err, never an execution"),
+        Err(e) => e,
+    };
     assert!(
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"

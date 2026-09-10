@@ -1135,8 +1135,11 @@ mod production_unit_tests {
             Duration::from_secs(5),
             Box::new(backend),
             &mut log,
-        )
-        .expect_err("preparation failure must not produce an execution");
+        );
+        let err = match err {
+            Ok(_) => panic!("preparation failure must not produce an execution"),
+            Err(e) => e,
+        };
         assert!(
             log.is_empty(),
             "spawn ledger unchanged on preparation failure"
