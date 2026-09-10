@@ -925,12 +925,10 @@ impl LinuxBackend {
         // the targeted sweep can see them. Failure is not fatal here: the
         // sweep reports not-clean and the run fails closed instead. The
         // outcome is recorded for the tree-sweep diagnostic string.
-        self.subreaper_prepare = Some(
-            match crate::multi::isolation::set_subreaper() {
-                Ok(()) => "ok".to_string(),
-                Err(e) => format!("ERR:{e:?}"),
-            },
-        );
+        self.subreaper_prepare = Some(match crate::multi::isolation::set_subreaper() {
+            Ok(()) => "ok".to_string(),
+            Err(e) => format!("ERR:{e:?}"),
+        });
 
         let landlock_ok = crate::sandbox::linux::landlock::abi_version().is_some();
         let seccomp_ok = crate::sandbox::linux::seccomp_netblock::probe_available();
