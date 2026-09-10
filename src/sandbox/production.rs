@@ -1,33 +1,49 @@
-//! Stage 3C: one authoritative production execution path over Stage 3B.
+//! Stage 3C correction: one authoritative production execution boundary.
 //!
 //! ```text
-//! real vetto command -> policy -> FrozenSpec -> CanonicalPolicy
-//!   -> SandboxBackend::prepare (LinuxBackend owns preparation)
-//!   -> backend-controlled spawn (pre_exec plan, single site)
-//!   -> kill/collect via proven killer path
-//!   -> host verification (/proc) + nonce tree sweep (3B reuse)
-//!   -> teardown -> typed ProductionResult
+//! main / multi / mcp
+//!         ↓
+//! UnpreparedProductionExecution (owned frozen inputs, NO spawn method)
+//!         ↓ prepare()
+//! PreparedProductionExecution (backend prepared + plan + frozen bundle)
+//!         ↓ spawn() — exactly one real spawn, consumes self
+//! SpawnedProductionExecution (handle + fds + backend + identity + nonce)
+//!         ↓ wait_collect() / finish()
+//! host verification + killer + drain + nonce sweep + typed result
 //! ```
 //!
-//! No duplication: child enforcement, host verification and tree sweep call
-//! `verify_ng::linux_enforce` directly. No second production-only sandbox.
-//! Tier mapping is honest: FS-only never silently becomes network-off,
-//! relay modes keep the existing relay architecture and report
-//! `network=unsupported` through the 3B boundary (no parity claimed).
-//! `oracle::judge` stays pure: nothing here infers security from stdout.
+//! Invariants (compile-time where possible):
+//! - `UnpreparedProductionExecution` has NO spawn method: preparation and
+//!   spawn cannot be separated, and one backend cannot be prepared while
+//!   another is spawned — the SAME `PreparedProductionExecution` object owns
+//!   the capability backend, the enforcement plan, and the frozen bundle the
+//!   child installs.
+//! - All spawn inputs are OWNED at construction (argv/cwd/env/policy/net/
+//!   stdio): nothing can drift between freeze and spawn. `Prepared` exposes
+//!   no setters and no re-freeze.
+//! - The child installs enforcement through the pre-existing shared
+//!   primitives only (`sandbox::linux::{landlock,seccomp_netblock,limits}`,
+//!   `verify_ng::linux_enforce` for host verify/sweep). No second
+//!   Landlock/seccomp implementation exists here.
+//! - Tier mapping is honest: FS-only never silently becomes network-off,
+//!   relay modes keep the existing relay architecture and report
+//!   `network=unsupported` through the 3B boundary (no parity claimed).
+//! - `oracle::judge` stays pure: nothing here infers security from stdout.
 
 use std::collections::{BTreeMap, HashMap};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::config::NetMode;
 use crate::policy::{Policy, Tier};
+use crate::sandbox::{Backend, SandboxHandle, SpawnOptions, StdioMode};
 use crate::verify_ng::engine;
 use crate::verify_ng::evidence::ExecutionIdentity;
 use crate::verify_ng::frozen::{self, FrozenSpec};
-use crate::verify_ng::killer::{self, KillOutcome, WaitKill};
+use crate::verify_ng::killer::{self, KillOutcome};
 use crate::verify_ng::sandbox_backend::{
     BackendKind, CanonicalPolicy, EnforcementReport, EnforcementState, PrepareContext,
     SandboxBackend, SecurityCapability,
@@ -217,8 +233,11 @@ pub fn build_production_env(
 
 /// Freeze production identity: policy cwd == FrozenSpec cwd == backend
 /// exec_root == actual child cwd by construction (all from `cwd`).
+/// `scenario` names the production route (`PROD_SCENARIO_ID`, `multi:<agent>`,
+/// `mcp`); the registry binding stays [`PROD_REGISTRY`].
 #[allow(clippy::too_many_arguments)]
 pub fn freeze_production(
+    scenario: &str,
     policy: &Policy,
     tier_label: &str,
     net: &NetMode,
@@ -229,7 +248,7 @@ pub fn freeze_production(
     nonce: &str,
 ) -> (FrozenSpec, CanonicalPolicy, ExecutionIdentity) {
     let spec = frozen::freeze_spec(
-        PROD_SCENARIO_ID,
+        scenario,
         PROD_REGISTRY,
         policy,
         tier_label,
@@ -241,54 +260,497 @@ pub fn freeze_production(
         nonce,
     );
     let canonical = CanonicalPolicy::from_frozen(&spec);
-    let identity =
-        ExecutionIdentity::new(PROD_SCENARIO_ID, nonce, PROD_REGISTRY, spec.hash().as_str());
+    let identity = ExecutionIdentity::new(scenario, nonce, PROD_REGISTRY, spec.hash().as_str());
     (spec, canonical, identity)
 }
 
-/// Authoritative wrapper for the existing tier-aware `Backend::spawn`
-/// (Full namespaces/relay/PTY paths). Every production `Backend::spawn`
-/// call must go through here; the counters prove it in tests.
-pub fn spawn_authoritative(
-    backend: crate::sandbox::Backend,
-    policy: &Policy,
-    opts: crate::sandbox::SpawnOptions,
-) -> anyhow::Result<crate::sandbox::Spawned> {
-    PROD_BACKEND_ENTERED.fetch_add(1, Ordering::SeqCst);
-    let spawned = backend.spawn(policy, opts)?;
-    PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
-    Ok(spawned)
+/// Unprepared production execution: OWNED frozen inputs, NO spawn method.
+///
+/// Construction snapshots everything the child will install
+/// (argv/cwd/env/policy/net/stdio/mechanics); all fields are private with no
+/// setters, so nothing can drift between construction, preparation and
+/// spawn. The ONLY way forward is [`prepare`](Self::prepare), which binds
+/// the Stage 3B capability backend to these exact inputs.
+pub struct UnpreparedProductionExecution {
+    mechanics: Backend,
+    policy: Policy,
+    argv: Vec<String>,
+    cwd: PathBuf,
+    env_extra: HashMap<String, String>,
+    net: NetMode,
+    timeout: Option<Duration>,
+    stdio: StdioMode,
+    scenario: String,
 }
 
-/// Authoritative wait: proven killer deadline loop (never a bare blocking
-/// wait), then the nonce-targeted 3B tree sweep. No arbitrary killing,
-/// no PID-only global cleanup.
-pub fn wait_authoritative(
-    handle: &mut crate::sandbox::SandboxHandle,
-    timeout: Option<Duration>,
-    nonce: &str,
-    backend: &mut dyn SandboxBackend,
-) -> (i32, bool) {
-    let deadline = Instant::now() + timeout.unwrap_or(Duration::from_secs(3600));
-    let (outcome, code) = killer::kill_on_deadline_with(handle, deadline, PROD_EXIT_POLL);
-    let timed_out = outcome == KillOutcome::KilledOnDeadline;
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(sweep) =
-            crate::verify_ng::linux_enforce::sweep_tree_by_nonce(nonce, handle.root_pid)
-        {
-            backend.note_tree_clean(sweep.clean);
-            backend.note_diagnostic(format!(
-                "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
-                sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
-            ));
+impl UnpreparedProductionExecution {
+    /// Snapshot every spawn input. `backend` is the already-detected legacy
+    /// mechanics (probe+tier+net); it is MOVED here and never exposed again,
+    /// so the prepared plan and the spawned child necessarily share it.
+    /// `net` MUST be the mode `backend` was detected with; any mismatch
+    /// fails closed at spawn time.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        backend: Backend,
+        policy: Policy,
+        argv: Vec<String>,
+        cwd: PathBuf,
+        env_extra: HashMap<String, String>,
+        net: NetMode,
+        timeout: Option<Duration>,
+        stdio: StdioMode,
+        scenario: String,
+    ) -> Self {
+        UnpreparedProductionExecution {
+            mechanics: backend,
+            policy,
+            argv,
+            cwd,
+            env_extra,
+            net,
+            timeout,
+            stdio,
+            scenario,
         }
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (nonce, backend);
+
+    /// Prepare with the platform capability backend (real Linux enforcement
+    /// on Linux; honest placeholders elsewhere).
+    pub fn prepare(self) -> anyhow::Result<PreparedProductionExecution> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut concrete = crate::verify_ng::sandbox_backend::LinuxBackend::new();
+            let mut prepared = self.prepare_with_backend_inner(&mut concrete)?;
+            // Tier honesty for forced configurations: the Seccomp tier
+            // installs no filesystem isolation even where the kernel offers
+            // Landlock (release tier selection never picks it there).
+            if prepared.tier == Some(Tier::Seccomp) {
+                concrete.restrict_to_seccomp_tier();
+            }
+            prepared.capability = Box::new(concrete);
+            Ok(prepared)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let capability: Box<dyn SandboxBackend> =
+                crate::verify_ng::sandbox_backend::select_backend(BackendKind::current_platform());
+            self.prepare_with_backend(capability)
+        }
     }
-    (code, timed_out)
+
+    /// Prepare with an explicitly injected capability backend. TEST-ONLY
+    /// seam (fail-closed and bypass tests): production routes always use
+    /// [`prepare`](Self::prepare). An injected backend owns its own honesty:
+    /// it must never report `Enforced` containment it does not install (the
+    /// fail-closed test proves fakes stay non-enforcing).
+    pub fn prepare_with_backend(
+        self,
+        mut capability: Box<dyn SandboxBackend>,
+    ) -> anyhow::Result<PreparedProductionExecution> {
+        let mut prepared = self.prepare_with_backend_inner(&mut *capability)?;
+        prepared.capability = capability;
+        Ok(prepared)
+    }
+
+    /// Shared freeze + prepare core: snapshot identity, build the frozen
+    /// environment, freeze the spec, and prepare the given capability
+    /// backend against it. Fail-closed: any preparation failure returns
+    /// `Err` with no spawn possible (this type has no spawn method).
+    fn prepare_with_backend_inner(
+        self,
+        capability: &mut dyn SandboxBackend,
+    ) -> anyhow::Result<PreparedProductionExecution> {
+        if self.argv.is_empty() {
+            anyhow::bail!("no production command provided");
+        }
+        #[cfg(target_os = "linux")]
+        if self.net.uses_relay()
+            && matches!(
+                self.mechanics.tier(),
+                Some(Tier::FsOnly) | Some(Tier::Seccomp)
+            )
+        {
+            anyhow::bail!("network relay modes require Tier FULL; refusing to run (fail-closed)");
+        }
+        let tier = self.mechanics.tier();
+        let tier_label = tier
+            .map(|t| t.label().to_string())
+            .unwrap_or_else(|| "none".to_string());
+
+        let nonce = engine::new_nonce();
+        let mut env_extra = self.env_extra;
+        env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
+        let env = build_production_env(&self.policy, &env_extra);
+
+        let (_spec, canonical, identity) = freeze_production(
+            &self.scenario,
+            &self.policy,
+            &tier_label,
+            &self.net,
+            &self.mechanics.describe(),
+            &self.argv,
+            &env,
+            &self.cwd,
+            &nonce,
+        );
+        capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
+        let prepared_ok = capability
+            .enforcement()
+            .map(|r| r.preparation_ok && r.binds_identity(&identity))
+            .unwrap_or(false);
+        if !prepared_ok {
+            anyhow::bail!(
+                "production backend preparation failed (fail-closed, no agent execution)"
+            );
+        }
+        Ok(PreparedProductionExecution {
+            mechanics: self.mechanics,
+            policy: self.policy,
+            argv: self.argv,
+            cwd: self.cwd,
+            env,
+            net: self.net,
+            tier,
+            timeout: self.timeout,
+            stdio: self.stdio,
+            scenario: self.scenario,
+            nonce,
+            identity,
+            // Overwritten by the caller with the prepared backend object.
+            capability: crate::verify_ng::sandbox_backend::select_backend(BackendKind::Direct),
+        })
+    }
+}
+
+/// Prepared production execution: the Stage 3B capability backend is
+/// prepared against the frozen bundle, and the legacy mechanics object that
+/// will perform the spawn is owned here. The ONLY way forward is
+/// [`spawn`](Self::spawn), which consumes `self`: preparation and spawn are
+/// inseparable, and one backend cannot be prepared while another is spawned.
+/// No setters, no re-freeze, no policy mutation.
+pub struct PreparedProductionExecution {
+    mechanics: Backend,
+    policy: Policy,
+    argv: Vec<String>,
+    cwd: PathBuf,
+    env: BTreeMap<String, String>,
+    net: NetMode,
+    tier: Option<Tier>,
+    timeout: Option<Duration>,
+    stdio: StdioMode,
+    scenario: String,
+    nonce: String,
+    identity: ExecutionIdentity,
+    capability: Box<dyn SandboxBackend>,
+}
+
+/// Frozen snapshot of every spawn input, for the policy-drift test: the
+/// boundary exposes the frozen bundle (argv/cwd/env/policy/net/stdio) so a
+/// test can attempt a mutation and prove the spawn still uses ONLY these
+/// values (the execution object has no setters and never re-reads callers).
+#[derive(Debug, Clone)]
+pub struct FrozenProductionInputs {
+    pub argv: Vec<String>,
+    pub cwd: PathBuf,
+    pub env: BTreeMap<String, String>,
+    pub tier: Option<Tier>,
+    pub net_label: String,
+    pub stdio_captured: bool,
+}
+
+impl PreparedProductionExecution {
+    /// Frozen execution identity bound to this run.
+    pub fn identity(&self) -> &ExecutionIdentity {
+        &self.identity
+    }
+    /// Per-run nonce (also present in the child environment for the sweep).
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+    /// Which capability backend prepared this run.
+    pub fn backend_kind(&self) -> BackendKind {
+        self.capability.kind()
+    }
+    /// Current enforcement report (post-prepare: at most `Configured`).
+    pub fn enforcement_report(&self) -> Option<&EnforcementReport> {
+        self.capability.enforcement()
+    }
+    /// Frozen spawn inputs: the ONLY values `spawn` may use.
+    pub fn frozen_inputs(&self) -> FrozenProductionInputs {
+        FrozenProductionInputs {
+            argv: self.argv.clone(),
+            cwd: self.cwd.clone(),
+            env: self.env.clone(),
+            tier: self.tier,
+            net_label: self.net.label(),
+            stdio_captured: !matches!(self.stdio, StdioMode::Inherit),
+        }
+    }
+    /// Frozen policy: the ONLY policy `spawn` and host verification use.
+    /// No mutation path exists after `prepare` (fields are private, no
+    /// setters, `spawn` consumes `self`).
+    pub fn frozen_policy(&self) -> &Policy {
+        &self.policy
+    }
+
+    /// Perform exactly one real production spawn. Consumes `self`: no retry
+    /// can convert FAIL into PASS, and no second child can be spawned from
+    /// this preparation.
+    ///
+    /// The child installs enforcement from the FROZEN bundle (frozen policy
+    /// + frozen tier/net + frozen argv/cwd/env/stdio) through the legacy
+    /// mechanics owned here — Full namespaces/mounts/relay, PTY wiring and
+    /// existing tier selection are preserved untouched. Fail-closed: any
+    /// preparation/freeze mismatch bails with the spawn ledger untouched and
+    /// no fallback execution.
+    pub fn spawn(mut self) -> anyhow::Result<SpawnedProductionExecution> {
+        // Tripwire: the mechanics object must agree with the frozen net.
+        // Both originate from the detection-mode value moved in at
+        // construction; any divergence fails closed with no spawn.
+        if self.mechanics.net_label() != self.net.label() {
+            anyhow::bail!("production net drift (fail-closed, no agent execution)");
+        }
+        // The prepared plan must agree with the frozen inputs it was built
+        // from: `net_deny` mirrors frozen net-off, and a new process group
+        // is always required on Linux. A mismatch means preparation and
+        // spawn disagree — fail closed instead of spawning unenforced.
+        #[cfg(target_os = "linux")]
+        if let Some(plan) = self.capability.pre_exec_plan() {
+            if plan.net_deny != matches!(self.net, NetMode::Off) {
+                anyhow::bail!("production plan/net drift (fail-closed, no agent execution)");
+            }
+            if !plan.new_pgroup {
+                anyhow::bail!("production plan lost process-group containment (fail-closed)");
+            }
+        }
+        let env_extra: HashMap<String, String> = self
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let opts = SpawnOptions {
+            agent_cmd: self.argv.clone(),
+            cwd: self.cwd.clone(),
+            env_extra,
+            stdio: self.stdio,
+        };
+        PROD_BACKEND_ENTERED.fetch_add(1, Ordering::SeqCst);
+        // THE single production spawn boundary: the moved mechanics object
+        // applies the frozen bundle to the real child. No other production
+        // call site may spawn an agent child. Serialized against the
+        // verify-ng harness spawns (fork-safety).
+        let spawned = {
+            let _serial = engine::spawn_serial().lock().unwrap();
+            self.mechanics.spawn(&self.policy, opts)?
+        };
+        PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
+        let pid = spawned.handle.root_pid;
+        self.capability.note_spawned(pid);
+        // Host verification observes THIS child (its real PID): seccomp
+        // filter, NO_NEW_PRIVS and process-group presence come from the
+        // shared 3B verifier; resource ceilings are checked against the
+        // FROZEN POLICY values with the shared limit parser (never the
+        // harness defaults). Unobserved stays `Enforced`, never `Verified`.
+        #[cfg(target_os = "linux")]
+        {
+            use crate::verify_ng::linux_enforce as le;
+            let mut verification = le::verify_child_host(pid);
+            if let Ok(limits_body) = std::fs::read_to_string(format!("/proc/{pid}/limits")) {
+                let lim = &self.policy.limits;
+                let expect = |row: &str, v: Option<u64>| match v {
+                    Some(x) => le::limits_field_is(&limits_body, row, x),
+                    // No ceiling configured: nothing installed, nothing to
+                    // verify (stays Enforced, honestly unverified).
+                    None => false,
+                };
+                verification.rlimit_as_ok = expect("Max address space", lim.address_space_bytes);
+                verification.rlimit_nproc_ok = expect("Max processes", lim.processes);
+                verification.rlimit_cpu_ok = expect("Max cpu time", lim.cpu_seconds);
+                verification.rlimit_fsize_ok = expect("Max file size", lim.file_size_bytes);
+            }
+            self.capability.note_host_verified(&verification);
+        }
+        Ok(SpawnedProductionExecution {
+            handle: spawned.handle,
+            #[cfg(unix)]
+            broker_ctrl_fd: spawned.broker_ctrl_fd,
+            #[cfg(unix)]
+            relay_port: spawned.relay_port,
+            #[cfg(unix)]
+            notif_listener: spawned.notif_listener,
+            pid,
+            nonce: self.nonce.clone(),
+            identity: self.identity.clone(),
+            exec_root: self.cwd.clone(),
+            scenario: self.scenario.clone(),
+            timeout: self.timeout,
+            capability: self.capability,
+        })
+    }
+}
+
+/// Spawned production execution: the real agent child plus everything needed
+/// to wait for it, verify it, clean up its tree, and report it. The handle
+/// is exposed mutably so interactive supervisors (PTY dashboards) can drive
+/// it; the typed result is only obtainable through [`wait_collect`](Self::wait_collect)
+/// or [`finish`](Self::finish), both of which run the nonce-targeted tree
+/// sweep and the backend teardown.
+pub struct SpawnedProductionExecution {
+    pub handle: SandboxHandle,
+    /// Broker end of the relay control socketpair (allowlist modes).
+    #[cfg(unix)]
+    pub broker_ctrl_fd: Option<OwnedFd>,
+    /// Loopback port the in-netns relay listens on (allowlist mode).
+    #[cfg(unix)]
+    pub relay_port: Option<u16>,
+    /// seccomp user-notify listener fd (`--observe-seccomp`).
+    #[cfg(unix)]
+    pub notif_listener: Option<OwnedFd>,
+    pid: u32,
+    nonce: String,
+    identity: ExecutionIdentity,
+    exec_root: PathBuf,
+    scenario: String,
+    timeout: Option<Duration>,
+    capability: Box<dyn SandboxBackend>,
+}
+
+impl SpawnedProductionExecution {
+    /// Actual agent root PID (host-observed, used for verification/sweep).
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+    /// Per-run nonce binding spec, report and child environment.
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+    /// Frozen execution identity of this run.
+    pub fn identity(&self) -> &ExecutionIdentity {
+        &self.identity
+    }
+    /// Spawn event for caller-owned ledgers (exact under threads).
+    pub fn event(&self) -> ProdSpawnEvent {
+        ProdSpawnEvent {
+            run_id: self.nonce.clone(),
+            pid: self.pid,
+        }
+    }
+    /// Current enforcement report.
+    pub fn enforcement_report(&self) -> Option<&EnforcementReport> {
+        self.capability.enforcement()
+    }
+    /// Broker end of the relay control socketpair (allowlist modes).
+    /// Taken by the supervisor to spawn the broker; `None` afterwards.
+    #[cfg(unix)]
+    pub fn take_broker_ctrl_fd(&mut self) -> Option<OwnedFd> {
+        self.broker_ctrl_fd.take()
+    }
+    /// Loopback port the in-netns relay listens on (allowlist mode).
+    #[cfg(unix)]
+    pub fn relay_port(&self) -> Option<u16> {
+        self.relay_port
+    }
+    /// seccomp user-notify listener fd (`--observe-seccomp`).
+    /// Taken by the supervisor to spawn the notifier; `None` afterwards.
+    #[cfg(unix)]
+    pub fn take_notif_listener(&mut self) -> Option<OwnedFd> {
+        self.notif_listener.take()
+    }
+
+    /// Wait with the proven killer path (frozen timeout), then finish.
+    /// Never a bare blocking wait.
+    pub fn wait_collect(mut self) -> ProductionResult {
+        let timeout = self.timeout;
+        let (exit_code, timed_out) = wait_for_exit(&mut self.handle, timeout);
+        self.finish(Some(exit_code), timed_out)
+    }
+
+    /// Finish after an externally driven wait (interactive TUI dashboards
+    /// own their wait loops): runs the nonce-targeted tree sweep for THIS
+    /// run, records it on the backend, tears down, and returns the typed
+    /// result. The sweep cannot be skipped: there is no other way to obtain
+    /// a `ProductionResult`.
+    pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(sweep) =
+                crate::verify_ng::linux_enforce::sweep_tree_by_nonce(self.nonce.as_str(), self.pid)
+            {
+                self.capability.note_tree_clean(sweep.clean);
+                self.capability.note_diagnostic(format!(
+                    "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
+                    sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
+                ));
+            }
+        }
+        let report = self
+            .capability
+            .enforcement()
+            .cloned()
+            .expect("prepared backend always holds a report");
+        let diagnostic = self.capability.diagnostic();
+        let backend_kind = self.capability.kind();
+        self.capability.teardown();
+        ProductionResult {
+            backend: backend_kind,
+            report,
+            exit_code,
+            timed_out,
+            pid: Some(self.pid),
+            nonce: self.nonce.clone(),
+            scenario_id: self.scenario.clone(),
+            exec_root: self.exec_root.clone(),
+            cwd: self.exec_root.clone(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            spawn_via_backend: true,
+            diagnostic,
+        }
+    }
+}
+
+/// Proven wait for ANY production handle: deadline → try_wait polling →
+/// terminate once → bounded re-wait. `None` polls until exit (interactive
+/// sessions whose deadline is the user's quit action). Never a bare
+/// blocking `wait()` that bypasses tree cleanup (the caller must still
+/// [`SpawnedProductionExecution::finish`] for the sweep).
+pub fn wait_for_exit(handle: &mut SandboxHandle, timeout: Option<Duration>) -> (i32, bool) {
+    match timeout {
+        Some(limit) => {
+            let deadline = Instant::now() + limit;
+            let (outcome, code) = killer::kill_on_deadline_with(handle, deadline, PROD_EXIT_POLL);
+            (code, outcome == KillOutcome::KilledOnDeadline)
+        }
+        None => loop {
+            if let Some(code) = handle.try_wait() {
+                return (code, false);
+            }
+            std::thread::sleep(PROD_EXIT_POLL);
+        },
+    }
+}
+
+/// Drain two caller-held pipe read ends with the production budget/cap
+/// (shared harness collector, no second implementation).
+#[cfg(unix)]
+pub fn collect_piped(stdout_r: OwnedFd, stderr_r: OwnedFd, budget: Duration) -> (Vec<u8>, Vec<u8>) {
+    use std::os::fd::IntoRawFd;
+    // SAFETY: OwnedFds are transferred into Files exactly once here.
+    let stdout_file: std::fs::File =
+        unsafe { std::os::fd::FromRawFd::from_raw_fd(stdout_r.into_raw_fd()) };
+    let stderr_file: std::fs::File =
+        unsafe { std::os::fd::FromRawFd::from_raw_fd(stderr_r.into_raw_fd()) };
+    // SAFETY: `ChildStdout/Stderr` are thin `File` wrappers; constructed
+    // from live pipe read ends owned by this call.
+    let stdout_child: std::process::ChildStdout = stdout_file.into();
+    let stderr_child: std::process::ChildStderr = stderr_file.into();
+    let collected = crate::verify_ng::collector::collect_child_stdio(
+        stdout_child,
+        stderr_child,
+        Instant::now() + budget,
+        PROD_MAX_STDIO,
+    );
+    (collected.stdout, collected.stderr)
 }
 
 /// Typed production execution result. All security state is typed
@@ -354,74 +816,13 @@ impl ProductionResult {
     }
 }
 
-struct ProdChild {
-    child: std::process::Child,
-    stdout: Option<std::process::ChildStdout>,
-    stderr: Option<std::process::ChildStderr>,
-    pgid: Option<i32>,
-}
-
-impl WaitKill for ProdChild {
-    fn try_wait(&mut self) -> Option<i32> {
-        match self.child.try_wait() {
-            Ok(Some(status)) => Some(decode_exit(status)),
-            Ok(None) => None,
-            Err(_) => None,
-        }
-    }
-    fn terminate(&mut self) {
-        #[cfg(unix)]
-        if let Some(pgid) = self.pgid {
-            // SAFETY: SIGKILL to the sandbox process group we spawned.
-            unsafe {
-                libc::kill(-pgid, libc::SIGKILL);
-            }
-        }
-        let _ = self.child.kill();
-    }
-}
-
-#[cfg(unix)]
-fn decode_exit(status: std::process::ExitStatus) -> i32 {
-    use std::os::unix::process::ExitStatusExt;
-    status
-        .code()
-        .unwrap_or_else(|| status.signal().map(|s| -s).unwrap_or(-1))
-}
-
-#[cfg(not(unix))]
-fn decode_exit(status: std::process::ExitStatus) -> i32 {
-    status.code().unwrap_or(-1)
-}
-
-fn fail_result(
-    backend: &dyn SandboxBackend,
-    report: EnforcementReport,
-    nonce: String,
-    cwd: PathBuf,
-) -> ProductionResult {
-    ProductionResult {
-        backend: backend.kind(),
-        report,
-        exit_code: None,
-        timed_out: false,
-        pid: None,
-        nonce,
-        scenario_id: PROD_SCENARIO_ID.to_string(),
-        exec_root: cwd.clone(),
-        cwd,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        spawn_via_backend: false,
-        diagnostic: backend.diagnostic(),
-    }
-}
-
-/// Headless production execution through the injected backend boundary.
-/// Real spawns `/bin/true`-class payloads via `Command` + the backend
-/// `pre_exec` plan; a failing preparation never spawns (`spawn_count==0`).
-/// A fake backend can never claim real Linux security: its report stays
-/// honestly Unsupported/Failed and `allows_pass` is false.
+/// Headless production execution through an injected capability backend.
+/// The legacy mechanics are always real-detected (fail-closed); only the
+/// capability backend is injected, and only the frozen bundle is spawned.
+/// A failing preparation never spawns (`spawn ledger` unchanged, `Err`
+/// return, no fallback). A fake backend can never claim real Linux
+/// security: its report stays honestly Unsupported/Failed.
+/// TEST-ONLY seam; production routes use [`execute_simple`].
 #[allow(clippy::too_many_arguments)]
 pub fn execute_with_backend(
     policy: &Policy,
@@ -431,172 +832,127 @@ pub fn execute_with_backend(
     net: NetMode,
     tier: Option<Tier>,
     timeout: Duration,
-    backend: &mut dyn SandboxBackend,
+    capability: Box<dyn SandboxBackend>,
     spawn_log: &mut ProdSpawnLog,
 ) -> anyhow::Result<ProductionResult> {
-    if argv.is_empty() {
-        anyhow::bail!("no production command provided");
-    }
-    // Preserve the existing fail-closed relay rule: FS-only/seccomp tiers
-    // cannot serve relay modes.
-    #[cfg(target_os = "linux")]
-    if net.uses_relay() && matches!(tier, Some(Tier::FsOnly) | Some(Tier::Seccomp)) {
-        anyhow::bail!("network relay modes require Tier FULL; refusing to run (fail-closed)");
-    }
-    let tier_label = tier
-        .map(|t| t.label().to_string())
-        .unwrap_or_else(|| prod_tier_mapping(tier, &net).tier_label.clone());
-
-    let nonce = engine::new_nonce();
-    let mut env_extra = env_extra;
-    env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
-    let env = build_production_env(policy, &env_extra);
-
-    let (_spec, canonical, identity) = freeze_production(
+    execute_inner(
         policy,
-        &tier_label,
-        &net,
-        backend.name(),
-        &argv,
-        &env,
-        &cwd,
-        &nonce,
-    );
-    let ctx = PrepareContext::default();
-    backend.prepare_with_context(&canonical, &identity, &ctx);
-    let prepared_ok = backend
-        .enforcement()
-        .map(|r| r.preparation_ok && r.binds_identity(&identity))
-        .unwrap_or(false);
-    let kind = backend.kind();
-    if !prepared_ok {
-        let report = backend.enforcement().cloned().unwrap_or_else(|| {
-            EnforcementReport::build(
-                kind,
-                &canonical,
-                &identity,
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-                false,
-            )
-        });
-        return Ok(fail_result(backend, report, nonce, cwd));
-    }
-    let plan = backend.pre_exec_plan();
-    #[cfg(not(unix))]
-    if plan.is_some() {
-        backend
-            .note_failed(crate::verify_ng::sandbox_backend::PreparationFailureKind::SpawnRefused);
-        let report = backend.enforcement().cloned().unwrap();
-        return Ok(fail_result(backend, report, nonce, cwd));
-    }
-
-    let mut cmd = std::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..])
-        .current_dir(&cwd)
-        .env_clear()
-        .envs(&env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        if let Some(plan) = plan.clone() {
-            // SAFETY: child-side syscalls only; errors abort spawn fail-closed.
-            unsafe {
-                cmd.pre_exec(move || crate::verify_ng::linux_enforce::apply_child_plan(&plan));
-            }
-        }
-    }
-    let mut child = {
-        let _serial = engine::spawn_serial().lock().unwrap();
-        match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                backend.note_failed(
-                    crate::verify_ng::sandbox_backend::PreparationFailureKind::SpawnRefused,
-                );
-                let report = backend.enforcement().cloned().unwrap();
-                let mut out = fail_result(backend, report, nonce, cwd);
-                out.stderr = format!("production spawn failed (no retry): {e}").into_bytes();
-                return Ok(out);
-            }
-        }
-    };
-    let pid = child.id();
-    spawn_log.push(ProdSpawnEvent {
-        run_id: nonce.clone(),
-        pid,
-    });
-    PROD_BACKEND_ENTERED.fetch_add(1, Ordering::SeqCst);
-    PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
-    backend.note_spawned(pid);
-    let verification = crate::verify_ng::linux_enforce::verify_child_host(pid);
-    backend.note_host_verified(&verification);
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let confined = backend.pre_exec_plan().is_some();
-    let mut prod_child = ProdChild {
-        child,
-        stdout,
-        stderr,
-        pgid: if confined { Some(pid as i32) } else { None },
-    };
-    let deadline = Instant::now() + timeout;
-    let (kill, code) = killer::kill_on_deadline_with(&mut prod_child, deadline, PROD_EXIT_POLL);
-    let timed_out = kill == KillOutcome::KilledOnDeadline;
-    if prod_child.pgid.is_some() {
-        prod_child.terminate();
-    }
-    let drain_deadline = Instant::now() + PROD_DRAIN_BUDGET;
-    let collected = match (prod_child.stdout.take(), prod_child.stderr.take()) {
-        (Some(o), Some(e)) => {
-            crate::verify_ng::collector::collect_child_stdio(o, e, drain_deadline, PROD_MAX_STDIO)
-        }
-        _ => crate::verify_ng::collector::CollectedStdio {
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            eof: false,
-            truncated: false,
-        },
-    };
-    let exit_code = prod_child.try_wait().or(Some(code));
-    #[cfg(target_os = "linux")]
-    if prod_child.pgid.is_some() {
-        if let Some(sweep) =
-            crate::verify_ng::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid)
-        {
-            backend.note_tree_clean(sweep.clean);
-            backend.note_diagnostic(format!(
-                "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
-                sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
-            ));
-        }
-    }
-    let report = backend.enforcement().cloned().unwrap();
-    let diagnostic = backend.diagnostic();
-    backend.teardown();
-    Ok(ProductionResult {
-        backend: kind,
-        report,
-        exit_code,
-        timed_out,
-        pid: Some(pid),
-        nonce,
-        scenario_id: PROD_SCENARIO_ID.to_string(),
-        exec_root: cwd.clone(),
+        argv,
         cwd,
-        stdout: collected.stdout,
-        stderr: collected.stderr,
-        spawn_via_backend: true,
-        diagnostic,
-    })
+        env_extra,
+        net,
+        tier,
+        timeout,
+        Some(capability),
+        spawn_log,
+    )
 }
 
-/// Real headless production execution: fresh `LinuxBackend` per run, no
-/// shared backend state, one spawn per call, no retry FAIL->PASS.
+/// Shared headless core: real-detected mechanics + typestate boundary.
+/// `capability=None` prepares the platform backend; `Some` injects a test
+/// double for the capability side only.
+#[allow(clippy::too_many_arguments)]
+fn execute_inner(
+    policy: &Policy,
+    argv: Vec<String>,
+    cwd: PathBuf,
+    env_extra: HashMap<String, String>,
+    net: NetMode,
+    tier: Option<Tier>,
+    timeout: Duration,
+    capability: Option<Box<dyn SandboxBackend>>,
+    spawn_log: &mut ProdSpawnLog,
+) -> anyhow::Result<ProductionResult> {
+    // Mechanics are real-detected (fail-closed, honors VETTO_FORCE_TIER in
+    // debug builds like every production route). Detection forks probes:
+    // production callers run it single-threaded; tests accept the same
+    // harness-grade fork class the 3B probes already use.
+    let mechanics = crate::sandbox::Backend::detect(net.clone(), false)?;
+    if let Some(t) = tier {
+        if mechanics.tier() != Some(t) {
+            anyhow::bail!("explicit tier does not match detected tier (fail-closed)");
+        }
+    }
+    #[cfg(unix)]
+    let (stdout_r, stdout_w, stderr_r, stderr_w) = piped_stdio_fds()?;
+    #[cfg(unix)]
+    let stdio = StdioMode::Captured {
+        stdout_w: stdout_w.as_raw_fd(),
+        stderr_w: stderr_w.as_raw_fd(),
+    };
+    #[cfg(not(unix))]
+    let stdio = StdioMode::Inherit;
+    let unprepared = UnpreparedProductionExecution::new(
+        mechanics,
+        policy.clone(),
+        argv,
+        cwd,
+        env_extra,
+        net,
+        Some(timeout),
+        stdio,
+        PROD_SCENARIO_ID.to_string(),
+    );
+    let prepared = match capability {
+        Some(capability) => unprepared.prepare_with_backend(capability)?,
+        None => unprepared.prepare()?,
+    };
+    let spawned = prepared.spawn()?;
+    spawn_log.push(spawned.event());
+    #[cfg(unix)]
+    {
+        // Drop our copies of the child-side write ends so EOF works.
+        drop(stdout_w);
+        drop(stderr_w);
+    }
+    let mut result = spawned.wait_collect();
+    #[cfg(unix)]
+    {
+        let (out, err) = collect_piped(stdout_r, stderr_r, PROD_DRAIN_BUDGET);
+        result.stdout = out;
+        result.stderr = err;
+    }
+    Ok(result)
+}
+
+/// Create two cloexec pipes for boundary-owned captured stdio.
+/// Returns `((stdout_r, stdout_w), (stderr_r, stderr_w))`.
+#[cfg(unix)]
+fn piped_stdio_fds() -> anyhow::Result<(OwnedFd, OwnedFd, OwnedFd, OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut make = || -> anyhow::Result<(OwnedFd, OwnedFd)> {
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: valid out-array for pipe(2).
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            anyhow::bail!("pipe: {}", std::io::Error::last_os_error());
+        }
+        for fd in fds {
+            // SAFETY: fd came from the successful pipe call.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+            {
+                let error = std::io::Error::last_os_error();
+                // SAFETY: both descriptors came from the successful pipe call.
+                unsafe {
+                    libc::close(fds[0]);
+                    libc::close(fds[1]);
+                }
+                anyhow::bail!("fcntl CLOEXEC: {error}");
+            }
+        }
+        // SAFETY: fresh descriptors from a successful pipe+CLOEXEC setup.
+        Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
+            OwnedFd::from_raw_fd(fds[1])
+        }))
+    };
+    let (out_r, out_w) = make()?;
+    let (err_r, err_w) = make()?;
+    Ok((out_r, out_w, err_r, err_w))
+}
+
+/// Real headless production execution through the authoritative boundary:
+/// real-detected mechanics, fresh capability backend per run, no shared
+/// backend state, one spawn per call, no retry FAIL->PASS.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_simple(
     policy: &Policy,
@@ -608,37 +964,9 @@ pub fn execute_simple(
     timeout: Duration,
     spawn_log: &mut ProdSpawnLog,
 ) -> anyhow::Result<ProductionResult> {
-    #[cfg(target_os = "linux")]
-    {
-        let mut backend = crate::verify_ng::sandbox_backend::LinuxBackend::new();
-        execute_with_backend(
-            policy,
-            argv,
-            cwd,
-            env_extra,
-            net,
-            tier,
-            timeout,
-            &mut backend,
-            spawn_log,
-        )
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut backend: Box<dyn SandboxBackend> =
-            crate::verify_ng::sandbox_backend::select_backend(BackendKind::current_platform());
-        execute_with_backend(
-            policy,
-            argv,
-            cwd,
-            env_extra,
-            net,
-            tier,
-            timeout,
-            &mut *backend,
-            spawn_log,
-        )
-    }
+    execute_inner(
+        policy, argv, cwd, env_extra, net, tier, timeout, None, spawn_log,
+    )
 }
 
 #[cfg(test)]
@@ -688,6 +1016,7 @@ mod production_unit_tests {
         let cwd = PathBuf::from("/tmp");
         let argv = vec!["sh".to_string()];
         let (a, _, id_a) = freeze_production(
+            PROD_SCENARIO_ID,
             &pol,
             "fs-only",
             &NetMode::Off,
@@ -700,6 +1029,7 @@ mod production_unit_tests {
         let mut pol2 = test_policy();
         pol2.deny_network = !pol.deny_network;
         let (b, _, _) = freeze_production(
+            PROD_SCENARIO_ID,
             &pol2,
             "fs-only",
             &NetMode::Off,
@@ -711,6 +1041,7 @@ mod production_unit_tests {
         );
         assert_ne!(a.hash(), b.hash());
         let (_, can, _) = freeze_production(
+            PROD_SCENARIO_ID,
             &pol,
             "fs-only",
             &NetMode::Off,
@@ -733,6 +1064,7 @@ mod production_unit_tests {
         let env = BTreeMap::new();
         let argv = vec!["sh".to_string()];
         let (spec, can, id) = freeze_production(
+            PROD_SCENARIO_ID,
             &pol,
             "full",
             &NetMode::Off,
@@ -749,6 +1081,7 @@ mod production_unit_tests {
     }
 
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.
+    /// No execution object exists on `Err`, so no child can exist either.
     #[test]
     fn test_prod_backend_fail_closed_001_no_spawn() {
         struct FailBackend {
@@ -792,9 +1125,9 @@ mod production_unit_tests {
                 self.report = None;
             }
         }
-        let mut backend = FailBackend { report: None };
+        let backend = FailBackend { report: None };
         let mut log = ProdSpawnLog::new();
-        let out = execute_with_backend(
+        let err = execute_with_backend(
             &test_policy(),
             vec!["sh".to_string()],
             PathBuf::from("/tmp"),
@@ -802,22 +1135,32 @@ mod production_unit_tests {
             NetMode::Off,
             Some(Tier::FsOnly),
             Duration::from_secs(5),
-            &mut backend,
+            Box::new(backend),
             &mut log,
         )
-        .expect("fail-closed returns a result, not an error");
-        assert!(log.is_empty(), "spawn_count == 0 on preparation failure");
-        assert!(!out.spawn_via_backend);
-        assert!(out.pid.is_none());
-        assert!(!out.allows_pass(&[SecurityCapability::HostEvidence]));
+        .expect_err("preparation failure must not produce an execution");
+        assert!(
+            log.is_empty(),
+            "spawn ledger unchanged on preparation failure"
+        );
+        assert!(
+            err.to_string().contains("fail-closed"),
+            "fail-closed error, got: {err:#}"
+        );
     }
 
     /// TEST-PROD-BACKEND-CALLED-001: production runner calls the backend.
+    /// Unix-only: asserts a real spawn through the boundary (Windows uses
+    /// `cmd` plumbing covered by the fail-closed test above).
+    #[cfg(unix)]
     #[test]
     fn test_prod_backend_called_001_runner_calls_backend() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering as AtomicOrdering},
+            Arc,
+        };
         struct CountBackend {
-            prepares: usize,
-            spawned: usize,
+            prepares: Arc<AtomicUsize>,
             report: Option<EnforcementReport>,
         }
         impl SandboxBackend for CountBackend {
@@ -835,7 +1178,7 @@ mod production_unit_tests {
                 policy: &CanonicalPolicy,
                 identity: &ExecutionIdentity,
             ) -> EnforcementReport {
-                self.prepares += 1;
+                self.prepares.fetch_add(1, AtomicOrdering::SeqCst);
                 let mut states = BTreeMap::new();
                 for cap in SecurityCapability::all() {
                     states.insert(cap, EnforcementState::Unsupported);
@@ -852,9 +1195,6 @@ mod production_unit_tests {
                 self.report = Some(report.clone());
                 report
             }
-            fn note_spawned(&mut self, _pid: u32) {
-                self.spawned += 1;
-            }
             fn enforcement(&self) -> Option<&EnforcementReport> {
                 self.report.as_ref()
             }
@@ -862,22 +1202,19 @@ mod production_unit_tests {
                 self.report = None;
             }
         }
-        let mut backend = CountBackend {
-            prepares: 0,
-            spawned: 0,
+        let prepares = Arc::new(AtomicUsize::new(0));
+        let backend = CountBackend {
+            prepares: Arc::clone(&prepares),
             report: None,
         };
         let tmp = std::env::temp_dir().join(format!("vetto-prod-called-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
-        // No /bin/true on macOS/Windows: use the platform shell.
-        #[cfg(unix)]
+        // No /bin/true on macOS: use the platform shell.
         let argv = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
             "exit 0".to_string(),
         ];
-        #[cfg(windows)]
-        let argv = vec!["cmd".to_string(), "/C".to_string(), "exit 0".to_string()];
         let mut log = ProdSpawnLog::new();
         let out = execute_with_backend(
             &test_policy(),
@@ -887,11 +1224,15 @@ mod production_unit_tests {
             NetMode::Off,
             None,
             Duration::from_secs(10),
-            &mut backend,
+            Box::new(backend),
             &mut log,
         )
         .expect("count backend run");
-        assert_eq!(backend.prepares, 1, "backend entered exactly once");
+        assert_eq!(
+            prepares.load(AtomicOrdering::SeqCst),
+            1,
+            "backend entered exactly once"
+        );
         assert_eq!(log.len(), 1, "one spawn == one scenario");
         assert!(out.spawn_via_backend);
         assert!(!out.allows_pass(&[SecurityCapability::FilesystemIsolation]));

@@ -151,6 +151,20 @@ impl Backend {
         }
     }
 
+    /// Network mode label this backend was detected/constructed with. The
+    /// production execution boundary freezes this string into the FrozenSpec
+    /// and refuses to spawn on any mismatch (fail-closed, no policy drift).
+    pub fn net_label(&self) -> String {
+        match self {
+            #[cfg(target_os = "linux")]
+            Backend::Linux(s) => s.net.label(),
+            #[cfg(target_os = "macos")]
+            Backend::Macos(s) => s.net.label(),
+            #[cfg(target_os = "windows")]
+            Backend::Windows(s) => s.net.label(),
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             #[cfg(target_os = "linux")]

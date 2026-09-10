@@ -748,6 +748,28 @@ impl LinuxBackend {
             report.preparation_ok = false;
         }
     }
+
+    /// Production honesty hook (Stage 3C, additive only): the Seccomp tier
+    /// installs no filesystem isolation even on Landlock-capable kernels
+    /// (forced-tier configurations; release tier selection never picks it
+    /// there). Demotes those two capabilities to `Unsupported` on the
+    /// STORED report so a later `note_spawned` cannot promote an
+    /// uninstalled mechanism to `Enforced`. Trait, states, transitions,
+    /// ceiling and oracle are untouched.
+    pub fn restrict_to_seccomp_tier(&mut self) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                if matches!(
+                    record.capability,
+                    SecurityCapability::FilesystemIsolation
+                        | SecurityCapability::ExecutionRootIsolation
+                ) {
+                    record.state = EnforcementState::Unsupported;
+                    record.failure = None;
+                }
+            }
+        }
+    }
 }
 
 impl SandboxBackend for LinuxBackend {

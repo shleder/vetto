@@ -1,10 +1,12 @@
 //! Fail-closed multi-agent launcher.
 //!
-//! Every `MultiSession` owns its own `Backend`, `SandboxHandle`, event bus,
-//! stats collector and captured stdout/stderr buffers. There is no shared
-//! child process or unsandboxed fallback. All backend detection and policy
-//! loading happens before any process is spawned; a spawn failure tears down
-//! already-created handles and returns an error to the caller.
+//! Every `MultiSession` owns its own `SpawnedProductionExecution` (frozen
+//! inputs + prepared Stage 3B backend + real child + nonce + sweep
+//! identity), event bus, stats collector and captured stdout/stderr
+//! buffers. There is no shared child process, no shared backend state, and
+//! no unsandboxed fallback. All backend detection and policy loading happens
+//! before any process is spawned; a spawn failure tears down already-created
+//! executions and returns an error to the caller.
 //!
 //! Phase 4 (Step 23 & 24): Virtual port allocation, debug port guardrails,
 //! sub-reaper configuration, and cross-agent isolation tracking.
@@ -29,9 +31,8 @@ use crate::multi::{AgentSpec, Manifest, MultiAggregator, MultiEventStream, Virtu
 use crate::policy;
 use crate::report::stats::StatsCollector;
 use crate::report::{self, storage::ReportStorage, ReportOptions};
-use crate::sandbox::SandboxHandle;
 #[cfg(unix)]
-use crate::sandbox::{Backend, SpawnOptions, StdioMode};
+use crate::sandbox::{Backend, StdioMode};
 #[cfg(unix)]
 use anyhow::bail;
 use anyhow::{Context, Result};
@@ -67,10 +68,22 @@ pub struct MultiSession {
     pub bus: EventBus,
     pub stats: StatsCollector,
     pub output: Arc<Mutex<OutputBuffers>>,
-    pub handle: Arc<Mutex<SandboxHandle>>,
+    /// Shared ownership of the SAME `SpawnedProductionExecution` that owns
+    /// the backend state, nonce and sweep identity: dashboards lock it for
+    /// pause/resume/terminate/try_wait, the wait thread locks it for the
+    /// proven wait + `finish` (nonce sweep + teardown + typed report).
+    /// Single owner, no handle/execution split, no shared backend state.
+    pub execution: Arc<Mutex<Option<crate::sandbox::production::SpawnedProductionExecution>>>,
     pub finished: Arc<AtomicBool>,
     pub started: Instant,
     pub allocated_ports: Vec<u16>,
+    /// Stage 3C per-run identity: the nonce the execution boundary minted
+    /// for this agent (also in the child env for the nonce-targeted sweep).
+    /// Never shared across agents.
+    pub prod_nonce: String,
+    /// Host-observed root PID of this agent's child (owned by the boundary
+    /// spawn, used by the wait thread for the nonce sweep).
+    pub root_pid: u32,
 }
 
 #[cfg(unix)]
@@ -80,44 +93,34 @@ struct PendingSession {
     tier: policy::Tier,
     policy: policy::Policy,
     bus: EventBus,
-    handle: SandboxHandle,
+    execution: crate::sandbox::production::SpawnedProductionExecution,
     stdout_r: OwnedFd,
     stderr_r: OwnedFd,
-    broker_ctrl_fd: Option<OwnedFd>,
-    notif_listener: Option<OwnedFd>,
     allocated_ports: Vec<u16>,
-    /// Stage 3C per-run identity: unique nonce per agent, never shared.
-    prod_nonce: String,
-}
-
-#[cfg(unix)]
-impl PendingSession {
-    fn terminate(&mut self) {
-        self.handle.terminate();
-    }
 }
 
 impl MultiSession {
+    fn with_execution<R>(
+        &self,
+        f: impl FnOnce(&mut crate::sandbox::production::SpawnedProductionExecution) -> R,
+    ) -> Option<R> {
+        self.execution.lock().ok()?.as_mut().map(f)
+    }
+
     pub fn pause(&self) {
-        if let Ok(mut handle) = self.handle.lock() {
-            handle.pause();
-        }
+        let _ = self.with_execution(|e| e.handle.pause());
     }
 
     pub fn resume(&self) {
-        if let Ok(mut handle) = self.handle.lock() {
-            handle.resume();
-        }
+        let _ = self.with_execution(|e| e.handle.resume());
     }
 
     pub fn terminate(&self) {
-        if let Ok(mut handle) = self.handle.lock() {
-            handle.terminate();
-        }
+        let _ = self.with_execution(|e| e.handle.terminate());
     }
 
     pub fn try_wait(&self) -> Option<i32> {
-        self.handle.lock().ok()?.try_wait()
+        self.with_execution(|e| e.handle.try_wait()).flatten()
     }
 
     pub fn output_text(&self) -> String {
@@ -191,14 +194,18 @@ impl MultiRuntime {
             });
         }
 
-        // Single-threaded fork phase.
+        // Single-threaded fork phase (only serialization: fork-safety).
+        // Agents run concurrently afterwards; each owns its execution.
         let mut pending = Vec::with_capacity(prepared.len());
         for prepared in prepared {
             match spawn_one(prepared, &project) {
                 Ok(session) => pending.push(session),
                 Err(error) => {
-                    for session in &mut pending {
-                        session.terminate();
+                    for session in pending.iter_mut() {
+                        // Fail-closed: terminate the already-spawned boundary
+                        // children via their own executions (handle Drop also
+                        // terminates; explicit first for prompt teardown).
+                        session.execution.handle.terminate();
                     }
                     return Err(anyhow::Error::new(VettoError::Sandbox(format!(
                         "multi-agent launch aborted; no unsandboxed fallback: {error:#}"
@@ -327,31 +334,37 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
     let backend = backend.ok_or_else(|| anyhow::anyhow!("sandbox backend was consumed"))?;
     let (stdout_r, stdout_w) = pipe2()?;
     let (stderr_r, stderr_w) = pipe2()?;
-    // Stage 3C: one spawn = one scenario. Fresh nonce per agent; no backend
-    // state, fixture root alias, or nonce is ever shared across agents.
-    let prod_nonce = crate::verify_ng::engine::new_nonce();
-    let mut extra = relay_env(&net);
-    extra.insert(
-        crate::sandbox::production::PROD_NONCE_ENV.to_string(),
-        prod_nonce.clone(),
-    );
-    let options = SpawnOptions {
-        agent_cmd: command,
-        cwd: project.to_path_buf(),
-        env_extra: extra,
-        stdio: StdioMode::Captured {
+    // Stage 3C authoritative boundary, one execution per agent: the SAME
+    // object owns frozen policy/identity/nonce, the prepared Stage 3B
+    // backend, and the real child spawn (Full namespaces + mounts + relay
+    // through the legacy mechanics it owns). No backend state, FrozenSpec,
+    // nonce or spawn ledger is ever shared across agents. `prepare` fails
+    // closed with no spawn possible; `spawn` consumes the preparation so one
+    // backend cannot be prepared while another is spawned.
+    let extra = relay_env(&net);
+    let unprepared = crate::sandbox::production::UnpreparedProductionExecution::new(
+        backend,
+        policy.clone(),
+        command,
+        project.to_path_buf(),
+        extra,
+        net.clone(),
+        // Multi-agent sessions are interactive (dashboard/bridge driven):
+        // no headless deadline is frozen; the wait thread below polls to
+        // natural exit through the proven killer path.
+        None,
+        StdioMode::Captured {
             stdout_w: stdout_w.as_raw_fd(),
             stderr_w: stderr_w.as_raw_fd(),
         },
-    };
-    let spawned = crate::sandbox::production::spawn_authoritative(backend, &policy, options)
+        format!("multi:{}", spec.name),
+    );
+    let prepared_exec = unprepared
+        .prepare()
+        .with_context(|| format!("prepare sandbox for agent '{}'", spec.name))?;
+    let execution = prepared_exec
+        .spawn()
         .with_context(|| format!("spawn agent '{}' inside its sandbox", spec.name))?;
-    let crate::sandbox::Spawned {
-        handle,
-        broker_ctrl_fd,
-        relay_port: _relay_port,
-        notif_listener,
-    } = spawned;
 
     drop(stdout_w);
     drop(stderr_w);
@@ -362,13 +375,10 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         tier,
         policy,
         bus: EventBus::new(),
-        handle,
+        execution,
         stdout_r,
         stderr_r,
-        broker_ctrl_fd,
-        notif_listener,
         allocated_ports,
-        prod_nonce,
     })
 }
 
@@ -387,20 +397,16 @@ fn activate_pending(
         tier,
         policy,
         bus,
-        handle,
+        mut execution,
         stdout_r,
         stderr_r,
-        broker_ctrl_fd,
-        notif_listener,
         allocated_ports,
-        prod_nonce,
     } = pending;
-    // Per-run nonce is consumed by the Linux tree sweep below; on other
-    // platforms there is no sweep, so release it explicitly.
-    #[cfg(not(target_os = "linux"))]
-    let _ = prod_nonce;
+    // Per-run identity owned by the boundary spawn: nonce binds the frozen
+    // spec, the backend report and the nonce-targeted tree sweep below.
+    let prod_nonce = execution.nonce().to_string();
     let stats = StatsCollector::spawn(&bus);
-    let root_pid = handle.root_pid;
+    let root_pid = execution.handle.root_pid;
 
     // Register agent in the isolation barrier
     let is_full = tier == policy::Tier::Full;
@@ -424,7 +430,7 @@ fn activate_pending(
 
     #[cfg(target_os = "linux")]
     {
-        if let Some(fd) = broker_ctrl_fd {
+        if let Some(fd) = execution.take_broker_ctrl_fd() {
             let broker_policy = match &net {
                 NetMode::Allowlist(domains) => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(domains.clone())
@@ -461,7 +467,7 @@ fn activate_pending(
                 bus.clone(),
             );
         }
-        if let Some(fd) = notif_listener {
+        if let Some(fd) = execution.take_notif_listener() {
             crate::sandbox::linux::observe_seccomp::spawn_notifier(
                 fd,
                 bus.clone(),
@@ -471,18 +477,18 @@ fn activate_pending(
         }
         crate::sandbox::linux::visibility::spawn_poller(bus.clone(), vec![root_pid]);
     }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        let _ = (broker_ctrl_fd, notif_listener);
-    }
 
     let output = Arc::new(Mutex::new(OutputBuffers::default()));
     spawn_pipe_reader(stdout_r, Arc::clone(&output), true);
     spawn_pipe_reader(stderr_r, Arc::clone(&output), false);
 
-    let handle = Arc::new(Mutex::new(handle));
+    // The live execution stays shared with the dashboards (pause/resume/
+    // terminate/try_wait lock it) while the wait thread below drives the
+    // proven wait on the SAME object and then `finish`es it (nonce sweep
+    // for THIS run + teardown + typed report). Single owner, no split.
+    let execution = Arc::new(Mutex::new(Some(execution)));
     let finished = Arc::new(AtomicBool::new(false));
-    let wait_handle = Arc::clone(&handle);
+    let wait_execution = Arc::clone(&execution);
     let wait_finished = Arc::clone(&finished);
     let wait_bus = bus.clone();
     let agent_name = spec.name.clone();
@@ -491,28 +497,39 @@ fn activate_pending(
     std::thread::Builder::new()
         .name(format!("vetto-multi-wait-{}", spec.name))
         .spawn(move || {
-            let code = wait_handle
+            // Proven wait on the SAME execution's handle: deadline →
+            // try_wait polling → terminate → bounded re-wait. The 24h
+            // deadline is the interactive-session equivalent of "no
+            // headless deadline": the dashboard/terminate path owns the
+            // lifetime; the killer path still guarantees no bare block.
+            let code = wait_execution
                 .lock()
-                .map(|mut handle| {
-                    // Proven path: bounded poll loop instead of a bare
-                    // blocking wait; per-run nonce sweep after reaping.
-                    let deadline = Instant::now() + std::time::Duration::from_secs(3600 * 24);
-                    let (outcome, c) = crate::verify_ng::killer::kill_on_deadline_with(
-                        &mut *handle,
-                        deadline,
-                        std::time::Duration::from_millis(100),
-                    );
-                    let _ = outcome;
-                    c
+                .map(|mut slot| {
+                    slot.as_mut()
+                        .map(|e| {
+                            let deadline =
+                                Instant::now() + std::time::Duration::from_secs(3600 * 24);
+                            let (outcome, c) = crate::verify_ng::killer::kill_on_deadline_with(
+                                &mut e.handle,
+                                deadline,
+                                std::time::Duration::from_millis(100),
+                            );
+                            let _ = outcome;
+                            c
+                        })
+                        .unwrap_or(-1)
                 })
                 .unwrap_or(-1);
-            #[cfg(target_os = "linux")]
-            {
-                let _ = crate::verify_ng::linux_enforce::sweep_tree_by_nonce(
-                    prod_nonce.as_str(),
-                    root_pid,
-                );
-            }
+            // `finish` consumes the SAME execution: nonce-targeted sweep
+            // for THIS run, backend teardown, typed report. Cannot skip.
+            let finished_report = wait_execution.lock().map(|mut slot| {
+                slot.take().map(|e| {
+                    let pid = e.pid();
+                    let result = e.finish(Some(code), false);
+                    (pid, result.report.render_deterministic())
+                })
+            });
+            let _ = finished_report;
             wait_bus.publish(Event::SessionEnded {
                 ts: crate::events::types::now(),
                 exit_code: code,
@@ -528,10 +545,12 @@ fn activate_pending(
         bus,
         stats,
         output,
-        handle,
+        execution,
         finished,
         started: Instant::now(),
         allocated_ports,
+        prod_nonce,
+        root_pid,
     }
 }
 

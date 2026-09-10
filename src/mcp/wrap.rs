@@ -193,18 +193,23 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
     let backend = sandbox::Backend::detect(net_mode.clone(), false)?;
     let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    let opts = sandbox::SpawnOptions {
-        agent_cmd: full_cmd,
-        cwd: project,
-        env_extra: HashMap::new(),
-        stdio: StdioMode::Inherit,
-    };
-
-    let spawned = sandbox::production::spawn_authoritative(backend, &policy, opts)?;
-    let mut handle = spawned.handle;
+    // One authoritative boundary: frozen inputs → prepared backend → the
+    // single real spawn. No MCP-specific direct spawn exists.
+    let unprepared = sandbox::production::UnpreparedProductionExecution::new(
+        backend,
+        policy.clone(),
+        full_cmd,
+        project,
+        HashMap::new(),
+        net_mode.clone(),
+        None,
+        StdioMode::Inherit,
+        "mcp".to_string(),
+    );
+    let mut spawned = unprepared.prepare()?.spawn()?;
 
     #[cfg(target_os = "linux")]
-    if let Some(fd) = spawned.broker_ctrl_fd {
+    if let Some(fd) = spawned.take_broker_ctrl_fd() {
         use std::os::unix::io::IntoRawFd;
         let broker_policy = match &net_mode {
             NetMode::Allowlist(d) => {
@@ -223,7 +228,10 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
         crate::sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus);
     }
 
-    let exit_code = handle.wait();
+    // Proven killer path with the frozen (absent) deadline, then the typed
+    // result; never a bare blocking wait.
+    let result = spawned.wait_collect();
+    let exit_code = result.exit_code.unwrap_or(-1);
     if exit_code != 0 {
         std::process::exit(exit_code);
     }

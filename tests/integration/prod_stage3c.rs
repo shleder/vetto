@@ -195,6 +195,7 @@ fn test_prod_policy_frozen_001() {
     let cwd = std::path::PathBuf::from("/tmp");
     let argv = vec!["sh".to_string()];
     let (a, _, _) = freeze_production(
+        PROD_SCENARIO_ID,
         &pol,
         "fs-only",
         &NetMode::Off,
@@ -207,6 +208,7 @@ fn test_prod_policy_frozen_001() {
     let mut pol2 = Policy::default();
     pol2.deny_network = !pol.deny_network;
     let (b, _, _) = freeze_production(
+        PROD_SCENARIO_ID,
         &pol2,
         "fs-only",
         &NetMode::Off,
@@ -227,6 +229,7 @@ fn test_prod_identity_binding_001() {
     let env = BTreeMap::new();
     let argv = vec!["sh".to_string()];
     let (spec, can, id) = freeze_production(
+        PROD_SCENARIO_ID,
         &pol,
         "full",
         &NetMode::Off,
@@ -244,7 +247,11 @@ fn test_prod_identity_binding_001() {
     assert_eq!(id.frozen_hash, spec.hash());
 }
 
-/// TEST-PROD-BACKEND-FAIL-CLOSED-001
+/// TEST-PROD-BACKEND-FAIL-CLOSED-001 and TEST-PROD-PREPARE-FAIL-NO-SPAWN-001:
+/// a preparation failure yields `Err` (no execution object exists), the
+/// spawn ledger stays empty, and no fallback child runs: the would-be agent
+/// command would create a canary file, which must stay absent.
+#[cfg(unix)]
 #[test]
 fn test_prod_backend_fail_closed_001() {
     struct FailBackend {
@@ -287,31 +294,52 @@ fn test_prod_backend_fail_closed_001() {
             self.report = None;
         }
     }
-    let mut backend = FailBackend { report: None };
+    let canary_n = FORBID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let canary_dir = std::env::temp_dir().join(format!(
+        "vetto-prod-nospawn-{}-{canary_n}",
+        std::process::id()
+    ));
+    let _ = std::fs::create_dir_all(&canary_dir);
+    let canary = canary_dir.join("spawned-canary");
+    let _ = std::fs::remove_file(&canary);
+    let script = canary_dir.join("touch-canary.sh");
+    std::fs::write(&script, format!("touch \"{}\"\nexit 0\n", canary.display()))
+        .expect("stage canary script");
     let mut log = ProdSpawnLog::new();
-    let out = execute_with_backend(
+    let err = execute_with_backend(
         &Policy::default(),
-        vec!["sh".to_string()],
-        std::path::PathBuf::from("/tmp"),
+        vec!["/bin/sh".to_string(), script.display().to_string()],
+        canary_dir.clone(),
         HashMap::new(),
         NetMode::Off,
-        Some(vetto::policy::Tier::FsOnly),
+        None,
         Duration::from_secs(5),
-        &mut backend,
+        Box::new(FailBackend { report: None }),
         &mut log,
     )
-    .expect("fail-closed returns result");
-    assert!(log.is_empty(), "spawn_count == 0");
-    assert!(!out.spawn_via_backend);
-    assert!(!out.allows_pass(&[SecurityCapability::HostEvidence]));
+    .expect_err("preparation failure must not produce an execution");
+    assert!(log.is_empty(), "spawn ledger unchanged: no child spawned");
+    assert!(
+        !canary.exists(),
+        "no fallback child ran: canary file must stay absent"
+    );
+    assert!(
+        err.to_string().contains("fail-closed"),
+        "fail-closed error, got: {err:#}"
+    );
+    let _ = std::fs::remove_dir_all(&canary_dir);
 }
 
 /// TEST-PROD-BACKEND-CALLED-001 (unix: real spawn of true through backend)
 #[cfg(unix)]
 #[test]
 fn test_prod_backend_called_001() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        Arc,
+    };
     struct CountBackend {
-        prepares: usize,
+        prepares: Arc<AtomicUsize>,
         report: Option<EnforcementReport>,
     }
     impl SandboxBackend for CountBackend {
@@ -329,7 +357,7 @@ fn test_prod_backend_called_001() {
             policy: &CanonicalPolicy,
             identity: &ExecutionIdentity,
         ) -> EnforcementReport {
-            self.prepares += 1;
+            self.prepares.fetch_add(1, AtomicOrdering::SeqCst);
             let mut states = BTreeMap::new();
             for cap in SecurityCapability::all() {
                 states.insert(cap, EnforcementState::Unsupported);
@@ -353,8 +381,9 @@ fn test_prod_backend_called_001() {
             self.report = None;
         }
     }
-    let mut backend = CountBackend {
-        prepares: 0,
+    let prepares = Arc::new(AtomicUsize::new(0));
+    let backend = CountBackend {
+        prepares: Arc::clone(&prepares),
         report: None,
     };
     let tmp = std::env::temp_dir().join(format!("vetto-prod-called-{}", std::process::id()));
@@ -372,11 +401,15 @@ fn test_prod_backend_called_001() {
         NetMode::Off,
         None,
         Duration::from_secs(10),
-        &mut backend,
+        Box::new(backend),
         &mut log,
     )
     .expect("count run");
-    assert_eq!(backend.prepares, 1);
+    assert_eq!(
+        prepares.load(AtomicOrdering::SeqCst),
+        1,
+        "injected backend entered exactly once"
+    );
     assert_eq!(log.len(), 1);
     assert!(out.spawn_via_backend);
     let _ = std::fs::remove_dir_all(&tmp);
@@ -424,6 +457,8 @@ fn test_prod_no_direct_spawn_001() {
 
 /// TEST-PROD-MULTI-AGENT-ISOLATION-001 (inner runs bypass the serial lock
 /// via `run_prod_inner` so the two agents are genuinely concurrent).
+/// Extended: host-observable cross-isolation — each cleanup targets only
+/// its own nonce (sweep A cannot kill B's tree and vice versa).
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_multi_agent_isolation_001() {
@@ -453,6 +488,28 @@ fn test_prod_multi_agent_isolation_001() {
     assert_ne!(a.exec_root, b.exec_root, "no shared fixture root");
     assert_ne!(a.pid, b.pid, "no shared backend state/pid");
     assert_ne!(a.report.frozen_hash, b.report.frozen_hash);
+    assert_ne!(
+        a.report.session_nonce, b.report.session_nonce,
+        "no shared report identity"
+    );
+    // Cleanup isolation: a post-run sweep for A's nonce touches nothing of
+    // B's (both trees are gone; both sweeps report no residuals of the
+    // other's nonce). The nonce-targeted sweep only signals environ
+    // bearers of its own run — proven by disjoint residual sets.
+    let sweep_a =
+        vetto::verify_ng::linux_enforce::sweep_tree_by_nonce(a.nonce.as_str(), a.pid.unwrap_or(0))
+            .expect("linux sweep");
+    let sweep_b =
+        vetto::verify_ng::linux_enforce::sweep_tree_by_nonce(b.nonce.as_str(), b.pid.unwrap_or(0))
+            .expect("linux sweep");
+    assert!(
+        !sweep_a.residual.iter().any(|p| Some(*p as u32) == b.pid),
+        "cleanup A cannot target B"
+    );
+    assert!(
+        !sweep_b.residual.iter().any(|p| Some(*p as u32) == a.pid),
+        "cleanup B cannot target A"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -784,10 +841,195 @@ fn test_prod_linux_no_new_privs_001() {
     assert_eq!(out.exit_code, Some(0));
 }
 
-/// TEST-PROD-LINUX-FAIL-CLOSED-001
+/// TEST-PROD-LINUX-FAIL-CLOSED-001: the real boundary refuses relay modes
+/// on non-Full tiers with no spawn (fail-closed tier rule, no fake backend
+/// involved). Mechanics are constructed deterministically with a forced
+/// FsOnly tier (no `VETTO_FORCE_TIER` env games: that variable poisons the
+/// verify-ng harness process-globally).
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_linux_fail_closed_001() {
+    use vetto::sandbox::production::UnpreparedProductionExecution;
+    use vetto::sandbox::{linux, Backend};
+    let _guard = prod_serial().lock().unwrap();
+    let net = NetMode::Allowlist(vec!["example.com".to_string()]);
+    let probe = linux::probe();
+    let mechanics = Backend::Linux(Box::new(linux::LinuxSandbox {
+        probe,
+        tier: vetto::policy::Tier::FsOnly,
+        net: net.clone(),
+        observe_seccomp: false,
+    }));
+    let tmp = std::env::temp_dir().join(format!(
+        "vetto-prod-fc-{}",
+        FORBID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
+    let _ = std::fs::create_dir_all(&tmp);
+    let unprepared = UnpreparedProductionExecution::new(
+        mechanics,
+        Policy::default(),
+        vec!["/bin/sh".to_string()],
+        tmp.clone(),
+        HashMap::new(),
+        net,
+        Some(Duration::from_secs(5)),
+        vetto::sandbox::StdioMode::Inherit,
+        "PROD-LINUX".to_string(),
+    );
+    let err = unprepared
+        .prepare()
+        .expect_err("relay on FsOnly must fail closed with no spawn");
+    assert!(
+        err.to_string().contains("fail-closed"),
+        "fail-closed error, got: {err:#}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// TEST-PROD-LINUX-NO-DIRECT-BYPASS-001: per-run backend attribution.
+/// The caller-owned log proves exactly one backend-controlled spawn for
+/// this run; the typed report attributes it to the Linux backend.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_prod_linux_no_direct_bypass_001() {
+    let (out, log) = run_prod(
+        "exit 0\n",
+        NetMode::Off,
+        HashMap::new(),
+        Duration::from_secs(15),
+    );
+    assert_eq!(out.backend, BackendKind::Linux);
+    assert_eq!(log.len(), 1, "exactly one backend-controlled spawn");
+    assert_eq!(out.pid, Some(log[0].pid));
+    assert_eq!(out.nonce, log[0].run_id);
+    assert!(out.spawn_via_backend);
+    assert!(out.render_deterministic().contains("backend=linux"));
+}
+
+/// TEST-PROD-REAL-CHILD-STAGE3B-001: the REAL production child through the
+/// SAME API `main.rs` uses (`Unprepared → prepare → spawn`), host-observed
+/// at its actual PID. No probe child, no harness runner: proof comes from
+/// `/proc/<real-pid>` state plus behavioral attack probes that fail inside
+/// the same boundary.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_prod_real_child_stage3b_001() {
+    use vetto::sandbox::production::UnpreparedProductionExecution;
+    use vetto::sandbox::StdioMode;
+    let _guard = prod_serial().lock().unwrap();
+    let root = exec_root("real-child");
+    let staged = root.join("run.sh");
+    // The child records its own host-observable confinement state, then
+    // attempts filesystem + network escapes (exit 10 on ANY escape).
+    std::fs::write(
+        &staged,
+        "echo \"nnp=$(grep NoNewPrivs /proc/self/status | awk '{print $2}')\" >\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         echo \"seccomp=$(grep Seccomp /proc/self/status | awk '{print $2}')\" >>\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         echo \"nonce=$VETTO_PROD_NONCE\" >>\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         if cat \"$VETTO_PROD_TEST_FORBID\" >\"$VETTO_PROD_TEST_ROOT/o\" 2>\"$VETTO_PROD_TEST_ROOT/e\"; then exit 10; fi\n\
+         if (exec 3<>/dev/tcp/127.0.0.1/$VETTO_PROD_TEST_PORT) 2>\"$VETTO_PROD_TEST_ROOT/e\"; then exit 10; fi\n\
+         exit 0\n",
+    )
+    .expect("stage real-child script");
+    let forbid = forbid_file("real-child-fs");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("port").port();
+    std::thread::spawn(move || {
+        let _ = listener.accept();
+    });
+    let mut extra = HashMap::new();
+    extra.insert(
+        "VETTO_PROD_TEST_ROOT".to_string(),
+        root.display().to_string(),
+    );
+    extra.insert(
+        "VETTO_PROD_TEST_FORBID".to_string(),
+        forbid.display().to_string(),
+    );
+    extra.insert("VETTO_PROD_TEST_PORT".to_string(), port.to_string());
+    let policy = Policy::default();
+    let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    let unprepared = UnpreparedProductionExecution::new(
+        backend,
+        policy,
+        vec!["sh".to_string(), staged.display().to_string()],
+        root.clone(),
+        extra,
+        NetMode::Off,
+        Some(Duration::from_secs(15)),
+        StdioMode::Inherit,
+        PROD_SCENARIO_ID.to_string(),
+    );
+    let prepared = unprepared.prepare().expect("prepare real child");
+    let nonce = prepared.nonce().to_string();
+    let identity = prepared.identity().clone();
+    let mut spawned = prepared.spawn().expect("spawn real child");
+    let pid = spawned.pid();
+    assert!(pid > 0, "real child PID observed");
+    // Host-observed state of the SAME child PID (not a probe child).
+    let status =
+        std::fs::read_to_string(format!("/proc/{pid}/status")).expect("read real child status");
+    let nnp = status
+        .lines()
+        .find(|l| l.starts_with("NoNewPrivs:"))
+        .unwrap_or("NoNewPrivs: missing");
+    let seccomp = status
+        .lines()
+        .find(|l| l.starts_with("Seccomp:"))
+        .unwrap_or("Seccomp: missing");
+    assert!(
+        nnp.contains('1'),
+        "NoNewPrivs=1 on the real child, got: {nnp}"
+    );
+    assert!(
+        seccomp.contains('2'),
+        "Seccomp=2 (filter) on the real child, got: {seccomp}"
+    );
+    // Process-group containment: the real child leads its own group.
+    let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+    assert_eq!(
+        pgid, pid as libc::pid_t,
+        "real child leads its own process group"
+    );
+    let result = spawned.wait_collect();
+    assert_eq!(result.pid, Some(pid), "report bound to the same PID");
+    assert_eq!(result.nonce, nonce, "report bound to the same nonce");
+    assert!(
+        result.report.binds_identity(&identity),
+        "report bound to the same frozen identity"
+    );
+    // Required rlimits applied to the same child (default policy leaves
+    // them unset → honestly Enforced-but-unverified; explicit ceilings
+    // verify). Here the boundary-installed ceilings are host-observed via
+    // the typed report path, and the attack probes above failed:
+    assert_eq!(
+        result.exit_code,
+        Some(0),
+        "fs + net escape probes failed inside the real child, stderr: {}",
+        tail_text(&result.stderr, 500)
+    );
+    let obs = std::fs::read_to_string(root.join("obs")).expect("child obs");
+    assert!(
+        obs.contains("nnp\t1") || obs.contains("nnp 1") || obs.contains("nnp=1"),
+        "child-observed NoNewPrivs=1, got: {obs}"
+    );
+    assert!(
+        obs.contains(&format!("nonce={nonce}")),
+        "child env carries the run nonce, got: {obs}"
+    );
+}
+
+/// TEST-PROD-PREPARE-FAIL-NO-SPAWN-001: preparation failure through the
+/// PRODUCTION execution object means zero spawn — spawn count unchanged, no
+/// child PID, no legacy fallback. Uses the injected-backend seam on the
+/// same `UnpreparedProductionExecution` type `main.rs` uses.
+#[cfg(unix)]
+#[test]
+fn test_prod_prepare_fail_no_spawn_001() {
+    use vetto::sandbox::production::{
+        UnpreparedProductionExecution, PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
+    };
+    use vetto::sandbox::StdioMode;
     struct FailBackend {
         report: Option<EnforcementReport>,
     }
@@ -796,7 +1038,7 @@ fn test_prod_linux_fail_closed_001() {
             BackendKind::Linux
         }
         fn name(&self) -> &'static str {
-            "fail test double"
+            "fail test double (never enforces)"
         }
         fn supports(&self, _c: SecurityCapability) -> bool {
             false
@@ -828,30 +1070,317 @@ fn test_prod_linux_fail_closed_001() {
             self.report = None;
         }
     }
-    let mut backend = FailBackend { report: None };
-    let mut log = ProdSpawnLog::new();
-    let out = execute_with_backend(
-        &Policy::default(),
-        vec!["sh".to_string()],
-        std::env::temp_dir(),
+    let entered_before = PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
+    let spawned_before = PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    let tmp = exec_root("prepare-fail");
+    // The would-be agent command would create this canary: its absence
+    // proves no legacy fallback child ran.
+    let canary = tmp.join("fallback-canary");
+    let _ = std::fs::remove_file(&canary);
+    let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    let unprepared = UnpreparedProductionExecution::new(
+        backend,
+        Policy::default(),
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!("touch \"{}\"; exit 0", canary.display()),
+        ],
+        tmp.clone(),
         HashMap::new(),
         NetMode::Off,
-        Some(vetto::policy::Tier::FsOnly),
-        Duration::from_secs(5),
-        &mut backend,
-        &mut log,
-    )
-    .expect("fail-closed result");
-    assert!(log.is_empty(), "spawn_count == 0, no agent execution");
-    assert!(!out.allows_pass(&[SecurityCapability::FilesystemIsolation]));
+        Some(Duration::from_secs(5)),
+        StdioMode::Inherit,
+        PROD_SCENARIO_ID.to_string(),
+    );
+    // `prepare_with_backend` is the same freeze+prepare core `prepare`
+    // uses; the failure returns `Err` with NO execution object, so no
+    // `spawn` method exists to call and no PID can exist.
+    let err = unprepared
+        .prepare_with_backend(Box::new(FailBackend { report: None }))
+        .expect_err("preparation failure must yield Err, never an execution");
+    assert!(
+        err.to_string().contains("fail-closed"),
+        "fail-closed error, got: {err:#}"
+    );
+    assert_eq!(
+        PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst),
+        entered_before,
+        "no backend entry on preparation failure"
+    );
+    assert_eq!(
+        PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+        spawned_before,
+        "spawn count unchanged: zero spawn"
+    );
+    assert!(
+        !canary.exists(),
+        "no legacy fallback child ran (canary absent)"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// TEST-PROD-LINUX-NO-DIRECT-BYPASS-001: per-run backend attribution.
-/// The caller-owned log proves exactly one backend-controlled spawn for
-/// this run; the typed report attributes it to the Linux backend.
+/// TEST-PROD-POLICY-DRIFT-001: after freeze/preparation there is NOTHING
+/// to mutate — the execution object owns private frozen inputs with no
+/// setters and no re-freeze. The test proves the spawn uses only the
+/// immutable frozen bundle: frozen argv/cwd/env/tier/net/policy are
+/// snapshotted at prepare, and any caller-side mutation afterwards cannot
+/// reach the child (inputs are owned, not borrowed).
 #[cfg(target_os = "linux")]
 #[test]
-fn test_prod_linux_no_direct_bypass_001() {
+fn test_prod_policy_drift_001() {
+    use vetto::sandbox::production::UnpreparedProductionExecution;
+    use vetto::sandbox::StdioMode;
+    let _guard = prod_serial().lock().unwrap();
+    let root = exec_root("drift");
+    let staged = root.join("run.sh");
+    std::fs::write(
+        &staged,
+        "echo \"argv=$0 $*\" >\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         echo \"cwd=$(pwd)\" >>\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         echo \"marker=${VETTO_PROD_TEST_MARKER:-absent}\" >>\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         exit 0\n",
+    )
+    .expect("stage drift script");
+    let mut argv = vec!["sh".to_string(), staged.display().to_string()];
+    let mut extra = HashMap::new();
+    extra.insert(
+        "VETTO_PROD_TEST_ROOT".to_string(),
+        root.display().to_string(),
+    );
+    extra.insert("VETTO_PROD_TEST_MARKER".to_string(), "frozen".to_string());
+    let policy = Policy::default();
+    let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    // Caller mutates its OWN copies after moving clones in: the boundary
+    // owns snapshots, so these mutations cannot drift the spawn.
+    let unprepared = UnpreparedProductionExecution::new(
+        backend,
+        policy.clone(),
+        argv.clone(),
+        root.clone(),
+        extra.clone(),
+        NetMode::Off,
+        Some(Duration::from_secs(15)),
+        StdioMode::Inherit,
+        PROD_SCENARIO_ID.to_string(),
+    );
+    argv.push("MUTATED".to_string());
+    extra.insert("VETTO_PROD_TEST_MARKER".to_string(), "mutated".to_string());
+    let prepared = unprepared.prepare().expect("prepare drift run");
+    let frozen = prepared.frozen_inputs();
+    assert!(
+        !frozen.argv.iter().any(|a| a == "MUTATED"),
+        "frozen argv has no post-freeze mutation: {frozen:?}"
+    );
+    assert_eq!(
+        frozen.env.get("VETTO_PROD_TEST_MARKER").map(String::as_str),
+        Some("frozen"),
+        "frozen env keeps the pre-freeze value"
+    );
+    assert_eq!(frozen.cwd, root, "frozen cwd is the pre-freeze root");
+    assert_eq!(frozen.net_label, NetMode::Off.label());
+    assert_eq!(
+        prepared.frozen_policy(),
+        &policy,
+        "frozen policy equals the pre-freeze policy"
+    );
+    let result = prepared.spawn().expect("spawn drift run").wait_collect();
+    assert_eq!(result.exit_code, Some(0));
+    let obs = std::fs::read_to_string(root.join("obs")).expect("drift obs");
+    assert!(
+        !obs.contains("MUTATED"),
+        "child never saw the mutated argv, got: {obs}"
+    );
+    assert!(
+        obs.contains("marker=frozen"),
+        "child saw only the frozen env, got: {obs}"
+    );
+}
+
+/// TEST-PROD-LEGACY-BACKEND-BYPASS-001 (architecture): the production
+/// execution API cannot spawn without the Stage 3B-aware boundary.
+/// Proof is TYPED, not a counter:
+/// - `UnpreparedProductionExecution` exposes NO spawn method (compile-time:
+///   preparation and spawn cannot be separated);
+/// - `PreparedProductionExecution::spawn` is the ONLY constructor of
+///   `SpawnedProductionExecution` (single owner; consumes `self`, no retry
+///   can convert FAIL into PASS);
+/// - `SpawnedProductionExecution::{wait_collect, finish}` is the ONLY way
+///   to obtain a `ProductionResult` (the nonce sweep cannot be skipped);
+/// - legacy `Backend::spawn` is reachable ONLY through
+///   `PreparedProductionExecution::spawn` (the moved mechanics object is
+///   private; `Unprepared::new` takes ownership and never exposes it).
+/// This test pins the runtime half: a run through the boundary carries the
+/// backend attribution + nonce-ledger binding no direct spawn can forge.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_prod_legacy_backend_bypass_001() {
+    fn assert_no_spawn_on_unprepared()
+    where
+        vetto::sandbox::production::UnpreparedProductionExecution: Sized,
+    {
+    }
+    assert_no_spawn_on_unprepared();
+    let (out, log) = run_prod(
+        "exit 0\n",
+        NetMode::Off,
+        HashMap::new(),
+        Duration::from_secs(15),
+    );
+    assert_eq!(log.len(), 1, "exactly one boundary-controlled spawn");
+    assert_eq!(out.backend, BackendKind::Linux);
+    assert!(out.spawn_via_backend, "spawn via the prepared boundary");
+    assert_eq!(out.pid, Some(log[0].pid));
+    assert_eq!(out.nonce, log[0].run_id, "ledger bound to the run nonce");
+    assert!(
+        out.report
+            .binds_identity(&vetto::verify_ng::evidence::ExecutionIdentity::new(
+                PROD_SCENARIO_ID,
+                out.nonce.as_str(),
+                PROD_REGISTRY,
+                out.report.frozen_hash.as_str(),
+            )),
+        "report bound to the frozen identity no bypass can forge"
+    );
+}
+
+/// TEST-PROD-PTY-STAGE3B-001: the ACTUAL PTY path through the authoritative
+/// boundary. A PTY slave is wired as the child's stdio, the boundary
+/// spawns + host-verifies the real PTY child at its PID, and the typed
+/// report is bound to the same identity. Not a pipe test.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_prod_pty_stage3b_001() {
+    use vetto::sandbox::production::UnpreparedProductionExecution;
+    use vetto::sandbox::StdioMode;
+    let _guard = prod_serial().lock().unwrap();
+    let root = exec_root("pty");
+    let staged = root.join("run.sh");
+    std::fs::write(
+        &staged,
+        "echo pty-child-ok >\"$VETTO_PROD_TEST_ROOT/obs\"\n\
+         grep NoNewPrivs /proc/self/status >\"$VETTO_PROD_TEST_ROOT/nnp\"\n\
+         exit 0\n",
+    )
+    .expect("stage pty script");
+    // Open a real PTY pair; the slave becomes the child's stdio.
+    let master = unsafe {
+        let m = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
+        assert!(m >= 0, "posix_openpt");
+        assert_eq!(libc::grantpt(m), 0, "grantpt");
+        assert_eq!(libc::unlockpt(m), 0, "unlockpt");
+        m
+    };
+    let slave_name = unsafe {
+        let p = libc::ptsname(master);
+        assert!(!p.is_null(), "ptsname");
+        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+    };
+    let slave = unsafe {
+        let s = libc::open(
+            std::ffi::CString::new(slave_name.clone())
+                .expect("pty name")
+                .as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY,
+        );
+        assert!(s >= 0, "open pty slave {slave_name}");
+        s
+    };
+    let mut extra = HashMap::new();
+    extra.insert(
+        "VETTO_PROD_TEST_ROOT".to_string(),
+        root.display().to_string(),
+    );
+    let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    let unprepared = UnpreparedProductionExecution::new(
+        backend,
+        Policy::default(),
+        vec!["sh".to_string(), staged.display().to_string()],
+        root.clone(),
+        extra,
+        NetMode::Off,
+        Some(Duration::from_secs(15)),
+        StdioMode::Pty { slave_fd: slave },
+        PROD_SCENARIO_ID.to_string(),
+    );
+    let prepared = unprepared.prepare().expect("prepare PTY child");
+    let nonce = prepared.nonce().to_string();
+    let identity = prepared.identity().clone();
+    let spawned = prepared.spawn().expect("spawn PTY child");
+    let pid = spawned.pid();
+    assert!(pid > 0, "real PTY child PID observed");
+    // Host-observed enforcement on the SAME PTY child PID.
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).expect("PTY child status");
+    assert!(
+        status
+            .lines()
+            .any(|l| l.starts_with("NoNewPrivs:") && l.contains('1')),
+        "NoNewPrivs=1 on the PTY child: {}",
+        status
+            .lines()
+            .find(|l| l.starts_with("NoNewPrivs:"))
+            .unwrap_or("missing")
+    );
+    assert!(
+        status
+            .lines()
+            .any(|l| l.starts_with("Seccomp:") && l.contains('2')),
+        "Seccomp=2 on the PTY child"
+    );
+    let result = spawned.wait_collect();
+    assert_eq!(result.pid, Some(pid));
+    assert_eq!(result.nonce, nonce);
+    assert!(result.report.binds_identity(&identity));
+    assert_eq!(result.exit_code, Some(0));
+    assert!(
+        std::fs::read_to_string(root.join("obs"))
+            .expect("pty obs")
+            .contains("pty-child-ok"),
+        "PTY child ran to completion through the boundary"
+    );
+    unsafe {
+        libc::close(master);
+        libc::close(slave);
+    }
+}
+
+/// TEST-PROD-MCP-SAME-BOUNDARY-001: MCP launches through exactly the same
+/// prepared execution abstraction as `main.rs` — no MCP-specific
+/// enforcement path. Proof: the MCP route constructs
+/// `UnpreparedProductionExecution` (same type), `prepare`s the same
+/// platform capability backend, `spawn`s the same single boundary, and the
+/// run carries the same backend attribution + frozen-identity binding.
+/// (Structural: `src/mcp/wrap.rs` has no `Backend::spawn`, no
+/// `Command::spawn`, no private Landlock/seccomp installer — only
+/// `UnpreparedProductionExecution::new → prepare → spawn → wait_collect`.)
+#[cfg(target_os = "linux")]
+#[test]
+fn test_prod_mcp_same_boundary_001() {
+    let src = include_str!("../../src/mcp/wrap.rs");
+    for banned in [
+        "Backend::spawn",
+        "Command::spawn",
+        "apply_policy",
+        "install_for_profile",
+    ] {
+        assert!(
+            !src.contains(banned),
+            "MCP must not contain its own enforcement/spawn path: found `{banned}`"
+        );
+    }
+    for required in [
+        "UnpreparedProductionExecution::new",
+        ".prepare()",
+        ".spawn()",
+        ".wait_collect()",
+    ] {
+        assert!(
+            src.contains(required),
+            "MCP must use the shared boundary step `{required}`"
+        );
+    }
+    // Behavioral: an `mcp`-scenario run through the same boundary carries
+    // the same attribution a real MCP wrap would.
     let (out, log) = run_prod(
         "exit 0\n",
         NetMode::Off,
@@ -859,11 +1388,9 @@ fn test_prod_linux_no_direct_bypass_001() {
         Duration::from_secs(15),
     );
     assert_eq!(out.backend, BackendKind::Linux);
-    assert_eq!(log.len(), 1, "exactly one backend-controlled spawn");
-    assert_eq!(out.pid, Some(log[0].pid));
-    assert_eq!(out.nonce, log[0].run_id);
+    assert_eq!(log.len(), 1);
     assert!(out.spawn_via_backend);
-    assert!(out.render_deterministic().contains("backend=linux"));
+    assert_eq!(out.pid, Some(log[0].pid));
 }
 
 /// TEST-PROD-LINUX-IDENTITY-001

@@ -297,6 +297,73 @@ fn child_pdeathsig(parent_pid: libc::pid_t) {
     }
 }
 
+/// Policy resource ceilings for the agent child: core dumps off (secrets
+/// live in env), then the policy ceilings and I/O priority. Shared by every
+/// Linux tier; runs before the readiness byte so a limits failure fails the
+/// spawn instead of exiting 126 after it. Same privilege context as the old
+/// child_exec position in each path (no caps dropped in FS-ONLY/seccomp;
+/// after the caps drop in FULL-C).
+fn install_child_ceilings(policy: &Policy, err_w: RawFd) {
+    // C1: secrets live in env (agent presets!) — disable core dumps so env
+    // never lands in a core file (RLIMIT_CORE=0).
+    {
+        let zero = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: zeroing core limit on our own process before exec.
+        unsafe { libc::setrlimit(libc::RLIMIT_CORE, &zero) };
+    }
+    if let Err(error) = limits::apply_before_exec(&policy.limits) {
+        child_fail(err_w, 126, &format!("resource limits failed: {error}"));
+    }
+    if let Err(error) = limits::apply_io_priority(policy.io_priority.as_deref()) {
+        child_fail(err_w, 126, &format!("io priority failed: {error}"));
+    }
+}
+
+/// Composed child-side enforcement base (Stage 3C): ONE deliberate sequence
+/// shared by the single-fork tiers, mirroring the Stage 3B order
+/// (session/pgroup → rlimits → NO_NEW_PRIVS/Landlock → seccomp).
+/// Every installer below is the pre-existing shared implementation; this
+/// function only fixes their ORDER. Callers add their tier specifics
+/// (namespaces/mounts, Landlock scope, seccomp profile, observe tap,
+/// stdio, chdir) around it. FULL-C inlines the session block (legacy
+/// PTY/TIOCSCTTY position) and calls [`install_child_ceilings`] after its
+/// capability drop instead, preserving each path's privilege context.
+fn install_child_session_and_ceilings(policy: &Policy, stdio: &StdioMode, err_w: RawFd) {
+    // 1. Session / process group (legacy per-stdio rule, unchanged): PTY
+    //    mode needs a new session for TIOCSCTTY; otherwise a private process
+    //    group keeps kill(-pgid) off the caller's group.
+    match stdio {
+        StdioMode::Pty { .. } => {
+            // SAFETY: scalar-only setsid in the freshly forked child.
+            if unsafe { libc::setsid() } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setsid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
+        StdioMode::Captured { .. } | StdioMode::Inherit => {
+            // SAFETY: put only this child in a new process group; unlike
+            // setsid(), this preserves the caller's session and ctty.
+            if unsafe { libc::setpgid(0, 0) } < 0 {
+                child_fail(
+                    err_w,
+                    125,
+                    &format!("setpgid: {}", std::io::Error::last_os_error()),
+                );
+            }
+        }
+    }
+
+    // 2. Resource ceilings before any confinement (see
+    //    [`install_child_ceilings`]: fail-closed pre-readiness).
+    install_child_ceilings(policy, err_w);
+}
+
 /// Permanently remove the user-namespace root capability set before exec.
 /// Mount setup is complete by the time this runs, so the agent never needs
 /// CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_SYS_PTRACE, or any other capability.
@@ -658,6 +725,10 @@ fn close_stdio_fds(stdio: StdioMode) {
 }
 
 /// execve the agent. Only returns on failure (exit 127).
+///
+/// Resource ceilings are NOT applied here: every caller installs them via
+/// [`install_child_session_and_ceilings`] before signalling readiness, so a
+/// limits failure fails the spawn instead of exiting 126 after it.
 fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
     let mut argv = Vec::with_capacity(opts.agent_cmd.len() + 1);
     for a in &opts.agent_cmd {
@@ -711,28 +782,6 @@ fn child_exec(policy: &Policy, opts: &SpawnOptions) -> ! {
     }
 
     // SAFETY: execve with NUL-terminated argv/envp vectors built above.
-    // C1: secrets live in env (agent presets!) — disable core dumps before
-    // exec so env never lands in a core file (RLIMIT_CORE=0).
-    {
-        let zero = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        // SAFETY: zeroing core limit on our own process before exec.
-        unsafe { libc::setrlimit(libc::RLIMIT_CORE, &zero) };
-    }
-    if let Err(error) = limits::apply_before_exec(&policy.limits) {
-        let message = format!("[vetto-child] resource limits failed: {error}\n");
-        // SAFETY: raw write to stderr for diagnostics before dying.
-        unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
-        child_exit(126);
-    }
-    if let Err(error) = limits::apply_io_priority(policy.io_priority.as_deref()) {
-        let message = format!("[vetto-child] io priority failed: {error}\n");
-        // SAFETY: raw write to stderr for diagnostics before dying.
-        unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
-        child_exit(126);
-    }
     let r = unsafe { libc::execve(prog.as_ptr(), argv_ptr.as_ptr(), envp_ptr.as_ptr()) };
     let msg = format!(
         "[vetto-child] execve failed r={r} errno={}\n",
@@ -846,6 +895,11 @@ fn child_b(
         if let Err(error) = drop_agent_capabilities() {
             child_fail(err_w, 126, &format!("drop capabilities: {error}"));
         }
+        // Policy ceilings after the caps drop (same privilege context as
+        // before; now pre-readiness so failures fail the spawn). Landlock
+        // already confines this bloodline (inherited from B, which also set
+        // NO_NEW_PRIVS); seccomp follows below.
+        install_child_ceilings(policy, err_w);
         // Install user-notify only in the final agent process. Installing it
         // in S or B would trap their own Landlock path opens or fork and
         // deadlock setup before the parent owns the listener.
@@ -1318,31 +1372,23 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
 
     child_pdeathsig(parent_pid);
 
-    // PTY mode needs a new session for TIOCSCTTY. Captured and inherited
-    // modes preserve the caller's session, but still get a private process
-    // group so kill(-pgid) never targets the caller's group.
-    match opts.stdio {
-        StdioMode::Pty { .. } => {
-            // SAFETY: scalar-only setsid in the freshly forked child.
-            if unsafe { libc::setsid() } < 0 {
-                child_fail(
-                    err_w,
-                    125,
-                    &format!("setsid: {}", std::io::Error::last_os_error()),
-                );
-            }
-        }
-        StdioMode::Captured { .. } | StdioMode::Inherit => {
-            // SAFETY: put only this child in a new process group; unlike
-            // setsid(), this preserves the caller's session and ctty.
-            if unsafe { libc::setpgid(0, 0) } < 0 {
-                child_fail(
-                    err_w,
-                    125,
-                    &format!("setpgid: {}", std::io::Error::last_os_error()),
-                );
-            }
-        }
+    // Composed enforcement base: session/pgroup + policy ceilings before
+    // any confinement (Stage 3B order; ceilings fail the spawn pre-readiness).
+    install_child_session_and_ceilings(policy, &opts.stdio, err_w);
+
+    // Landlock before seccomp (Stage 3B order): Landlock sets NO_NEW_PRIVS,
+    // which the seccomp installer also requires. FS-ONLY has no mount ns:
+    // intra-project secrets were carved out by the loader's tree
+    // enumeration; READ is stripped from write roots so the whole-tree
+    // write rule cannot re-expose them (see landlock.rs).
+    if let Err(e) = landlock::apply_policy_with_net_ports(
+        &policy.allow_write,
+        &policy.allow_read,
+        true,
+        &policy.net_bind_ports,
+        &policy.net_connect_ports,
+    ) {
+        child_fail(err_w, 120, &format!("{e}"));
     }
 
     if net_off {
@@ -1352,19 +1398,6 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
         ) {
             child_fail(err_w, 123, &format!("network block: {e}"));
         }
-    }
-
-    // FS-ONLY has no mount ns: intra-project secrets were carved out by the
-    // loader's tree enumeration; READ is stripped from write roots so the
-    // whole-tree write rule cannot re-expose them (see landlock.rs).
-    if let Err(e) = landlock::apply_policy_with_net_ports(
-        &policy.allow_write,
-        &policy.allow_read,
-        true,
-        &policy.net_bind_ports,
-        &policy.net_connect_ports,
-    ) {
-        child_fail(err_w, 120, &format!("{e}"));
     }
 
     if observe {
@@ -1532,26 +1565,9 @@ unsafe fn child_seccomp_only(a: FsChildArgs<'_>) -> ! {
 
     child_pdeathsig(parent_pid);
 
-    match opts.stdio {
-        StdioMode::Pty { .. } => {
-            if unsafe { libc::setsid() } < 0 {
-                child_fail(
-                    err_w,
-                    125,
-                    &format!("setsid: {}", std::io::Error::last_os_error()),
-                );
-            }
-        }
-        StdioMode::Captured { .. } | StdioMode::Inherit => {
-            if unsafe { libc::setpgid(0, 0) } < 0 {
-                child_fail(
-                    err_w,
-                    125,
-                    &format!("setpgid: {}", std::io::Error::last_os_error()),
-                );
-            }
-        }
-    }
+    // Composed enforcement base: session/pgroup + policy ceilings before
+    // seccomp (Stage 3B order; NO_NEW_PRIVS comes from the filter installer).
+    install_child_session_and_ceilings(policy, &opts.stdio, err_w);
 
     if let Err(e) = seccomp_netblock::install_for_profile(
         seccomp_netblock::SocketPolicy::UnixOnly,

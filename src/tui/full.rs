@@ -32,11 +32,16 @@ const INPUT_INTERVAL: Duration = Duration::from_millis(25);
 type SharedBuf = Arc<Mutex<Vec<u8>>>;
 
 /// Run the session in full-dashboard mode; returns the agent's exit code.
+///
+/// The handle is borrowed: ownership (and the mandatory post-run tree sweep)
+/// stays with the production execution boundary. Waiting inside uses
+/// try_wait polling (proven killer path for the quit branch), never a bare
+/// blocking wait that could bypass tree cleanup.
 pub fn run(
     bus: &EventBus,
     stdout_r: OwnedFd,
     stderr_r: OwnedFd,
-    mut handle: SandboxHandle,
+    handle: &mut SandboxHandle,
     tier: &str,
     net: &str,
     profile: &str,
@@ -55,7 +60,10 @@ pub fn run(
     let Ok(mut terminal) = Terminal::new(backend) else {
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
-        return handle.wait();
+        // No dashboard to drive the session: poll to natural exit (the
+        // boundary still sweeps afterwards; never a bare blocking wait).
+        let (code, _) = crate::sandbox::production::wait_for_exit(handle, None);
+        return code;
     };
 
     let mut scroll_up: usize = 0;
@@ -88,7 +96,13 @@ pub fn run(
                     match k.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             handle.terminate();
-                            break handle.wait();
+                            // Bounded re-wait after the kill (proven killer
+                            // path); the boundary sweeps afterwards.
+                            let (code, _) = crate::sandbox::production::wait_for_exit(
+                                handle,
+                                Some(std::time::Duration::from_secs(10)),
+                            );
+                            break code;
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                             confirm_quit = false;

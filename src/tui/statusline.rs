@@ -28,10 +28,14 @@ const TICK: Duration = Duration::from_millis(20);
 const REPLAY_CAP: usize = 1024 * 1024;
 
 /// Run the session in statusline mode; returns the agent's exit code.
+///
+/// The handle is borrowed: ownership (and the mandatory post-run tree sweep)
+/// stays with the production execution boundary. The loop polls `try_wait`
+/// (never a bare blocking wait).
 pub fn run(
     bus: &EventBus,
     pty_master: &OwnedFd,
-    mut handle: SandboxHandle,
+    handle: &mut SandboxHandle,
     tier: &str,
     net: &str,
     profile: &str,
