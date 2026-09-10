@@ -499,12 +499,12 @@ impl PreparedProductionExecution {
     /// can convert FAIL into PASS, and no second child can be spawned from
     /// this preparation.
     ///
-    /// The child installs enforcement from the FROZEN bundle (frozen policy
-    /// + frozen tier/net + frozen argv/cwd/env/stdio) through the legacy
-    /// mechanics owned here — Full namespaces/mounts/relay, PTY wiring and
-    /// existing tier selection are preserved untouched. Fail-closed: any
-    /// preparation/freeze mismatch bails with the spawn ledger untouched and
-    /// no fallback execution.
+    /// The child installs enforcement from the FROZEN bundle
+    /// (frozen policy + frozen tier/net + frozen argv/cwd/env/stdio) through
+    /// the legacy mechanics owned here (Full namespaces/mounts/relay, PTY
+    /// wiring, existing tier selection, all preserved untouched).
+    /// Fail-closed: any preparation/freeze mismatch bails with the spawn
+    /// ledger untouched and no fallback execution.
     pub fn spawn(mut self) -> anyhow::Result<SpawnedProductionExecution> {
         // Tripwire: the mechanics object must agree with the frozen net.
         // Both originate from the detection-mode value moved in at
@@ -901,7 +901,7 @@ fn execute_inner(
         drop(stdout_w);
         drop(stderr_w);
     }
-    let mut result = spawned.wait_collect();
+    let result = spawned.wait_collect();
     #[cfg(unix)]
     {
         let (out, err) = collect_piped(stdout_r, stderr_r, PROD_DRAIN_BUDGET);

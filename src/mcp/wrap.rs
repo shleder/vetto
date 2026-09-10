@@ -206,7 +206,7 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
         StdioMode::Inherit,
         "mcp".to_string(),
     );
-    let mut spawned = unprepared.prepare()?.spawn()?;
+    let spawned = unprepared.prepare()?.spawn()?;
 
     #[cfg(target_os = "linux")]
     if let Some(fd) = spawned.take_broker_ctrl_fd() {
