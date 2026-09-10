@@ -31,7 +31,7 @@ fn jsonl_redacts_aws_key_in_agent_argv() {
     assert!(out.status.success(), "{}", stderr(&out));
     // STAGE3C-DEBUG (temporary): ground truth for instant-exit analysis.
     eprintln!(
-        "STAGE3C-DEBUG secret status={:?} stdout={!r} stderr={!r}",
+        "STAGE3C-DEBUG secret status={:?} stdout={:?} stderr={:?}",
         out.status,
         stdout(&out),
         stderr(&out)

@@ -319,7 +319,7 @@ fn test_control_split_001_forged_control_cannot_pass() {
 
     assert_single_spawn(&log, &out);
     // STAGE3C-DEBUG (temporary): ground truth for exit-code analysis.
-    eprintln!("STAGE3C-DEBUG control_split exit={:?} timed_out={} kill={:?} eof={} trunc={} stdout={!r} stderr={!r} detail={}",
+    eprintln!("STAGE3C-DEBUG control_split exit={:?} timed_out={} kill={:?} eof={} trunc={} stdout={:?} stderr={:?} detail={}",
         out.exit_code, out.timed_out, out.kill, out.stdio_eof, out.stdio_truncated,
         String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr), out.result.detail);
     assert_eq!(out.exit_code, Some(0));

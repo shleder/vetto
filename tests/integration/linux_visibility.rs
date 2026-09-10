@@ -27,7 +27,7 @@ fn jsonl_contains_lifecycle_events() {
     assert!(out.status.success(), "agent failed: {}", stderr(&out));
     // STAGE3C-DEBUG (temporary): ground truth for instant-exit analysis.
     eprintln!(
-        "STAGE3C-DEBUG visibility status={:?} stdout={!r} stderr={!r}",
+        "STAGE3C-DEBUG visibility status={:?} stdout={:?} stderr={:?}",
         out.status,
         stdout(&out),
         stderr(&out)
