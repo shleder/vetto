@@ -206,7 +206,9 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
         StdioMode::Inherit,
         "mcp".to_string(),
     );
-    let spawned = unprepared.prepare()?.spawn()?;
+    let mut spawned = unprepared.prepare()?.spawn()?;
+    // `take_*` borrows mutably even on platforms where the branch below is
+    // compiled out — keep `mut` unconditional, not `cfg`-gated.
 
     #[cfg(target_os = "linux")]
     if let Some(fd) = spawned.take_broker_ctrl_fd() {

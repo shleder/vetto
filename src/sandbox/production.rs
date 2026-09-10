@@ -901,7 +901,10 @@ fn execute_inner(
         drop(stdout_w);
         drop(stderr_w);
     }
-    let result = spawned.wait_collect();
+    // `mut` is unconditional: the unix branch below assigns stdout/stderr,
+    // and `cfg`-gated `mut` would diverge between platforms.
+    #[allow(unused_mut)]
+    let mut result = spawned.wait_collect();
     #[cfg(unix)]
     {
         let (out, err) = collect_piped(stdout_r, stderr_r, PROD_DRAIN_BUDGET);
