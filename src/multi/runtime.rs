@@ -395,6 +395,10 @@ fn activate_pending(
         allocated_ports,
         prod_nonce,
     } = pending;
+    // Per-run nonce is consumed by the Linux tree sweep below; on other
+    // platforms there is no sweep, so release it explicitly.
+    #[cfg(not(target_os = "linux"))]
+    let _ = prod_nonce;
     let stats = StatsCollector::spawn(&bus);
     let root_pid = handle.root_pid;
 
@@ -487,10 +491,9 @@ fn activate_pending(
     std::thread::Builder::new()
         .name(format!("vetto-multi-wait-{}", spec.name))
         .spawn(move || {
-            let (code, root) = wait_handle
+            let code = wait_handle
                 .lock()
                 .map(|mut handle| {
-                    let root = handle.root_pid;
                     // Proven path: bounded poll loop instead of a bare
                     // blocking wait; per-run nonce sweep after reaping.
                     let deadline = Instant::now() + std::time::Duration::from_secs(3600 * 24);
@@ -500,13 +503,15 @@ fn activate_pending(
                         std::time::Duration::from_millis(100),
                     );
                     let _ = outcome;
-                    (c, root)
+                    c
                 })
-                .unwrap_or((-1, 0));
+                .unwrap_or(-1);
             #[cfg(target_os = "linux")]
             {
-                let _ =
-                    crate::verify_ng::linux_enforce::sweep_tree_by_nonce(prod_nonce.as_str(), root);
+                let _ = crate::verify_ng::linux_enforce::sweep_tree_by_nonce(
+                    prod_nonce.as_str(),
+                    root_pid,
+                );
             }
             wait_bus.publish(Event::SessionEnded {
                 ts: crate::events::types::now(),

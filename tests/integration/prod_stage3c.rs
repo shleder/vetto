@@ -10,9 +10,11 @@ use std::time::Duration;
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
+#[cfg(target_os = "linux")]
+use vetto::sandbox::production::{build_production_env, execute_simple, PROD_NONCE_ENV};
 use vetto::sandbox::production::{
-    build_production_env, execute_simple, execute_with_backend, freeze_production,
-    prod_tier_mapping, ProdSpawnLog, PROD_NONCE_ENV, PROD_REGISTRY, PROD_SCENARIO_ID,
+    execute_with_backend, freeze_production, prod_tier_mapping, ProdSpawnLog, PROD_REGISTRY,
+    PROD_SCENARIO_ID,
 };
 use vetto::verify_ng::evidence::ExecutionIdentity;
 use vetto::verify_ng::sandbox_backend::{
