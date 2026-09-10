@@ -488,7 +488,9 @@ impl PreparedProductionExecution {
     }
     /// Frozen policy: the ONLY policy `spawn` and host verification use.
     /// No mutation path exists after `prepare` (fields are private, no
-    /// setters, `spawn` consumes `self`).
+    /// setters, `spawn` consumes `self`). Compared by name in tests
+    /// (`Policy` has no `PartialEq`); the frozen hash binding in the
+    /// `EnforcementReport` is the authoritative identity check.
     pub fn frozen_policy(&self) -> &Policy {
         &self.policy
     }

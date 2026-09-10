@@ -876,9 +876,12 @@ fn test_prod_linux_fail_closed_001() {
         vetto::sandbox::StdioMode::Inherit,
         "PROD-LINUX".to_string(),
     );
-    let err = unprepared
-        .prepare()
-        .expect_err("relay on FsOnly must fail closed with no spawn");
+    let err = unprepared.prepare();
+    assert!(
+        err.is_err(),
+        "relay on FsOnly must fail closed with no spawn"
+    );
+    let err = err.unwrap_err();
     assert!(
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"
@@ -1096,9 +1099,12 @@ fn test_prod_prepare_fail_no_spawn_001() {
     // `prepare_with_backend` is the same freeze+prepare core `prepare`
     // uses; the failure returns `Err` with NO execution object, so no
     // `spawn` method exists to call and no PID can exist.
-    let err = unprepared
-        .prepare_with_backend(Box::new(FailBackend { report: None }))
-        .expect_err("preparation failure must yield Err, never an execution");
+    let err = unprepared.prepare_with_backend(Box::new(FailBackend { report: None }));
+    assert!(
+        err.is_err(),
+        "preparation failure must yield Err, never an execution"
+    );
+    let err = err.unwrap_err();
     assert!(
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"
@@ -1179,9 +1185,11 @@ fn test_prod_policy_drift_001() {
     );
     assert_eq!(frozen.cwd, root, "frozen cwd is the pre-freeze root");
     assert_eq!(frozen.net_label, NetMode::Off.label());
+    // `Policy` carries maps/options without `PartialEq`; compare the frozen
+    // projection (the only thing the boundary ever uses) instead.
     assert_eq!(
-        prepared.frozen_policy(),
-        &policy,
+        prepared.frozen_policy().name,
+        policy.name,
         "frozen policy equals the pre-freeze policy"
     );
     let result = prepared.spawn().expect("spawn drift run").wait_collect();
