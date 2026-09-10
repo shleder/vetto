@@ -929,7 +929,13 @@ impl LinuxBackend {
             Ok(()) => {
                 // SAFETY: scalar prctl query on our own process.
                 let get = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) };
-                format!("ok/get={get}")
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(-999);
+                format!(
+                    "ok/get={get}/errno={errno}/getno={}",
+                    libc::PR_GET_CHILD_SUBREAPER
+                )
             }
             Err(e) => format!("ERR:{e:?}"),
         });
