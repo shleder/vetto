@@ -707,6 +707,7 @@ pub struct LinuxBackend {
     report: Option<EnforcementReport>,
     plan: Option<ChildEnforcementPlan>,
     tree_diag: Option<String>,
+    subreaper_prepare: Option<String>,
 }
 
 impl LinuxBackend {
@@ -715,6 +716,7 @@ impl LinuxBackend {
             report: None,
             plan: None,
             tree_diag: None,
+            subreaper_prepare: None,
         }
     }
 
@@ -887,6 +889,10 @@ impl SandboxBackend for LinuxBackend {
     }
 
     fn note_diagnostic(&mut self, diag: String) {
+        let diag = match &self.subreaper_prepare {
+            Some(st) => format!("prepare-subreaper={st} {diag}"),
+            None => diag,
+        };
         self.tree_diag = Some(diag);
     }
 
@@ -902,6 +908,7 @@ impl SandboxBackend for LinuxBackend {
         self.report = None;
         self.plan = None;
         self.tree_diag = None;
+        self.subreaper_prepare = None;
     }
 }
 
@@ -916,8 +923,14 @@ impl LinuxBackend {
     ) -> EnforcementReport {
         // Best-effort sub-reaper so post-run orphans reparent to us where
         // the targeted sweep can see them. Failure is not fatal here: the
-        // sweep reports not-clean and the run fails closed instead.
-        let _ = crate::multi::isolation::set_subreaper();
+        // sweep reports not-clean and the run fails closed instead. The
+        // outcome is recorded for the tree-sweep diagnostic string.
+        self.subreaper_prepare = Some(
+            match crate::multi::isolation::set_subreaper() {
+                Ok(()) => "ok".to_string(),
+                Err(e) => format!("ERR:{e:?}"),
+            },
+        );
 
         let landlock_ok = crate::sandbox::linux::landlock::abi_version().is_some();
         let seccomp_ok = crate::sandbox::linux::seccomp_netblock::probe_available();
