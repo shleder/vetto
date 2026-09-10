@@ -25,6 +25,13 @@ fn jsonl_contains_lifecycle_events() {
         ],
     );
     assert!(out.status.success(), "agent failed: {}", stderr(&out));
+    // STAGE3C-DEBUG (temporary): ground truth for instant-exit analysis.
+    eprintln!(
+        "STAGE3C-DEBUG visibility status={:?} stdout={!r} stderr={!r}",
+        out.status,
+        stdout(&out),
+        stderr(&out)
+    );
     let log = std::fs::read_to_string(&jsonl).expect("jsonl written");
     assert!(log.contains("\"session_started\""), "{log}");
     assert!(log.contains("\"session_ended\""), "{log}");

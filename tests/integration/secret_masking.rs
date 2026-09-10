@@ -29,6 +29,13 @@ fn jsonl_redacts_aws_key_in_agent_argv() {
         ],
     );
     assert!(out.status.success(), "{}", stderr(&out));
+    // STAGE3C-DEBUG (temporary): ground truth for instant-exit analysis.
+    eprintln!(
+        "STAGE3C-DEBUG secret status={:?} stdout={!r} stderr={!r}",
+        out.status,
+        stdout(&out),
+        stderr(&out)
+    );
     let log = std::fs::read_to_string(&jsonl).unwrap_or_default();
     assert!(!log.contains(secret), "AWS key leaked into jsonl: {log}");
     assert!(
