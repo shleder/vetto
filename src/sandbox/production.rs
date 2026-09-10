@@ -734,16 +734,10 @@ pub fn wait_for_exit(handle: &mut SandboxHandle, timeout: Option<Duration>) -> (
 /// (shared harness collector, no second implementation).
 #[cfg(unix)]
 pub fn collect_piped(stdout_r: OwnedFd, stderr_r: OwnedFd, budget: Duration) -> (Vec<u8>, Vec<u8>) {
-    use std::os::fd::IntoRawFd;
-    // SAFETY: OwnedFds are transferred into Files exactly once here.
-    let stdout_file: std::fs::File =
-        unsafe { std::os::fd::FromRawFd::from_raw_fd(stdout_r.into_raw_fd()) };
-    let stderr_file: std::fs::File =
-        unsafe { std::os::fd::FromRawFd::from_raw_fd(stderr_r.into_raw_fd()) };
-    // SAFETY: `ChildStdout/Stderr` are thin `File` wrappers; constructed
-    // from live pipe read ends owned by this call.
-    let stdout_child: std::process::ChildStdout = stdout_file.into();
-    let stderr_child: std::process::ChildStderr = stderr_file.into();
+    // `ChildStdout/Stderr` are thin fd wrappers with `From<OwnedFd>` (there
+    // is no `From<File>`): hand the owned pipe read ends over directly.
+    let stdout_child: std::process::ChildStdout = stdout_r.into();
+    let stderr_child: std::process::ChildStderr = stderr_r.into();
     let collected = crate::verify_ng::collector::collect_child_stdio(
         stdout_child,
         stderr_child,
@@ -920,7 +914,7 @@ fn execute_inner(
 #[cfg(unix)]
 fn piped_stdio_fds() -> anyhow::Result<(OwnedFd, OwnedFd, OwnedFd, OwnedFd)> {
     use std::os::fd::FromRawFd;
-    let mut make = || -> anyhow::Result<(OwnedFd, OwnedFd)> {
+    let make = || -> anyhow::Result<(OwnedFd, OwnedFd)> {
         let mut fds = [0 as libc::c_int; 2];
         // SAFETY: valid out-array for pipe(2).
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
@@ -1082,6 +1076,8 @@ mod production_unit_tests {
 
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.
     /// No execution object exists on `Err`, so no child can exist either.
+    /// Non-Unix: mechanics detection fails closed first (Windows sandbox
+    /// unavailable in CI), which is the same `Err`-with-empty-ledger proof.
     #[test]
     fn test_prod_backend_fail_closed_001_no_spawn() {
         struct FailBackend {
@@ -1143,8 +1139,14 @@ mod production_unit_tests {
             log.is_empty(),
             "spawn ledger unchanged on preparation failure"
         );
+        // Two fail-closed origins share this shape: the injected capability
+        // backend refuses preparation (Unix), or real mechanics detection
+        // refuses first (non-Unix, e.g. Windows sandbox unavailable in CI).
+        // Both are `Err` with an empty ledger and no child — never a silent
+        // direct fallback.
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("fail-closed"),
+            msg.contains("fail-closed") || msg.contains("refusing"),
             "fail-closed error, got: {err:#}"
         );
     }

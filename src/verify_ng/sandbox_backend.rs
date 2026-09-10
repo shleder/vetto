@@ -519,7 +519,11 @@ impl HostVerification {
 /// (spawn succeeded, so the plan ran without error) promotes to `Enforced`,
 /// and only [`note_host_verified`](SandboxBackend::note_host_verified)
 /// (host-observed proof) promotes to `Verified`.
-pub trait SandboxBackend {
+/// `Send` is required: production executions cross thread boundaries
+/// (multi-agent dashboards share one `SpawnedProductionExecution` with the
+/// wait thread). All backends are plain data (reports/plans/strings), so
+/// the bound is structural, not behavioral.
+pub trait SandboxBackend: Send {
     /// Which implementation this is (matrix row + report attribution).
     fn kind(&self) -> BackendKind;
 

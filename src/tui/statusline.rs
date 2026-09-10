@@ -69,7 +69,7 @@ pub fn run(
         // Ctrl+] -> scrollable event overlay.
         if fwd.take_overlay_request() {
             fwd.pause();
-            run_overlay(&mut app_state, &mut rx, &mut handle, master, &mut replay);
+            run_overlay(&mut app_state, &mut rx, handle, master, &mut replay);
             fwd.resume();
             let _ = terminal::enable_raw_mode();
             set_scroll_region(outer.0.saturating_sub(1).max(1));
