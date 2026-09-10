@@ -352,11 +352,13 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
 
 /// One full `/proc` scan for pids whose environ carries this run's nonce.
 ///
-/// Returns `(matched, blind)`. `blind=true` means a same-UID live process
-/// with an unreadable environ was observed — the scan cannot claim clean.
-/// Foreign-UID processes are skipped (they cannot carry our nonce), so
-/// system daemons never blind the sweep. Only nonce-matching pids are ever
-/// signalled by the caller.
+/// Returns `(matched, blind)`. `blind=true` means one of OUR live processes
+/// (direct or sub-reaper-adopted child, `PPid == me`) had an unreadable
+/// environ — the scan cannot claim clean. Foreign same-UID processes (other
+/// test runs' trees: Yama may deny their environ) are skipped without
+/// blinding: any live nonce-bearer ends up reparented to us once its parent
+/// dies, so the next pass observes it as our child. Only nonce-matching pids
+/// are ever signalled by the caller.
 #[cfg(target_os = "linux")]
 fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -> (Vec<i32>, bool) {
     let mut matched = Vec::new();
@@ -396,8 +398,9 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
         }
         // Environ is unreadable for zombies (reap below if ours) or
         // mid-exit races (ENOENT/ESRCH — the process is going away): never
-        // blocking clean. Only a hard read error on a live, un-reaped
-        // process (EACCES/hidepid) is blindness (fail-closed).
+        // blocking clean. A hard read error (EACCES/hidepid, e.g. Yama
+        // scope) blinds only for OUR live children — reparenting delivers
+        // every orphan to us, so a foreign tree can never hide our nonce.
         let env = match std::fs::read(format!("/proc/{pid}/environ")) {
             Ok(env) => env,
             Err(e)
@@ -413,7 +416,9 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
                     unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
                     continue;
                 }
-                blind = true;
+                if crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me) {
+                    blind = true;
+                }
                 continue;
             }
         };

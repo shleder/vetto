@@ -612,23 +612,16 @@ fn test_linux_pid_limit_001() {
     require_tool("python3");
     let scen = scenario("TEST-LINUX-PID-LIMIT-001", Category::Proc);
     let net = NetMode::Off;
-    // Deterministic fork loop: keep N children alive concurrently so the
+    // Deterministic fork loop: children stay alive concurrently so the
     // kernel must refuse excess forks with EAGAIN under the process
-    // ceiling (exit 0). Reaping each child immediately would never press
-    // the ceiling (exit 10). No shell `jobs`, no exit-code-2 heuristics.
+    // ceiling (exit 0). The parent then SIGKILLs and reaps its children.
+    // 300 instant-exit children would never press the ceiling (exit 10).
+    // No shell `jobs`, no exit-code-2 heuristics.
     let script = concat!(
-        "import errno, os, sys\n",
+        "import errno, os, signal, sys, time\n",
         "N = 300\n",
         "children = []\n",
         "fork_failed = False\n",
-        "def reap_one(block):\n",
-        "    try:\n",
-        "        p, _ = os.waitpid(-1, 0 if block else os.WNOHANG)\n",
-        "    except ChildProcessError:\n",
-        "        return None\n",
-        "    except InterruptedError:\n",
-        "        return None\n",
-        "    return p if p > 0 else None\n",
         "for _ in range(N):\n",
         "    try:\n",
         "        pid = os.fork()\n",
@@ -638,18 +631,17 @@ fn test_linux_pid_limit_001() {
         "            break\n",
         "        raise\n",
         "    if pid == 0:\n",
+        "        try:\n",
+        "            time.sleep(30)\n",
+        "        except BaseException:\n",
+        "            pass\n",
         "        os._exit(0)\n",
         "    children.append(pid)\n",
-        "    while len(children) >= 64:\n",
-        "        p = reap_one(False)\n",
-        "        if p is None:\n",
-        "            break\n",
-        "        try:\n",
-        "            children.remove(p)\n",
-        "        except ValueError:\n",
-        "            pass\n",
-        "    if len(children) >= 300:\n",
-        "        break\n",
+        "for pid in children:\n",
+        "    try:\n",
+        "        os.kill(pid, signal.SIGKILL)\n",
+        "    except ProcessLookupError:\n",
+        "        pass\n",
         "for pid in children:\n",
         "    try:\n",
         "        os.waitpid(pid, 0)\n",
