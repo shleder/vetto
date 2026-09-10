@@ -46,6 +46,7 @@ mod policy_loading;
 mod policy_overlays;
 mod policy_parity;
 mod policy_tools;
+mod prod_stage3c;
 mod rescue;
 mod secret_masking;
 mod shim_interception;

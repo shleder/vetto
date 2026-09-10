@@ -869,6 +869,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     if pol.git_guard || cfg.git_guard {
         env_extra.insert("VETTO_GIT_GUARD".into(), "1".into());
     }
+    // Stage 3C: per-run production identity. One spawn = one scenario; the
+    // nonce binds the frozen spec, the backend report and the tree sweep.
+    let prod_nonce = vetto::verify_ng::engine::new_nonce();
+    env_extra.insert(
+        sandbox::production::PROD_NONCE_ENV.into(),
+        prod_nonce.clone(),
+    );
 
     #[cfg(not(unix))]
     if !pol.secret_proxies.is_empty() {
@@ -965,8 +972,56 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         stdio,
     };
 
+    // Stage 3C authoritative preparation: LinuxBackend owns the enforcement
+    // report. Fail-closed: a failed preparation never spawns (no fallback).
+    #[cfg(target_os = "linux")]
+    let mut prod_backend: Box<dyn vetto::verify_ng::sandbox_backend::SandboxBackend> =
+        Box::new(vetto::verify_ng::sandbox_backend::LinuxBackend::new());
+    #[cfg(not(target_os = "linux"))]
+    let mut prod_backend: Box<dyn vetto::verify_ng::sandbox_backend::SandboxBackend> =
+        vetto::verify_ng::sandbox_backend::select_backend(
+            vetto::verify_ng::sandbox_backend::BackendKind::current_platform(),
+        );
+    let prod_env = sandbox::production::build_production_env(&pol, &opts.env_extra);
+    {
+        let (_spec, canonical, identity) = sandbox::production::freeze_production(
+            &pol,
+            tier_label(tier),
+            &cfg.net,
+            &backend.describe(),
+            &agent_cmd,
+            &prod_env,
+            &project,
+            &prod_nonce,
+        );
+        // Policy cwd == FrozenSpec cwd == backend exec_root by construction
+        // (all from `project`); the spawn below uses the same `project`.
+        debug_assert_eq!(canonical.cwd, project);
+        prod_backend.prepare_with_context(
+            &canonical,
+            &identity,
+            &vetto::verify_ng::sandbox_backend::PrepareContext::default(),
+        );
+        let prepared_ok = prod_backend
+            .enforcement()
+            .map(|r| r.preparation_ok && r.binds_identity(&identity))
+            .unwrap_or(false);
+        if !prepared_ok {
+            anyhow::bail!(
+                "production backend preparation failed (fail-closed, no agent execution)"
+            );
+        }
+    }
+
     let started = std::time::Instant::now();
-    let spawned = backend.spawn(&pol, opts)?;
+    let spawned = sandbox::production::spawn_authoritative(*backend, &pol, opts)?;
+    #[cfg(target_os = "linux")]
+    {
+        prod_backend.note_spawned(spawned.handle.root_pid);
+        let verification =
+            vetto::verify_ng::linux_enforce::verify_child_host(spawned.handle.root_pid);
+        prod_backend.note_host_verified(&verification);
+    }
     let mut handle = spawned.handle;
     #[cfg(unix)]
     let broker_ctrl_fd = spawned.broker_ctrl_fd;
@@ -1269,7 +1324,17 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         TuiMode::None => {
             let res = match cfg.session_timeout {
                 Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
-                None => (handle.wait(), false),
+                None => {
+                    // Proven path even without a deadline: bounded poll loop,
+                    // never a bare blocking wait that bypasses tree cleanup.
+                    let (code, timed) = sandbox::production::wait_authoritative(
+                        &mut handle,
+                        None,
+                        &prod_nonce,
+                        &mut *prod_backend,
+                    );
+                    (code, timed)
+                }
             };
             if let Some(h) = out_reader {
                 let _ = h.join();
@@ -1285,6 +1350,25 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         Some(limit) => wait_with_timeout(&mut handle, &bus, limit),
         None => (handle.wait(), false),
     };
+
+    // Stage 3C: per-run nonce sweep + typed enforcement report. Host-observed
+    // only; never inferred from agent stdout/stderr. No vague marketing words.
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(sweep) =
+            vetto::verify_ng::linux_enforce::sweep_tree_by_nonce(prod_nonce.as_str(), root_pid)
+        {
+            prod_backend.note_tree_clean(sweep.clean);
+            prod_backend.note_diagnostic(format!(
+                "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
+                sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
+            ));
+        }
+        if let Some(report) = prod_backend.enforcement() {
+            eprintln!("vetto: enforcement {}", report.render_deterministic());
+        }
+        prod_backend.teardown();
+    }
 
     let duration_secs = started.elapsed().as_secs();
     bus.publish(Event::SessionEnded {
@@ -1518,32 +1602,31 @@ fn tier_label(tier: Option<policy::Tier>) -> &'static str {
 
 /// Wait for the sandboxed session with a hard deadline. Returns the child
 /// exit code plus a flag telling whether vetto tore the sandbox down at the
-/// deadline (exit code 124 mirrors GNU timeout(1)). Teardown goes through
-/// `SandboxHandle::terminate`, so every platform reuses its own kill strategy.
+/// deadline (exit code 124 mirrors GNU timeout(1)). Uses the proven killer
+/// path: deadline -> terminate once -> bounded re-wait (never a bare
+/// blocking wait that bypasses tree cleanup).
 fn wait_with_timeout(
     handle: &mut sandbox::SandboxHandle,
     bus: &EventBus,
     limit: std::time::Duration,
 ) -> (i32, bool) {
     let deadline = std::time::Instant::now() + limit;
-    loop {
-        if let Some(code) = handle.try_wait() {
-            return (code, false);
-        }
-        if std::time::Instant::now() >= deadline {
-            eprintln!(
-                "vetto: session timeout ({}) reached; terminating the sandbox",
-                format_duration(limit)
-            );
-            bus.publish(Event::SessionTimeout {
-                ts: events::types::now(),
-            });
-            handle.terminate();
-            let code = handle.wait();
-            return (code, true);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    let (outcome, code) = vetto::verify_ng::killer::kill_on_deadline_with(
+        handle,
+        deadline,
+        std::time::Duration::from_millis(100),
+    );
+    if outcome == vetto::verify_ng::killer::KillOutcome::KilledOnDeadline {
+        eprintln!(
+            "vetto: session timeout ({}) reached; terminating the sandbox",
+            format_duration(limit)
+        );
+        bus.publish(Event::SessionTimeout {
+            ts: events::types::now(),
+        });
+        return (code, true);
     }
+    (code, false)
 }
 
 fn format_duration(limit: std::time::Duration) -> String {

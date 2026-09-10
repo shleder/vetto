@@ -215,3 +215,40 @@ Suite-уровень владения (`SuiteRunner`, один scenario — не
 `$PROJECT` внутри, side-channels, kernel-0day, полнота логов, привязка хэша
 к живому процессу (только непрерывность владения до fork), полнота sweep
 при SIGKILL на FS-ONLY/macOS, UDS/IPC-exfil на mac/Win, статистика CI-таймингов.
+
+## Stage 3C — production-интеграция (факт, только доказанное тестами)
+
+Единственный прод-путь: `src/sandbox/production.rs` (`ProductionRunner`).
+Прод-спавны (`src/main.rs supervise`, `src/multi/runtime.rs`,
+`src/mcp/wrap.rs`) идут только через `spawn_authoritative` /
+`execute_simple` / `execute_with_backend`; прямого `Backend::spawn` вне
+`production.rs` в прод-коде нет. Таймаут — только проверенный killer-путь
+(deadline → kill → bounded re-wait → nonce sweep), без голого blocking
+`wait()` без последующей printer-friendly sweep-очистки. Отчётность —
+только типизированные `EnforcementState`, никогда `sandboxed/secure`.
+
+### PROVEN IN PRODUCTION (через реальный прод-раннер, Linux, net=off)
+
+Filesystem (Landlock allowlist, deny/symlink/proc-root/dotdot/root-escape),
+network off (seccomp UnixOnly, TCP connect + namespace-escape), process
+(pgroup + NO_NEW_PRIVS, host-verified через /proc), tree (group-kill +
+nonce sub-reaper sweep, grandchild/reaped, deadline tree-kill),
+resources (RLIMIT_AS/NPROC/CPU/FSIZE, host-verified через /proc/limits),
+syscalls (seccomp hardening deny ptrace), fail-closed (preparation failure
+→ spawn_count==0), no-direct-bypass (backend entered ровно 1 раз),
+identity (policy cwd == FrozenSpec cwd == exec_root == child cwd, nonce
+уникален, env не реинтродуцирует секреты).
+
+### VERIFY-NG ONLY (harness доказывает, прод не заявляет паритет)
+
+Relay allowlist/strict/ask: прод сохраняет существующую relay-архитектуру
+(netns+broker); 3B `UnixOnly` не выдаётся за allowlist relay, через 3B
+границу сеть честно `unsupported`. Full-tier namespaces/mounts/pidns живут
+в существующем `Backend::spawn` (не ослаблены), 3B даёт отчётность +
+верификацию + sweep поверх.
+
+### UNSUPPORTED
+
+macOS/Windows enforcement через 3B-границу (плейсхолдеры, всё
+`Unsupported`); cgroups/PID/user/mount-неймспейсы как новые примитивы 3C
+не добавлялись; daemon/root/containers/VM/новый policy-язык не вводились.
