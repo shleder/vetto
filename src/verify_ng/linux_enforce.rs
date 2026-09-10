@@ -280,7 +280,17 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
         }
         // SAFETY: scalar prctl query on our own process (see `is_child_subreaper`).
         out.subreaper_ok = is_child_subreaper();
-        if out.all_observed() || Instant::now() >= deadline || !pid_alive(pid) {
+        // A zombie's observable flags are frozen: only we can reap it, and
+        // we reap after verification, so further polling burns the deadline
+        // with identical output. Return immediately (Stage 3C: production
+        // fast-path commands otherwise pay the full 2s here whenever their
+        // policy rlimits legitimately differ from the harness ceilings —
+        // caps honestly stay `Enforced`, never falsely `Verified`).
+        let zombie = match status.as_deref() {
+            Some(body) => pid_is_zombie(body),
+            None => false,
+        };
+        if out.all_observed() || Instant::now() >= deadline || !pid_alive(pid) || zombie {
             return out;
         }
         std::thread::sleep(Duration::from_millis(25));
