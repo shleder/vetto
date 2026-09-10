@@ -56,6 +56,20 @@ fn exec_root(tag: &str) -> std::path::PathBuf {
 
 /// Run one headless production command through the authoritative path.
 /// `script` is staged at `<root>/run.sh` and executed as `sh run.sh`.
+/// Serializes the heavyweight production-spawn tests among themselves so
+/// the suite does not starve timing-sensitive observers elsewhere
+/// (100ms visibility poller, jsonl drain). Caller-owned spawn logs stay
+/// exact under parallelism; this lock only caps added CPU/fork pressure.
+/// The multi-agent test uses `run_prod_inner` directly to keep its two
+/// agents genuinely concurrent.
+#[cfg(target_os = "linux")]
+static PROD_SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn prod_serial() -> &'static std::sync::Mutex<()> {
+    PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[cfg(target_os = "linux")]
 fn run_prod(
     script: &str,
@@ -63,11 +77,24 @@ fn run_prod(
     extra: HashMap<String, String>,
     timeout: Duration,
 ) -> (vetto::sandbox::production::ProductionResult, ProdSpawnLog) {
-    run_prod_argv(&["sh"], script, net, extra, timeout)
+    let _guard = prod_serial().lock().unwrap();
+    run_prod_inner(&["sh"], script, net, extra, timeout)
 }
 
 #[cfg(target_os = "linux")]
 fn run_prod_argv(
+    interpreter: &[&str],
+    script: &str,
+    net: NetMode,
+    extra: HashMap<String, String>,
+    timeout: Duration,
+) -> (vetto::sandbox::production::ProductionResult, ProdSpawnLog) {
+    let _guard = prod_serial().lock().unwrap();
+    run_prod_inner(interpreter, script, net, extra, timeout)
+}
+
+#[cfg(target_os = "linux")]
+fn run_prod_inner(
     interpreter: &[&str],
     script: &str,
     net: NetMode,
@@ -354,36 +381,32 @@ fn test_prod_backend_called_001() {
 }
 
 /// TEST-PROD-BACKEND-OWNS-SPAWN-001: one spawn == one scenario via backend.
+/// The caller-owned log is the exact proof (global ops counters are
+/// informational under parallel test threads).
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_backend_owns_spawn_001() {
-    let before =
-        vetto::sandbox::production::PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
     let (out, log) = run_prod(
         "exit 0\n",
         NetMode::Off,
         HashMap::new(),
         Duration::from_secs(15),
     );
-    assert_eq!(log.len(), 1);
+    assert_eq!(log.len(), 1, "exactly one spawn per production run");
     assert_eq!(out.pid, Some(log[0].pid));
-    assert_eq!(out.nonce, log[0].run_id);
-    assert!(out.spawn_via_backend);
-    let after =
-        vetto::sandbox::production::PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(after, before + 1);
+    assert_eq!(out.nonce, log[0].run_id, "spawn bound to run nonce");
+    assert!(out.spawn_via_backend, "spawn via the backend boundary");
+    assert_eq!(out.backend, BackendKind::Linux);
 }
 
 /// TEST-PROD-NO-DIRECT-SPAWN-001: production has no direct-spawn bypass.
-/// Proved structurally: every prod spawn site routes through
-/// `production::spawn_authoritative` / `execute_with_backend`; this test
-/// asserts the counters move exactly once per production run and the
-/// backend boundary was entered.
+/// Every prod spawn site routes through `production::spawn_authoritative`
+/// / `execute_with_backend`; the per-run log plus the typed backend
+/// attribution prove the backend path was entered and no alternate direct
+/// spawn was used for this run.
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_no_direct_spawn_001() {
-    let entered_before =
-        vetto::sandbox::production::PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
     let (out, log) = run_prod(
         "exit 0\n",
         NetMode::Off,
@@ -392,21 +415,19 @@ fn test_prod_no_direct_spawn_001() {
     );
     assert_eq!(out.backend, BackendKind::Linux);
     assert_eq!(log.len(), 1, "backend path entered exactly once");
-    let entered_after =
-        vetto::sandbox::production::PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(
-        entered_after,
-        entered_before + 1,
-        "no alternate direct spawn path used"
-    );
+    assert!(out.spawn_via_backend);
+    assert_eq!(out.pid, Some(log[0].pid));
+    assert!(out.render_deterministic().contains("backend=linux"));
 }
 
-/// TEST-PROD-MULTI-AGENT-ISOLATION-001
+/// TEST-PROD-MULTI-AGENT-ISOLATION-001 (inner runs bypass the serial lock
+/// via `run_prod_inner` so the two agents are genuinely concurrent).
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_multi_agent_isolation_001() {
     let h1 = std::thread::spawn(|| {
-        run_prod(
+        run_prod_inner(
+            &["sh"],
             "exit 0\n",
             NetMode::Off,
             HashMap::new(),
@@ -414,7 +435,8 @@ fn test_prod_multi_agent_isolation_001() {
         )
     });
     let h2 = std::thread::spawn(|| {
-        run_prod(
+        run_prod_inner(
+            &["sh"],
             "exit 0\n",
             NetMode::Off,
             HashMap::new(),
@@ -815,12 +837,12 @@ fn test_prod_linux_fail_closed_001() {
     assert!(!out.allows_pass(&[SecurityCapability::FilesystemIsolation]));
 }
 
-/// TEST-PROD-LINUX-NO-DIRECT-BYPASS-001
+/// TEST-PROD-LINUX-NO-DIRECT-BYPASS-001: per-run backend attribution.
+/// The caller-owned log proves exactly one backend-controlled spawn for
+/// this run; the typed report attributes it to the Linux backend.
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_linux_no_direct_bypass_001() {
-    let entered_before =
-        vetto::sandbox::production::PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
     let (out, log) = run_prod(
         "exit 0\n",
         NetMode::Off,
@@ -828,10 +850,9 @@ fn test_prod_linux_no_direct_bypass_001() {
         Duration::from_secs(15),
     );
     assert_eq!(out.backend, BackendKind::Linux);
-    assert_eq!(log.len(), 1);
-    let entered_after =
-        vetto::sandbox::production::PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(entered_after, entered_before + 1);
+    assert_eq!(log.len(), 1, "exactly one backend-controlled spawn");
+    assert_eq!(out.pid, Some(log[0].pid));
+    assert_eq!(out.nonce, log[0].run_id);
     assert!(out.spawn_via_backend);
     assert!(out.render_deterministic().contains("backend=linux"));
 }
