@@ -927,14 +927,9 @@ impl LinuxBackend {
         // outcome is recorded for the tree-sweep diagnostic string.
         self.subreaper_prepare = Some(match crate::multi::isolation::set_subreaper() {
             Ok(()) => {
-                // SAFETY: scalar prctl query on our own process.
-                let get = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) };
-                let errno = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(-999);
                 format!(
-                    "ok/get={get}/errno={errno}/getno={}",
-                    libc::PR_GET_CHILD_SUBREAPER
+                    "ok/subreaper={}",
+                    super::linux_enforce::is_child_subreaper()
                 )
             }
             Err(e) => format!("ERR:{e:?}"),

@@ -89,6 +89,27 @@ pub fn apply_child_plan(
     }
 }
 
+/// True when this process is a child sub-reaper (`PR_SET_CHILD_SUBREAPER`).
+///
+/// `PR_GET_CHILD_SUBREAPER` reports via `put_user` into the `arg2` pointer
+/// (return is 0 on success), so a scalar `prctl(GET, 0, ...)` call always
+/// fails with `EFAULT` — the out-pointer is mandatory.
+#[cfg(target_os = "linux")]
+pub(crate) fn is_child_subreaper() -> bool {
+    let mut flag: libc::c_int = 0;
+    // SAFETY: prctl writes 0/1 into the local int on success.
+    let rc = unsafe {
+        libc::prctl(
+            libc::PR_GET_CHILD_SUBREAPER,
+            &mut flag as *mut libc::c_int as libc::c_ulong,
+            0,
+            0,
+            0,
+        )
+    };
+    rc == 0 && flag == 1
+}
+
 /// Host-side verification of a live confined child, read from `/proc`
 /// without trusting any child output. Best-effort with a bounded wait:
 /// short-lived children may exit before every field is observed, in which
@@ -257,8 +278,8 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
                 out.rlimit_fsize_ok = true;
             }
         }
-        // SAFETY: scalar prctl query on our own process.
-        out.subreaper_ok = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) } == 1;
+        // SAFETY: scalar prctl query on our own process (see `is_child_subreaper`).
+        out.subreaper_ok = is_child_subreaper();
         if out.all_observed() || Instant::now() >= deadline || !pid_alive(pid) {
             return out;
         }
@@ -280,8 +301,8 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
 #[cfg(target_os = "linux")]
 fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     use std::time::{Duration, Instant};
-    // SAFETY: scalar prctl query on our own process.
-    let subreaper = unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0) } == 1;
+    // SAFETY: scalar prctl query on our own process (see `is_child_subreaper`).
+    let subreaper = is_child_subreaper();
     let mut outcome = SweepOutcome {
         clean: false,
         killed: 0,
@@ -567,5 +588,15 @@ mod linux_enforce_tests {
         assert_eq!(status_uid("Name:\tx\nState:\tR (running)\n"), None);
         assert_eq!(status_uid(""), None);
         assert_eq!(status_uid("Uid:\tnot-a-number\n"), None);
+    }
+
+    /// The sub-reaper query must not fail with `EFAULT`: the kernel reports
+    /// through the out-pointer, so a scalar call form would always read false.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn subreaper_query_is_deterministic() {
+        let a = is_child_subreaper();
+        let b = is_child_subreaper();
+        assert_eq!(a, b);
     }
 }
