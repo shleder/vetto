@@ -638,7 +638,7 @@ fn test_prod_linux_tree_kill_001() {
         "sleep 60\n",
         NetMode::Off,
         HashMap::new(),
-        Duration::from_secs(3),
+        Duration::from_secs(2),
     );
     assert_eq!(log.len(), 1);
     assert!(out.timed_out, "deadline must kill");
@@ -646,6 +646,13 @@ fn test_prod_linux_tree_kill_001() {
 }
 
 /// TEST-PROD-LINUX-PID-LIMIT-001
+///
+/// NOTE (test hygiene): RLIMIT_NPROC is enforced per real UID, so while the
+/// bomb holds ~128 concurrent sleepers every other fork on this UID can
+/// observe transient EAGAIN. The loop therefore stops at 160 (past the 128
+/// ceiling with margin, far below the 3B suite's 300) and reaps immediately,
+/// keeping the shared-budget exhaustion window as short as possible while
+/// still proving the ceiling via an observed EAGAIN.
 #[cfg(target_os = "linux")]
 #[test]
 fn test_prod_linux_pid_limit_001() {
@@ -654,14 +661,14 @@ fn test_prod_linux_pid_limit_001() {
         "import errno, os, signal, sys, time\n",
         "children = []\n",
         "failed = False\n",
-        "for _ in range(300):\n",
+        "for _ in range(160):\n",
         "    try:\n",
         "        pid = os.fork()\n",
         "    except OSError as e:\n",
         "        failed = e.errno == errno.EAGAIN\n",
         "        break\n",
         "    if pid == 0:\n",
-        "        time.sleep(30)\n",
+        "        time.sleep(10)\n",
         "        os._exit(0)\n",
         "    children.append(pid)\n",
         "for pid in children:\n",
