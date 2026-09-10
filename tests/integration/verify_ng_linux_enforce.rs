@@ -458,8 +458,9 @@ fn test_linux_proc_escape_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "sweep must observably clean the tree: {}",
-        report.render_deterministic()
+        "sweep must observably clean the tree: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
@@ -493,8 +494,9 @@ fn test_linux_grandchild_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "tree must be observably clean: {}",
-        report.render_deterministic()
+        "tree must be observably clean: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
@@ -525,8 +527,9 @@ fn test_linux_tree_kill_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "deadline tree kill must leave no residuals: {}",
-        report.render_deterministic()
+        "deadline tree kill must leave no residuals: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_no_pass(&out);
 }
@@ -558,8 +561,9 @@ fn test_linux_orphan_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "orphan must be observably reaped: {}",
-        report.render_deterministic()
+        "orphan must be observably reaped: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
@@ -1123,8 +1127,9 @@ fn test_linux_escape_proc_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "daemon escape must be observably swept: {}",
-        report.render_deterministic()
+        "daemon escape must be observably swept: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
@@ -1286,8 +1291,9 @@ fn test_linux_escape_grandchild_001() {
     assert_eq!(
         report.state(SecurityCapability::ProcessTreeContainment),
         EnforcementState::Verified,
-        "deep chain observably reaped: {}",
-        report.render_deterministic()
+        "deep chain observably reaped: {} detail={}",
+        report.render_deterministic(),
+        tail_text(out.result.detail.as_bytes(), 600)
     );
     assert_eq!(out.result.verdict, Verdict::Inconclusive);
 }
