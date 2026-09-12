@@ -122,9 +122,29 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
         enforced.push(SecurityCapability::ResourceLimits);
         enforced.push(SecurityCapability::HostEvidence);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
     {
         // Placeholders enforce nothing, including host evidence via 3B.
+    }
+    // NEEDS-COORDINATOR: Windows installs Job Object tree containment, the
+    // AppContainer process/filesystem boundary and default-deny network
+    // (net=off only) through the production spawn path; syscall filtering
+    // and execution-root scoping stay unsupported, and resource ceilings
+    // are policy-conditional (per-run report only, never static).
+    #[cfg(target_os = "windows")]
+    {
+        let probe = crate::sandbox::windows::probe();
+        if probe.experimental_create_process_in_sandbox {
+            enforced.push(SecurityCapability::FilesystemIsolation);
+            enforced.push(SecurityCapability::ProcessIsolation);
+            if net_off {
+                enforced.push(SecurityCapability::NetworkIsolation);
+            }
+        }
+        if probe.job_object_kill_on_close {
+            enforced.push(SecurityCapability::ProcessTreeContainment);
+        }
+        enforced.push(SecurityCapability::HostEvidence);
     }
     let unsupported: Vec<SecurityCapability> = SecurityCapability::all()
         .into_iter()
@@ -549,6 +569,22 @@ impl PreparedProductionExecution {
         PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
         let pid = spawned.handle.root_pid;
         self.capability.note_spawned(pid);
+        // Windows host verification observes THIS child through the
+        // retained handles: Job Object membership, the kill-on-close flag,
+        // installed ceilings and the child token integrity level. Anything
+        // unobserved stays `Configured`, never `Enforced` (NEEDS-COORDINATOR:
+        // Windows promotion lives here, not in `note_spawned`, which the
+        // unenforced harness path shares).
+        #[cfg(target_os = "windows")]
+        {
+            let verification = match spawned.handle.windows_raw_handles() {
+                Some((process, job)) => unsafe {
+                    crate::verify_ng::windows_enforce::verify_production_child(process, job)
+                },
+                None => crate::verify_ng::sandbox_backend::HostVerification::none(),
+            };
+            self.capability.note_host_verified(&verification);
+        }
         // Host verification observes THIS child (its real PID): seccomp
         // filter, NO_NEW_PRIVS and process-group presence come from the
         // shared 3B verifier; resource ceilings are checked against the
@@ -674,6 +710,29 @@ impl SpawnedProductionExecution {
     /// result. The sweep cannot be skipped: there is no other way to obtain
     /// a `ProductionResult`.
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
+        // Windows tree sweep (NEEDS-COORDINATOR: additive, cfg-gated): read
+        // the host-observed job membership, terminate through kill-on-close
+        // (the kernel kills the whole tree — no PID-group signals, no
+        // best-effort sweep), then prove every observed member dead by
+        // handle. Residual survivors fail the tree claim closed.
+        #[cfg(target_os = "windows")]
+        {
+            use crate::verify_ng::windows_enforce as we;
+            let members = match self.handle.windows_raw_handles() {
+                Some((_, job)) => unsafe { we::job_assigned_pids(job) },
+                None => Vec::new(),
+            };
+            let observed = members.len();
+            // Kill-on-close termination: dropping the job handle kills every
+            // assigned process. This is the containment kill, not cleanup.
+            self.handle.terminate();
+            let residual = we::pids_still_alive(&members, Duration::from_secs(5));
+            let clean = residual.is_empty();
+            self.capability.note_tree_clean(clean);
+            self.capability.note_diagnostic(format!(
+                "tree-sweep clean={clean} observed={observed} residual={residual:?} job-kill-on-close"
+            ));
+        }
         #[cfg(target_os = "linux")]
         {
             if let Some(sweep) =
