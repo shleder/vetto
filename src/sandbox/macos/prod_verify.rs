@@ -74,17 +74,15 @@ pub fn sweep_tree(pid: u32) -> bool {
 fn tree_gone(pid: u32, pgid: libc::pid_t) -> bool {
     // SAFETY: kill(., 0) liveness probes on our own tree only.
     let group_gone = if pgid > 0 {
-        unsafe { libc::kill(-pgid, 0) } != 0
+        unsafe { libc::kill(-pgid, 0) != 0 }
     } else {
         true
     };
     let mut status = 0i32;
     // SAFETY: plain waitpid with WNOHANG on our own child.
     let r = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) };
-    let leader_reaped_or_gone =
-        r == pid as libc::pid_t || (r < 0 && is_esrch_or_echild());
-    let leader_dead =
-        leader_reaped_or_gone || unsafe { libc::kill(pid as libc::pid_t, 0) } != 0;
+    let leader_reaped_or_gone = r == pid as libc::pid_t || (r < 0 && is_esrch_or_echild());
+    let leader_dead = leader_reaped_or_gone || unsafe { libc::kill(pid as libc::pid_t, 0) != 0 };
     group_gone && leader_dead
 }
 

@@ -1040,7 +1040,7 @@ impl LinuxBackend {
 
 /// Stage 3C macOS backend: real Seatbelt enforcement (SBPL write isolation
 /// + `--net=off` network denial via `sandbox_init_with_parameters`,
-/// `setrlimit` ceilings, new process group, kqueue parent-death watchdog).
+///   `setrlimit` ceilings, new process group, kqueue parent-death watchdog).
 ///
 /// State machine per run, mirroring `LinuxBackend`: `prepare` probes and
 /// reports at most `Configured` (`HostEvidence` is `Enforced` by
