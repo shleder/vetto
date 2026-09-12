@@ -989,7 +989,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         cfg.net.clone(),
         frozen_timeout,
         stdio,
-        "PROD-LINUX".to_string(),
+        sandbox::production::PROD_SCENARIO_ID.to_string(),
     );
     let prepared = unprepared.prepare()?;
 

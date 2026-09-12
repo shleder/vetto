@@ -979,7 +979,7 @@ fn test_prod_linux_fail_closed_001() {
         net,
         Some(Duration::from_secs(5)),
         vetto::sandbox::StdioMode::Inherit,
-        "PROD-LINUX".to_string(),
+        PROD_SCENARIO_ID.to_string(),
     );
     let err = unprepared.prepare();
     let err = match err {

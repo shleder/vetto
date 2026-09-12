@@ -50,7 +50,8 @@ use crate::verify_ng::sandbox_backend::{
 };
 
 /// Production scenario id: real runs are not registry scenarios.
-pub const PROD_SCENARIO_ID: &str = "PROD-LINUX";
+/// Platform-neutral: the backend binding carries the OS, not this string.
+pub const PROD_SCENARIO_ID: &str = "PROD";
 /// Nonce env label: run label for the nonce-targeted sweep, not a secret.
 pub const PROD_NONCE_ENV: &str = "VETTO_PROD_NONCE";
 /// Registry binding for production runs (not a scenario-registry hash).
