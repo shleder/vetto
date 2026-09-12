@@ -178,8 +178,9 @@ impl PreparationFailureKind {
 
 /// Which backend implementation a report or matrix entry refers to.
 /// `Direct` is the pre-existing direct-exec plumbing (explicitly
-/// non-contained); the other three are Stage 3A placeholders whose
-/// containment stays `Unsupported` until Stage 3B+.
+/// non-contained); `Linux` enforces on Linux (Stage 3B), `Macos` enforces
+/// on macOS (Stage 3C-macOS), `Windows` stays a Stage 3A placeholder whose
+/// containment is `Unsupported`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendKind {
