@@ -344,7 +344,10 @@ fn test_backend_no_fake_enforcement_001() {
     {
         let mut backend = select_backend(BackendKind::Macos);
         let report = backend.prepare(&policy, &identity);
-        assert!(report.enforced().is_empty(), "macOS must enforce nothing off macOS");
+        assert!(
+            report.enforced().is_empty(),
+            "macOS must enforce nothing off macOS"
+        );
         for cap in SecurityCapability::all() {
             assert!(!report.is_enforced(cap));
             assert_ne!(report.state(cap), EnforcementState::Enforced);

@@ -158,12 +158,13 @@ fn test_macos_backend_prepare_001() {
 /// downgrade to `--net=off`.
 #[test]
 fn test_macos_backend_relay_fail_001() {
-    use vetto::verify_ng::sandbox_backend::{PreparationFailureKind, select_backend};
+    use vetto::verify_ng::sandbox_backend::select_backend;
     let (policy, identity) = canonical_policy("allowlist:example.com");
     let mut backend = select_backend(BackendKind::Macos);
     let report = backend.prepare(&policy, &identity);
     #[cfg(target_os = "macos")]
     {
+        use vetto::verify_ng::sandbox_backend::PreparationFailureKind;
         assert!(
             !report.preparation_ok,
             "relay net must fail preparation on macOS"
@@ -212,7 +213,9 @@ fn test_macos_tier_mapping_001() {
             mapping.enforced
         );
     }
-    assert!(!mapping.enforced.contains(&SecurityCapability::SyscallRestriction));
+    assert!(!mapping
+        .enforced
+        .contains(&SecurityCapability::SyscallRestriction));
     assert!(!mapping
         .enforced
         .contains(&SecurityCapability::ExecutionRootIsolation));
@@ -229,11 +232,15 @@ fn test_macos_tier_mapping_001() {
         );
     }
     // Best-effort rlimits stay out of the PASS gate (partial, documented).
-    assert!(!mapping.mandatory.contains(&SecurityCapability::ResourceLimits));
+    assert!(!mapping
+        .mandatory
+        .contains(&SecurityCapability::ResourceLimits));
     let relay = NetMode::Allowlist(vec!["example.com".to_string()]);
     let relay_mapping = prod_tier_mapping(None, &relay);
     assert!(
-        !relay_mapping.enforced.contains(&SecurityCapability::NetworkIsolation),
+        !relay_mapping
+            .enforced
+            .contains(&SecurityCapability::NetworkIsolation),
         "relay net is never enforced on macOS"
     );
     assert!(!relay_mapping.allows_pass_possible);
@@ -370,7 +377,10 @@ fn test_macos_prod_child_001() {
     let prepared = unprepared.prepare().expect("prepare macOS child");
     assert_eq!(prepared.backend_kind(), BackendKind::Macos);
     // Preparation installs nothing yet: confinement at most Configured.
-    let pre = prepared.enforcement_report().expect("prepare report").clone();
+    let pre = prepared
+        .enforcement_report()
+        .expect("prepare report")
+        .clone();
     assert!(pre.preparation_ok);
     assert!(!pre.is_enforced(SecurityCapability::FilesystemIsolation));
     let nonce = prepared.nonce().to_string();
@@ -406,7 +416,9 @@ fn test_macos_prod_child_001() {
         EnforcementState::Unsupported
     );
     assert_eq!(
-        result.report.state(SecurityCapability::ExecutionRootIsolation),
+        result
+            .report
+            .state(SecurityCapability::ExecutionRootIsolation),
         EnforcementState::Unsupported
     );
     // The macOS PASS gate holds for the containment set, never for fakes.
@@ -477,7 +489,8 @@ fn test_macos_prod_fs_deny_001() {
     assert_eq!(log.len(), 1);
     assert_eq!(out.backend, BackendKind::Macos);
     assert!(
-        out.state(SecurityCapability::FilesystemIsolation).is_enforced(),
+        out.state(SecurityCapability::FilesystemIsolation)
+            .is_enforced(),
         "write isolation must be enforced: {}",
         out.render_deterministic()
     );
@@ -537,7 +550,8 @@ fn test_macos_prod_net_deny_001() {
     .expect("macOS net-deny run");
     assert_eq!(log.len(), 1);
     assert!(
-        out.state(SecurityCapability::NetworkIsolation).is_enforced(),
+        out.state(SecurityCapability::NetworkIsolation)
+            .is_enforced(),
         "network isolation must be enforced: {}",
         out.render_deterministic()
     );
@@ -642,7 +656,11 @@ fn test_macos_prod_prepare_fail_no_spawn_001() {
     let unprepared = UnpreparedProductionExecution::new(
         backend,
         Policy::default(),
-        vec!["/bin/sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 0".to_string(),
+        ],
         root.clone(),
         HashMap::new(),
         net,
@@ -729,7 +747,10 @@ fn test_macos_prod_drift_001() {
         "report bound to the frozen identity"
     );
     let obs = std::fs::read_to_string(root.join("obs")).expect("drift obs");
-    assert!(obs.contains("marker=frozen"), "child saw only frozen env: {obs}");
+    assert!(
+        obs.contains("marker=frozen"),
+        "child saw only frozen env: {obs}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -741,7 +762,11 @@ fn test_macos_prod_identity_001() {
     let mut log = ProdSpawnLog::new();
     let out = execute_simple(
         &Policy::default(),
-        vec!["/bin/sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 0".to_string(),
+        ],
         root.clone(),
         HashMap::new(),
         NetMode::Off,
@@ -753,14 +778,14 @@ fn test_macos_prod_identity_001() {
     assert_eq!(log.len(), 1);
     assert_eq!(out.nonce, log[0].run_id);
     assert_eq!(out.pid, Some(log[0].pid));
-    assert!(out.report.binds_identity(
-        &vetto::verify_ng::evidence::ExecutionIdentity::new(
+    assert!(out
+        .report
+        .binds_identity(&vetto::verify_ng::evidence::ExecutionIdentity::new(
             PROD_SCENARIO_ID,
             out.nonce.as_str(),
             PROD_REGISTRY,
             out.report.frozen_hash.as_str(),
-        )
-    ));
+        )));
     assert!(!out.nonce.is_empty());
     assert!(out.exec_root.is_absolute());
     let _ = std::fs::remove_dir_all(&root);

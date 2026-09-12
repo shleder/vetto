@@ -39,8 +39,8 @@ mod linux_timeout;
 mod linux_verify;
 #[cfg(target_os = "linux")]
 mod linux_visibility;
-mod macos_seatbelt;
 mod macos_prod;
+mod macos_seatbelt;
 mod multi_agent;
 mod onboarding;
 mod policy_loading;
