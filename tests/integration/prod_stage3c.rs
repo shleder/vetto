@@ -392,8 +392,24 @@ fn test_prod_backend_called_001() {
     let tmp = std::env::temp_dir().join(format!("vetto-prod-called-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     let mut log = ProdSpawnLog::new();
+    // Real mechanics enforce real Landlock: an empty policy denies
+    // `/dev/null` at stdio setup (child exit 124) wherever Landlock is
+    // active. Minimal functional policy (system read roots + tmp write
+    // root); assertions below still target the injected backend's report.
+    let mut policy = Policy::default();
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
+        let p = std::path::PathBuf::from(cand);
+        if p.exists() && !policy.allow_read.contains(&p) {
+            policy.allow_read.push(p);
+        }
+    }
+    for cand in [tmp.clone(), std::path::PathBuf::from("/tmp")] {
+        if cand.exists() && !policy.allow_write.contains(&cand) {
+            policy.allow_write.push(cand);
+        }
+    }
     let out = execute_with_backend(
-        &Policy::default(),
+        &policy,
         vec![
             "/bin/sh".to_string(),
             "-c".to_string(),

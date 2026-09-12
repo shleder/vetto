@@ -994,6 +994,9 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let prepared = unprepared.prepare()?;
 
     let started = std::time::Instant::now();
+    // `take_*`/`&mut handle` are `cfg`-gated (Linux/unix): `mut` is dead on
+    // Windows, required elsewhere. `allow` keeps one spelling, not two.
+    #[allow(unused_mut)]
     let mut spawned = prepared.spawn()?;
 
     // Close main's duplicates of the child-side stdio fds so EOF semantics
