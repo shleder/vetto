@@ -28,11 +28,13 @@
 //! ```text
 //! Stage 3A was architecture only.
 //! Stage 3B implements real Linux enforcement (landlock + seccomp + rlimit
-//!   + process-group/tree sweep); macOS remains a placeholder.
+//!   + process-group/tree sweep).
 //! Stage 3C implements real Windows enforcement (Job Object tree
 //!   containment + AppContainer process/filesystem boundary + restricted
-//!   token, host-verified); syscall filtering and exec-root scoping stay
-//!   `Unsupported` there.
+//!   token, host-verified) and real macOS enforcement (Seatbelt SBPL
+//!   write + net-off isolation, see origin/feat/platform/macos);
+//!   syscall filtering and exec-root scoping stay `Unsupported` on both.
+//!   NEEDS-COORDINATOR: convergent doc; macOS/Windows cells disjoint.
 //! ```
 //!
 //! Backends report `Unsupported` for every capability they cannot actually
@@ -174,8 +176,8 @@ impl PreparationFailureKind {
 /// Which backend implementation a report or matrix entry refers to.
 /// `Direct` is the pre-existing direct-exec plumbing (explicitly
 /// non-contained); Linux/Windows carry real enforcement behind this
-/// boundary (Stage 3B/3C) while macOS stays a Stage 3A placeholder whose
-/// containment stays `Unsupported`.
+/// boundary (Stage 3B/3C) while macOS enforcement lives on
+/// origin/feat/platform/macos (NEEDS-COORDINATOR: convergent enum doc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendKind {

@@ -122,15 +122,36 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
         enforced.push(SecurityCapability::ResourceLimits);
         enforced.push(SecurityCapability::HostEvidence);
     }
-    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    {
+        // Seatbelt write + net-off isolation, process-group containment,
+        // best-effort rlimits and host evidence — only where the Seatbelt
+        // primitive actually exists (fail-closed `Backend::detect` refuses
+        // the session otherwise). No syscall filter and no exec-root READ
+        // isolation exist on this platform: both stay unsupported, never
+        // emulated.
+        if crate::sandbox::macos::MacosSandbox::seatbelt_available() {
+            enforced.push(SecurityCapability::FilesystemIsolation);
+            if net_off {
+                enforced.push(SecurityCapability::NetworkIsolation);
+            }
+            enforced.push(SecurityCapability::ProcessIsolation);
+            enforced.push(SecurityCapability::ProcessTreeContainment);
+            enforced.push(SecurityCapability::ResourceLimits);
+            enforced.push(SecurityCapability::HostEvidence);
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         // Placeholders enforce nothing, including host evidence via 3B.
     }
-    // NEEDS-COORDINATOR: Windows installs Job Object tree containment, the
-    // AppContainer process/filesystem boundary and default-deny network
-    // (net=off only) through the production spawn path; syscall filtering
-    // and execution-root scoping stay unsupported, and resource ceilings
-    // are policy-conditional (per-run report only, never static).
+    // Windows installs Job Object tree containment, the AppContainer
+    // process/filesystem boundary and default-deny network (net=off only)
+    // through the production spawn path; syscall filtering and
+    // execution-root scoping stay unsupported, and resource ceilings are
+    // policy-conditional (per-run report only, never static).
+    // NEEDS-COORDINATOR: convergent placeholder above keeps macOS/Windows
+    // cells disjoint; Linux block above stays byte-identical to bd0e242.
     #[cfg(target_os = "windows")]
     {
         let probe = crate::sandbox::windows::probe();
@@ -154,7 +175,11 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
     let tier_label = tier.map(|t| t.label().to_string()).unwrap_or_else(|| {
         #[cfg(target_os = "linux")]
         return "seccomp".to_string();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        return "seatbelt".to_string();
+        #[cfg(target_os = "windows")]
+        return "job".to_string();
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         return "unsupported".to_string();
     });
     let mandatory: Vec<SecurityCapability> = match tier {
@@ -193,7 +218,27 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
             SecurityCapability::SyscallRestriction,
             SecurityCapability::HostEvidence,
         ],
-        None => vec![SecurityCapability::HostEvidence],
+        // No tier on macOS (`Backend::tier()` is `None` there): the normal
+        // macOS case mandates the Seatbelt containment set. Best-effort
+        // rlimits stay out of the gate (partial, documented); syscall and
+        // exec-root READ isolation are unsupported and can never gate a PASS.
+        // Off macOS (Linux/Windows/other) the gate stays HostEvidence-only.
+        None => {
+            #[cfg(target_os = "macos")]
+            {
+                vec![
+                    SecurityCapability::FilesystemIsolation,
+                    SecurityCapability::NetworkIsolation,
+                    SecurityCapability::ProcessIsolation,
+                    SecurityCapability::ProcessTreeContainment,
+                    SecurityCapability::HostEvidence,
+                ]
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                vec![SecurityCapability::HostEvidence]
+            }
+        }
     };
     let allows_pass_possible = mandatory.iter().all(|c| enforced.contains(c));
     let notes = "fs-only never silently becomes network=off; relay modes keep the \
