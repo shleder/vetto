@@ -28,7 +28,12 @@
 //! ```text
 //! Stage 3A was architecture only.
 //! Stage 3B implements real Linux enforcement (landlock + seccomp + rlimit
-//!   + process-group/tree sweep); macOS/Windows remain placeholders.
+//!   + process-group/tree sweep); Windows remains a placeholder.
+//! Stage 3C-macOS implements real macOS enforcement (Seatbelt SBPL write +
+//!   net-off isolation, setrlimit ceilings, process-group containment,
+//!   kqueue parent-death watchdog); syscall filtering and exec-root READ
+//!   isolation stay Unsupported (no seccomp equivalent; SBPL reads are
+//!   broad by platform necessity).
 //! ```
 //!
 //! Backends report `Unsupported` for every capability they cannot actually
@@ -38,7 +43,11 @@
 //! `LinuxBackend::prepare` reports at most `Configured` (probed, planned,
 //! not yet installed); only a successful backend-controlled spawn promotes
 //! to `Enforced`, and only host-observed `/proc` evidence promotes to
-//! `Verified`. Fail-closed gating ([`apply_backend_ceiling`]) demotes any
+//! `Verified`. `MacosBackend::prepare` follows the same state machine (at
+//! most `Configured`, plus `HostEvidence` which is `Enforced` by
+//! construction); only a Seatbelt-confined spawn promotes to `Enforced`,
+//! and only host-observed `getpgid` / group-death checks promote process
+//! and tree capabilities to `Verified`. Fail-closed gating ([`apply_backend_ceiling`]) demotes any
 //! `PASS` whose mandatory capabilities are not actually enforced to
 //! `INCONCLUSIVE`, never to `PASS`.
 //!
@@ -1028,17 +1037,74 @@ impl LinuxBackend {
     }
 }
 
-/// Stage 3A macOS placeholder. No sandbox-profile, filesystem, network,
-/// syscall, or process isolation is claimed; every capability stays
-/// `Unsupported`. No Linux mechanisms are reused through portability hacks.
+/// Stage 3C macOS backend: real Seatbelt enforcement (SBPL write isolation
+/// + `--net=off` network denial via `sandbox_init_with_parameters`,
+/// `setrlimit` ceilings, new process group, kqueue parent-death watchdog).
+///
+/// State machine per run, mirroring `LinuxBackend`: `prepare` probes and
+/// reports at most `Configured` (`HostEvidence` is `Enforced` by
+/// construction); a successful Seatbelt-confined spawn promotes to
+/// `Enforced`; host-observed `getpgid` / group-death evidence promotes
+/// process/tree containment to `Verified`.
+///
+/// Honest scope (partial, documented, never faked):
+/// - `FilesystemIsolation` = WRITE isolation only (SBPL write roots +
+///   secret tail-denies). Reads are broad by platform necessity, so
+///   `ExecutionRootIsolation` stays `Unsupported`.
+/// - `SyscallRestriction` stays `Unsupported`: Seatbelt is not a syscall
+///   filter and macOS has no seccomp equivalent; nothing is emulated.
+/// - `ResourceLimits` are best-effort (`setrlimit` refusals are surfaced on
+///   the child stderr, never fatal): promoted to `Enforced` on a successful
+///   spawn, never to `Verified` (no remote-rlimit observation API).
+/// - Filesystem/network isolation likewise stay at `Enforced`: installed
+///   without error, effect proven behaviorally by adversarial tests; only
+///   host-observed process/tree state promotes to `Verified`.
+/// - Relay network modes (`allowlist`/`strict`/`ask`) have no macOS
+///   mechanism and fail preparation closed (`preparation_ok == false`,
+///   `NetworkIsolation` = `Failed`).
+///
+/// Off macOS every capability stays `Unsupported` (no portability hacks).
 #[derive(Debug, Clone, Default)]
 pub struct MacosBackend {
     report: Option<EnforcementReport>,
+    tree_diag: Option<String>,
 }
 
 impl MacosBackend {
     pub fn new() -> Self {
-        MacosBackend { report: None }
+        MacosBackend {
+            report: None,
+            tree_diag: None,
+        }
+    }
+
+    /// Upgrade every `Configured` record to `Enforced` in the stored report.
+    fn promote_configured_to_enforced(&mut self) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                if record.state == EnforcementState::Configured {
+                    record.state = EnforcementState::Enforced;
+                }
+            }
+        }
+    }
+
+    /// Fail every installed-or-planned record with `kind` and fail closed.
+    fn fail_installed(&mut self, kind: PreparationFailureKind) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                match record.state {
+                    EnforcementState::Configured
+                    | EnforcementState::Enforced
+                    | EnforcementState::Verified => {
+                        record.state = EnforcementState::Failed;
+                        record.failure = Some(kind);
+                    }
+                    _ => {}
+                }
+            }
+            report.preparation_ok = false;
+        }
     }
 }
 
@@ -1048,11 +1114,27 @@ impl SandboxBackend for MacosBackend {
     }
 
     fn name(&self) -> &'static str {
-        "macos (Stage 3A placeholder; no enforcement yet)"
+        "macos (seatbelt write+net-off+rlimit+pgroup; no seccomp, reads broad)"
     }
 
-    fn supports(&self, _capability: SecurityCapability) -> bool {
-        false
+    fn supports(&self, capability: SecurityCapability) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            matches!(
+                capability,
+                SecurityCapability::FilesystemIsolation
+                    | SecurityCapability::NetworkIsolation
+                    | SecurityCapability::ProcessIsolation
+                    | SecurityCapability::ProcessTreeContainment
+                    | SecurityCapability::ResourceLimits
+                    | SecurityCapability::HostEvidence
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = capability;
+            false
+        }
     }
 
     fn prepare(
@@ -1060,20 +1142,158 @@ impl SandboxBackend for MacosBackend {
         policy: &CanonicalPolicy,
         identity: &ExecutionIdentity,
     ) -> EnforcementReport {
-        let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
-            .into_iter()
-            .map(|c| (c, EnforcementState::Unsupported))
-            .collect();
-        let report = EnforcementReport::build(
-            BackendKind::Macos,
-            policy,
-            identity,
-            &states,
-            &BTreeMap::new(),
-            true,
-        );
-        self.report = Some(report.clone());
-        report
+        self.prepare_with_context(policy, identity, &PrepareContext::default())
+    }
+
+    fn prepare_with_context(
+        &mut self,
+        policy: &CanonicalPolicy,
+        identity: &ExecutionIdentity,
+        ctx: &PrepareContext,
+    ) -> EnforcementReport {
+        let _ = ctx;
+        self.tree_diag = None;
+        #[cfg(not(target_os = "macos"))]
+        {
+            let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+                .into_iter()
+                .map(|c| (c, EnforcementState::Unsupported))
+                .collect();
+            let report = EnforcementReport::build(
+                BackendKind::Macos,
+                policy,
+                identity,
+                &states,
+                &BTreeMap::new(),
+                true,
+            );
+            self.report = Some(report.clone());
+            report
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Only `--net=off` is isolatable without a relay backend; any
+            // other mode fails preparation closed (no spawn possible).
+            if policy.net_mode != "off" {
+                let mut states: BTreeMap<SecurityCapability, EnforcementState> =
+                    SecurityCapability::all()
+                        .into_iter()
+                        .map(|c| (c, EnforcementState::Unsupported))
+                        .collect();
+                states.insert(
+                    SecurityCapability::NetworkIsolation,
+                    EnforcementState::Failed,
+                );
+                let mut failures = BTreeMap::new();
+                failures.insert(
+                    SecurityCapability::NetworkIsolation,
+                    PreparationFailureKind::UnsupportedOnPlatform,
+                );
+                let report = EnforcementReport::build(
+                    BackendKind::Macos,
+                    policy,
+                    identity,
+                    &states,
+                    &failures,
+                    false,
+                );
+                self.report = Some(report.clone());
+                return report;
+            }
+            let mut states = BTreeMap::new();
+            let mut set = |cap: SecurityCapability, ok: bool| {
+                states.insert(
+                    cap,
+                    if ok {
+                        EnforcementState::Configured
+                    } else {
+                        EnforcementState::Unsupported
+                    },
+                );
+            };
+            set(SecurityCapability::FilesystemIsolation, true);
+            set(SecurityCapability::NetworkIsolation, true);
+            set(SecurityCapability::ProcessIsolation, true);
+            set(SecurityCapability::ProcessTreeContainment, true);
+            set(SecurityCapability::ResourceLimits, true);
+            // No syscall filter on macOS; reads are broad by platform
+            // necessity (write isolation is the enforced boundary).
+            set(SecurityCapability::SyscallRestriction, false);
+            set(SecurityCapability::ExecutionRootIsolation, false);
+            states.insert(SecurityCapability::HostEvidence, EnforcementState::Enforced);
+            let report = EnforcementReport::build(
+                BackendKind::Macos,
+                policy,
+                identity,
+                &states,
+                &BTreeMap::new(),
+                true,
+            );
+            self.report = Some(report.clone());
+            report
+        }
+    }
+
+    fn note_spawned(&mut self, _pid: u32) {
+        self.promote_configured_to_enforced();
+    }
+
+    fn note_host_verified(&mut self, verification: &HostVerification) {
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
+        // macOS has no `NoNewPrivs`/seccomp/remote-rlimit indicators: the
+        // only host-observable installation proof is the separate process
+        // group. Everything else stays `Enforced`, honestly unverified.
+        if verification.pgroup_separate {
+            if let Some(record) = report
+                .records
+                .iter_mut()
+                .find(|r| r.capability == SecurityCapability::ProcessIsolation)
+            {
+                if record.state == EnforcementState::Enforced {
+                    record.state = EnforcementState::Verified;
+                }
+            }
+        }
+    }
+
+    fn note_failed(&mut self, kind: PreparationFailureKind) {
+        self.fail_installed(kind);
+    }
+
+    fn note_tree_clean(&mut self, clean: bool) {
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
+        if let Some(record) = report
+            .records
+            .iter_mut()
+            .find(|r| r.capability == SecurityCapability::ProcessTreeContainment)
+        {
+            match record.state {
+                EnforcementState::Enforced if clean => {
+                    record.state = EnforcementState::Verified;
+                }
+                EnforcementState::Enforced | EnforcementState::Configured if !clean => {
+                    // Post-run sweep outcome, not a preparation failure:
+                    // only the tree capability fails. `preparation_ok`
+                    // stays untouched so one dirty tree cannot demote
+                    // unrelated enforced caps.
+                    record.state = EnforcementState::Failed;
+                    record.failure = Some(PreparationFailureKind::VerificationUnavailable);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn note_diagnostic(&mut self, diag: String) {
+        self.tree_diag = Some(diag);
+    }
+
+    fn diagnostic(&self) -> Option<String> {
+        self.tree_diag.clone()
     }
 
     fn enforcement(&self) -> Option<&EnforcementReport> {
@@ -1082,6 +1302,7 @@ impl SandboxBackend for MacosBackend {
 
     fn teardown(&mut self) {
         self.report = None;
+        self.tree_diag = None;
     }
 }
 
@@ -1144,7 +1365,8 @@ impl SandboxBackend for WindowsBackend {
 }
 
 /// Select a backend implementation by kind. Stage 3B wires real Linux
-/// enforcement behind this boundary; macOS/Windows stay placeholders.
+/// enforcement behind this boundary; Stage 3C-macOS wires real Seatbelt
+/// enforcement; Windows stays a placeholder.
 pub fn select_backend(kind: BackendKind) -> Box<dyn SandboxBackend> {
     match kind {
         BackendKind::Direct => Box::new(DirectBackend::new()),
