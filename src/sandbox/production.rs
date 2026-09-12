@@ -982,7 +982,7 @@ mod production_unit_tests {
     /// Bare `Policy::default()` denies `/dev/null` at stdio setup (child
     /// exit 124) wherever Landlock is active. Capability assertions below
     /// still target the injected backend's report, never the mechanics.
-    fn functional_test_policy(tmp: &PathBuf) -> Policy {
+    fn functional_test_policy(tmp: &std::path::Path) -> Policy {
         let mut policy = test_policy();
         for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
             let p = PathBuf::from(cand);
@@ -990,7 +990,7 @@ mod production_unit_tests {
                 policy.allow_read.push(p);
             }
         }
-        for cand in [tmp.clone(), PathBuf::from("/tmp")] {
+        for cand in [tmp.to_path_buf(), PathBuf::from("/tmp")] {
             if cand.exists() && !policy.allow_write.contains(&cand) {
                 policy.allow_write.push(cand);
             }
