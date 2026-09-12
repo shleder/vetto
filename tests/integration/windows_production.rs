@@ -19,13 +19,13 @@ use std::time::{Duration, Instant};
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
-use vetto::sandbox::production::{
-    freeze_production, prod_tier_mapping, PROD_REGISTRY, PROD_SCENARIO_ID,
-};
 #[cfg(target_os = "windows")]
 use vetto::sandbox::production::{
     execute_simple, execute_with_backend, ProdSpawnLog, UnpreparedProductionExecution,
     PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
+};
+use vetto::sandbox::production::{
+    freeze_production, prod_tier_mapping, PROD_REGISTRY, PROD_SCENARIO_ID,
 };
 #[cfg(target_os = "windows")]
 use vetto::sandbox::{Backend, StdioMode};
@@ -86,11 +86,7 @@ fn win_policy() -> Policy {
 
 #[cfg(target_os = "windows")]
 fn win_exec_root(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "vetto-win-prod-{}-{}",
-        tag,
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("vetto-win-prod-{}-{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).expect("create windows prod exec root");
     dir
 }
@@ -123,11 +119,7 @@ fn test_win_prod_real_001_child_runs_through_boundary() {
     let mut log = ProdSpawnLog::new();
     let out = match execute_simple(
         &win_policy(),
-        vec![
-            "cmd".to_string(),
-            "/c".to_string(),
-            "exit 0".to_string(),
-        ],
+        vec!["cmd".to_string(), "/c".to_string(), "exit 0".to_string()],
         root,
         HashMap::new(),
         NetMode::Off,
@@ -179,11 +171,7 @@ fn test_win_prod_ownership_001_preparation_owns_inputs() {
         }
     };
     let root = win_exec_root("ownership");
-    let argv = vec![
-        "cmd".to_string(),
-        "/c".to_string(),
-        "exit 0".to_string(),
-    ];
+    let argv = vec!["cmd".to_string(), "/c".to_string(), "exit 0".to_string()];
     let unprepared = UnpreparedProductionExecution::new(
         mechanics,
         win_policy(),
@@ -243,11 +231,10 @@ fn test_win_prod_fail_closed_001_no_spawn() {
             policy: &CanonicalPolicy,
             identity: &ExecutionIdentity,
         ) -> EnforcementReport {
-            let states: BTreeMap<SecurityCapability, EnforcementState> =
-                SecurityCapability::all()
-                    .into_iter()
-                    .map(|c| (c, EnforcementState::Failed))
-                    .collect();
+            let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+                .into_iter()
+                .map(|c| (c, EnforcementState::Failed))
+                .collect();
             let failures: BTreeMap<SecurityCapability, PreparationFailureKind> =
                 SecurityCapability::all()
                     .into_iter()
@@ -395,7 +382,10 @@ fn test_win_prod_timeout_001_deadline_kills_tree() {
         }
     };
     let elapsed = started.elapsed();
-    assert!(out.timed_out, "the 45s sleeper must die on the 10s deadline");
+    assert!(
+        out.timed_out,
+        "the 45s sleeper must die on the 10s deadline"
+    );
     assert!(
         elapsed < Duration::from_secs(40),
         "deadline kill must be prompt (took {elapsed:?})"
@@ -583,14 +573,12 @@ fn test_win_prod_tier_001_mapping_honest() {
         "relay net is not an isolation claim"
     );
     let sec = prod_tier_mapping(Some(vetto::policy::Tier::Seccomp), &NetMode::Off);
-    assert!(
-        !sec.mandatory
-            .contains(&SecurityCapability::FilesystemIsolation)
-    );
-    assert!(
-        !sec.mandatory
-            .contains(&SecurityCapability::ExecutionRootIsolation)
-    );
+    assert!(!sec
+        .mandatory
+        .contains(&SecurityCapability::FilesystemIsolation));
+    assert!(!sec
+        .mandatory
+        .contains(&SecurityCapability::ExecutionRootIsolation));
 }
 
 /// TEST-WIN-PROD-CEILING-001: an unimplemented capability can never PASS,

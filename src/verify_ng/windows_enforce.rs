@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
-use super::sandbox_backend::{EnforcementState, PreparationFailureKind, SecurityCapability};
 #[cfg(target_os = "windows")]
 use super::sandbox_backend::HostVerification;
+use super::sandbox_backend::{EnforcementState, PreparationFailureKind, SecurityCapability};
 
 /// Host-probed facts that drive the Windows capability mapping.
 ///
@@ -116,11 +116,10 @@ pub fn states_for_facts(
     bool,
 ) {
     if !facts.critical_ready() {
-        let states: BTreeMap<SecurityCapability, EnforcementState> =
-            SecurityCapability::all()
-                .into_iter()
-                .map(|c| (c, EnforcementState::Failed))
-                .collect();
+        let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+            .into_iter()
+            .map(|c| (c, EnforcementState::Failed))
+            .collect();
         let failures: BTreeMap<SecurityCapability, PreparationFailureKind> =
             SecurityCapability::all()
                 .into_iter()
@@ -235,8 +234,7 @@ extern "system" {
 #[allow(non_snake_case)]
 #[link(name = "advapi32")]
 extern "system" {
-    fn OpenProcessToken(process: RawHandle, desired_access: Dword, token: *mut RawHandle)
-    -> Bool;
+    fn OpenProcessToken(process: RawHandle, desired_access: Dword, token: *mut RawHandle) -> Bool;
     fn GetTokenInformation(
         token: RawHandle,
         information_class: Dword,
@@ -492,10 +490,7 @@ mod windows_enforce_tests {
         assert!(!ok, "no probe evidence must not prepare");
         for cap in SecurityCapability::all() {
             assert_eq!(states[&cap], EnforcementState::Failed);
-            assert_eq!(
-                failures[&cap],
-                PreparationFailureKind::PlatformUnavailable
-            );
+            assert_eq!(failures[&cap], PreparationFailureKind::PlatformUnavailable);
         }
     }
 

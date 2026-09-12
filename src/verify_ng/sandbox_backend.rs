@@ -1153,8 +1153,7 @@ impl WindowsBackend {
         identity: &ExecutionIdentity,
         facts: &super::windows_enforce::ProbeFacts,
     ) -> EnforcementReport {
-        let (states, failures, preparation_ok) =
-            super::windows_enforce::states_for_facts(facts);
+        let (states, failures, preparation_ok) = super::windows_enforce::states_for_facts(facts);
         let report = EnforcementReport::build(
             BackendKind::Windows,
             policy,
@@ -1230,11 +1229,10 @@ impl SandboxBackend for WindowsBackend {
         #[cfg(not(target_os = "windows"))]
         {
             // Legacy placeholder behavior, unchanged: no enforcement claimed.
-            let states: BTreeMap<SecurityCapability, EnforcementState> =
-                SecurityCapability::all()
-                    .into_iter()
-                    .map(|c| (c, EnforcementState::Unsupported))
-                    .collect();
+            let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+                .into_iter()
+                .map(|c| (c, EnforcementState::Unsupported))
+                .collect();
             let report = EnforcementReport::build(
                 BackendKind::Windows,
                 policy,
