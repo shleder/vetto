@@ -111,6 +111,15 @@ fn prod_test_policy(root: &std::path::Path) -> Policy {
         file_size_bytes: Some(64 * 1024 * 1024),
         io_rate: None,
     };
+    // Test scripts call tools by bare name (`grep`, `awk`, `sleep`); the
+    // child environment is allowlist-filtered, so pass PATH/HOME through
+    // (production loader profiles grant these; the bare default grants
+    // nothing and every external tool dies with 127/10).
+    for var in ["PATH", "HOME"] {
+        if !policy.environment.pass_through.iter().any(|p| p == var) {
+            policy.environment.pass_through.push(var.to_string());
+        }
+    }
     policy
 }
 
