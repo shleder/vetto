@@ -63,4 +63,5 @@ mod verify_ng_host_evidence;
 mod verify_ng_linux_enforce;
 mod verify_ng_traps;
 mod windows_enforcement;
+mod windows_production;
 mod windows_sandbox;

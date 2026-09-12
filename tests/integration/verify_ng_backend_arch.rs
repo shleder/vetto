@@ -2,10 +2,10 @@
 //!
 //! These tests assert semantics, not type existence: unsupported backends
 //! cannot PASS, preparation failure cannot spawn, identity stays bound, and
-//! the oracle remains pure. Stage 3A is architecture only — Linux enforces
-//! on Linux (Stage 3B), macOS enforces on macOS (Stage 3C-macOS: Seatbelt
-//! write+net-off, no syscall filter, reads broad), Windows stays a
-//! placeholder reporting `Unsupported` for containment.
+//! the oracle remains pure. Stage 3A is architecture only; Stage 3B wires
+//! real Linux enforcement, Stage 3C wires real macOS (Seatbelt write +
+//! net-off, no syscall filter, reads broad) and real Windows (Job Object +
+//! AppContainer) enforcement. Off their own OS each reports `Unsupported`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -67,10 +67,10 @@ fn test_backend_capability_001_reports_explicitly() {
         }
     }
     // Stage 3B: Linux really enforces (landlock+seccomp+rlimit+tree) on
-    // Linux; Stage 3C-macOS really enforces (seatbelt write+net-off,
-    // rlimit, pgroup) on macOS; Windows stays a placeholder with no
-    // support anywhere. No syscall filter and no exec-root READ isolation
-    // exist on macOS (SBPL reads are broad): both stay unsupported there.
+    // Linux; Stage 3C: macOS really enforces (seatbelt write+net-off,
+    // rlimit, pgroup) on macOS, Windows really enforces its probed subset
+    // on Windows. No syscall filter and no exec-root READ isolation exist
+    // on macOS/Windows: both stay unsupported there.
     #[cfg(target_os = "linux")]
     for cap in SecurityCapability::all() {
         assert!(
@@ -97,7 +97,7 @@ fn test_backend_capability_001_reports_explicitly() {
         ] {
             assert!(
                 matrix.supports(BackendKind::Macos, cap),
-                "macOS {cap:?} must be supported in Stage 3C-macOS"
+                "macOS {cap:?} must be supported in Stage 3C"
             );
         }
         for cap in [
@@ -117,11 +117,35 @@ fn test_backend_capability_001_reports_explicitly() {
             "macOS {cap:?} must be unsupported off macOS"
         );
     }
-    for kind in [BackendKind::Windows] {
-        for cap in SecurityCapability::all() {
+    #[cfg(not(target_os = "windows"))]
+    for cap in SecurityCapability::all() {
+        assert!(
+            !matrix.supports(BackendKind::Windows, cap),
+            "Windows {cap:?} must be unsupported off Windows"
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for cap in [
+            SecurityCapability::FilesystemIsolation,
+            SecurityCapability::NetworkIsolation,
+            SecurityCapability::ProcessIsolation,
+            SecurityCapability::ProcessTreeContainment,
+            SecurityCapability::ResourceLimits,
+            SecurityCapability::HostEvidence,
+        ] {
             assert!(
-                !matrix.supports(kind, cap),
-                "{kind:?} {cap:?} must be unsupported"
+                matrix.supports(BackendKind::Windows, cap),
+                "Windows {cap:?} must be supported in Stage 3C"
+            );
+        }
+        for cap in [
+            SecurityCapability::SyscallRestriction,
+            SecurityCapability::ExecutionRootIsolation,
+        ] {
+            assert!(
+                !matrix.supports(BackendKind::Windows, cap),
+                "Windows {cap:?} has no mechanism and must stay unsupported"
             );
         }
     }
@@ -325,9 +349,12 @@ fn test_backend_no_fake_enforcement_001() {
     );
     // Stage 3B: Linux `prepare` reports at most `Configured` for
     // confinement (`HostEvidence` is `Enforced` at prepare, like Direct);
-    // Stage 3C-macOS follows the same state machine on macOS (and reports
-    // all-`Unsupported` off macOS); Windows stays fully `Unsupported`.
-    for kind in [BackendKind::Windows] {
+    // Stage 3C: macOS follows the same state machine on macOS (and reports
+    // all-`Unsupported` off macOS); Windows reports the probed subset at
+    // `Configured` on Windows and stays fully `Unsupported` elsewhere.
+    // Cross-platform runners: each backend fully `Unsupported` off its OS.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    for kind in [BackendKind::Macos, BackendKind::Windows] {
         let mut backend = select_backend(kind);
         let report = backend.prepare(&policy, &identity);
         assert!(
@@ -353,6 +380,25 @@ fn test_backend_no_fake_enforcement_001() {
             assert_ne!(report.state(cap), EnforcementState::Enforced);
             assert_ne!(report.state(cap), EnforcementState::Verified);
         }
+        assert_eq!(
+            report.state(SecurityCapability::FilesystemIsolation),
+            EnforcementState::Unsupported
+        );
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut backend = select_backend(BackendKind::Windows);
+        let report = backend.prepare(&policy, &identity);
+        assert!(report.enforced().is_empty(), "Windows must enforce nothing");
+        for cap in SecurityCapability::all() {
+            assert!(!report.is_enforced(cap));
+            assert_ne!(report.state(cap), EnforcementState::Enforced);
+            assert_ne!(report.state(cap), EnforcementState::Verified);
+        }
+        assert_eq!(
+            report.state(SecurityCapability::FilesystemIsolation),
+            EnforcementState::Unsupported
+        );
     }
     #[cfg(target_os = "macos")]
     {
@@ -360,7 +406,20 @@ fn test_backend_no_fake_enforcement_001() {
         let report = backend.prepare(&policy, &identity);
         // `prepare` installs nothing: only `HostEvidence` (observation by
         // construction) is `Enforced`; confinement is at most `Configured`.
-        assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
+            assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
+        for cap in SecurityCapability::all() {
+            if cap == SecurityCapability::HostEvidence {
+                continue;
+            }
+            assert!(!report.is_enforced(cap));
+            assert_ne!(report.state(cap), EnforcementState::Enforced);
+            assert_ne!(report.state(cap), EnforcementState::Verified);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut backend = select_backend(BackendKind::Windows);
+        let report = backend.prepare(&policy, &identity);
         for cap in SecurityCapability::all() {
             if cap == SecurityCapability::HostEvidence {
                 continue;

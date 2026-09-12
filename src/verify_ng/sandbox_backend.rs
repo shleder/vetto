@@ -28,12 +28,12 @@
 //! ```text
 //! Stage 3A was architecture only.
 //! Stage 3B implements real Linux enforcement (landlock + seccomp + rlimit
-//!   + process-group/tree sweep); Windows remains a placeholder.
-//! Stage 3C-macOS implements real macOS enforcement (Seatbelt SBPL write +
-//!   net-off isolation, setrlimit ceilings, process-group containment,
-//!   kqueue parent-death watchdog); syscall filtering and exec-root READ
-//!   isolation stay Unsupported (no seccomp equivalent; SBPL reads are
-//!   broad by platform necessity).
+//!   + process-group/tree sweep); Stage 3C implements real macOS enforcement
+//!   (Seatbelt SBPL write + net-off isolation, setrlimit ceilings,
+//!   process-group containment) and real Windows enforcement (Job Object
+//!   tree containment + AppContainer boundary); syscall filtering and
+//!   exec-root READ isolation stay Unsupported on macOS/Windows (no seccomp
+//!   equivalent; reads broad by platform necessity).
 //! ```
 //!
 //! Backends report `Unsupported` for every capability they cannot actually
@@ -179,8 +179,7 @@ impl PreparationFailureKind {
 /// Which backend implementation a report or matrix entry refers to.
 /// `Direct` is the pre-existing direct-exec plumbing (explicitly
 /// non-contained); `Linux` enforces on Linux (Stage 3B), `Macos` enforces
-/// on macOS (Stage 3C-macOS), `Windows` stays a Stage 3A placeholder whose
-/// containment is `Unsupported`.
+/// on macOS (Stage 3C), `Windows` enforces on Windows (Stage 3C).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendKind {
@@ -477,6 +476,11 @@ pub struct ChildEnforcementPlan {
 /// Host-observed verification of a live confined child, read from `/proc`
 /// without trusting any child output. Any flag the host could not observe
 /// stays false: the capability remains `Enforced`, never `Verified`.
+/// The `win_*` fields carry the Windows counterpart observations (retained
+/// parent handles via `windows_enforce`; NEEDS-COORDINATOR: additive,
+/// always false off Windows). [`HostVerification::all_observed`] covers the
+/// Linux fields only; the Windows backend applies per-capability
+/// transitions instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostVerification {
     pub seccomp_filter: bool,
@@ -487,6 +491,16 @@ pub struct HostVerification {
     pub rlimit_cpu_ok: bool,
     pub rlimit_fsize_ok: bool,
     pub subreaper_ok: bool,
+    /// `IsProcessInJob` confirmed the child in its Job Object (Windows).
+    pub win_in_job: bool,
+    /// The job carries `KILL_ON_JOB_CLOSE` (Windows, read back).
+    pub win_kill_on_close: bool,
+    /// The child token integrity RID is low or below (Windows, read back).
+    pub win_low_integrity: bool,
+    /// At least one job ceiling (memory or active-process) observed
+    /// (Windows, read back; presence only, values attested at the
+    /// mechanics layer).
+    pub win_job_ceiling: bool,
 }
 
 impl HostVerification {
@@ -500,6 +514,10 @@ impl HostVerification {
             rlimit_cpu_ok: false,
             rlimit_fsize_ok: false,
             subreaper_ok: false,
+            win_in_job: false,
+            win_kill_on_close: false,
+            win_low_integrity: false,
+            win_job_ceiling: false,
         }
     }
 
@@ -1307,18 +1325,81 @@ impl SandboxBackend for MacosBackend {
     }
 }
 
-/// Stage 3A Windows placeholder. No Job Object, AppContainer, network, or
-/// filesystem containment is claimed; every capability stays `Unsupported`.
+/// Windows backend: real Job Object + AppContainer enforcement (Stage 3C).
+/// No filesystem, network-beyond-off, syscall, or exec-root containment
+/// beyond the compiled SandboxSpec is claimed; every such capability stays
+/// `Configured` at best and `Unsupported` where no mechanism exists.
 /// Environment variables, HOME changes, working directories, and
 /// application conventions are never represented as containment.
+///
+/// State machine per run (NEEDS-COORDINATOR: intentional deviation from the
+/// `pre_exec` promotion rule, which has no Windows counterpart):
+/// `prepare` probes and reports at most `Configured` (`HostEvidence` is
+/// `Enforced` at prepare like Linux/Direct); `note_spawned` records the pid
+/// WITHOUT promoting (the install happens inside the mechanics spawn, so a
+/// bare spawn claim proves nothing); only `note_host_verified` with
+/// positive host-observed evidence promotes `Configured` to `Enforced`
+/// (and process to `Verified` on a low-integrity read-back).
+/// `ResourceLimits` maxes out at `Enforced`: ceiling values are attested at
+/// the mechanics layer, whose read-back here covers presence only. Off
+/// Windows every capability stays `Unsupported` (legacy placeholder
+/// behavior, unchanged).
 #[derive(Debug, Clone, Default)]
 pub struct WindowsBackend {
     report: Option<EnforcementReport>,
+    spawned_pid: Option<u32>,
+    diagnostic: Option<String>,
 }
 
 impl WindowsBackend {
     pub fn new() -> Self {
-        WindowsBackend { report: None }
+        WindowsBackend {
+            report: None,
+            spawned_pid: None,
+            diagnostic: None,
+        }
+    }
+
+    /// Prepare against explicit probe facts. Thin wrapper over the pure
+    /// [`super::windows_enforce::states_for_facts`] mapping so the state
+    /// table stays unit-testable without a Windows host.
+    fn prepare_with_facts(
+        &mut self,
+        policy: &CanonicalPolicy,
+        identity: &ExecutionIdentity,
+        facts: &super::windows_enforce::ProbeFacts,
+    ) -> EnforcementReport {
+        let (states, failures, preparation_ok) = super::windows_enforce::states_for_facts(facts);
+        let report = EnforcementReport::build(
+            BackendKind::Windows,
+            policy,
+            identity,
+            &states,
+            &failures,
+            preparation_ok,
+        );
+        self.spawned_pid = None;
+        self.diagnostic = Some(format!(
+            "win prepare ok={preparation_ok} as-user={} exec-root=unsupported syscalls=unsupported",
+            facts.experimental_as_user
+        ));
+        self.report = Some(report.clone());
+        report
+    }
+
+    /// Promote a `Configured` record to `Enforced` in the stored report.
+    fn promote_configured(&mut self, capability: SecurityCapability) {
+        if let Some(report) = self.report.as_mut() {
+            if let Some(record) = report
+                .records
+                .iter_mut()
+                .find(|r| r.capability == capability)
+            {
+                if record.state == EnforcementState::Configured {
+                    record.state = EnforcementState::Enforced;
+                }
+            }
+        }
     }
 }
 
@@ -1328,11 +1409,27 @@ impl SandboxBackend for WindowsBackend {
     }
 
     fn name(&self) -> &'static str {
-        "windows (Stage 3A placeholder; no enforcement yet)"
+        "windows (job kill-on-close + appcontainer process sandbox; no syscall filter)"
     }
 
-    fn supports(&self, _capability: SecurityCapability) -> bool {
-        false
+    fn supports(&self, capability: SecurityCapability) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            matches!(
+                capability,
+                SecurityCapability::FilesystemIsolation
+                    | SecurityCapability::NetworkIsolation
+                    | SecurityCapability::ProcessIsolation
+                    | SecurityCapability::ProcessTreeContainment
+                    | SecurityCapability::ResourceLimits
+                    | SecurityCapability::HostEvidence
+            )
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = capability;
+            false
+        }
     }
 
     fn prepare(
@@ -1340,34 +1437,139 @@ impl SandboxBackend for WindowsBackend {
         policy: &CanonicalPolicy,
         identity: &ExecutionIdentity,
     ) -> EnforcementReport {
-        let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
-            .into_iter()
-            .map(|c| (c, EnforcementState::Unsupported))
-            .collect();
-        let report = EnforcementReport::build(
-            BackendKind::Windows,
-            policy,
-            identity,
-            &states,
-            &BTreeMap::new(),
-            true,
-        );
-        self.report = Some(report.clone());
-        report
+        #[cfg(target_os = "windows")]
+        {
+            let facts = super::windows_enforce::ProbeFacts::current(policy.net_mode == "off");
+            self.prepare_with_facts(policy, identity, &facts)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Legacy placeholder behavior, unchanged: no enforcement claimed.
+            let states: BTreeMap<SecurityCapability, EnforcementState> = SecurityCapability::all()
+                .into_iter()
+                .map(|c| (c, EnforcementState::Unsupported))
+                .collect();
+            let report = EnforcementReport::build(
+                BackendKind::Windows,
+                policy,
+                identity,
+                &states,
+                &BTreeMap::new(),
+                true,
+            );
+            self.report = Some(report.clone());
+            report
+        }
     }
 
     fn enforcement(&self) -> Option<&EnforcementReport> {
         self.report.as_ref()
     }
 
+    fn note_spawned(&mut self, pid: u32) {
+        // Records the pid only. There is no `pre_exec` plan on Windows, so
+        // spawn success alone cannot promote: the harness runner spawns
+        // unenforced children through this same trait method, and promoting
+        // here would let an uninstalled mechanism read as `Enforced`.
+        // Promotion waits for host evidence in `note_host_verified`.
+        self.spawned_pid = Some(pid);
+    }
+
+    fn note_host_verified(&mut self, verification: &HostVerification) {
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
+        if !report.preparation_ok {
+            return;
+        }
+        // The production spawn path installs the compiled SandboxSpec and
+        // assigns the Job Object atomically (any failure terminates the
+        // child and returns `Err`), so an `IsProcessInJob`-observed child
+        // proves this run went through the installing path.
+        if verification.win_in_job {
+            self.promote_configured(SecurityCapability::FilesystemIsolation);
+            self.promote_configured(SecurityCapability::NetworkIsolation);
+            self.promote_configured(SecurityCapability::ProcessIsolation);
+            if verification.win_kill_on_close {
+                self.promote_configured(SecurityCapability::ProcessTreeContainment);
+            }
+        }
+        if verification.win_job_ceiling {
+            self.promote_configured(SecurityCapability::ResourceLimits);
+        }
+        if verification.win_low_integrity {
+            if let Some(report) = self.report.as_mut() {
+                if let Some(record) = report.records.iter_mut().find(|r| {
+                    r.capability == SecurityCapability::ProcessIsolation
+                        && r.state == EnforcementState::Enforced
+                }) {
+                    record.state = EnforcementState::Verified;
+                }
+            }
+        }
+    }
+
+    fn note_failed(&mut self, kind: PreparationFailureKind) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                match record.state {
+                    EnforcementState::Configured
+                    | EnforcementState::Enforced
+                    | EnforcementState::Verified => {
+                        record.state = EnforcementState::Failed;
+                        record.failure = Some(kind);
+                    }
+                    _ => {}
+                }
+            }
+            report.preparation_ok = false;
+        }
+    }
+
+    fn note_tree_clean(&mut self, clean: bool) {
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
+        if let Some(record) = report
+            .records
+            .iter_mut()
+            .find(|r| r.capability == SecurityCapability::ProcessTreeContainment)
+        {
+            match record.state {
+                EnforcementState::Enforced if clean => {
+                    record.state = EnforcementState::Verified;
+                }
+                EnforcementState::Enforced | EnforcementState::Configured if !clean => {
+                    record.state = EnforcementState::Failed;
+                    record.failure = Some(PreparationFailureKind::VerificationUnavailable);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn note_diagnostic(&mut self, diag: String) {
+        let diag = match &self.diagnostic {
+            Some(st) => format!("{st} {diag}"),
+            None => diag,
+        };
+        self.diagnostic = Some(diag);
+    }
+
+    fn diagnostic(&self) -> Option<String> {
+        self.diagnostic.clone()
+    }
+
     fn teardown(&mut self) {
         self.report = None;
+        self.spawned_pid = None;
+        self.diagnostic = None;
     }
 }
 
 /// Select a backend implementation by kind. Stage 3B wires real Linux
-/// enforcement behind this boundary; Stage 3C-macOS wires real Seatbelt
-/// enforcement; Windows stays a placeholder.
+/// enforcement behind this boundary; Stage 3C wires real macOS (Seatbelt)
+/// and real Windows (Job Object + AppContainer) enforcement.
 pub fn select_backend(kind: BackendKind) -> Box<dyn SandboxBackend> {
     match kind {
         BackendKind::Direct => Box::new(DirectBackend::new()),
@@ -1723,14 +1925,20 @@ mod backend_arch_tests {
     /// TEST-BACKEND-NO-FAKE-ENFORCEMENT-001: unsupported is never enforced.
     /// Stage 3B: `prepare` reports at most `Configured` (never `Enforced`
     /// or `Verified` — nothing is installed until a backend-controlled
-    /// spawn); the Windows placeholder stays fully `Unsupported`;
-    /// Stage 3C-macOS reports the Seatbelt plan at `Configured` on macOS
-    /// (`HostEvidence` is `Enforced` by construction, like Linux/Direct)
-    /// and stays fully `Unsupported` elsewhere.
+    /// spawn). Stage 3C: the macOS backend reports the Seatbelt plan at
+    /// `Configured` on macOS (`HostEvidence` is `Enforced` by construction,
+    /// like Linux/Direct) and stays fully `Unsupported` elsewhere; the
+    /// Windows backend reports at most `Configured` off Windows; on
+    /// Windows it reports the probed subset at `Configured` (`HostEvidence`
+    /// `Enforced` at prepare like Linux/Direct) and promotes only on host
+    /// evidence — `note_spawned` alone never enforces.
     #[test]
     fn test_backend_no_fake_enforcement_001() {
         let (policy, identity) = test_policy_and_identity();
-        for kind in [BackendKind::Windows] {
+        // Cross-platform placeholders: Macos fully Unsupported off macOS,
+        // Windows fully Unsupported off Windows.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        for kind in [BackendKind::Macos, BackendKind::Windows] {
             let mut backend = select_backend(kind);
             let report = backend.prepare(&policy, &identity);
             for cap in SecurityCapability::all() {
@@ -1764,6 +1972,23 @@ mod backend_arch_tests {
                 EnforcementState::Unsupported
             );
         }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut backend = select_backend(BackendKind::Windows);
+            let report = backend.prepare(&policy, &identity);
+            for cap in SecurityCapability::all() {
+                assert!(
+                    !report.is_enforced(cap),
+                    "Windows {cap:?} must not be enforced off Windows"
+                );
+                assert_ne!(report.state(cap), EnforcementState::Enforced);
+                assert_ne!(report.state(cap), EnforcementState::Verified);
+            }
+            assert_eq!(
+                report.state(SecurityCapability::FilesystemIsolation),
+                EnforcementState::Unsupported
+            );
+        }
         #[cfg(target_os = "macos")]
         {
             let mut backend = select_backend(BackendKind::Macos);
@@ -1771,7 +1996,6 @@ mod backend_arch_tests {
             // `prepare` installs nothing: only `HostEvidence` (observation
             // by construction) is `Enforced`; confinement is at most
             // `Configured`.
-            assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
             for cap in SecurityCapability::all() {
                 if cap == SecurityCapability::HostEvidence {
                     continue;
@@ -1780,6 +2004,39 @@ mod backend_arch_tests {
                 assert_ne!(report.state(cap), EnforcementState::Enforced);
                 assert_ne!(report.state(cap), EnforcementState::Verified);
             }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows `prepare` binds the probed subset at `Configured`
+            // (never `Enforced`/`Verified` before host evidence), and a bare
+            // spawn claim without host evidence still enforces nothing.
+            let mut backend = select_backend(BackendKind::Windows);
+            let report = backend.prepare(&policy, &identity);
+            for cap in SecurityCapability::all() {
+                if cap == SecurityCapability::HostEvidence {
+                    continue;
+                }
+                assert!(
+                    !report.is_enforced(cap),
+                    "Windows {cap:?} must not be enforced before host evidence"
+                );
+                assert_ne!(report.state(cap), EnforcementState::Enforced);
+                assert_ne!(report.state(cap), EnforcementState::Verified);
+            }
+            backend.note_spawned(1234);
+            let report = backend
+                .enforcement()
+                .expect("prepared report survives a spawn note");
+            for cap in SecurityCapability::all() {
+                if cap == SecurityCapability::HostEvidence {
+                    continue;
+                }
+                assert!(
+                    !report.is_enforced(cap),
+                    "Windows {cap:?} must not enforce on spawn note alone"
+                );
+            }
+        }
         }
         // Linux `prepare` probes and plans but installs no confinement:
         // containment states are `Configured` or `Unsupported`, never
