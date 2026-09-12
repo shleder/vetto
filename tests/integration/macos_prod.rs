@@ -73,21 +73,6 @@ fn canonical_policy(net_mode: &str) -> (CanonicalPolicy, ExecutionIdentity) {
     (policy, identity)
 }
 
-#[cfg(target_os = "macos")]
-fn require_tool(name: &str) -> String {
-    for candidate in [
-        format!("/bin/{name}"),
-        format!("/usr/bin/{name}"),
-        format!("/usr/local/bin/{name}"),
-        format!("/opt/homebrew/bin/{name}"),
-    ] {
-        if PathBuf::from(&candidate).is_file() {
-            return candidate;
-        }
-    }
-    panic!("CI must provide tool `{name}` for macOS prod tests");
-}
-
 // ---------------------------------------------------------------------------
 // Cross-platform: backend honesty + matrix (real assertions on both sides)
 // ---------------------------------------------------------------------------
@@ -510,23 +495,24 @@ fn test_macos_prod_fs_deny_001() {
 }
 
 /// TEST-MACOS-PROD-NET-DENY-001: TCP connect fails under `--net=off`.
+/// Bash probe (`/bin/bash` + `/dev/tcp`, redirecting its own connect-error
+/// into the allow-write exec root): `/usr/bin/python3` on macOS is an Xcode
+/// shim that needs an xcrun cache write at `$TMPDIR/xcrun_db-*` which no
+/// allow-write root can cover (TMPDIR is runner-owned, forbid-listing it
+/// would be a lie), so it can never start inside a Seatbelt child and dies
+/// before any TCP assert runs. Bash is the platform shell (#!/bin/bash is
+/// the repo script shebang) and inherits no such cache need; the assert
+/// below is on the host-observed child exit code plus the enforced report,
+/// never on interpreter stdout.
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_net_deny_001() {
-    let python = require_tool("python3");
     let root = scratch("net-deny");
-    let staged = root.join("connect.py");
+    let staged = root.join("connect.sh");
     std::fs::write(
         &staged,
-        "import socket, os\n\
-         port = int(os.environ[\"VETTO_PROD_TEST_PORT\"])\n\
-         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
-         s.settimeout(3)\n\
-         try:\n\
-         \ts.connect((\"127.0.0.1\", port))\n\
-         except OSError:\n\
-         \tos._exit(0)\n\
-         os._exit(10)\n",
+        "port=\"$VETTO_PROD_TEST_PORT\"\n\
+         if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>\"$VETTO_PROD_TEST_ROOT/e\"; then exit 10; else exit 0; fi\n",
     )
     .expect("stage net probe");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -536,10 +522,20 @@ fn test_macos_prod_net_deny_001() {
     });
     let mut extra = HashMap::new();
     extra.insert("VETTO_PROD_TEST_PORT".to_string(), port.to_string());
+    extra.insert(
+        "VETTO_PROD_TEST_ROOT".to_string(),
+        root.display().to_string(),
+    );
+    // The probe redirects child stderr into the exec root: allow it.
+    // Bash (not /bin/sh): /dev/tcp is a bashism — POSIX sh parses the
+    // redirect as a file path and would exit 0 without ever touching the
+    // network, a vacuous pass. Bash is the honest primitive here.
+    let mut policy = Policy::default();
+    policy.allow_write = vec![root.clone()];
     let mut log = ProdSpawnLog::new();
     let out = execute_simple(
-        &Policy::default(),
-        vec![python, staged.display().to_string()],
+        &policy,
+        vec!["/bin/bash".to_string(), staged.display().to_string()],
         root.clone(),
         extra,
         NetMode::Off,
@@ -712,7 +708,10 @@ fn test_macos_prod_drift_001() {
         root.display().to_string(),
     );
     extra.insert("VETTO_PROD_TEST_MARKER".to_string(), "frozen".to_string());
-    let policy = Policy::default();
+    // The drift child must be able to write its observation file: allow
+    // the exec root for writes (same pattern as the fs-deny test).
+    let mut policy = Policy::default();
+    policy.allow_write = vec![root.clone()];
     let backend = Backend::detect(NetMode::Off, false).expect("detect macOS mechanics");
     let unprepared = UnpreparedProductionExecution::new(
         backend,

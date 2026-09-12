@@ -404,6 +404,15 @@ impl UnpreparedProductionExecution {
         if self.argv.is_empty() {
             anyhow::bail!("no production command provided");
         }
+        #[cfg(target_os = "macos")]
+        if self.net.uses_relay() {
+            anyhow::bail!(
+                "production backend preparation failed (fail-closed, no agent execution): \
+                 --net={} requires the Linux network-namespace relay and is unavailable on macOS; \
+                 refusing silently-weaker enforcement (fail-closed); run with `--net=off` on macOS",
+                self.net.label()
+            );
+        }
         #[cfg(target_os = "linux")]
         if self.net.uses_relay()
             && matches!(
