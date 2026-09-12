@@ -1723,11 +1723,14 @@ mod backend_arch_tests {
     /// TEST-BACKEND-NO-FAKE-ENFORCEMENT-001: unsupported is never enforced.
     /// Stage 3B: `prepare` reports at most `Configured` (never `Enforced`
     /// or `Verified` — nothing is installed until a backend-controlled
-    /// spawn); macOS/Windows placeholders stay fully `Unsupported`.
+    /// spawn); the Windows placeholder stays fully `Unsupported`;
+    /// Stage 3C-macOS reports the Seatbelt plan at `Configured` on macOS
+    /// (`HostEvidence` is `Enforced` by construction, like Linux/Direct)
+    /// and stays fully `Unsupported` elsewhere.
     #[test]
     fn test_backend_no_fake_enforcement_001() {
         let (policy, identity) = test_policy_and_identity();
-        for kind in [BackendKind::Macos, BackendKind::Windows] {
+        for kind in [BackendKind::Windows] {
             let mut backend = select_backend(kind);
             let report = backend.prepare(&policy, &identity);
             for cap in SecurityCapability::all() {
@@ -1742,6 +1745,41 @@ mod backend_arch_tests {
                 report.state(SecurityCapability::FilesystemIsolation),
                 EnforcementState::Unsupported
             );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut backend = select_backend(BackendKind::Macos);
+            let report = backend.prepare(&policy, &identity);
+            assert!(
+                report.enforced().is_empty(),
+                "macOS must enforce nothing off macOS"
+            );
+            for cap in SecurityCapability::all() {
+                assert!(!report.is_enforced(cap));
+                assert_ne!(report.state(cap), EnforcementState::Enforced);
+                assert_ne!(report.state(cap), EnforcementState::Verified);
+            }
+            assert_eq!(
+                report.state(SecurityCapability::FilesystemIsolation),
+                EnforcementState::Unsupported
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let mut backend = select_backend(BackendKind::Macos);
+            let report = backend.prepare(&policy, &identity);
+            // `prepare` installs nothing: only `HostEvidence` (observation
+            // by construction) is `Enforced`; confinement is at most
+            // `Configured`.
+            assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
+            for cap in SecurityCapability::all() {
+                if cap == SecurityCapability::HostEvidence {
+                    continue;
+                }
+                assert!(!report.is_enforced(cap));
+                assert_ne!(report.state(cap), EnforcementState::Enforced);
+                assert_ne!(report.state(cap), EnforcementState::Verified);
+            }
         }
         // Linux `prepare` probes and plans but installs no confinement:
         // containment states are `Configured` or `Unsupported`, never
