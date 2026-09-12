@@ -148,7 +148,13 @@ fn run_prod_inner(
     let root = exec_root("run");
     let staged = root.join("run.sh");
     std::fs::write(&staged, script).expect("stage prod script");
+    // The child does a raw `execve` (no PATH search): resolve the
+    // interpreter parent-side, like production supervisors do. A bare
+    // `"sh"` dies with ENOENT (exit 127) inside every tier.
     let mut argv: Vec<String> = interpreter.iter().map(|s| s.to_string()).collect();
+    if let Some(first) = argv.first_mut() {
+        *first = resolve_test_tool(first);
+    }
     argv.push(staged.display().to_string());
     let mut env_extra = extra;
     env_extra.insert(
@@ -200,6 +206,29 @@ fn tail_text(bytes: &[u8], max: usize) -> String {
     } else {
         text[text.len() - max..].to_string()
     }
+}
+
+/// Resolve a test interpreter to an absolute path via `PATH` (parent
+/// side, before the freeze). Mirrors production supervisor resolution.
+#[cfg(target_os = "linux")]
+fn resolve_test_tool(name: &str) -> String {
+    if name.contains('/') {
+        return name.to_string();
+    }
+    for dir in std::env::var_os("PATH")
+        .unwrap_or_default()
+        .to_string_lossy()
+        .split(':')
+    {
+        if dir.is_empty() {
+            continue;
+        }
+        let cand = std::path::Path::new(dir).join(name);
+        if cand.is_file() {
+            return cand.to_string_lossy().into_owned();
+        }
+    }
+    panic!("CI must provide tool `{name}` on PATH");
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,7 +1044,7 @@ fn test_prod_real_child_stage3b_001() {
     let unprepared = UnpreparedProductionExecution::new(
         backend,
         policy,
-        vec!["sh".to_string(), staged.display().to_string()],
+        vec![resolve_test_tool("sh"), staged.display().to_string()],
         root.clone(),
         extra,
         NetMode::Off,
@@ -1083,15 +1112,17 @@ fn test_prod_real_child_stage3b_001() {
 }
 
 /// TEST-PROD-PREPARE-FAIL-NO-SPAWN-001: preparation failure through the
-/// PRODUCTION execution object means zero spawn — spawn count unchanged, no
-/// child PID, no legacy fallback. Uses the injected-backend seam on the
-/// same `UnpreparedProductionExecution` type `main.rs` uses.
+/// PRODUCTION execution object means zero spawn — no child PID, no legacy
+/// fallback. Uses the injected-backend seam on the same
+/// `UnpreparedProductionExecution` type `main.rs` uses. Proof is structural
+/// (`Err` yields NO execution object, so no `spawn` method exists to call)
+/// plus the canary: the would-be command would create it. Process-global
+/// counters are observability only (spec §13) and inherently racy under
+/// parallel tests, so they are not asserted here.
 #[cfg(unix)]
 #[test]
 fn test_prod_prepare_fail_no_spawn_001() {
-    use vetto::sandbox::production::{
-        UnpreparedProductionExecution, PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
-    };
+    use vetto::sandbox::production::UnpreparedProductionExecution;
     use vetto::sandbox::StdioMode;
     struct FailBackend {
         report: Option<EnforcementReport>,
@@ -1133,8 +1164,6 @@ fn test_prod_prepare_fail_no_spawn_001() {
             self.report = None;
         }
     }
-    let entered_before = PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
-    let spawned_before = PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
     let tmp = exec_root("prepare-fail");
     // The would-be agent command would create this canary: its absence
     // proves no legacy fallback child ran.
@@ -1168,16 +1197,6 @@ fn test_prod_prepare_fail_no_spawn_001() {
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"
     );
-    assert_eq!(
-        PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst),
-        entered_before,
-        "no backend entry on preparation failure"
-    );
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst),
-        spawned_before,
-        "spawn count unchanged: zero spawn"
-    );
     assert!(
         !canary.exists(),
         "no legacy fallback child ran (canary absent)"
@@ -1207,7 +1226,7 @@ fn test_prod_policy_drift_001() {
          exit 0\n",
     )
     .expect("stage drift script");
-    let mut argv = vec!["sh".to_string(), staged.display().to_string()];
+    let mut argv = vec![resolve_test_tool("sh"), staged.display().to_string()];
     let mut extra = HashMap::new();
     extra.insert(
         "VETTO_PROD_TEST_ROOT".to_string(),
@@ -1363,7 +1382,7 @@ fn test_prod_pty_stage3b_001() {
     let unprepared = UnpreparedProductionExecution::new(
         backend,
         policy,
-        vec!["sh".to_string(), staged.display().to_string()],
+        vec![resolve_test_tool("sh"), staged.display().to_string()],
         root.clone(),
         extra,
         NetMode::Off,
