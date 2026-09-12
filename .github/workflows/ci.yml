@@ -2,7 +2,10 @@ name: ci
 
 on:
   push:
-    branches: [main, 'tier-*', 'feat/*', 'fix/*']
+    # coordinator: `*` does not cross `/`, so nested platform branches
+    # (`feat/platform/*`) never triggered CI; `feat/**` covers them.
+    # Same fix as windows branch (converge at merge).
+    branches: [main, 'tier-*', 'feat/*', 'feat/**', 'fix/*']
   pull_request:
   workflow_dispatch:
 
