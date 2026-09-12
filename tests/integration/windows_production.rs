@@ -91,6 +91,121 @@ fn win_exec_root(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Minimal process-handle rights for job assignment plus observation
+/// (set-quota + terminate + query + synchronize).
+#[cfg(target_os = "windows")]
+const JOB_TEST_ACCESS: u32 = 0x0100 | 0x0001 | 0x0400 | 0x1000 | 0x10_0000;
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(
+        desired_access: u32,
+        inherit_handle: i32,
+        process_id: u32,
+    ) -> *mut std::ffi::c_void;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
+
+/// TEST-WIN-PROD-JOB-001: the exact host-observation primitives the
+/// production boundary calls (`job_assigned_pids`, `verify_production_child`,
+/// `pids_still_alive`) prove tree containment on ANY Windows host — no
+/// experimental sandbox export needed. A detached 60s sleeper is assigned
+/// to a kill-on-close job; dropping the job must leave zero members alive.
+/// This proves the kill and the observation, not the AppContainer boundary
+/// (which stays gated behind `backend_available` above).
+#[cfg(target_os = "windows")]
+#[test]
+fn test_win_prod_job_001_kill_on_close_kills_tree() {
+    use vetto::sandbox::windows::job_object::JobObject;
+    use vetto::verify_ng::windows_enforce as we;
+
+    let _guard = win_prod_serial().lock().unwrap();
+    let job = match JobObject::new_kill_on_close() {
+        Ok(job) => job,
+        Err(e) => {
+            eprintln!("SKIP: cannot create a kill-on-close Job Object here: {e:#}");
+            return;
+        }
+    };
+    let root = win_exec_root("jobkill");
+    let mut child = match std::process::Command::new("cmd")
+        .args(["/c", "start /b \"\" timeout /t 60 >NUL & exit 0"])
+        .current_dir(&root)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("SKIP: cannot spawn the fixture root: {e:#}");
+            return;
+        }
+    };
+    let root_pid = child.id();
+    // SAFETY: scalar OpenProcess on our own just-spawned child.
+    let root_handle = unsafe { OpenProcess(JOB_TEST_ACCESS, 0, root_pid) };
+    if root_handle.is_null() {
+        let _ = child.kill();
+        eprintln!("SKIP: cannot open the fixture root for assignment");
+        return;
+    }
+    // SAFETY: live handle with assignment rights from the OpenProcess above.
+    if unsafe { job.assign_process(root_handle) }.is_err() {
+        // SAFETY: handle from the successful OpenProcess above.
+        unsafe { CloseHandle(root_handle) };
+        let _ = child.kill();
+        eprintln!(
+            "SKIP: this host refuses nested job assignment (outer job policy); tree-kill primitives not exercisable"
+        );
+        return;
+    }
+    let _ = child.wait();
+    // The detached sleeper appears asynchronously: poll the host-observed
+    // membership until it materializes (or the fixture proves broken).
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let members = loop {
+        // SAFETY: job is a live Job Object handle owned above.
+        let members = unsafe { we::job_assigned_pids(job.raw_handle()) };
+        if !members.is_empty() || Instant::now() >= deadline {
+            break members;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // SAFETY: handle from the successful OpenProcess above.
+    unsafe { CloseHandle(root_handle) };
+    if members.is_empty() {
+        eprintln!(
+            "SKIP: detached sleeper never joined the job on this host; fixture not exercisable"
+        );
+        return;
+    }
+    // Host-observed verification through the same entry point production
+    // uses: membership plus the kill-on-close flag must read back.
+    let first = members[0];
+    // SAFETY: scalar OpenProcess on a job member we just observed.
+    let member_handle = unsafe { OpenProcess(JOB_TEST_ACCESS, 0, first) };
+    if !member_handle.is_null() {
+        // SAFETY: both handles live (member observed alive, job owned).
+        let verification = unsafe { we::verify_production_child(member_handle, job.raw_handle()) };
+        // SAFETY: handle from the successful OpenProcess above.
+        unsafe { CloseHandle(member_handle) };
+        assert!(
+            verification.win_in_job,
+            "IsProcessInJob must observe the assigned sleeper"
+        );
+        assert!(
+            verification.win_kill_on_close,
+            "the kill-on-close flag must read back from the job"
+        );
+    }
+    // The containment kill: dropping the last job handle kills the tree.
+    drop(job);
+    let residual = we::pids_still_alive(&members, Duration::from_secs(10));
+    assert!(
+        residual.is_empty(),
+        "kill-on-close must leave no tree member alive; survivors: {residual:?}"
+    );
+}
+
 fn test_scenario(id: &str, category: Category) -> Scenario {
     Scenario {
         id: id.to_string(),

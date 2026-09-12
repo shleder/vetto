@@ -137,6 +137,11 @@ jobs:
       # visible in the log instead of buried under --quiet.
       - name: Windows platform suite (verbose)
         run: cargo test --all-features --test integration windows_ -- --nocapture
+      # Capability snapshot of the runner itself: documents which Windows
+      # primitives the hosted runner offers (experimental AppContainer
+      # export, job kill-on-close, tokens) for the skip-vs-prove audit.
+      - name: Windows capability snapshot (doctor)
+        run: cargo run --all-features --quiet -- doctor
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   gitleaks:
