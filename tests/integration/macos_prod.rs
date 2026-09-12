@@ -740,10 +740,11 @@ fn test_macos_prod_drift_001() {
     assert_eq!(frozen.cwd, root);
     assert_eq!(frozen.net_label, NetMode::Off.label());
     assert_eq!(prepared.frozen_policy().name, policy.name);
+    let identity = prepared.identity().clone();
     let result = prepared.spawn().expect("spawn drift run").wait_collect();
     assert_eq!(result.exit_code, Some(0));
     assert!(
-        result.report.binds_identity(result.identity()),
+        result.report.binds_identity(&identity),
         "report bound to the frozen identity"
     );
     let obs = std::fs::read_to_string(root.join("obs")).expect("drift obs");
