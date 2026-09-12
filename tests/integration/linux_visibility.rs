@@ -24,7 +24,13 @@ fn jsonl_contains_lifecycle_events() {
             &script,
         ],
     );
-    assert!(out.status.success(), "agent failed: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "agent failed: {} stdout={} stderr={}",
+        exit_diagnosis(&out),
+        stdout(&out),
+        stderr(&out)
+    );
     let log = std::fs::read_to_string(&jsonl).expect("jsonl written");
     assert!(log.contains("\"session_started\""), "{log}");
     assert!(log.contains("\"session_ended\""), "{log}");

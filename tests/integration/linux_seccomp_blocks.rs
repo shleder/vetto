@@ -92,7 +92,8 @@ allow_read = ["$PROJECT", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/dev/null"
         }
         assert!(
             out.status.success(),
-            "{operation} escaped seccomp; stdout={} stderr={}",
+            "{operation} escaped seccomp; {} stdout={} stderr={}",
+            exit_diagnosis(&out),
             stdout(&out),
             stderr(&out)
         );

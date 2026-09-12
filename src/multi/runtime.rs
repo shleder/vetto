@@ -391,6 +391,9 @@ fn activate_pending(
 ) -> MultiSession {
     #[cfg(not(target_os = "linux"))]
     let _ = project;
+    // `take_*` below is Linux-only: `mut` is dead on macOS, required on
+    // Linux. `allow` keeps one spelling, not two.
+    #[allow(unused_mut)]
     let PendingSession {
         spec,
         net,

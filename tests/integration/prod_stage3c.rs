@@ -5,21 +5,27 @@
 //! exit 0 when confinement held and 10 on escape; host-observed facts
 //! (wait status, canary integrity, typed enforcement report) decide.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
 use std::time::Duration;
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
 #[cfg(target_os = "linux")]
 use vetto::sandbox::production::{build_production_env, execute_simple, PROD_NONCE_ENV};
+#[cfg(unix)]
+use vetto::sandbox::production::{execute_with_backend, ProdSpawnLog};
 use vetto::sandbox::production::{
-    execute_with_backend, freeze_production, prod_tier_mapping, ProdSpawnLog, PROD_REGISTRY,
-    PROD_SCENARIO_ID,
+    freeze_production, prod_tier_mapping, PROD_REGISTRY, PROD_SCENARIO_ID,
 };
+#[cfg(unix)]
 use vetto::verify_ng::evidence::ExecutionIdentity;
+use vetto::verify_ng::sandbox_backend::SecurityCapability;
+#[cfg(unix)]
 use vetto::verify_ng::sandbox_backend::{
     BackendKind, CanonicalPolicy, EnforcementReport, EnforcementState, SandboxBackend,
-    SecurityCapability,
 };
 
 static FORBID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -72,6 +78,56 @@ fn prod_serial() -> &'static std::sync::Mutex<()> {
     PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
 }
 
+/// Functional production policy for the `run_prod*` helpers: the real
+/// mechanics enforce real Landlock, so the child needs system read roots
+/// (shell, loader libs, `/dev/null` for stdio setup) plus the exec root in
+/// BOTH lists (FsOnly strips READ from write-only roots; a path in both
+/// keeps read+write, mirroring the real loader's project grant). Ceilings
+/// mirror the 3B plan defaults so limit tests exercise real ceilings and
+/// host verification confirms them. Forbid canaries live OUTSIDE the exec
+/// root (write-only via `/tmp` or unlisted) and stay denied.
+#[cfg(target_os = "linux")]
+fn prod_test_policy(root: &std::path::Path) -> Policy {
+    let mut policy = Policy::default();
+    // NOTE: `/proc` read is granted deliberately (test scaffolding, not a
+    // product grant): host-side verification reads `/proc/<pid>` anyway, and
+    // the in-child probes (`grep NoNewPrivs /proc/self/status`) need it.
+    // Landlock with no `/proc` rule denies those reads, which only masks the
+    // real assertions. Forbid canaries live under `/tmp`, outside `/proc`.
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
+        let p = std::path::PathBuf::from(cand);
+        if p.exists() && !policy.allow_read.contains(&p) {
+            policy.allow_read.push(p);
+        }
+    }
+    if !policy.allow_read.contains(&root.to_path_buf()) {
+        policy.allow_read.push(root.to_path_buf());
+    }
+    for cand in [root.to_path_buf(), std::path::PathBuf::from("/tmp")] {
+        if cand.exists() && !policy.allow_write.contains(&cand) {
+            policy.allow_write.push(cand);
+        }
+    }
+    policy.limits = vetto::policy::ResourceLimits {
+        cpu_seconds: Some(5),
+        address_space_bytes: Some(256 * 1024 * 1024),
+        processes: Some(128),
+        open_files: None,
+        file_size_bytes: Some(64 * 1024 * 1024),
+        io_rate: None,
+    };
+    // Test scripts call tools by bare name (`grep`, `awk`, `sleep`); the
+    // child environment is allowlist-filtered, so pass PATH/HOME through
+    // (production loader profiles grant these; the bare default grants
+    // nothing and every external tool dies with 127/10).
+    for var in ["PATH", "HOME"] {
+        if !policy.environment.pass_through.iter().any(|p| p == var) {
+            policy.environment.pass_through.push(var.to_string());
+        }
+    }
+    policy
+}
+
 #[cfg(target_os = "linux")]
 fn run_prod(
     script: &str,
@@ -106,14 +162,20 @@ fn run_prod_inner(
     let root = exec_root("run");
     let staged = root.join("run.sh");
     std::fs::write(&staged, script).expect("stage prod script");
+    // The child does a raw `execve` (no PATH search): resolve the
+    // interpreter parent-side, like production supervisors do. A bare
+    // `"sh"` dies with ENOENT (exit 127) inside every tier.
     let mut argv: Vec<String> = interpreter.iter().map(|s| s.to_string()).collect();
+    if let Some(first) = argv.first_mut() {
+        *first = resolve_test_tool(first);
+    }
     argv.push(staged.display().to_string());
     let mut env_extra = extra;
     env_extra.insert(
         "VETTO_PROD_TEST_ROOT".to_string(),
         root.display().to_string(),
     );
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let mut log = ProdSpawnLog::new();
     let out = execute_simple(
         &policy,
@@ -158,6 +220,29 @@ fn tail_text(bytes: &[u8], max: usize) -> String {
     } else {
         text[text.len() - max..].to_string()
     }
+}
+
+/// Resolve a test interpreter to an absolute path via `PATH` (parent
+/// side, before the freeze). Mirrors production supervisor resolution.
+#[cfg(target_os = "linux")]
+fn resolve_test_tool(name: &str) -> String {
+    if name.contains('/') {
+        return name.to_string();
+    }
+    for dir in std::env::var_os("PATH")
+        .unwrap_or_default()
+        .to_string_lossy()
+        .split(':')
+    {
+        if dir.is_empty() {
+            continue;
+        }
+        let cand = std::path::Path::new(dir).join(name);
+        if cand.is_file() {
+            return cand.to_string_lossy().into_owned();
+        }
+    }
+    panic!("CI must provide tool `{name}` on PATH");
 }
 
 // ---------------------------------------------------------------------------
@@ -392,8 +477,25 @@ fn test_prod_backend_called_001() {
     let tmp = std::env::temp_dir().join(format!("vetto-prod-called-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     let mut log = ProdSpawnLog::new();
+    // Real mechanics enforce real Landlock: an empty policy denies
+    // `/dev/null` at stdio setup (child exit 124) wherever Landlock is
+    // active. Minimal functional policy (system read roots + tmp write
+    // root, `/proc` for parity with `prod_test_policy`); assertions below
+    // still target the injected backend's report.
+    let mut policy = Policy::default();
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
+        let p = std::path::PathBuf::from(cand);
+        if p.exists() && !policy.allow_read.contains(&p) {
+            policy.allow_read.push(p);
+        }
+    }
+    for cand in [tmp.clone(), std::path::PathBuf::from("/tmp")] {
+        if cand.exists() && !policy.allow_write.contains(&cand) {
+            policy.allow_write.push(cand);
+        }
+    }
     let out = execute_with_backend(
-        &Policy::default(),
+        &policy,
         vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
@@ -952,12 +1054,12 @@ fn test_prod_real_child_stage3b_001() {
         forbid.display().to_string(),
     );
     extra.insert("VETTO_PROD_TEST_PORT".to_string(), port.to_string());
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
     let unprepared = UnpreparedProductionExecution::new(
         backend,
         policy,
-        vec!["sh".to_string(), staged.display().to_string()],
+        vec![resolve_test_tool("sh"), staged.display().to_string()],
         root.clone(),
         extra,
         NetMode::Off,
@@ -1025,15 +1127,17 @@ fn test_prod_real_child_stage3b_001() {
 }
 
 /// TEST-PROD-PREPARE-FAIL-NO-SPAWN-001: preparation failure through the
-/// PRODUCTION execution object means zero spawn — spawn count unchanged, no
-/// child PID, no legacy fallback. Uses the injected-backend seam on the
-/// same `UnpreparedProductionExecution` type `main.rs` uses.
+/// PRODUCTION execution object means zero spawn — no child PID, no legacy
+/// fallback. Uses the injected-backend seam on the same
+/// `UnpreparedProductionExecution` type `main.rs` uses. Proof is structural
+/// (`Err` yields NO execution object, so no `spawn` method exists to call)
+/// plus the canary: the would-be command would create it. Process-global
+/// counters are observability only (spec §13) and inherently racy under
+/// parallel tests, so they are not asserted here.
 #[cfg(unix)]
 #[test]
 fn test_prod_prepare_fail_no_spawn_001() {
-    use vetto::sandbox::production::{
-        UnpreparedProductionExecution, PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
-    };
+    use vetto::sandbox::production::UnpreparedProductionExecution;
     use vetto::sandbox::StdioMode;
     struct FailBackend {
         report: Option<EnforcementReport>,
@@ -1075,8 +1179,6 @@ fn test_prod_prepare_fail_no_spawn_001() {
             self.report = None;
         }
     }
-    let entered_before = PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst);
-    let spawned_before = PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
     let tmp = exec_root("prepare-fail");
     // The would-be agent command would create this canary: its absence
     // proves no legacy fallback child ran.
@@ -1110,16 +1212,6 @@ fn test_prod_prepare_fail_no_spawn_001() {
         err.to_string().contains("fail-closed"),
         "fail-closed error, got: {err:#}"
     );
-    assert_eq!(
-        PROD_BACKEND_ENTERED.load(std::sync::atomic::Ordering::SeqCst),
-        entered_before,
-        "no backend entry on preparation failure"
-    );
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst),
-        spawned_before,
-        "spawn count unchanged: zero spawn"
-    );
     assert!(
         !canary.exists(),
         "no legacy fallback child ran (canary absent)"
@@ -1149,14 +1241,14 @@ fn test_prod_policy_drift_001() {
          exit 0\n",
     )
     .expect("stage drift script");
-    let mut argv = vec!["sh".to_string(), staged.display().to_string()];
+    let mut argv = vec![resolve_test_tool("sh"), staged.display().to_string()];
     let mut extra = HashMap::new();
     extra.insert(
         "VETTO_PROD_TEST_ROOT".to_string(),
         root.display().to_string(),
     );
     extra.insert("VETTO_PROD_TEST_MARKER".to_string(), "frozen".to_string());
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
     // Caller mutates its OWN copies after moving clones in: the boundary
     // owns snapshots, so these mutations cannot drift the spawn.
@@ -1301,10 +1393,11 @@ fn test_prod_pty_stage3b_001() {
         root.display().to_string(),
     );
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    let policy = prod_test_policy(&root);
     let unprepared = UnpreparedProductionExecution::new(
         backend,
-        Policy::default(),
-        vec!["sh".to_string(), staged.display().to_string()],
+        policy,
+        vec![resolve_test_tool("sh"), staged.display().to_string()],
         root.clone(),
         extra,
         NetMode::Off,

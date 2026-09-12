@@ -976,6 +976,28 @@ mod production_unit_tests {
         Policy::default()
     }
 
+    /// Minimal functional policy for real-spawn unit tests: system read
+    /// roots + tmp write root so the child passes stdio setup (`/dev/null`)
+    /// and `execve` under real Landlock-enforcing mechanics (Full/FsOnly).
+    /// Bare `Policy::default()` denies `/dev/null` at stdio setup (child
+    /// exit 124) wherever Landlock is active. Capability assertions below
+    /// still target the injected backend's report, never the mechanics.
+    fn functional_test_policy(tmp: &std::path::Path) -> Policy {
+        let mut policy = test_policy();
+        for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
+            let p = PathBuf::from(cand);
+            if p.exists() && !policy.allow_read.contains(&p) {
+                policy.allow_read.push(p);
+            }
+        }
+        for cand in [tmp.to_path_buf(), PathBuf::from("/tmp")] {
+            if cand.exists() && !policy.allow_write.contains(&cand) {
+                policy.allow_write.push(cand);
+            }
+        }
+        policy
+    }
+
     /// TEST-PROD-TIER-MAPPING-001: tiers map honestly, no forced strongest.
     #[test]
     fn test_prod_tier_mapping_001_honest() {
@@ -1226,8 +1248,9 @@ mod production_unit_tests {
             "exit 0".to_string(),
         ];
         let mut log = ProdSpawnLog::new();
+        let policy = functional_test_policy(&tmp);
         let out = execute_with_backend(
-            &test_policy(),
+            &policy,
             argv,
             tmp.clone(),
             HashMap::new(),

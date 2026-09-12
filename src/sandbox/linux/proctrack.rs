@@ -11,8 +11,11 @@
 //!    agent child terminates, surviving descendants are reparented to vetto
 //!    instead of init.
 //! 2. After the group kill, [`sweep_reparented`] scans `/proc` for live
-//!    processes whose PPid is vetto, SIGKILLs them (except the root pid,
-//!    which `SandboxHandle::wait` reaps) and reaps their exit statuses.
+//!    processes whose PPid is vetto, SIGKILLs the ones OUTSIDE vetto's own
+//!    session (setsid-detached escapers of this sandbox) and reaps their
+//!    exit statuses. Same-session processes are concurrent sandboxes
+//!    (multi-agent sessions, parallel harnesses) or helpers — killing them
+//!    would violate cleanup isolation, so they are spared.
 //! 3. Because `supervise` exits through `std::process::exit` (which skips
 //!    `Drop`), the normal-exit path never runs `SandboxHandle::terminate`.
 //!    [`arm_exit_sweep`] registers an `atexit` handler as the safety net so
@@ -78,14 +81,41 @@ extern "C" fn exit_sweep() {
 /// pid's exit status is never consumed out from under `wait`. Returns the
 /// number of SIGKILL signals delivered (zombies included; their kill is a
 /// no-op that precedes the reaping).
+///
+/// ISOLATION (cleanup_A must never target B): a victim is killed ONLY if it
+/// lives OUTSIDE our session (`getsid(victim) != getsid(self)`). Our escapers
+/// are setsid-detached by construction, so they always qualify; concurrent
+/// sandboxes in this process (multi-agent sessions, parallel tests) and the
+/// harness's own helpers share our session and are spared. Same-session
+/// setpgid-only escapers that additionally exec-cleaned their environ are a
+/// documented residual (the nonce-targeted sweep still catches every
+/// non-exec-cleaned one). Any lookup error skips the victim conservatively.
 pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
     // SAFETY: scalar getpid.
     let me = unsafe { libc::getpid() } as u32;
+    // SAFETY: scalar getsid on our own process; always succeeds.
+    let my_sid = session_of(0);
     let deadline = Instant::now() + Duration::from_millis(deadline_ms);
     let mut killed = 0usize;
     loop {
         let candidates = scan_children(me, root_pid);
-        if candidates.is_empty() {
+        let killable: Vec<i32> = candidates
+            .into_iter()
+            .filter(|pid| {
+                // Never touch our own root (its status belongs to `wait`).
+                if *pid == root_pid {
+                    return false;
+                }
+                // Foreign-session processes (concurrent sandboxes, harness
+                // helpers) are spared: only setsid-detached escapers of
+                // THIS sandbox qualify. Skip conservatively on lookup error.
+                match (my_sid, session_of(*pid)) {
+                    (Some(mine), Some(theirs)) => mine != theirs,
+                    _ => false,
+                }
+            })
+            .collect();
+        if killable.is_empty() {
             // Orphans become visible only after their parent terminates:
             // reparenting happens at termination, so once the root is a
             // zombie (or gone), everything below it has already been adopted
@@ -95,7 +125,7 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
                 return killed;
             }
         } else {
-            for pid in candidates {
+            for pid in killable {
                 // SAFETY: SIGKILL to a pid that is, at scan time, a direct
                 // child of this process (PPid == getpid()).
                 if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
@@ -138,6 +168,18 @@ fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
         }
     }
     children
+}
+
+/// Session id of `pid` (`None` on any lookup error: the victim vanished or
+/// is unreachable, and must be skipped conservatively).
+fn session_of(pid: libc::pid_t) -> Option<libc::pid_t> {
+    // SAFETY: scalar getsid on a possibly-vanished pid; errors are normal.
+    let sid = unsafe { libc::getsid(pid) };
+    if sid < 0 {
+        None
+    } else {
+        Some(sid)
+    }
 }
 
 /// True when the root can no longer produce new orphans: the process is gone

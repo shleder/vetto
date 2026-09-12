@@ -147,6 +147,24 @@ pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
+/// One-line exit diagnosis: `code=N` normally, `signal=N` when killed by a
+/// signal (notably SIGKILL=9 from the OOM-killer under parallel load).
+/// `code=None` alone hides that distinction.
+pub fn exit_diagnosis(out: &Output) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        match out.status.code() {
+            Some(code) => format!("code={code}"),
+            None => format!("signal={:?}", out.status.signal()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        format!("code={:?}", out.status.code())
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn tool_available(name: &str) -> bool {
     Command::new(name)

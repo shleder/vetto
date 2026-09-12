@@ -249,7 +249,13 @@ fn codex_default_scan_uses_index_first_with_a_fifty_session_limit() {
     create_codex_sqlite_index(&root, &path_refs);
 
     let output = run_rescue(&root, &["scan"]);
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(
+        output.status.success(),
+        "{} stdout={} stderr: {}",
+        exit_diagnosis(&output),
+        stdout(&output),
+        stderr(&output)
+    );
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
     let discovery = &value["discovery"];
     assert_eq!(discovery["mode"], "index-first");
@@ -429,7 +435,9 @@ fn codex_index_scan_tolerates_an_unbounded_cli_limit_without_aborting() {
     let output = run_rescue(&root, &["scan", "--limit", "1000000000000000"]);
     assert!(
         output.status.success(),
-        "an unbounded --limit must not abort on allocation; stderr: {}",
+        "an unbounded --limit must not abort on allocation; {} stdout={} stderr: {}",
+        exit_diagnosis(&output),
+        stdout(&output),
         stderr(&output)
     );
 }
