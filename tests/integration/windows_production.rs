@@ -129,8 +129,16 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
         }
     };
     let root = win_exec_root("jobkill");
+    // Direct tree: root `timeout /t 60` plus a detached `start /b` grandchild
+    // sleeper (grandchild proves tree depth; root proves kill coverage).
+    // Spawned directly under the console (no `start`-shared console), so the
+    // parent-side handle wait is bounded and cannot block on console
+    // ownership. Both members must join the job for the proof to hold.
     let mut child = match std::process::Command::new("cmd")
-        .args(["/c", "start /b \"\" timeout /t 60 >NUL & exit 0"])
+        .args([
+            "/c",
+            "start /b \"\" timeout /t 60 >NUL & timeout /t 60 >NUL",
+        ])
         .current_dir(&root)
         .spawn()
     {
@@ -160,21 +168,27 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
     }
     let _ = child.wait();
     // The detached sleeper appears asynchronously: poll the host-observed
-    // membership until it materializes (or the fixture proves broken).
+    // membership until both tree members materialize (or the fixture proves
+    // broken). Bounded: 15s poll, then SKIP — never an unbounded wait.
     let deadline = Instant::now() + Duration::from_secs(15);
     let members = loop {
         // SAFETY: job is a live Job Object handle owned above.
         let members = unsafe { we::job_assigned_pids(job.raw_handle()) };
-        if !members.is_empty() || Instant::now() >= deadline {
+        // Two members (root + detached grandchild) prove a real tree; one
+        // member with the kill flag still proves the kill, but the tree
+        // claim needs the grandchild — wait for both within the bound.
+        if members.len() >= 2 || Instant::now() >= deadline {
             break members;
         }
         std::thread::sleep(Duration::from_millis(50));
     };
     // SAFETY: handle from the successful OpenProcess above.
     unsafe { CloseHandle(root_handle) };
-    if members.is_empty() {
+    if members.len() < 2 {
+        let _ = child.kill();
         eprintln!(
-            "SKIP: detached sleeper never joined the job on this host; fixture not exercisable"
+            "SKIP: detached sleeper never joined the job on this host (members={}); fixture not exercisable",
+            members.len()
         );
         return;
     }
