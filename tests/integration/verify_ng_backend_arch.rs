@@ -406,7 +406,7 @@ fn test_backend_no_fake_enforcement_001() {
         let report = backend.prepare(&policy, &identity);
         // `prepare` installs nothing: only `HostEvidence` (observation by
         // construction) is `Enforced`; confinement is at most `Configured`.
-            assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
+        assert_eq!(report.enforced(), vec![SecurityCapability::HostEvidence]);
         for cap in SecurityCapability::all() {
             if cap == SecurityCapability::HostEvidence {
                 continue;

@@ -2037,7 +2037,6 @@ mod backend_arch_tests {
                 );
             }
         }
-        }
         // Linux `prepare` probes and plans but installs no confinement:
         // containment states are `Configured` or `Unsupported`, never
         // `Enforced`/`Verified`, so no PASS is possible before a real
