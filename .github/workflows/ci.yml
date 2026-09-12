@@ -129,6 +129,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --all-features
       - run: cargo test --all-features --quiet
+      # NEEDS-COORDINATOR (windows-agent): verbose Windows platform-suite
+      # run so the production-boundary/tree/timeout/capability proofs are
+      # visible in the log instead of buried under --quiet.
+      - name: Windows platform suite (verbose)
+        run: cargo test --all-features --test integration windows_ -- --nocapture
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   gitleaks:
