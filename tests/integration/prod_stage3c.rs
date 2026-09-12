@@ -89,7 +89,12 @@ fn prod_serial() -> &'static std::sync::Mutex<()> {
 #[cfg(target_os = "linux")]
 fn prod_test_policy(root: &std::path::Path) -> Policy {
     let mut policy = Policy::default();
-    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
+    // NOTE: `/proc` read is granted deliberately (test scaffolding, not a
+    // product grant): host-side verification reads `/proc/<pid>` anyway, and
+    // the in-child probes (`grep NoNewPrivs /proc/self/status`) need it.
+    // Landlock with no `/proc` rule denies those reads, which only masks the
+    // real assertions. Forbid canaries live under `/tmp`, outside `/proc`.
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
         let p = std::path::PathBuf::from(cand);
         if p.exists() && !policy.allow_read.contains(&p) {
             policy.allow_read.push(p);
@@ -475,9 +480,10 @@ fn test_prod_backend_called_001() {
     // Real mechanics enforce real Landlock: an empty policy denies
     // `/dev/null` at stdio setup (child exit 124) wherever Landlock is
     // active. Minimal functional policy (system read roots + tmp write
-    // root); assertions below still target the injected backend's report.
+    // root, `/proc` for parity with `prod_test_policy`); assertions below
+    // still target the injected backend's report.
     let mut policy = Policy::default();
-    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
         let p = std::path::PathBuf::from(cand);
         if p.exists() && !policy.allow_read.contains(&p) {
             policy.allow_read.push(p);

@@ -26,8 +26,8 @@ fn jsonl_contains_lifecycle_events() {
     );
     assert!(
         out.status.success(),
-        "agent failed: code={:?} stdout={} stderr={}",
-        out.status.code(),
+        "agent failed: {} stdout={} stderr={}",
+        exit_diagnosis(&out),
         stdout(&out),
         stderr(&out)
     );

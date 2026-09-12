@@ -984,7 +984,7 @@ mod production_unit_tests {
     /// still target the injected backend's report, never the mechanics.
     fn functional_test_policy(tmp: &std::path::Path) -> Policy {
         let mut policy = test_policy();
-        for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
+        for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc"] {
             let p = PathBuf::from(cand);
             if p.exists() && !policy.allow_read.contains(&p) {
                 policy.allow_read.push(p);

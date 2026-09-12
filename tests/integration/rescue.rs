@@ -251,8 +251,8 @@ fn codex_default_scan_uses_index_first_with_a_fifty_session_limit() {
     let output = run_rescue(&root, &["scan"]);
     assert!(
         output.status.success(),
-        "code={:?} stdout={} stderr: {}",
-        output.status.code(),
+        "{} stdout={} stderr: {}",
+        exit_diagnosis(&output),
         stdout(&output),
         stderr(&output)
     );
@@ -435,8 +435,8 @@ fn codex_index_scan_tolerates_an_unbounded_cli_limit_without_aborting() {
     let output = run_rescue(&root, &["scan", "--limit", "1000000000000000"]);
     assert!(
         output.status.success(),
-        "an unbounded --limit must not abort on allocation; code={:?} stdout={} stderr: {}",
-        output.status.code(),
+        "an unbounded --limit must not abort on allocation; {} stdout={} stderr: {}",
+        exit_diagnosis(&output),
         stdout(&output),
         stderr(&output)
     );
