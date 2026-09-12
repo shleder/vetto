@@ -5,21 +5,27 @@
 //! exit 0 when confinement held and 10 on escape; host-observed facts
 //! (wait status, canary integrity, typed enforcement report) decide.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
 use std::time::Duration;
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
 #[cfg(target_os = "linux")]
 use vetto::sandbox::production::{build_production_env, execute_simple, PROD_NONCE_ENV};
+#[cfg(unix)]
+use vetto::sandbox::production::{execute_with_backend, ProdSpawnLog};
 use vetto::sandbox::production::{
-    execute_with_backend, freeze_production, prod_tier_mapping, ProdSpawnLog, PROD_REGISTRY,
-    PROD_SCENARIO_ID,
+    freeze_production, prod_tier_mapping, PROD_REGISTRY, PROD_SCENARIO_ID,
 };
+#[cfg(unix)]
 use vetto::verify_ng::evidence::ExecutionIdentity;
+use vetto::verify_ng::sandbox_backend::SecurityCapability;
+#[cfg(unix)]
 use vetto::verify_ng::sandbox_backend::{
     BackendKind, CanonicalPolicy, EnforcementReport, EnforcementState, SandboxBackend,
-    SecurityCapability,
 };
 
 static FORBID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -72,6 +78,42 @@ fn prod_serial() -> &'static std::sync::Mutex<()> {
     PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
 }
 
+/// Functional production policy for the `run_prod*` helpers: the real
+/// mechanics enforce real Landlock, so the child needs system read roots
+/// (shell, loader libs, `/dev/null` for stdio setup) plus the exec root in
+/// BOTH lists (FsOnly strips READ from write-only roots; a path in both
+/// keeps read+write, mirroring the real loader's project grant). Ceilings
+/// mirror the 3B plan defaults so limit tests exercise real ceilings and
+/// host verification confirms them. Forbid canaries live OUTSIDE the exec
+/// root (write-only via `/tmp` or unlisted) and stay denied.
+#[cfg(target_os = "linux")]
+fn prod_test_policy(root: &std::path::Path) -> Policy {
+    let mut policy = Policy::default();
+    for cand in ["/bin", "/usr", "/lib", "/lib64", "/etc", "/dev"] {
+        let p = std::path::PathBuf::from(cand);
+        if p.exists() && !policy.allow_read.contains(&p) {
+            policy.allow_read.push(p);
+        }
+    }
+    if !policy.allow_read.contains(&root.to_path_buf()) {
+        policy.allow_read.push(root.to_path_buf());
+    }
+    for cand in [root.to_path_buf(), std::path::PathBuf::from("/tmp")] {
+        if cand.exists() && !policy.allow_write.contains(&cand) {
+            policy.allow_write.push(cand);
+        }
+    }
+    policy.limits = vetto::policy::ResourceLimits {
+        cpu_seconds: Some(5),
+        address_space_bytes: Some(256 * 1024 * 1024),
+        processes: Some(128),
+        open_files: None,
+        file_size_bytes: Some(64 * 1024 * 1024),
+        io_rate: None,
+    };
+    policy
+}
+
 #[cfg(target_os = "linux")]
 fn run_prod(
     script: &str,
@@ -113,7 +155,7 @@ fn run_prod_inner(
         "VETTO_PROD_TEST_ROOT".to_string(),
         root.display().to_string(),
     );
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let mut log = ProdSpawnLog::new();
     let out = execute_simple(
         &policy,
@@ -968,7 +1010,7 @@ fn test_prod_real_child_stage3b_001() {
         forbid.display().to_string(),
     );
     extra.insert("VETTO_PROD_TEST_PORT".to_string(), port.to_string());
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
     let unprepared = UnpreparedProductionExecution::new(
         backend,
@@ -1172,7 +1214,7 @@ fn test_prod_policy_drift_001() {
         root.display().to_string(),
     );
     extra.insert("VETTO_PROD_TEST_MARKER".to_string(), "frozen".to_string());
-    let policy = Policy::default();
+    let policy = prod_test_policy(&root);
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
     // Caller mutates its OWN copies after moving clones in: the boundary
     // owns snapshots, so these mutations cannot drift the spawn.
@@ -1317,9 +1359,10 @@ fn test_prod_pty_stage3b_001() {
         root.display().to_string(),
     );
     let backend = vetto::sandbox::Backend::detect(NetMode::Off, false).expect("detect mechanics");
+    let policy = prod_test_policy(&root);
     let unprepared = UnpreparedProductionExecution::new(
         backend,
-        Policy::default(),
+        policy,
         vec!["sh".to_string(), staged.display().to_string()],
         root.clone(),
         extra,

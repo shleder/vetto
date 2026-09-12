@@ -1250,6 +1250,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             });
         }
     }
+    // Windows has no relay/poller/fsevents branch: the binding above is
+    // `None` by construction; silence it with one spelling, not `cfg` soup.
+    #[cfg(target_os = "windows")]
+    let _ = &relay_port;
 
     install_sigint_forwarder(root_pid, tier);
 
