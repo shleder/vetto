@@ -69,7 +69,7 @@ impl ProbeFacts {
 
     /// Probe the real OS. Windows-only: mirrors the fail-closed gate in
     /// `WindowsSandbox::new` (job + restricted/low token + AppContainer API
-    /// + experimental export), so capability and mechanics agree on what a
+    /// and experimental export), so capability and mechanics agree on what a
     /// spawn requires.
     #[cfg(target_os = "windows")]
     pub fn current(net_off: bool) -> Self {
