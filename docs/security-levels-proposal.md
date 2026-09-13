@@ -222,7 +222,7 @@ verify battery — unavailable на Windows (`verify.rs:156`), только capa
 3. CLI/UX (`--security-level`, бейджи, `doctor --json`).
 4. Docs-классы + F1/F2/F3 правки.
 5. VM-путь (mac-VM/WSL2-guest) — отдельный эпик, до него docs только `plan`.
-6. Версия: +0.0.1 по политике репо (факт: `Cargo.toml` сейчас `0.2.18`, `VERSIONS.md` в worktree нет —
+6. Версия: +0.0.1 по политике репо (факт: `Cargo.toml` сейчас `0.2.23`, `VERSIONS.md` в worktree нет —
    сверить с основным репо перед релизом, прыжков и пропусков номеров нет).
 
 ## Critical review (вывод)

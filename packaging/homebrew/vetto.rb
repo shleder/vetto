@@ -7,20 +7,20 @@ class Vetto < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/shleder/vetto/releases/download/v0.2.23/vetto-macos-aarch64.tar.gz"
-      sha256 "5e0abff03602319d64d1f43642bda41ce44722c71c24553adc0507dfea368eb1"
+      sha256 "ebcc2b7375cd19caed2969f95ea6a1f22c4eba74408ed460c37e377db73d72d1"
     else
-      url "https://github.com/shleder/vetto/releases/download/v0.2.17/vetto-macos-x86_64.tar.gz"
-      sha256 "08e0c1841081a45f812159610d0a5c05e686d0358b2d2c483756bd4fc587d9f8"
+      url "https://github.com/shleder/vetto/releases/download/v0.2.23/vetto-macos-x86_64.tar.gz"
+      sha256 "a2bd271442d03a10315cb2a235cf1379a943b6c8482c66ec4bca9902ddebbf0e"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/shleder/vetto/releases/download/v0.2.17/vetto-linux-aarch64.tar.gz"
-      sha256 "6d4515b12581fc5d7dd2620a37fcc651aa0a6c5ff6550905c7847c4b994caa94"
+      url "https://github.com/shleder/vetto/releases/download/v0.2.23/vetto-linux-aarch64.tar.gz"
+      sha256 "c2f0814cc22e030261a719ff248d5949a50a75ffbf727f8db748df028c1fa2b4"
     else
-      url "https://github.com/shleder/vetto/releases/download/v0.2.17/vetto-linux-x86_64.tar.gz"
-      sha256 "fc12c131ff2d2ba713c16b43f1ce7e77f49597cf864abc428a4a15842997588c"
+      url "https://github.com/shleder/vetto/releases/download/v0.2.23/vetto-linux-x86_64.tar.gz"
+      sha256 "68a952a752218fa155659a5e2563ea2969f71eb7504f5bfe01bb917df4ee4992"
     end
   end
 

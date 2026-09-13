@@ -65,3 +65,23 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
   }
 }
 ```
+
+---
+
+## 4. Wrapping External MCP Servers (`vetto mcp wrap`)
+
+Vetto can wrap and sandbox any third-party MCP server binary (e.g. filesystem servers, database runners, web scrapers) to constrain its filesystem and network access:
+
+```bash
+vetto mcp wrap --allow /path/to/workspace --allow-read /usr/share --net off -- <server-binary> [args...]
+```
+
+### Windows Path Hardening
+On Windows hosts, `vetto mcp wrap` automatically resolves and grants read access to:
+- Canonical `%SystemRoot%` (`C:\Windows`) and `%SystemRoot%\System32` (with binary existence verification against `cmd.exe` / `kernel32.dll` to prevent ENV-POISON attacks).
+- `%ProgramFiles%` (and `%ProgramFiles(x86)%`).
+- Temporary directories (`%TEMP%`, `%TMP%`).
+
+### Platform Network Requirement
+- **Linux**: Network relay supports `--net off`, `--net allowlist:<domains>`, and strict port filtering.
+- **Non-Linux (macOS & Windows)**: Network relay requires Linux network namespaces (`CLONE_NEWNET`). On macOS and Windows, `vetto mcp wrap` requires `--net off` (the default). Attempting other network modes on non-Linux platforms fails closed with `PlatformUnsupported`.

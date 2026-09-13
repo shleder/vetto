@@ -20,7 +20,7 @@ not run an install script, download code at install time, or require a Rust
 toolchain. The small launcher runs on the Node.js installation that provides
 npm.
 
-Prebuilt targets in `0.2.4`:
+Prebuilt targets in `0.2.23`:
 
 | Platform | Architecture | Native path |
 | --- | --- | --- |
@@ -31,7 +31,8 @@ Prebuilt targets in `0.2.4`:
 | Windows | x86_64 | `win32-x64` |
 
 Linux requires a glibc-based distribution with Landlock support for the full
-sandbox tier. The Windows backend is experimental and reports its available
+sandbox tier (Tier 1). The Windows backend provides Tier 3 process isolation
+(Job Objects tree containment + AppContainer) and reports its available
 capabilities through `vetto doctor`.
 
 The npm package is the only supported user installation channel for the native

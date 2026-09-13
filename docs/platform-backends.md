@@ -22,10 +22,10 @@ Accordingly, Vetto enforces an immutable 3-tier boundary architecture:
 
 | Platform / Tier | Filesystem Write | Filesystem Read | Network Namespace | Process Reaping | Secret Overlays per OS | Assurance Status |
 | :--- | :--- | :--- | :---: | :--- | :---: | :--- |
-| **Linux (Native)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O Mounts) | **100% Scoped Read** (Landlock VFS Inode checks, `~/.ssh` / `.env` blocked) | **Yes** (`CLONE_NEWNET`, loopback-only + local TCP/TLS broker) | **100% PID Namespace** (`CLONE_NEWPID` init teardown + `PR_SET_PDEATHSIG`) | **Yes** (tmpfs mode-000 and `/dev/null` bind-mounts over secrets) | **Production-grade**: Complete hardware & kernel isolation boundary |
-| **Linux (WSL2)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock via WSL2 Linux Kernel) | **100% Scoped Read** (Landlock VFS Inode checks) | **Yes** (`CLONE_NEWNET` inside WSL2 VM) | **100% PID Namespace** teardown | **Yes** (tmpfs mount overlays inside WSL2) | **Production-grade**: Recommended path for Windows workstations |
-| **macOS (Darwin)**<br/>*Tier 2 (Experimental)* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **Partial** (Watchdog `kqueue` `pdeath_watch` sends `SIGKILL` to group) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Experimental**: Write confinement and `--net=off` network lockdown |
-| **Windows Native**<br/>*Tier 3 (Preview)* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Preview**: Process guardrails only; use WSL2 for full kernel boundary |
+| **Linux (Native)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O Mounts) | **100% Scoped Read** (Landlock VFS Inode checks, `~/.ssh` / `.env` blocked) | **Yes** (`CLONE_NEWNET`, loopback-only + local TCP/TLS broker) | **100% PID Namespace** (`CLONE_NEWPID` init teardown + `PR_SET_PDEATHSIG` + full `/proc` nonce tree sweep) | **Yes** (tmpfs mode-000 and `/dev/null` bind-mounts over secrets) | **Tier 1 (Proven)**: Complete hardware & kernel isolation boundary (Landlock, seccomp UnixOnly/AgentMin, rlimits, sticky NO_NEW_PRIVS) |
+| **Linux (WSL2)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock via WSL2 Linux Kernel) | **100% Scoped Read** (Landlock VFS Inode checks) | **Yes** (`CLONE_NEWNET` inside WSL2 VM) | **100% PID Namespace** teardown + `/proc` sweep | **Yes** (tmpfs mount overlays inside WSL2) | **Tier 1 (Production)**: Recommended path for Windows workstations |
+| **macOS (Darwin)**<br/>*Tier 2 (Experimental)* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **pgroup host sweep** (Watchdog `kqueue` `pdeath_watch` + group-death SIGKILL sweep) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Tier 2 (Experimental)**: Write confinement and `--net=off` network lockdown. Unprivileged read-isolation and syscall filtering unsupported (use OrbStack/Linux VM for full read isolation) |
+| **Windows Native**<br/>*Tier 3 (Preview)* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Tier 3 (Preview)**: Process guardrails with kill-on-close and `--net off`; no seccomp/BPF or exec-root isolation. Use WSL2 for full kernel boundary |
 | **Windows Sandbox**<br/>*Tier 3 (VM Isolated)* | **VM Isolated** (Dedicated virtual disk, mapped read-write folders only) | **VM Isolated** (Host secrets never mapped into `.wsb` specification) | **Virtual Switch** (Hyper-V vSwitch disabled under `--net=off`) | **VM Teardown** (Hyper-V VM instance termination) | **Full Isolation** (Physically separated filesystem in disposable VM) | **Disposable VM**: Hardware-virtualized container (requires Hyper-V) |
 
 ---
@@ -48,10 +48,16 @@ The Linux backend represents Vetto's reference production architecture, leveragi
 - Dedicated network namespace (`CLONE_NEWNET`) with only a loopback interface.
 - Outbound traffic strictly routed through an in-process TCP/TLS relay broker with DNS rebinding protection and private IP blocking.
 
-### Process Tree Supervision
+### Process Tree Supervision & Cleanup
 - Child executed inside a dedicated PID namespace (`CLONE_NEWPID`) as PID 1 (init).
 - When the Vetto supervisor process terminates, the kernel destroys the PID namespace, ensuring 100% orphan and zombie cleanup.
-- Fallback subreaper (`PR_SET_CHILD_SUBREAPER`) and `PR_SET_PDEATHSIG` prevent detached `setsid` escapes.
+- Fallback subreaper (`PR_SET_CHILD_SUBREAPER`), `PR_SET_PDEATHSIG`, and dedicated process groups (`setpgid`).
+- Full `/proc` nonce tree sweep inspects process environment nonces to guarantee no orphaned descendants survive.
+
+### Seccomp-BPF, rlimits & Sticky Privileges
+- **Seccomp Filters**: Enforces kernel-level BPF syscall filters (`UnixOnly` and `AgentMin`) before `execve` to block raw socket escapes, debuggers (`ptrace`), eBPF loaders (`bpf`), and privileged system calls.
+- **Sticky `NO_NEW_PRIVS`**: Sets `PR_SET_NO_NEW_PRIVS` irreversibly before sandbox activation, preventing privilege escalation via setuid binaries.
+- **Resource Ceilings (rlimits)**: Enforces strict resource limits on address space (`RLIMIT_AS`), maximum processes (`RLIMIT_NPROC`), CPU time (`RLIMIT_CPU`), and file size (`RLIMIT_FSIZE`).
 
 ---
 
@@ -105,10 +111,6 @@ The Windows native backend is designated **Tier 3 (Preview)**. It provides proce
 - `sandbox::windows::windows_sandbox` generates `.wsb` disposable VM specifications with mapped read-only and read-write folders (`mapped_read_only`, `mapped_read_write`).
 - Activated explicitly via `--backend win-sandbox`. Fails closed if Hyper-V virtualization or the Windows Sandbox feature is not enabled.
 
-### WSL2 Recommendation for Windows
-- The native Windows kernel does not provide unprivileged mount namespaces or LSM hooks equivalent to Linux Landlock. Fine-grained network filtering via Windows Filtering Platform (WFP) requires administrator privileges, which Vetto strictly refuses to demand.
+### Platform Boundary & WSL2 Recommendation
+- The native Windows kernel does not provide unprivileged mount namespaces, seccomp, BPF, or LSM hooks equivalent to Linux Landlock. Syscall filtering and exec-root isolation remain unsupported on native Windows. Fine-grained network filtering via Windows Filtering Platform (WFP) requires administrator privileges, which Vetto strictly refuses to demand.
 - **Production Recommendation**: Windows developers requiring Tier 1 production isolation should execute Vetto within **WSL2** (`wsl -- vetto ...`). The WSL2 Linux kernel provides complete Landlock LSM, seccomp-bpf, and network namespace isolation natively.
-
-### Authenticode Digital Signing
-- `packaging/windows/sign.ps1` signs `vetto.exe` using `signtool.exe` or `osslsigncode` with SHA-256 and RFC 3161 timestamps (`http://timestamp.digicert.com`).
-- Configured in CI release workflows via `SIGNING_CERT_PFX` and `SIGNING_CERT_PASSWORD`.

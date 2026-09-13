@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Sun Sep 13 2026 vetto contributors - 0.2.23-1
+- Sync the source-only recipe with the published 0.2.23 release.
+
 * Fri Sep 05 2026 vetto contributors - 0.2.15-1
 - Opt-in background self-update, upgrade rollback, supply-chain gate.
 

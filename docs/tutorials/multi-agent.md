@@ -11,3 +11,5 @@ Target length: 6 minutes.
 5. Open the combined report and compare blocked/file/network counts.
 6. Emphasize that failure to establish any requested sandbox fails the whole
    launch before agents begin.
+
+> **Platform Constraint**: The multi-agent orchestrator (`vetto multi`) is supported on Unix platforms (Linux and macOS). On Windows, multi-agent execution is blocked fail-closed (`UnsupportedPlatform: multi-agent`).

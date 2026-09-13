@@ -71,7 +71,7 @@ sbom = {
         "component": {
             "type": "application",
             "name": "vetto",
-            "version": "0.2.5",
+            "version": "0.2.23",
             "description": "Daemon-less sandbox + security layer for AI coding agents",
         }
     },

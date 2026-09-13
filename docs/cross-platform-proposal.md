@@ -1,6 +1,6 @@
 # Cross-platform sandbox: сверка proposal с кодом + решение
 
-Ветка: `arch/cross-platform`. Репозиторий: версия `0.2.18` (подтверждено `Cargo.toml:3`).
+Ветка: `arch/cross-platform`. Репозиторий: версия `0.2.23` (подтверждено `Cargo.toml:3`).
 Проверялся proposal `/home/shleder/Downloads/cross-platform-sandbox-proposal.md` (§1–26)
 чтением кода, не на веру. Production-код не писался. `src/verify_ng/` не тронут.
 
