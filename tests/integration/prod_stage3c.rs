@@ -909,11 +909,28 @@ fn test_prod_linux_cpu_limit_001() {
 fn test_prod_linux_syscall_deny_001() {
     require_tool("python3");
     let script = concat!(
-        "import ctypes, os\n",
+        "import ctypes, os, sys\n",
+        "root = os.environ.get('VETTO_PROD_TEST_ROOT', '.')\n",
+        "proof_path = os.path.join(root, 'syscall_denied')\n",
         "libc = ctypes.CDLL(None, use_errno=True)\n",
         "r = libc.ptrace(0, 0, 0, 0)\n",
         "e = ctypes.get_errno()\n",
-        "os._exit(0 if (r == -1 and e == 1) else 10)\n",
+        "if r == -1 and e == 1:\n",
+        "    with open(proof_path, 'w') as f:\n",
+        "        f.write('BLOCKED:ptrace:EPERM\\n')\n",
+        "        f.flush()\n",
+        "        os.fsync(f.fileno())\n",
+        "    sys.stderr.write('BLOCKED:ptrace:EPERM\\n')\n",
+        "    sys.stderr.flush()\n",
+        "    os._exit(0)\n",
+        "else:\n",
+        "    with open(proof_path, 'w') as f:\n",
+        "        f.write('UNBLOCKED:ptrace:r=%r:e=%r\\n' % (r, e))\n",
+        "        f.flush()\n",
+        "        os.fsync(f.fileno())\n",
+        "    sys.stderr.write('UNBLOCKED:ptrace:r=%r:e=%r\\n' % (r, e))\n",
+        "    sys.stderr.flush()\n",
+        "    os._exit(10)\n",
     );
     let (out, log) = run_prod_argv(
         &["python3"],
@@ -926,7 +943,33 @@ fn test_prod_linux_syscall_deny_001() {
     if !require_enforced_or_skip(&out, SecurityCapability::SyscallRestriction) {
         return;
     }
-    assert_eq!(out.exit_code, Some(0));
+    let proof_file = out.exec_root.join("syscall_denied");
+    let proof = std::fs::read_to_string(&proof_file).unwrap_or_else(|e| {
+        panic!(
+            "syscall deny proof file missing ({e}); exit_code={:?}, stderr: {}",
+            out.exit_code,
+            tail_text(&out.stderr, 500)
+        )
+    });
+    assert_eq!(
+        proof.trim(),
+        "BLOCKED:ptrace:EPERM",
+        "forbidden syscall must be denied with EPERM; exit_code={:?}, stderr: {}",
+        out.exit_code,
+        tail_text(&out.stderr, 500)
+    );
+    assert_ne!(
+        out.exit_code,
+        Some(10),
+        "forbidden syscall must not succeed (script reported unblocked syscall)"
+    );
+    assert_eq!(
+        out.exit_code,
+        Some(0),
+        "forbidden syscall must terminate cleanly with exit code 0; got {:?}, stderr: {}",
+        out.exit_code,
+        tail_text(&out.stderr, 500)
+    );
 }
 
 /// TEST-PROD-LINUX-NO-NEW-PRIVS-001

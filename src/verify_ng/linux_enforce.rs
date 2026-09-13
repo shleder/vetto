@@ -406,11 +406,14 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
                 continue;
             }
         }
-        // Environ is unreadable for zombies (reap below if ours) or
-        // mid-exit races (ENOENT/ESRCH — the process is going away): never
-        // blocking clean. A hard read error (EACCES/hidepid, e.g. Yama
-        // scope) blinds only for OUR live children — reparenting delivers
-        // every orphan to us, so a foreign tree can never hide our nonce.
+        // Environ is unreadable for zombies or mid-exit races (ENOENT/ESRCH
+        // — the process is going away): never blocking clean. Unconfirmed
+        // zombies must not be reaped here without an exact nonce match,
+        // otherwise we race with concurrent SandboxHandles in this process
+        // and steal their exit status (turning exit_code into Some(-1)).
+        // A hard read error (EACCES/hidepid, e.g. Yama scope) blinds only
+        // for OUR live children — reparenting delivers every orphan to us,
+        // so a foreign tree can never hide our nonce.
         let env = match std::fs::read(format!("/proc/{pid}/environ")) {
             Ok(env) => env,
             Err(e)
@@ -421,9 +424,6 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
             }
             Err(_) => {
                 if pid_is_zombie(&status) {
-                    let mut st = 0i32;
-                    // SAFETY: non-blocking waitpid (reaps only our children).
-                    unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
                     continue;
                 }
                 if crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me) {
