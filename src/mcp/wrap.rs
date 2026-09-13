@@ -69,6 +69,118 @@ pub fn parse_wrap_net(net: &str) -> Result<NetMode> {
     crate::config::parse_net_mode(net)
 }
 
+/// Validates network relay mode against the current execution platform.
+pub fn validate_wrap_relay(net_mode: &NetMode) -> Result<()> {
+    validate_wrap_relay_for_platform(net_mode, cfg!(target_os = "linux"))
+}
+
+pub(crate) fn validate_wrap_relay_for_platform(net_mode: &NetMode, is_linux: bool) -> Result<()> {
+    if net_mode.uses_relay() && !is_linux {
+        return Err(anyhow::Error::new(VettoError::UnsupportedPlatform(
+            "network relay requires Linux network namespaces; use --net off on this platform",
+        )));
+    }
+    Ok(())
+}
+
+/// Returns true if the path contains any relative parent directory traversal components (`..`).
+#[cfg(any(windows, test))]
+fn path_has_parent_dir(path: &Path) -> bool {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return true;
+    }
+    let s = path.to_string_lossy();
+    s.split(['/', '\\']).any(|seg| seg == "..")
+}
+
+/// Returns true if the path starts with a valid Windows drive root (e.g. `C:\` or `c:/`).
+#[cfg(any(windows, test))]
+fn starts_with_valid_drive(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    let bytes = s.as_bytes();
+    if bytes.len() < 3 {
+        return false;
+    }
+    bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+/// Checks that a Windows path is absolute and contains no parent traversal components (`..`).
+#[cfg(any(windows, test))]
+fn is_safe_windows_path<P: AsRef<Path>>(path: P) -> bool {
+    let p = path.as_ref();
+    let s = p.to_string_lossy();
+    if s.chars()
+        .any(|c| matches!(c, '*' | '?' | '"' | '<' | '>' | '|'))
+    {
+        return false;
+    }
+    #[cfg(windows)]
+    let is_abs = p.is_absolute();
+    #[cfg(not(windows))]
+    let is_abs = p.is_absolute() || starts_with_valid_drive(p) || s.starts_with(r"\\");
+    is_abs && !path_has_parent_dir(p)
+}
+
+/// Validates that a path is absolute, starts with a valid drive root (e.g. `C:\`),
+/// and does not contain parent traversal components.
+#[cfg(any(windows, test))]
+fn is_valid_windows_drive_path<P: AsRef<Path>>(path: P) -> bool {
+    let p = path.as_ref();
+    starts_with_valid_drive(p) && is_safe_windows_path(p)
+}
+
+/// Validates a Windows SystemRoot candidate against structural and existence criteria.
+#[cfg(any(windows, test))]
+fn is_valid_system_root_with_check<F>(path: &Path, check_sys32: F) -> bool
+where
+    F: Fn(&Path) -> bool,
+{
+    if !is_valid_windows_drive_path(path) {
+        return false;
+    }
+    let sys32 = path.join("System32");
+    check_sys32(&sys32)
+}
+
+/// Resolves a Windows SystemRoot from an optional raw environment value,
+/// falling back to canonical `C:\Windows` if validation fails.
+#[cfg(any(windows, test))]
+fn resolve_windows_system_root_from<F>(raw_env: Option<&str>, check_sys32: F) -> PathBuf
+where
+    F: Fn(&Path) -> bool,
+{
+    let canonical_fallback = PathBuf::from(r"C:\Windows");
+    let val = match raw_env {
+        Some(v) if !v.trim().is_empty() => v,
+        _ => return canonical_fallback,
+    };
+    let candidate = PathBuf::from(val);
+    if is_valid_system_root_with_check(&candidate, check_sys32) {
+        candidate
+    } else {
+        canonical_fallback
+    }
+}
+
+/// Verifies whether the System32 directory or critical system binaries exist.
+#[cfg(windows)]
+fn default_check_system32(sys32: &Path) -> bool {
+    sys32.is_dir() || sys32.join("cmd.exe").is_file() || sys32.join("kernel32.dll").is_file()
+}
+
+/// Resolves the Windows SystemRoot directory from environment variables,
+/// hardened against ENV-POISON attacks.
+#[cfg(windows)]
+fn resolve_windows_system_root() -> PathBuf {
+    let raw = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .ok();
+    resolve_windows_system_root_from(raw.as_deref(), default_check_system32)
+}
+
 /// Synthesizes an isolated sandbox policy and network configuration for wrapping an MCP server.
 pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
     #[cfg(unix)]
@@ -78,13 +190,13 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
     #[cfg(windows)]
     {
         let temp = std::env::temp_dir();
-        if !allow_write.contains(&temp) {
+        if is_safe_windows_path(&temp) && !allow_write.contains(&temp) {
             allow_write.push(temp);
         }
         for var in &["TEMP", "TMP"] {
             if let Ok(temp) = std::env::var(var) {
                 let pb = PathBuf::from(temp);
-                if !allow_write.contains(&pb) {
+                if is_safe_windows_path(&pb) && !allow_write.contains(&pb) {
                     allow_write.push(pb);
                 }
             }
@@ -122,35 +234,48 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
             }
         };
 
-        let sysroot = std::env::var("SystemRoot")
-            .or_else(|_| std::env::var("windir"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(r"C:\Windows"));
+        let sysroot = resolve_windows_system_root();
         add_path(sysroot.clone());
         add_path(sysroot.join("System32"));
 
-        for var in &[
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramW6432",
-            "LOCALAPPDATA",
-        ] {
-            if let Ok(val) = std::env::var(var) {
-                add_path(PathBuf::from(val));
+        let program_files = std::env::var("ProgramFiles")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| is_valid_windows_drive_path(p))
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        add_path(program_files);
+
+        let program_files_x86 = std::env::var("ProgramFiles(x86)")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| is_valid_windows_drive_path(p))
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+        add_path(program_files_x86);
+
+        if let Ok(val) = std::env::var("ProgramW6432") {
+            let p = PathBuf::from(val);
+            if is_valid_windows_drive_path(&p) {
+                add_path(p);
             }
         }
-        if std::env::var("ProgramFiles").is_err() {
-            add_path(PathBuf::from(r"C:\Program Files"));
-        }
-        if std::env::var("ProgramFiles(x86)").is_err() {
-            add_path(PathBuf::from(r"C:\Program Files (x86)"));
-        }
-        if std::env::var("LOCALAPPDATA").is_err() {
-            if let Some(userprofile) = std::env::var_os("USERPROFILE") {
-                add_path(PathBuf::from(userprofile).join("AppData").join("Local"));
+
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| is_safe_windows_path(p));
+        if let Some(p) = local_app_data {
+            add_path(p);
+        } else if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+            let fallback = PathBuf::from(userprofile).join("AppData").join("Local");
+            if is_safe_windows_path(&fallback) {
+                add_path(fallback);
             }
         }
-        add_path(std::env::temp_dir());
+
+        let temp = std::env::temp_dir();
+        if is_safe_windows_path(&temp) {
+            add_path(temp);
+        }
     }
     for path in &args.allow {
         let pb = PathBuf::from(path);
@@ -205,6 +330,7 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
     }
 
     let net_mode = parse_wrap_net(&args.net)?;
+    validate_wrap_relay(&net_mode)?;
     let deny_network = matches!(net_mode, NetMode::Off);
 
     let policy = Policy {
@@ -357,10 +483,7 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            let sysroot = std::env::var("SystemRoot")
-                .or_else(|_| std::env::var("windir"))
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from(r"C:\Windows"));
+            let sysroot = resolve_windows_system_root();
             assert!(policy.allow_read.contains(&sysroot));
             assert!(policy.allow_read.contains(&sysroot.join("System32")));
             assert!(policy.allow_read.contains(&std::env::temp_dir()));
@@ -372,21 +495,153 @@ mod tests {
 
     #[test]
     fn test_mcp_wrap_network_relay_unsupported_on_non_linux() {
-        if cfg!(target_os = "linux") {
-            return;
-        }
         let args = McpWrapArgs {
             allow: vec![],
             allow_read: vec![],
             net: "open".to_string(),
             command: vec!["echo".to_string()],
         };
-        let result = run_wrap(&args);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("network relay requires Linux network namespaces"));
+        let result = build_wrap_policy(&args);
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            let vetto_err = err.downcast_ref::<VettoError>();
+            assert!(matches!(
+                vetto_err,
+                Some(VettoError::UnsupportedPlatform(_))
+            ));
+            assert!(err
+                .to_string()
+                .contains("network relay requires Linux network namespaces"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(result.is_ok());
+            let (policy, net_mode) = result.unwrap();
+            assert_eq!(net_mode, NetMode::Allowlist(vec!["*".to_string()]));
+            assert!(!policy.deny_network);
+        }
+    }
+
+    #[test]
+    fn test_mcp_wrap_validate_relay_for_platform() {
+        let open_mode = NetMode::Allowlist(vec!["*".to_string()]);
+        let off_mode = NetMode::Off;
+
+        let non_linux_err = validate_wrap_relay_for_platform(&open_mode, false);
+        assert!(non_linux_err.is_err());
+        let err = non_linux_err.unwrap_err();
+        let vetto_err = err.downcast_ref::<VettoError>();
+        assert!(matches!(
+            vetto_err,
+            Some(VettoError::UnsupportedPlatform(_))
+        ));
+
+        assert!(validate_wrap_relay_for_platform(&off_mode, false).is_ok());
+        assert!(validate_wrap_relay_for_platform(&open_mode, true).is_ok());
+        assert!(validate_wrap_relay_for_platform(&off_mode, true).is_ok());
+    }
+
+    #[test]
+    fn test_windows_path_traversal_detection() {
+        assert!(!path_has_parent_dir(Path::new(r"C:\Windows\System32")));
+        assert!(!path_has_parent_dir(Path::new("C:/Windows/System32")));
+        assert!(!path_has_parent_dir(Path::new(
+            r"C:\Program Files\App..dir"
+        )));
+        assert!(path_has_parent_dir(Path::new(r"C:\Windows\..\System32")));
+        assert!(path_has_parent_dir(Path::new("C:/Windows/../System32")));
+        assert!(path_has_parent_dir(Path::new("..")));
+        assert!(path_has_parent_dir(Path::new(r"..\AppData\Local")));
+        assert!(path_has_parent_dir(Path::new(r"C:\..\secret")));
+    }
+
+    #[test]
+    fn test_windows_drive_prefix_validation() {
+        assert!(starts_with_valid_drive(Path::new(r"C:\Windows")));
+        assert!(starts_with_valid_drive(Path::new("c:/windows")));
+        assert!(starts_with_valid_drive(Path::new(r"D:\Program Files")));
+        assert!(starts_with_valid_drive(Path::new(r"z:\data")));
+        assert!(!starts_with_valid_drive(Path::new(r"1:\data")));
+        assert!(!starts_with_valid_drive(Path::new(r"C:relative")));
+        assert!(!starts_with_valid_drive(Path::new(r"\\server\share")));
+        assert!(!starts_with_valid_drive(Path::new(r"/usr/bin")));
+        assert!(!starts_with_valid_drive(Path::new(r"")));
+    }
+
+    #[test]
+    fn test_windows_drive_path_validation() {
+        assert!(is_valid_windows_drive_path(Path::new(r"C:\Program Files")));
+        assert!(is_valid_windows_drive_path(Path::new(
+            r"C:\Program Files (x86)"
+        )));
+        assert!(is_valid_windows_drive_path(Path::new("D:/Tools")));
+        assert!(!is_valid_windows_drive_path(Path::new(
+            r"C:\Program Files\..\Evil"
+        )));
+        assert!(!is_valid_windows_drive_path(Path::new(r"relative\path")));
+        assert!(!is_valid_windows_drive_path(Path::new(
+            r"\\evil_server\share"
+        )));
+        assert!(!is_valid_windows_drive_path(Path::new(r"C:relative")));
+    }
+
+    #[test]
+    fn test_windows_safe_path_validation() {
+        assert!(is_safe_windows_path(Path::new(
+            r"C:\Users\user\AppData\Local"
+        )));
+        assert!(is_safe_windows_path(Path::new(
+            r"C:\Users\user\AppData\Local\Temp"
+        )));
+        assert!(!is_safe_windows_path(Path::new(r"..\AppData\Local")));
+        assert!(!is_safe_windows_path(Path::new(r"C:\Users\..\Sensitive")));
+        assert!(!is_safe_windows_path(Path::new(r"relative\temp")));
+    }
+
+    #[test]
+    fn test_windows_system_root_resolution() {
+        let fallback = PathBuf::from(r"C:\Windows");
+
+        assert_eq!(resolve_windows_system_root_from(None, |_| true), fallback);
+        assert_eq!(
+            resolve_windows_system_root_from(Some(""), |_| true),
+            fallback
+        );
+        assert_eq!(
+            resolve_windows_system_root_from(Some("   "), |_| true),
+            fallback
+        );
+
+        assert_eq!(
+            resolve_windows_system_root_from(Some("relative/path"), |_| true),
+            fallback
+        );
+        assert_eq!(
+            resolve_windows_system_root_from(Some(r"C:\Windows\..\Evil"), |_| true),
+            fallback
+        );
+        assert_eq!(
+            resolve_windows_system_root_from(Some(r"\\server\share\Windows"), |_| true),
+            fallback
+        );
+
+        assert_eq!(
+            resolve_windows_system_root_from(Some(r"C:\Users\victim"), |_| false),
+            fallback
+        );
+
+        assert_eq!(
+            resolve_windows_system_root_from(Some(r"C:\Windows"), |sys32| sys32
+                == Path::new(r"C:\Windows\System32")),
+            PathBuf::from(r"C:\Windows")
+        );
+        assert_eq!(
+            resolve_windows_system_root_from(Some(r"D:\CustomWin"), |sys32| sys32
+                == Path::new(r"D:\CustomWin\System32")),
+            PathBuf::from(r"D:\CustomWin")
+        );
     }
 
     #[test]
