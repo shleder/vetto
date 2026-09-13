@@ -1885,17 +1885,19 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     }
     #[cfg(target_os = "macos")]
     {
-        println!(
-            "seatbelt (sandbox-exec): {}",
-            yn(sandbox::macos::MacosSandbox::seatbelt_available())
-        );
+        let seatbelt_available = sandbox::macos::MacosSandbox::seatbelt_available();
+        println!("seatbelt (sandbox-exec): {}", yn(seatbelt_available));
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
         println!("  platform status:       Tier 2 (write isolation + process rlimits + network lockdown)");
         println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
         println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
         if fix {
-            vetto::doctor::print_fixes(&[]);
+            let macos_fixes = vetto::doctor::fix::collect_macos_fixes(
+                seatbelt_available,
+                sbpl_status != sandbox::macos::seatbelt::SbplFragmentStatus::Ok,
+            );
+            vetto::doctor::print_fixes(&macos_fixes);
         }
         if probe_deny {
             doctor_probe()?;
@@ -1962,7 +1964,8 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  platform status:       Tier 3 (Job Objects + Restricted Token + LPAC)");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {
-            vetto::doctor::print_fixes(&[]);
+            let windows_fixes = vetto::doctor::fix::collect_windows_fixes(&capabilities, &optional);
+            vetto::doctor::print_fixes(&windows_fixes);
         }
         if probe_deny {
             println!("probe: display-only deny verification is unavailable on the Windows backend");
