@@ -1,0 +1,21 @@
+# Gitleaks configuration for Vetto Platform
+# Extends default Gitleaks rule suite with allowlists for synthetic test fixtures and mocks.
+
+title = "vetto gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic test fixtures and mock secret tokens allowlist"
+paths = [
+    '''(?:^|[/\\])src[/\\]cli[/\\]mask\.rs$''',
+    '''(?:^|[/\\])src[/\\]pty[/\\]redact\.rs$''',
+    '''(?:^|[/\\])src[/\\]policy[/\\]secretscan\.rs$''',
+    '''(?:^|[/\\])src[/\\]watchdog[/\\]env_gen\.rs$''',
+    '''(?:^|[/\\])src[/\\]net_l7[/\\]token\.rs$''',
+    '''(?:^|[/\\])src[/\\]net_l7[/\\]dev_server\.rs$''',
+    '''(?:^|[/\\])src[/\\]pty[/\\]entropy\.rs$''',
+    '''(?:^|[/\\])tests[/\\]rescue_output_schema\.rs$''',
+    '''(?:^|[/\\])tests[/\\]integration[/\\]rescue\.rs$''',
+]
