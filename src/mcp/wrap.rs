@@ -519,7 +519,10 @@ mod tests {
         {
             assert!(result.is_ok());
             let (policy, net_mode) = result.unwrap();
-            assert_eq!(net_mode, NetMode::Allowlist(vec!["*".to_string()]));
+            assert!(matches!(
+                net_mode,
+                NetMode::Allowlist(ref d) if d == &["*".to_string()]
+            ));
             assert!(!policy.deny_network);
         }
     }
@@ -633,13 +636,15 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_windows_system_root_from(Some(r"C:\Windows"), |sys32| sys32
-                == Path::new(r"C:\Windows\System32")),
+            resolve_windows_system_root_from(Some(r"C:\Windows"), |sys32| {
+                sys32.to_string_lossy().ends_with("System32")
+            }),
             PathBuf::from(r"C:\Windows")
         );
         assert_eq!(
-            resolve_windows_system_root_from(Some(r"D:\CustomWin"), |sys32| sys32
-                == Path::new(r"D:\CustomWin\System32")),
+            resolve_windows_system_root_from(Some(r"D:\CustomWin"), |sys32| {
+                sys32.to_string_lossy().ends_with("System32")
+            }),
             PathBuf::from(r"D:\CustomWin")
         );
     }

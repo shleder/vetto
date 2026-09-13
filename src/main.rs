@@ -1954,7 +1954,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             "event log source:        {}",
             yn(optional.eventlog.source_registered)
         );
-        for note in capabilities.notes {
+        for note in &capabilities.notes {
             println!("  note: {note}");
         }
         println!("  note: {}", optional.firewall.note);

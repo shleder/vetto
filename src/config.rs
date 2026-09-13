@@ -14,7 +14,7 @@ use crate::cli::Cli;
 use crate::error::VettoError;
 use crate::policy::presets::{agent_network_allowlist, Preset};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetMode {
     /// Default. Enforced on every tier (netns on FULL, seccomp-BPF on FS-ONLY).
     Off,
@@ -385,6 +385,9 @@ impl RunConfig {
 pub fn parse_net_mode(s: &str) -> Result<NetMode> {
     if s == "off" {
         return Ok(NetMode::Off);
+    }
+    if s == "open" {
+        return Ok(NetMode::Allowlist(vec!["*".to_string()]));
     }
     if s == "ask" {
         return Ok(NetMode::Ask);
