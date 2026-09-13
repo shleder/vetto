@@ -1,0 +1,30 @@
+# Gitleaks configuration for Vetto Platform
+# Extends default Gitleaks rule suite with allowlists for synthetic test fixtures and mocks.
+
+title = "vetto gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic test fixtures and mock secret tokens allowlist"
+paths = [
+    '''(?:^|[/\\])src[/\\]cli[/\\]mask\.rs$''',
+    '''(?:^|[/\\])src[/\\]pty[/\\]redact\.rs$''',
+    '''(?:^|[/\\])src[/\\]policy[/\\]secretscan\.rs$''',
+    '''(?:^|[/\\])src[/\\]watchdog[/\\]env_gen\.rs$''',
+    '''(?:^|[/\\])src[/\\]net_l7[/\\]token\.rs$''',
+    '''(?:^|[/\\])src[/\\]net_l7[/\\]dev_server\.rs$''',
+    '''(?:^|[/\\])src[/\\]pty[/\\]entropy\.rs$''',
+    '''(?:^|[/\\])src[/\\]pty[/\\]ansi\.rs$''',
+    '''(?:^|[/\\])src[/\\]logger[/\\]sanitizer\.rs$''',
+    '''(?:^|[/\\])src[/\\]tui[/\\]app\.rs$''',
+    '''(?:^|[/\\])src[/\\]report[/\\]html\.rs$''',
+    '''(?:^|[/\\])src[/\\]report[/\\]json\.rs$''',
+    '''(?:^|[/\\])src[/\\]report[/\\]mod\.rs$''',
+    '''(?:^|[/\\])tests[/\\]integration[/\\]secret_masking\.rs$''',
+    '''(?:^|[/\\])tests[/\\]rescue_output_schema\.rs$''',
+    '''(?:^|[/\\])tests[/\\]integration[/\\]rescue\.rs$''',
+    '''(?:^|[/\\])docs[/\\]research[/\\]agent-sandbox-engineering-catalog\.md$''',
+    '''(?:^|[/\\])docs[/\\]schema[/\\]agent-requirements-50\.json$''',
+]

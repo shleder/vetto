@@ -19,6 +19,7 @@
 pub mod fsevents;
 pub mod limits;
 pub mod pdeath_watch;
+pub mod prod_verify;
 pub mod seatbelt;
 
 use std::ffi::CString;

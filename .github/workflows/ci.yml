@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main, 'tier-*', 'feat/*', 'fix/*']
+    # `*` does not cross `/`: nested platform/integration branches
+    # (`feat/platform/*`, `integration/*`) need `**` to trigger CI.
+    branches: [main, 'tier-*', 'feat/*', 'feat/**', 'fix/*', 'integration/**']
   pull_request:
   workflow_dispatch:
 
@@ -114,6 +116,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --all-features
       - run: cargo test --all-features --quiet
+      - name: macOS production boundary tests (explicit)
+        # The full suite above already runs these; this step keeps the
+        # macOS proof visible per-module in the job log (mirrors the
+        # Windows verbose suite below).
+        run: cargo test --test integration macos_prod --all-features
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Intel macOS cross-check
         run: cargo check --target x86_64-apple-darwin --all-features
@@ -129,6 +136,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --all-features
       - run: cargo test --all-features --quiet
+      # NEEDS-COORDINATOR (windows-agent): verbose Windows platform-suite
+      # run so the production-boundary/tree/timeout/capability proofs are
+      # visible in the log instead of buried under --quiet.
+      - name: Windows platform suite (verbose)
+        run: cargo test --all-features --test integration windows_ -- --nocapture
+      # Capability snapshot of the runner itself: documents which Windows
+      # primitives the hosted runner offers (experimental AppContainer
+      # export, job kill-on-close, tokens) for the skip-vs-prove audit.
+      - name: Windows capability snapshot (doctor)
+        run: cargo run --all-features --quiet -- doctor
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   gitleaks:

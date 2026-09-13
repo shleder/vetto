@@ -122,9 +122,50 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
         enforced.push(SecurityCapability::ResourceLimits);
         enforced.push(SecurityCapability::HostEvidence);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // Seatbelt write + net-off isolation, process-group containment,
+        // best-effort rlimits and host evidence — only where the Seatbelt
+        // primitive actually exists (fail-closed `Backend::detect` refuses
+        // the session otherwise). No syscall filter and no exec-root READ
+        // isolation exist on this platform: both stay unsupported, never
+        // emulated.
+        if crate::sandbox::macos::MacosSandbox::seatbelt_available() {
+            enforced.push(SecurityCapability::FilesystemIsolation);
+            if net_off {
+                enforced.push(SecurityCapability::NetworkIsolation);
+            }
+            enforced.push(SecurityCapability::ProcessIsolation);
+            enforced.push(SecurityCapability::ProcessTreeContainment);
+            enforced.push(SecurityCapability::ResourceLimits);
+            enforced.push(SecurityCapability::HostEvidence);
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         // Placeholders enforce nothing, including host evidence via 3B.
+    }
+    // Windows installs Job Object tree containment, the AppContainer
+    // process/filesystem boundary and default-deny network (net=off only)
+    // through the production spawn path; syscall filtering and
+    // execution-root scoping stay unsupported, and resource ceilings are
+    // policy-conditional (per-run report only, never static).
+    // NEEDS-COORDINATOR: convergent placeholder above keeps macOS/Windows
+    // cells disjoint; Linux block above stays byte-identical to bd0e242.
+    #[cfg(target_os = "windows")]
+    {
+        let probe = crate::sandbox::windows::probe();
+        if probe.experimental_create_process_in_sandbox {
+            enforced.push(SecurityCapability::FilesystemIsolation);
+            enforced.push(SecurityCapability::ProcessIsolation);
+            if net_off {
+                enforced.push(SecurityCapability::NetworkIsolation);
+            }
+        }
+        if probe.job_object_kill_on_close {
+            enforced.push(SecurityCapability::ProcessTreeContainment);
+        }
+        enforced.push(SecurityCapability::HostEvidence);
     }
     let unsupported: Vec<SecurityCapability> = SecurityCapability::all()
         .into_iter()
@@ -134,7 +175,11 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
     let tier_label = tier.map(|t| t.label().to_string()).unwrap_or_else(|| {
         #[cfg(target_os = "linux")]
         return "seccomp".to_string();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        return "seatbelt".to_string();
+        #[cfg(target_os = "windows")]
+        return "job".to_string();
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         return "unsupported".to_string();
     });
     let mandatory: Vec<SecurityCapability> = match tier {
@@ -173,7 +218,27 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
             SecurityCapability::SyscallRestriction,
             SecurityCapability::HostEvidence,
         ],
-        None => vec![SecurityCapability::HostEvidence],
+        // No tier on macOS (`Backend::tier()` is `None` there): the normal
+        // macOS case mandates the Seatbelt containment set. Best-effort
+        // rlimits stay out of the gate (partial, documented); syscall and
+        // exec-root READ isolation are unsupported and can never gate a PASS.
+        // Off macOS (Linux/Windows/other) the gate stays HostEvidence-only.
+        None => {
+            #[cfg(target_os = "macos")]
+            {
+                vec![
+                    SecurityCapability::FilesystemIsolation,
+                    SecurityCapability::NetworkIsolation,
+                    SecurityCapability::ProcessIsolation,
+                    SecurityCapability::ProcessTreeContainment,
+                    SecurityCapability::HostEvidence,
+                ]
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                vec![SecurityCapability::HostEvidence]
+            }
+        }
     };
     let allows_pass_possible = mandatory.iter().all(|c| enforced.contains(c));
     let notes = "fs-only never silently becomes network=off; relay modes keep the \
@@ -364,6 +429,15 @@ impl UnpreparedProductionExecution {
         if self.argv.is_empty() {
             anyhow::bail!("no production command provided");
         }
+        #[cfg(target_os = "macos")]
+        if self.net.uses_relay() {
+            anyhow::bail!(
+                "production backend preparation failed (fail-closed, no agent execution): \
+                 --net={} requires the Linux network-namespace relay and is unavailable on macOS; \
+                 refusing silently-weaker enforcement (fail-closed); run with `--net=off` on macOS",
+                self.net.label()
+            );
+        }
         #[cfg(target_os = "linux")]
         if self.net.uses_relay()
             && matches!(
@@ -549,6 +623,22 @@ impl PreparedProductionExecution {
         PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
         let pid = spawned.handle.root_pid;
         self.capability.note_spawned(pid);
+        // Windows host verification observes THIS child through the
+        // retained handles: Job Object membership, the kill-on-close flag,
+        // installed ceilings and the child token integrity level. Anything
+        // unobserved stays `Configured`, never `Enforced` (NEEDS-COORDINATOR:
+        // Windows promotion lives here, not in `note_spawned`, which the
+        // unenforced harness path shares).
+        #[cfg(target_os = "windows")]
+        {
+            let verification = match spawned.handle.windows_raw_handles() {
+                Some((process, job)) => unsafe {
+                    crate::verify_ng::windows_enforce::verify_production_child(process, job)
+                },
+                None => crate::verify_ng::sandbox_backend::HostVerification::none(),
+            };
+            self.capability.note_host_verified(&verification);
+        }
         // Host verification observes THIS child (its real PID): seccomp
         // filter, NO_NEW_PRIVS and process-group presence come from the
         // shared 3B verifier; resource ceilings are checked against the
@@ -571,6 +661,15 @@ impl PreparedProductionExecution {
                 verification.rlimit_cpu_ok = expect("Max cpu time", lim.cpu_seconds);
                 verification.rlimit_fsize_ok = expect("Max file size", lim.file_size_bytes);
             }
+            self.capability.note_host_verified(&verification);
+        }
+        // macOS host verification observes THIS child the same way: the
+        // separate process group via `getpgid` (Seatbelt denials are
+        // invisible to the host and there is no seccomp/rlimit indicator,
+        // so those caps stay `Enforced`, honestly unverified).
+        #[cfg(target_os = "macos")]
+        {
+            let verification = crate::sandbox::macos::prod_verify::verify_child_host(pid);
             self.capability.note_host_verified(&verification);
         }
         Ok(SpawnedProductionExecution {
@@ -674,6 +773,29 @@ impl SpawnedProductionExecution {
     /// result. The sweep cannot be skipped: there is no other way to obtain
     /// a `ProductionResult`.
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
+        // Windows tree sweep (NEEDS-COORDINATOR: additive, cfg-gated): read
+        // the host-observed job membership, terminate through kill-on-close
+        // (the kernel kills the whole tree — no PID-group signals, no
+        // best-effort sweep), then prove every observed member dead by
+        // handle. Residual survivors fail the tree claim closed.
+        #[cfg(target_os = "windows")]
+        {
+            use crate::verify_ng::windows_enforce as we;
+            let members = match self.handle.windows_raw_handles() {
+                Some((_, job)) => unsafe { we::job_assigned_pids(job) },
+                None => Vec::new(),
+            };
+            let observed = members.len();
+            // Kill-on-close termination: dropping the job handle kills every
+            // assigned process. This is the containment kill, not cleanup.
+            self.handle.terminate();
+            let residual = we::pids_still_alive(&members, Duration::from_secs(5));
+            let clean = residual.is_empty();
+            self.capability.note_tree_clean(clean);
+            self.capability.note_diagnostic(format!(
+                "tree-sweep clean={clean} observed={observed} residual={residual:?} job-kill-on-close"
+            ));
+        }
         #[cfg(target_os = "linux")]
         {
             if let Some(sweep) =
@@ -685,6 +807,18 @@ impl SpawnedProductionExecution {
                     sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
                 ));
             }
+        }
+        // macOS tree sweep: SIGKILL the process group + leader, then prove
+        // group death from the host. `setsid` escapers are the documented
+        // gap (no pidns); a surviving group member fails the tree cap closed.
+        #[cfg(target_os = "macos")]
+        {
+            let clean = crate::sandbox::macos::prod_verify::sweep_tree(self.pid);
+            self.capability.note_tree_clean(clean);
+            self.capability.note_diagnostic(format!(
+                "tree-sweep clean={clean} pid={} (pgroup kill + group-death check)",
+                self.pid
+            ));
         }
         let report = self
             .capability

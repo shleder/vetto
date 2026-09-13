@@ -5,3 +5,12 @@ b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:github-
 b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:jwt:413
 b7f65a9d99ea48c8c3f3ddd1c95ce985b23ad1a9:tests/test_adversarial_audit.py:pypi-upload-token:412
 77a8f66e23256eb9c340b6e971c95e98ec0848d2:tests/verify_ng/scenarios/FUZZ-CORPUS-001.toml:generic-api-key:18
+2970e5c70510fd786d0ac2127082e7e9c6e03b7a:src/pty/ansi.rs:github-pat:191
+f72f0c0ad2007498ea9fb69b84f28e7d2d213468:docs/research/agent-sandbox-engineering-catalog.md:github-pat:942
+f72f0c0ad2007498ea9fb69b84f28e7d2d213468:docs/schema/agent-requirements-50.json:github-pat:1339
+03d9a01cb82152fe0e8267344524b8308ee66f17:src/report/html.rs:github-pat:174
+03d9a01cb82152fe0e8267344524b8308ee66f17:src/report/json.rs:github-pat:46
+03d9a01cb82152fe0e8267344524b8308ee66f17:src/report/mod.rs:github-pat:439
+9cd9344070231e0cfa6e7dd4f7c35a212e9f7649:tests/integration/secret_masking.rs:github-pat:43
+4326909b1a1b57d80a7201c8560a2624ed49f582:src/logger/sanitizer.rs:github-pat:201
+03d9a01cb82152fe0e8267344524b8308ee66f17:src/tui/app.rs:github-pat:472

@@ -24,7 +24,7 @@
 //! (explicitly non-contained); [`run_one_with_backend`] accepts any
 //! [`super::sandbox_backend::SandboxBackend`]. Stage 3B wires real Linux
 //! enforcement (landlock + seccomp + rlimit + process-group/tree sweep)
-//! behind the same trait; macOS/Windows stay placeholders. The oracle stays
+//! behind the same trait; Windows stays a placeholder. The oracle stays
 //! pure throughout: every Linux fact is collected host-side and judged as
 //! structured data.
 //!

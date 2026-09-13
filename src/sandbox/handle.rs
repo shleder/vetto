@@ -212,6 +212,23 @@ impl Drop for SandboxHandle {
     }
 }
 
+#[cfg(windows)]
+impl SandboxHandle {
+    /// Borrowed raw `(process, job)` handles for host-side verification.
+    ///
+    /// Used by the production boundary to host-observe the child (job
+    /// membership, kill-on-close flag, ceilings, token integrity) and to
+    /// enumerate the tree at sweep time. The handles stay owned by this
+    /// object; callers must not close them and must only use them while
+    /// this handle is alive. Returns `None` when no Job Object strategy is
+    /// installed (never the case for a Windows production spawn).
+    pub fn windows_raw_handles(&self) -> Option<(*mut std::ffi::c_void, *mut std::ffi::c_void)> {
+        // On Windows `KillStrategy` has exactly the Job Object variant.
+        let KillStrategy::JobObject { job, process } = self.strategy.as_ref()?;
+        Some((process.as_raw_handle(), job.as_raw_handle()))
+    }
+}
+
 #[cfg(unix)]
 fn decode_status(status: i32) -> i32 {
     if libc::WIFEXITED(status) {
