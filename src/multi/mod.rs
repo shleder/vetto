@@ -21,7 +21,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-#[cfg(any(not(unix), test))]
 use crate::error::VettoError;
 use crate::events::{Event, EventBus, FileAccess};
 
@@ -260,6 +259,12 @@ impl AgentSpec {
         }
         if self.profile.trim().is_empty() {
             bail!("agent '{}' has an empty profile", self.name);
+        }
+        let net = crate::config::parse_net_mode(&self.net)?;
+        if net.uses_relay() && cfg!(not(target_os = "linux")) {
+            return Err(anyhow::Error::new(VettoError::UnsupportedPlatform(
+                "network relay requires Linux network namespaces; use --net off on this platform",
+            )));
         }
         Ok(())
     }
@@ -761,5 +766,26 @@ mod tests {
             crate::exit_codes::map_error_to_exit_code(&err),
             crate::exit_codes::EXIT_FAIL_CLOSED
         );
+    }
+
+    #[test]
+    fn test_multi_network_relay_unsupported_on_non_linux() {
+        let text = r#"
+            version = 1
+            [[agents]]
+            name = "a"
+            command = ["echo"]
+            net = "open"
+        "#;
+        let result = parse_manifest_str(text);
+        if cfg!(not(target_os = "linux")) {
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(err
+                .to_string()
+                .contains("network relay requires Linux network namespaces"));
+        } else {
+            assert!(result.is_ok());
+        }
     }
 }

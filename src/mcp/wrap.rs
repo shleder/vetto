@@ -10,6 +10,7 @@ use anyhow::{bail, Result};
 
 use crate::cli::McpWrapArgs;
 use crate::config::NetMode;
+use crate::error::VettoError;
 use crate::policy::types::{DenyEntry, Policy};
 use crate::sandbox::{self, StdioMode};
 
@@ -70,11 +71,23 @@ pub fn parse_wrap_net(net: &str) -> Result<NetMode> {
 
 /// Synthesizes an isolated sandbox policy and network configuration for wrapping an MCP server.
 pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
+    #[cfg(unix)]
     let mut allow_write: Vec<PathBuf> = vec![PathBuf::from("/tmp"), PathBuf::from("/dev/null")];
+    #[cfg(not(unix))]
+    let mut allow_write: Vec<PathBuf> = Vec::new();
     #[cfg(windows)]
     {
-        if let Ok(temp) = std::env::var("TEMP") {
-            allow_write.push(PathBuf::from(temp));
+        let temp = std::env::temp_dir();
+        if !allow_write.contains(&temp) {
+            allow_write.push(temp);
+        }
+        for var in &["TEMP", "TMP"] {
+            if let Ok(temp) = std::env::var(var) {
+                let pb = PathBuf::from(temp);
+                if !allow_write.contains(&pb) {
+                    allow_write.push(pb);
+                }
+            }
         }
     }
     for path in &args.allow {
@@ -84,6 +97,7 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
         }
     }
 
+    #[cfg(unix)]
     let mut allow_read: Vec<PathBuf> = vec![
         PathBuf::from("/usr"),
         PathBuf::from("/lib"),
@@ -97,6 +111,46 @@ pub fn build_wrap_policy(args: &McpWrapArgs) -> Result<(Policy, NetMode)> {
         if Path::new("/etc").exists() {
             allow_read.push(PathBuf::from("/etc"));
         }
+    }
+    #[cfg(not(unix))]
+    let mut allow_read: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    {
+        let mut add_path = |p: PathBuf| {
+            if !allow_read.contains(&p) {
+                allow_read.push(p);
+            }
+        };
+
+        let sysroot = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(r"C:\Windows"));
+        add_path(sysroot.clone());
+        add_path(sysroot.join("System32"));
+
+        for var in &[
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "LOCALAPPDATA",
+        ] {
+            if let Ok(val) = std::env::var(var) {
+                add_path(PathBuf::from(val));
+            }
+        }
+        if std::env::var("ProgramFiles").is_err() {
+            add_path(PathBuf::from(r"C:\Program Files"));
+        }
+        if std::env::var("ProgramFiles(x86)").is_err() {
+            add_path(PathBuf::from(r"C:\Program Files (x86)"));
+        }
+        if std::env::var("LOCALAPPDATA").is_err() {
+            if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+                add_path(PathBuf::from(userprofile).join("AppData").join("Local"));
+            }
+        }
+        add_path(std::env::temp_dir());
     }
     for path in &args.allow {
         let pb = PathBuf::from(path);
@@ -177,6 +231,12 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
     }
 
     let (mut policy, net_mode) = build_wrap_policy(args)?;
+
+    if net_mode.uses_relay() && cfg!(not(target_os = "linux")) {
+        return Err(anyhow::Error::new(VettoError::UnsupportedPlatform(
+            "network relay requires Linux network namespaces; use --net off on this platform",
+        )));
+    }
 
     let mut full_cmd = args.command.clone();
     let resolved_bin = resolve_in_path(&full_cmd[0])?;
@@ -272,8 +332,15 @@ mod tests {
 
         let (policy, net) = build_wrap_policy(&args).expect("build policy");
 
-        assert!(policy.allow_write.contains(&PathBuf::from("/tmp")));
-        assert!(policy.allow_write.contains(&PathBuf::from("/dev/null")));
+        #[cfg(unix)]
+        {
+            assert!(policy.allow_write.contains(&PathBuf::from("/tmp")));
+            assert!(policy.allow_write.contains(&PathBuf::from("/dev/null")));
+        }
+        #[cfg(windows)]
+        {
+            assert!(policy.allow_write.contains(&std::env::temp_dir()));
+        }
         assert!(policy
             .allow_write
             .contains(&PathBuf::from("/workspace/project")));
@@ -282,12 +349,44 @@ mod tests {
             .allow_read
             .contains(&PathBuf::from("/workspace/project")));
         assert!(policy.allow_read.contains(&PathBuf::from("/opt/data")));
-        assert!(policy.allow_read.contains(&PathBuf::from("/usr")));
-        assert!(policy.allow_read.contains(&PathBuf::from("/lib")));
-        assert!(policy.allow_read.contains(&PathBuf::from("/bin")));
+        #[cfg(unix)]
+        {
+            assert!(policy.allow_read.contains(&PathBuf::from("/usr")));
+            assert!(policy.allow_read.contains(&PathBuf::from("/lib")));
+            assert!(policy.allow_read.contains(&PathBuf::from("/bin")));
+        }
+        #[cfg(windows)]
+        {
+            let sysroot = std::env::var("SystemRoot")
+                .or_else(|_| std::env::var("windir"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(r"C:\Windows"));
+            assert!(policy.allow_read.contains(&sysroot));
+            assert!(policy.allow_read.contains(&sysroot.join("System32")));
+            assert!(policy.allow_read.contains(&std::env::temp_dir()));
+        }
 
         assert!(matches!(net, NetMode::Off));
         assert!(policy.deny_network);
+    }
+
+    #[test]
+    fn test_mcp_wrap_network_relay_unsupported_on_non_linux() {
+        if cfg!(target_os = "linux") {
+            return;
+        }
+        let args = McpWrapArgs {
+            allow: vec![],
+            allow_read: vec![],
+            net: "open".to_string(),
+            command: vec!["echo".to_string()],
+        };
+        let result = run_wrap(&args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("network relay requires Linux network namespaces"));
     }
 
     #[test]

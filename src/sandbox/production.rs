@@ -45,8 +45,8 @@ use crate::verify_ng::evidence::ExecutionIdentity;
 use crate::verify_ng::frozen::{self, FrozenSpec};
 use crate::verify_ng::killer::{self, KillOutcome};
 use crate::verify_ng::sandbox_backend::{
-    BackendKind, CanonicalPolicy, EnforcementReport, EnforcementState, PrepareContext,
-    SandboxBackend, SecurityCapability,
+    select_backend, BackendKind, CanonicalPolicy, EnforcementReport, EnforcementState,
+    PrepareContext, SandboxBackend, SecurityCapability,
 };
 
 /// Production scenario id: real runs are not registry scenarios.
@@ -344,6 +344,7 @@ pub struct UnpreparedProductionExecution {
     cwd: PathBuf,
     env_extra: HashMap<String, String>,
     net: NetMode,
+    pub tier: Option<Tier>,
     timeout: Option<Duration>,
     stdio: StdioMode,
     scenario: String,
@@ -367,6 +368,7 @@ impl UnpreparedProductionExecution {
         stdio: StdioMode,
         scenario: String,
     ) -> Self {
+        let tier = backend.tier();
         UnpreparedProductionExecution {
             mechanics: backend,
             policy,
@@ -374,34 +376,27 @@ impl UnpreparedProductionExecution {
             cwd,
             env_extra,
             net,
+            tier,
             timeout,
             stdio,
             scenario,
         }
     }
 
+    /// Detected execution tier for this production run.
+    pub fn tier(&self) -> Option<Tier> {
+        self.tier
+    }
+
     /// Prepare with the platform capability backend (real Linux enforcement
     /// on Linux; honest placeholders elsewhere).
     pub fn prepare(self) -> anyhow::Result<PreparedProductionExecution> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut concrete = crate::verify_ng::sandbox_backend::LinuxBackend::new();
-            let mut prepared = self.prepare_with_backend_inner(&mut concrete)?;
-            // Tier honesty for forced configurations: the Seccomp tier
-            // installs no filesystem isolation even where the kernel offers
-            // Landlock (release tier selection never picks it there).
-            if prepared.tier == Some(Tier::Seccomp) {
-                concrete.restrict_to_seccomp_tier();
-            }
-            prepared.capability = Box::new(concrete);
-            Ok(prepared)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let capability: Box<dyn SandboxBackend> =
-                crate::verify_ng::sandbox_backend::select_backend(BackendKind::current_platform());
-            self.prepare_with_backend(capability)
-        }
+        let mut backend = select_backend(BackendKind::current_platform());
+        let tier = self.tier;
+        let mut prepared = self.prepare_with_backend_inner(&mut *backend)?;
+        backend.restrict_tier(tier);
+        prepared.capability = backend;
+        Ok(prepared)
     }
 
     /// Prepare with an explicitly injected capability backend. TEST-ONLY
@@ -413,7 +408,9 @@ impl UnpreparedProductionExecution {
         self,
         mut capability: Box<dyn SandboxBackend>,
     ) -> anyhow::Result<PreparedProductionExecution> {
+        let tier = self.tier;
         let mut prepared = self.prepare_with_backend_inner(&mut *capability)?;
+        capability.restrict_tier(tier);
         prepared.capability = capability;
         Ok(prepared)
     }
@@ -447,7 +444,7 @@ impl UnpreparedProductionExecution {
         {
             anyhow::bail!("network relay modes require Tier FULL; refusing to run (fail-closed)");
         }
-        let tier = self.mechanics.tier();
+        let tier = self.tier;
         let tier_label = tier
             .map(|t| t.label().to_string())
             .unwrap_or_else(|| "none".to_string());

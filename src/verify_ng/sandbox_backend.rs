@@ -64,6 +64,7 @@ use super::evidence::ExecutionIdentity;
 use super::frozen::FrozenSpec;
 use super::model::{Category, Verdict};
 use super::registry::Scenario;
+use crate::policy::Tier;
 
 /// Security capabilities tracked by every backend.
 ///
@@ -628,6 +629,10 @@ pub trait SandboxBackend: Send {
         None
     }
 
+    /// Restrict enforcement to the given execution tier (e.g. Seccomp tier
+    /// installs no filesystem isolation). Defaults to no-op.
+    fn restrict_tier(&mut self, _tier: Option<Tier>) {}
+
     /// Last preparation outcome, if any.
     fn enforcement(&self) -> Option<&EnforcementReport>;
 
@@ -740,6 +745,7 @@ pub struct LinuxBackend {
     plan: Option<ChildEnforcementPlan>,
     tree_diag: Option<String>,
     subreaper_prepare: Option<String>,
+    tier: Option<Tier>,
 }
 
 impl LinuxBackend {
@@ -749,6 +755,7 @@ impl LinuxBackend {
             plan: None,
             tree_diag: None,
             subreaper_prepare: None,
+            tier: None,
         }
     }
 
@@ -788,7 +795,14 @@ impl LinuxBackend {
     /// STORED report so a later `note_spawned` cannot promote an
     /// uninstalled mechanism to `Enforced`. Trait, states, transitions,
     /// ceiling and oracle are untouched.
-    pub fn restrict_to_seccomp_tier(&mut self) {
+    pub fn restrict_to_seccomp_tier(&mut self, tier: Option<Tier>) {
+        self.tier = tier;
+        if tier == Some(Tier::Seccomp) {
+            self.restrict_seccomp_records();
+        }
+    }
+
+    fn restrict_seccomp_records(&mut self) {
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if matches!(
@@ -865,7 +879,10 @@ impl SandboxBackend for LinuxBackend {
                 true,
             );
             self.report = Some(report.clone());
-            report
+            if self.tier == Some(Tier::Seccomp) {
+                self.restrict_seccomp_records();
+            }
+            self.report.clone().unwrap_or(report)
         }
         #[cfg(target_os = "linux")]
         {
@@ -954,6 +971,10 @@ impl SandboxBackend for LinuxBackend {
         self.tree_diag.clone()
     }
 
+    fn restrict_tier(&mut self, tier: Option<Tier>) {
+        self.restrict_to_seccomp_tier(tier);
+    }
+
     fn enforcement(&self) -> Option<&EnforcementReport> {
         self.report.as_ref()
     }
@@ -963,6 +984,7 @@ impl SandboxBackend for LinuxBackend {
         self.plan = None;
         self.tree_diag = None;
         self.subreaper_prepare = None;
+        self.tier = None;
     }
 }
 
@@ -1052,7 +1074,10 @@ impl LinuxBackend {
             true,
         );
         self.report = Some(report.clone());
-        report
+        if self.tier == Some(Tier::Seccomp) {
+            self.restrict_seccomp_records();
+        }
+        self.report.clone().unwrap_or(report)
     }
 }
 
