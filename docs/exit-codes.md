@@ -47,7 +47,7 @@ prints one `vetto: recap:` line with exactly one next action:
 
 | Outcome | Recap points at |
 |---|---|
-| `124` / timeout | larger `--session-timeout` or splitting the task |
+| `124` / timeout | larger `--timeout` or splitting the task |
 | `126` | `vetto audit --latest` + `vetto allow` / `vetto deny` |
 | `125` | `vetto doctor`, then `vetto pack --bug` |
 | `127` | `vetto enable <agent>` or PATH check |

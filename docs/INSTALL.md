@@ -5,7 +5,7 @@
 Install the latest pre-compiled `vetto` binary to `~/.local/bin` using `curl`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto-tiers/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash
 ```
 
 ### Options
@@ -13,13 +13,13 @@ curl -fsSL https://raw.githubusercontent.com/shleder/vetto-tiers/main/scripts/in
 Install system-wide to `/usr/local/bin`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto-tiers/main/scripts/install.sh | bash -s -- --system
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash -s -- --system
 ```
 
 Install to a custom directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto-tiers/main/scripts/install.sh | bash -s -- --dir /custom/bin
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash -s -- --dir /custom/bin
 ```
 
 ## Security & Verification

@@ -208,9 +208,9 @@ if [ "$VETTO_ACTIVE" -eq 0 ] && [ "$EXPOSED_SECRETS" -gt 0 ]; then
     echo -e "Autonomous tools (Claude Code, OpenAI Codex CLI, Aider, Cursor) running"
     echo -e "in this shell have unrestricted access to your credentials and keys."
     echo -e "\nRemediation:"
-    echo -e "  1. Install Vetto:  ${COLOR_BOLD}npm i -g @shledery/vetto${COLOR_RESET}  or  ${COLOR_BOLD}brew install shleder/tap/vetto${COLOR_RESET}"
+    echo -e "  1. Install Vetto:  ${COLOR_BOLD}npm i -g @shledery/vetto${COLOR_RESET}  or  ${COLOR_BOLD}brew tap shleder/vetto && brew install vetto${COLOR_RESET}"
     echo -e "  2. Enable agent:   ${COLOR_BOLD}vetto enable claude${COLOR_RESET} (or codex / aider / cursor)"
-    echo -e "  3. Execute safely: ${COLOR_BOLD}vetto run -- <command>${COLOR_RESET}"
+    echo -e "  3. Execute safely: ${COLOR_BOLD}vetto -- <command>${COLOR_RESET}"
 elif [ "$VETTO_ACTIVE" -eq 1 ]; then
     echo -e "${COLOR_GREEN}${COLOR_BOLD}VERDICT: PROTECTED — VETTO ACTIVE ENFORCEMENT ENGAGED${COLOR_RESET}"
     echo -e "Host secrets are masked and egress policy is enforced by kernel primitives."

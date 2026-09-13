@@ -25,3 +25,5 @@ In CI / release trains, SBOM generation can be attached as a release step:
   with:
     files: vetto-sbom.json
 ```
+
+For release `v0.2.23`, pre-generated CycloneDX 1.5 SBOM artifacts are published directly on [GitHub Releases](https://github.com/shleder/vetto/releases/tag/v0.2.23).

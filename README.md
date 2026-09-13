@@ -59,12 +59,16 @@ cargo install vetto --locked
 
 ```bash
 # Via Homebrew (macOS & Linux)
-brew install shleder/tap/vetto
+brew tap shleder/vetto
+brew install vetto
+# Or directly: brew install shleder/vetto/vetto
 ```
 
 ```bash
 # Via Arch Linux AUR (Arch, Manjaro, EndeavourOS)
 yay -S vetto          # Or: yay -S vetto-git
+# Or install built package directly with pacman:
+sudo pacman -U vetto-0.2.23-1-x86_64.pkg.tar.zst
 ```
 
 ```powershell
@@ -72,8 +76,7 @@ yay -S vetto          # Or: yay -S vetto-git
 choco install vetto
 
 # Via Scoop (Windows)
-scoop bucket add vetto https://github.com/shleder/vetto
-scoop install vetto
+scoop install https://github.com/shleder/vetto/releases/download/v0.2.23/vetto.json
 ```
 
 ```bash
@@ -297,7 +300,7 @@ vetto -- codex exec "refactor auth module"
 # Security presets: balanced (default) | paranoid | yolo
 vetto --preset paranoid -- npm test
 
-# Network modes: off (default) | allowlist:<domains> | strict:<host:port>
+# Network modes: off (default) | ask | allowlist:<domains> | strict:<host:port>
 vetto --net allowlist:api.anthropic.com,github.com -- cargo check
 vetto --net strict:github.com:22 --git-ssh -- git fetch origin
 
