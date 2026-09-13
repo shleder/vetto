@@ -129,15 +129,14 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
         }
     };
     let root = win_exec_root("jobkill");
-    // Direct tree: root `timeout /t 60` plus a detached `start /b` grandchild
+    // Direct tree: root sleeper plus a detached `start /b` grandchild
     // sleeper (grandchild proves tree depth; root proves kill coverage).
-    // Spawned directly under the console (no `start`-shared console), so the
-    // parent-side handle wait is bounded and cannot block on console
-    // ownership. Both members must join the job for the proof to hold.
+    // Uses stdin-safe `ping` to hold background processes without console
+    // stdin hang risk in headless CI. Both members must join the job for the proof to hold.
     let mut child = match std::process::Command::new("cmd")
         .args([
             "/c",
-            "start /b \"\" timeout /t 60 >NUL & timeout /t 60 >NUL",
+            "start /b \"\" ping 127.0.0.1 -n 61 >NUL & ping 127.0.0.1 -n 61 >NUL",
         ])
         .current_dir(&root)
         .spawn()
@@ -153,6 +152,7 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
     let root_handle = unsafe { OpenProcess(JOB_TEST_ACCESS, 0, root_pid) };
     if root_handle.is_null() {
         let _ = child.kill();
+        let _ = child.wait();
         eprintln!("SKIP: cannot open the fixture root for assignment");
         return;
     }
@@ -161,12 +161,12 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
         // SAFETY: handle from the successful OpenProcess above.
         unsafe { CloseHandle(root_handle) };
         let _ = child.kill();
+        let _ = child.wait();
         eprintln!(
             "SKIP: this host refuses nested job assignment (outer job policy); tree-kill primitives not exercisable"
         );
         return;
     }
-    let _ = child.wait();
     // The detached sleeper appears asynchronously: poll the host-observed
     // membership until both tree members materialize (or the fixture proves
     // broken). Bounded: 15s poll, then SKIP — never an unbounded wait.
@@ -186,6 +186,7 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
     unsafe { CloseHandle(root_handle) };
     if members.len() < 2 {
         let _ = child.kill();
+        let _ = child.wait();
         eprintln!(
             "SKIP: detached sleeper never joined the job on this host (members={}); fixture not exercisable",
             members.len()
@@ -217,6 +218,25 @@ fn test_win_prod_job_001_kill_on_close_kills_tree() {
     assert!(
         residual.is_empty(),
         "kill-on-close must leave no tree member alive; survivors: {residual:?}"
+    );
+
+    // Verify root child terminates promptly following kill-on-close, with bounded poll.
+    let exit_deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < exit_deadline {
+        if let Ok(Some(_)) = child.try_wait() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(
+        exited,
+        "root child process must terminate on job kill-on-close"
     );
 }
 
