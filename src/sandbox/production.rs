@@ -177,8 +177,6 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
         return "seccomp".to_string();
         #[cfg(target_os = "macos")]
         return "seatbelt".to_string();
-        #[cfg(target_os = "macos")]
-        return "seatbelt".to_string();
         #[cfg(target_os = "windows")]
         return "job".to_string();
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
