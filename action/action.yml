@@ -52,9 +52,9 @@ runs:
         if ! command -v vetto >/dev/null 2>&1; then
           echo "Installing vetto via npm..."
           if [ "${{ inputs.version }}" = "latest" ] || [ -z "${{ inputs.version }}" ]; then
-            npm install -g vetto || npm install -g @vetto/cli || true
+            npm install -g @shledery/vetto || true
           else
-            npm install -g "vetto@${{ inputs.version }}" || true
+            npm install -g "@shledery/vetto@${{ inputs.version }}" || true
           fi
         fi
         if ! command -v vetto >/dev/null 2>&1; then
