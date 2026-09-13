@@ -705,7 +705,11 @@ mod tests {
 
     #[test]
     fn test_windows_system_root_env_fallback() {
-        let check_sys32 = |p: &Path| p.to_string_lossy().ends_with("System32");
+        let check_sys32 = |p: &Path| {
+            let s = p.to_string_lossy();
+            (s.starts_with(r"C:\Windows") || s.starts_with(r"D:\RealWin"))
+                && s.ends_with("System32")
+        };
 
         // When SystemRoot is valid, use it:
         assert_eq!(
@@ -715,8 +719,11 @@ mod tests {
 
         // When SystemRoot is poisoned, fall back to windir:
         assert_eq!(
-            resolve_windows_system_root_with(Some(r"C:\Users\victim"), Some(r"D:\RealWin"), |p| p
-                == Path::new(r"D:\RealWin\System32")),
+            resolve_windows_system_root_with(
+                Some(r"C:\Users\victim"),
+                Some(r"D:\RealWin"),
+                check_sys32
+            ),
             PathBuf::from(r"D:\RealWin")
         );
 
