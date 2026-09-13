@@ -264,12 +264,39 @@ fn test_macos_matrix_001() {
             );
         }
     }
-    // Windows is never our claim to change.
-    for cap in SecurityCapability::all() {
-        assert!(
-            !matrix.supports(BackendKind::Windows, cap),
-            "windows {cap:?} must stay unsupported"
-        );
+    #[cfg(not(target_os = "windows"))]
+    {
+        for cap in SecurityCapability::all() {
+            assert!(
+                !matrix.supports(BackendKind::Windows, cap),
+                "windows {cap:?} must stay unsupported off Windows"
+            );
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for cap in [
+            SecurityCapability::FilesystemIsolation,
+            SecurityCapability::NetworkIsolation,
+            SecurityCapability::ProcessIsolation,
+            SecurityCapability::ProcessTreeContainment,
+            SecurityCapability::ResourceLimits,
+            SecurityCapability::HostEvidence,
+        ] {
+            assert!(
+                matrix.supports(BackendKind::Windows, cap),
+                "windows {cap:?} must be supported on Windows"
+            );
+        }
+        for cap in [
+            SecurityCapability::SyscallRestriction,
+            SecurityCapability::ExecutionRootIsolation,
+        ] {
+            assert!(
+                !matrix.supports(BackendKind::Windows, cap),
+                "windows {cap:?} must stay unsupported"
+            );
+        }
     }
 }
 
