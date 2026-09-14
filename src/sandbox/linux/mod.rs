@@ -101,6 +101,18 @@ fn kernel_release() -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
+/// Acquire an authoritative pinned file descriptor for the child process via pidfd_open(2).
+/// Pinning the process identity prevents PID recycling races (INV-21 / Phase 1).
+pub fn open_pidfd(pid: u32) -> Option<OwnedFd> {
+    const SYS_PIDFD_OPEN: libc::c_long = 434;
+    let res = unsafe { libc::syscall(SYS_PIDFD_OPEN, pid as libc::pid_t, 0u32) };
+    if res >= 0 {
+        Some(unsafe { OwnedFd::from_raw_fd(res as i32) })
+    } else {
+        None
+    }
+}
+
 /// Fail-closed tier selection. `Err` means: the agent does NOT run.
 ///
 /// `VETTO_FORCE_TIER=full|fs-only|seccomp` is a testing override honored in
@@ -1304,11 +1316,14 @@ fn spawn_full(
             _ => None,
         };
 
+    let pidfd = open_pidfd(pid as u32);
+
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::PidNsPipe(alive_w)),
             _cgroup: cgroup_handle,
+            pidfd,
         },
         broker_ctrl_fd: broker_end,
         relay_port,
@@ -1522,6 +1537,8 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     // sweep its reparented setsid escapers.
     proctrack::arm_exit_sweep(pid, pid);
 
+    let pidfd = open_pidfd(pid as u32);
+
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
@@ -1531,6 +1548,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
                 sweep: true,
             }),
             _cgroup: cgroup_handle,
+            pidfd,
         },
         broker_ctrl_fd: None,
         relay_port: None,
@@ -1683,6 +1701,8 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
 
     proctrack::arm_exit_sweep(pid, pid);
 
+    let pidfd = open_pidfd(pid as u32);
+
     Ok(Spawned {
         handle: SandboxHandle {
             root_pid: pid as u32,
@@ -1692,6 +1712,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
                 sweep: true,
             }),
             _cgroup: cgroup_handle,
+            pidfd,
         },
         broker_ctrl_fd: None,
         relay_port: None,
