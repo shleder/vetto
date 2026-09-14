@@ -1047,7 +1047,8 @@ impl AsyncPipeReader {
                     } else {
                         let err = std::io::Error::last_os_error();
                         let code = err.raw_os_error().unwrap_or(0);
-                        if code != libc::EAGAIN && code != libc::EWOULDBLOCK && code != libc::EINTR {
+                        if code != libc::EAGAIN && code != libc::EWOULDBLOCK && code != libc::EINTR
+                        {
                             break;
                         }
                     }
@@ -1063,7 +1064,8 @@ impl AsyncPipeReader {
     }
 
     pub fn notify_child_exited(&self) {
-        self.child_done.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.child_done
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn join(mut self) -> Vec<u8> {

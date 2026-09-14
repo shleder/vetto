@@ -133,7 +133,9 @@ impl SandboxHandle {
                     revents: 0,
                 };
                 let r = unsafe { libc::poll(&mut pfd_poll, 1, 0) };
-                if r <= 0 || (pfd_poll.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) == 0 {
+                if r <= 0
+                    || (pfd_poll.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) == 0
+                {
                     return None;
                 }
             }
