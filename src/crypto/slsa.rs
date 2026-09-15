@@ -136,13 +136,17 @@ impl SignedSlsaEnvelope {
 
         public_key
             .verify(self.payload.as_bytes(), &signature)
-            .map_err(|e| anyhow::anyhow!("SLSA cryptographic signature verification failed: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("SLSA cryptographic signature verification failed: {}", e)
+            })?;
 
         let payload_statement: InTotoStatement = serde_json::from_str(&self.payload)
             .map_err(|e| anyhow::anyhow!("Failed to parse payload as InTotoStatement: {}", e))?;
 
         if payload_statement != self.statement {
-            bail!("Envelope integrity violation: embedded statement does not match verified payload");
+            bail!(
+                "Envelope integrity violation: embedded statement does not match verified payload"
+            );
         }
 
         Ok(())

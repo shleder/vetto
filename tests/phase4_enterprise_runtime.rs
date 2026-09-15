@@ -355,7 +355,9 @@ fn test_enterprise_policy_synchronization_and_drift_detection() {
     let mut invalid_manifest = manifest.clone();
     invalid_manifest.schema_version = 99;
     assert!(matches!(
-        invalid_manifest.verify_contract(&contract_claude).unwrap_err(),
+        invalid_manifest
+            .verify_contract(&contract_claude)
+            .unwrap_err(),
         PolicySyncError::InvalidManifest(_)
     ));
 
