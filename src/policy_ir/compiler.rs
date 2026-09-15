@@ -243,7 +243,7 @@ mod compiler_tests {
             "claude",
             &ws,
             Some(NetworkMode::Allowlist),
-            &[ws.clone()],
+            std::slice::from_ref(&ws),
             &[sub_out],
         )
         .expect("compilation should succeed");
@@ -262,7 +262,13 @@ mod compiler_tests {
         std::fs::create_dir_all(&ws).unwrap();
 
         let outside_write = temp_dir.join("outside_target.txt");
-        let result = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[outside_write]);
+        let result = PolicyCompiler::compile(
+            "codex",
+            &ws,
+            None,
+            std::slice::from_ref(&ws),
+            &[outside_write],
+        );
 
         assert!(matches!(
             result,
@@ -279,7 +285,8 @@ mod compiler_tests {
         std::fs::create_dir_all(&ws).unwrap();
 
         let env_file = ws.join(".env");
-        let result = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[env_file]);
+        let result =
+            PolicyCompiler::compile("codex", &ws, None, std::slice::from_ref(&ws), &[env_file]);
 
         assert!(matches!(
             result,

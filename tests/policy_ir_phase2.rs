@@ -31,7 +31,7 @@ fn test_policy_compiler_contract_sealing() {
         "claude",
         &ws,
         Some(NetworkMode::Allowlist),
-        &[ws.clone()],
+        std::slice::from_ref(&ws),
         &[sub_write],
     )
     .expect("compile contract");
@@ -63,7 +63,13 @@ fn test_policy_compiler_ancestor_containment_and_escape() {
 
     // Write path that escapes the workspace
     let escape_target = temp_dir.join("escaped_file.txt");
-    let res = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[escape_target]);
+    let res = PolicyCompiler::compile(
+        "codex",
+        &ws,
+        None,
+        std::slice::from_ref(&ws),
+        &[escape_target],
+    );
 
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
@@ -83,7 +89,13 @@ fn test_policy_compiler_mask_path_collision() {
 
     // Attempting to target .env inside workspace
     let env_target = ws.join(".env");
-    let res = PolicyCompiler::compile("aider", &ws, None, &[ws.clone()], &[env_target]);
+    let res = PolicyCompiler::compile(
+        "aider",
+        &ws,
+        None,
+        std::slice::from_ref(&ws),
+        &[env_target],
+    );
 
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
