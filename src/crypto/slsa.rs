@@ -160,7 +160,11 @@ impl CosignSlsaBuilder {
     }
 
     /// Sets the execution timestamps.
-    pub fn timestamps(mut self, started_on: impl Into<String>, finished_on: impl Into<String>) -> Self {
+    pub fn timestamps(
+        mut self,
+        started_on: impl Into<String>,
+        finished_on: impl Into<String>,
+    ) -> Self {
         self.started_on = started_on.into();
         self.finished_on = finished_on.into();
         self
@@ -181,7 +185,9 @@ impl CosignSlsaBuilder {
                     },
                 },
                 run_details: SlsaRunDetails {
-                    builder: SlsaBuilder { id: self.builder_id },
+                    builder: SlsaBuilder {
+                        id: self.builder_id,
+                    },
                     metadata: SlsaMetadata {
                         invocation_id: self.invocation_id,
                         started_on: self.started_on,
@@ -215,7 +221,11 @@ impl CosignSlsaBuilder {
 fn uuid_or_random() -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    let seed = format!("{}:{}", std::process::id(), chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let seed = format!(
+        "{}:{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     hasher.update(seed.as_bytes());
     let hash = hasher.finalize();
     format!(
@@ -233,7 +243,10 @@ mod tests {
     #[test]
     fn test_slsa_builder_and_statement_schema() {
         let builder = CosignSlsaBuilder::new("test-contract-123", "claude-code")
-            .subject("git-commit:b3ea2af", "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a")
+            .subject(
+                "git-commit:b3ea2af",
+                "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a",
+            )
             .builder_id("vetto-runtime:v0.40.0")
             .invocation_id("session-550e8400-e29b-41d4-a716-446655440000")
             .timestamps("2026-09-14T15:30:00Z", "2026-09-14T15:30:12Z");
@@ -244,15 +257,26 @@ mod tests {
         assert_eq!(statement.subject.len(), 1);
         assert_eq!(statement.subject[0].name, "git-commit:b3ea2af");
         assert_eq!(
-            statement.subject[0].digest.get("sha256").map(|s| s.as_str()),
+            statement.subject[0]
+                .digest
+                .get("sha256")
+                .map(|s| s.as_str()),
             Some("8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a")
         );
         assert_eq!(
-            statement.predicate.build_definition.external_parameters.contract_id,
+            statement
+                .predicate
+                .build_definition
+                .external_parameters
+                .contract_id,
             "test-contract-123"
         );
         assert_eq!(
-            statement.predicate.build_definition.external_parameters.agent_name,
+            statement
+                .predicate
+                .build_definition
+                .external_parameters
+                .agent_name,
             "claude-code"
         );
 
@@ -266,8 +290,10 @@ mod tests {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
 
-        let builder = CosignSlsaBuilder::new("contract-456", "opencode")
-            .subject("test-artifact", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        let builder = CosignSlsaBuilder::new("contract-456", "opencode").subject(
+            "test-artifact",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
 
         let signed = builder.sign(&signing_key).expect("sign envelope");
         assert_eq!(signed.payload_type, IN_TOTO_PAYLOAD_TYPE);

@@ -77,7 +77,6 @@ pub fn cleanup_ok(phase: KillPhase, survivors: bool) -> bool {
     phase == KillPhase::Verify && !survivors
 }
 
-
 /// Hard upper bound for total process tree and resource extinction (§12.1).
 pub const MAX_EXTINCTION_DEADLINE_MS: u64 = 500;
 
@@ -231,13 +230,8 @@ mod proctree_tests {
 
     #[test]
     fn test_extinction_theorem_verification_pass() {
-        let proof = ExtinctionVerifier::verify(
-            PlatformExtinctionTier::LinuxTier1Proven,
-            0,
-            0,
-            120,
-        )
-        .expect("linux extinction must verify");
+        let proof = ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 0, 120)
+            .expect("linux extinction must verify");
 
         assert_eq!(proof.surviving_processes, 0);
         assert_eq!(proof.surviving_resources, 0);
@@ -246,13 +240,9 @@ mod proctree_tests {
 
     #[test]
     fn test_extinction_theorem_macos_best_effort() {
-        let proof = ExtinctionVerifier::verify(
-            PlatformExtinctionTier::MacOsTier2BestEffort,
-            0,
-            0,
-            80,
-        )
-        .expect("macos extinction best effort");
+        let proof =
+            ExtinctionVerifier::verify(PlatformExtinctionTier::MacOsTier2BestEffort, 0, 0, 80)
+                .expect("macos extinction best effort");
 
         assert_eq!(proof.surviving_processes, 0);
         assert!(!proof.mathematically_proven, "macOS is non-authoritative");
@@ -260,13 +250,8 @@ mod proctree_tests {
 
     #[test]
     fn test_extinction_theorem_surviving_pid_fails_closed() {
-        let breach = ExtinctionVerifier::verify(
-            PlatformExtinctionTier::LinuxTier1Proven,
-            1,
-            0,
-            50,
-        )
-        .unwrap_err();
+        let breach = ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 1, 0, 50)
+            .unwrap_err();
 
         assert_eq!(breach.exit_code, 125);
         assert!(breach.reason.contains("Lifecycle breach"));
@@ -274,13 +259,9 @@ mod proctree_tests {
 
     #[test]
     fn test_extinction_theorem_deadline_exceeded_fails_closed() {
-        let breach = ExtinctionVerifier::verify(
-            PlatformExtinctionTier::LinuxTier1Proven,
-            0,
-            0,
-            501,
-        )
-        .unwrap_err();
+        let breach =
+            ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 0, 501)
+                .unwrap_err();
 
         assert_eq!(breach.exit_code, 125);
         assert!(breach.reason.contains("Extinction deadline exceeded"));

@@ -242,7 +242,10 @@ fn test_process_tree_extinction_theorem_cases() {
     let mac_proof =
         ExtinctionVerifier::verify(PlatformExtinctionTier::MacOsTier2BestEffort, 0, 0, 150)
             .expect("macOS best effort succeeds");
-    assert!(!mac_proof.mathematically_proven, "macOS is non-authoritative");
+    assert!(
+        !mac_proof.mathematically_proven,
+        "macOS is non-authoritative"
+    );
 
     // 4. Survivor breach triggers Exit 125 fail-closed
     let survivor_breach =

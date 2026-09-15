@@ -165,11 +165,7 @@ impl FleetManager {
 
     /// Retrieves an active worker scope by ID.
     pub fn get_worker(&self, worker_id: &str) -> Option<AgentWorkerScope> {
-        self.active_workers
-            .lock()
-            .ok()?
-            .get(worker_id)
-            .cloned()
+        self.active_workers.lock().ok()?.get(worker_id).cloned()
     }
 
     /// Returns a list of all currently active workers.
@@ -187,7 +183,10 @@ impl FleetManager {
     /// 4. Mandatory IPC namespace isolation enabled
     pub fn verify_isolation(&self, worker_a_id: &str, worker_b_id: &str) -> Result<()> {
         if worker_a_id == worker_b_id {
-            bail!("Cannot verify isolation of a worker against itself ('{}')", worker_a_id);
+            bail!(
+                "Cannot verify isolation of a worker against itself ('{}')",
+                worker_a_id
+            );
         }
 
         let workers = self
@@ -286,6 +285,9 @@ mod tests {
 
         let overflow = fleet.allocate_worker("a4");
         assert!(overflow.is_err());
-        assert!(overflow.unwrap_err().to_string().contains("Fleet capacity exceeded"));
+        assert!(overflow
+            .unwrap_err()
+            .to_string()
+            .contains("Fleet capacity exceeded"));
     }
 }

@@ -65,9 +65,15 @@ impl FinalVerdict {
     /// Action mandated by the Decision Truth Table (§18.2).
     pub fn recommended_action(&self) -> &'static str {
         match (self.status, self.strength) {
-            (VerdictStatus::Pass, EvidenceStrength::Strong) => "Commit CoW changes to host workspace.",
-            (VerdictStatus::Pass, EvidenceStrength::Partial) => "Commit CoW changes to host workspace with partial warning.",
-            (VerdictStatus::Pass, EvidenceStrength::Unsupported) => "Invalid verdict: unsupported platform cannot pass.",
+            (VerdictStatus::Pass, EvidenceStrength::Strong) => {
+                "Commit CoW changes to host workspace."
+            }
+            (VerdictStatus::Pass, EvidenceStrength::Partial) => {
+                "Commit CoW changes to host workspace with partial warning."
+            }
+            (VerdictStatus::Pass, EvidenceStrength::Unsupported) => {
+                "Invalid verdict: unsupported platform cannot pass."
+            }
             (VerdictStatus::Fail, _) => "Wipe CoW layer; abort session immediately.",
             (VerdictStatus::Inconclusive, _) => "Wipe CoW layer; audit ledger inconclusive.",
             (VerdictStatus::NotApplicable, _) => "Execution aborted pre-launch.",
@@ -126,7 +132,8 @@ impl VerdictEngine {
                 status: VerdictStatus::Fail,
                 strength: EvidenceStrength::Unsupported,
                 exit_code: 125,
-                reason: "Platform lacks necessary kernel enforcement primitives: fail-closed".to_string(),
+                reason: "Platform lacks necessary kernel enforcement primitives: fail-closed"
+                    .to_string(),
             };
         }
 
@@ -136,7 +143,10 @@ impl VerdictEngine {
                 status: VerdictStatus::Fail,
                 strength,
                 exit_code: 125,
-                reason: format!("Contract violation: {} kernel capability denials recorded", kernel_denials),
+                reason: format!(
+                    "Contract violation: {} kernel capability denials recorded",
+                    kernel_denials
+                ),
             };
         }
 
@@ -145,7 +155,10 @@ impl VerdictEngine {
                 status: VerdictStatus::Fail,
                 strength,
                 exit_code: 125,
-                reason: format!("VFS violation: {} writes outside authorized workspace", unauthorized_writes),
+                reason: format!(
+                    "VFS violation: {} writes outside authorized workspace",
+                    unauthorized_writes
+                ),
             };
         }
 
@@ -154,7 +167,10 @@ impl VerdictEngine {
                 status: VerdictStatus::Fail,
                 strength,
                 exit_code: 125,
-                reason: format!("Lifecycle breach: {} descendant processes escaped extinction", zombies_survived),
+                reason: format!(
+                    "Lifecycle breach: {} descendant processes escaped extinction",
+                    zombies_survived
+                ),
             };
         }
 
@@ -164,7 +180,8 @@ impl VerdictEngine {
                 status: VerdictStatus::Inconclusive,
                 strength,
                 exit_code: 125,
-                reason: "Evidence capture channel dropped events: audit ledger inconclusive".to_string(),
+                reason: "Evidence capture channel dropped events: audit ledger inconclusive"
+                    .to_string(),
             };
         }
 
@@ -173,7 +190,8 @@ impl VerdictEngine {
             status: VerdictStatus::Pass,
             strength,
             exit_code: agent_exit_code,
-            reason: "All security contract invariants satisfied with authoritative host facts".to_string(),
+            reason: "All security contract invariants satisfied with authoritative host facts"
+                .to_string(),
         }
     }
 }
@@ -182,8 +200,8 @@ impl VerdictEngine {
 mod tests {
     use super::*;
     use crate::policy_ir::{
-        AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract, NetworkContract,
-        NetworkMode, ResourceContract, UnsealedSecurityContract,
+        AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract,
+        NetworkContract, NetworkMode, ResourceContract, UnsealedSecurityContract,
     };
     use std::path::PathBuf;
 
@@ -248,7 +266,10 @@ mod tests {
         assert_eq!(verdict.exit_code, 0);
         assert_eq!(verdict.display_badge(), "PASS [STRONG]");
         assert!(verdict.is_success());
-        assert_eq!(verdict.recommended_action(), "Commit CoW changes to host workspace.");
+        assert_eq!(
+            verdict.recommended_action(),
+            "Commit CoW changes to host workspace."
+        );
     }
 
     #[test]
@@ -260,7 +281,10 @@ mod tests {
         assert_eq!(verdict.exit_code, 125);
         assert_eq!(verdict.display_badge(), "FAIL [STRONG]");
         assert!(!verdict.is_success());
-        assert_eq!(verdict.recommended_action(), "Wipe CoW layer; abort session immediately.");
+        assert_eq!(
+            verdict.recommended_action(),
+            "Wipe CoW layer; abort session immediately."
+        );
     }
 
     #[test]
@@ -292,7 +316,13 @@ mod tests {
     fn test_unsupported_platform() {
         let contract = mock_contract();
         let verdict = VerdictEngine::evaluate_with_strength(
-            &contract, 0, 0, 0, true, 0, EvidenceStrength::Unsupported,
+            &contract,
+            0,
+            0,
+            0,
+            true,
+            0,
+            EvidenceStrength::Unsupported,
         );
         assert_eq!(verdict.status, VerdictStatus::Fail);
         assert_eq!(verdict.strength, EvidenceStrength::Unsupported);

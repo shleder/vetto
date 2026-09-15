@@ -150,8 +150,8 @@ impl EnterprisePolicySync {
 mod tests {
     use super::*;
     use crate::policy_ir::contract::{
-        AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract, NetworkContract,
-        NetworkMode, ResourceContract, UnsealedSecurityContract,
+        AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract,
+        NetworkContract, NetworkMode, ResourceContract, UnsealedSecurityContract,
     };
     use std::path::PathBuf;
 
