@@ -731,6 +731,97 @@ fn forbidden_ipv4(ip: Ipv4Addr) -> bool {
         || cloud_metadata
 }
 
+fn extract_sni(buf: &[u8]) -> Result<Option<String>, ()> {
+    if buf.is_empty() {
+        return Ok(None);
+    }
+    if buf[0] != 0x16 {
+        return Err(());
+    }
+    if buf.len() < 5 {
+        return Ok(None);
+    }
+    let record_len = u16::from_be_bytes([buf[3], buf[4]]) as usize;
+    if buf.len() < 5 + record_len {
+        return Ok(None);
+    }
+    if buf[5] != 0x01 {
+        return Err(());
+    }
+
+    let handshake_len = (u32::from_be_bytes([0, buf[6], buf[7], buf[8]])) as usize;
+    if record_len < 4 + handshake_len {
+        return Err(());
+    }
+
+    let mut pos = 9;
+    pos += 2;
+    pos += 32;
+
+    if pos >= buf.len() {
+        return Err(());
+    }
+    let session_id_len = buf[pos] as usize;
+    pos += 1 + session_id_len;
+
+    if pos + 2 > buf.len() {
+        return Err(());
+    }
+    let cipher_suites_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+    pos += 2 + cipher_suites_len;
+
+    if pos >= buf.len() {
+        return Err(());
+    }
+    let comp_methods_len = buf[pos] as usize;
+    pos += 1 + comp_methods_len;
+
+    if pos + 2 > buf.len() {
+        return Ok(Some("".to_string()));
+    }
+    let extensions_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+    pos += 2;
+
+    let ext_end = pos + extensions_len;
+    if ext_end > buf.len() {
+        return Err(());
+    }
+
+    while pos + 4 <= ext_end {
+        let ext_type = u16::from_be_bytes([buf[pos], buf[pos + 1]]);
+        let ext_len = u16::from_be_bytes([buf[pos + 2], buf[pos + 3]]) as usize;
+        pos += 4;
+
+        if ext_type == 0x0000 {
+            if pos + ext_len > ext_end {
+                return Err(());
+            }
+            let mut sni_pos = pos;
+            if sni_pos + 2 > pos + ext_len {
+                return Err(());
+            }
+            let _list_len = u16::from_be_bytes([buf[sni_pos], buf[sni_pos + 1]]) as usize;
+            sni_pos += 2;
+
+            while sni_pos + 3 <= pos + ext_len {
+                let name_type = buf[sni_pos];
+                let name_len = u16::from_be_bytes([buf[sni_pos + 1], buf[sni_pos + 2]]) as usize;
+                sni_pos += 3;
+                if name_type == 0 {
+                    if sni_pos + name_len <= pos + ext_len {
+                        return Ok(Some(
+                            String::from_utf8_lossy(&buf[sni_pos..sni_pos + name_len]).to_string(),
+                        ));
+                    }
+                }
+                sni_pos += name_len;
+            }
+        }
+        pos += ext_len;
+    }
+    Ok(Some("".to_string()))
+}
+
 const CMSG_SPACE_FD: usize = 32; // CMSG_SPACE(sizeof(int)) on 64-bit
 
 fn create_and_send_data_fd(
@@ -818,6 +909,69 @@ fn create_and_send_data_fd(
 
     let mut unix_side = mine;
     let mut outbound = tcp;
+
+    if target_addr.port() == 443 {
+        let mut sni_buf = Vec::new();
+        let mut sni_ok = false;
+        loop {
+            let mut chunk = [0u8; 4096];
+            match unix_side.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    sni_buf.extend_from_slice(&chunk[..n]);
+                    match extract_sni(&sni_buf) {
+                        Ok(Some(sni)) => {
+                            let req_h = host_tx.trim().trim_end_matches('.').to_ascii_lowercase();
+                            let act = sni.trim().trim_end_matches('.').to_ascii_lowercase();
+                            let is_ip = req_h.parse::<std::net::IpAddr>().is_ok();
+                            if (act.is_empty() && is_ip)
+                                || act == req_h
+                                || act.ends_with(&format!(".{req_h}"))
+                                || req_h.ends_with(&format!(".{act}"))
+                            {
+                                sni_ok = true;
+                            } else {
+                                bus.publish(Event::Notice {
+                                    ts: crate::events::types::now(),
+                                    message: format!(
+                                        "SNI mismatch: expected '{req_h}', got '{act}'"
+                                    ),
+                                });
+                            }
+                            break;
+                        }
+                        Ok(None) => {
+                            if sni_buf.len() > 8192 {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            bus.publish(Event::Notice {
+                                ts: crate::events::types::now(),
+                                message: format!(
+                                    "Non-TLS or malformed traffic on port 443 to {}",
+                                    host_tx
+                                ),
+                            });
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        if !sni_ok {
+            let _ = outbound.shutdown(std::net::Shutdown::Both);
+            return Ok(());
+        }
+
+        if outbound.write_all(&sni_buf).is_err() {
+            return Ok(());
+        }
+        bytes_tx.fetch_add(sni_buf.len() as u64, Ordering::Relaxed);
+    }
+
     let mut buf = [0u8; 16384];
     loop {
         if quota_kill_tx.load(Ordering::Relaxed) {
