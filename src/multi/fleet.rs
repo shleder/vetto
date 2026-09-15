@@ -124,6 +124,14 @@ impl FleetManager {
             slot_id += 1;
         }
 
+        if slot_id > self.config.max_agents {
+            bail!(
+                "Fleet slot allocation exceeded max configured agents: slot {} > max {}",
+                slot_id,
+                self.config.max_agents
+            );
+        }
+
         let worker_id = format!("agent-{:02}", slot_id);
         let scope_path = self.config.cgroup_root.join(format!("{}.scope", worker_id));
         let ephemeral_port = self
