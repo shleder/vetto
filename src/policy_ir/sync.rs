@@ -131,7 +131,7 @@ impl EnterprisePolicySync {
                 PolicyManifestEntry {
                     agent_name: name.clone(),
                     contract_digest_blake3: contract.contract_digest_blake3.clone(),
-                    supervisor_version: contract.agent_identity.supervisor_version.clone(),
+                    supervisor_version: contract.agent_identity.agent_version.clone(),
                     network_mode: format!("{:?}", contract.network.mode),
                     cow_overlay_enabled: contract.filesystem.cow_overlay,
                 },
@@ -177,7 +177,7 @@ mod tests {
                 execution_root_ro: true,
             },
             network: NetworkContract {
-                mode: NetworkMode::LoopbackOnly,
+                mode: NetworkMode::Strict,
                 allowed_domains: vec![],
                 allowed_ports: vec![],
                 block_cloud_metadata: true,

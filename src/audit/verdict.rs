@@ -209,7 +209,7 @@ mod tests {
                 execution_root_ro: true,
             },
             network: NetworkContract {
-                mode: NetworkMode::LoopbackOnly,
+                mode: NetworkMode::Strict,
                 allowed_domains: vec![],
                 allowed_ports: vec![],
                 block_cloud_metadata: true,

@@ -53,7 +53,7 @@ fn create_sealed_contract(name: &str) -> SecurityContract {
             execution_root_ro: true,
         },
         network: NetworkContract {
-            mode: NetworkMode::LoopbackOnly,
+            mode: NetworkMode::Strict,
             allowed_domains: vec![],
             allowed_ports: vec![],
             block_cloud_metadata: true,
@@ -92,7 +92,10 @@ fn test_slsa_l3_attestation_envelope_and_signature() {
     let agent_name = "claude-code";
 
     let builder = CosignSlsaBuilder::new(contract_id, agent_name)
-        .subject("git-commit:b3ea2af", "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a")
+        .subject(
+            "git-commit:b3ea2af",
+            "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a",
+        )
         .builder_id("vetto-runtime:v0.40.0")
         .invocation_id("session-550e8400-e29b-41d4-a716-446655440000")
         .timestamps("2026-09-14T15:30:00Z", "2026-09-14T15:30:12Z");
@@ -100,7 +103,10 @@ fn test_slsa_l3_attestation_envelope_and_signature() {
     let signed_envelope = builder.sign(&signing_key).expect("signing must succeed");
 
     assert_eq!(signed_envelope.payload_type, IN_TOTO_PAYLOAD_TYPE);
-    assert_eq!(signed_envelope.statement.statement_type, IN_TOTO_STATEMENT_V1);
+    assert_eq!(
+        signed_envelope.statement.statement_type,
+        IN_TOTO_STATEMENT_V1
+    );
     assert_eq!(signed_envelope.statement.predicate_type, SLSA_PROVENANCE_V1);
     assert_eq!(signed_envelope.signature.len(), 128); // 64-byte Ed25519 in hex
 
@@ -121,7 +127,10 @@ fn test_verdict_engine_all_matrix_states() {
     assert_eq!(v_pass.exit_code, 0);
     assert!(v_pass.is_success());
     assert_eq!(v_pass.display_badge(), "PASS [STRONG]");
-    assert_eq!(v_pass.recommended_action(), "Commit CoW changes to host workspace.");
+    assert_eq!(
+        v_pass.recommended_action(),
+        "Commit CoW changes to host workspace."
+    );
 
     // 2. Fail [Strong] - kernel denials
     let v_denial = VerdictEngine::evaluate(&contract, 5, 0, 0, true, 0);
@@ -130,7 +139,10 @@ fn test_verdict_engine_all_matrix_states() {
     assert_eq!(v_denial.exit_code, 125);
     assert!(!v_denial.is_success());
     assert_eq!(v_denial.display_badge(), "FAIL [STRONG]");
-    assert_eq!(v_denial.recommended_action(), "Wipe CoW layer; abort session immediately.");
+    assert_eq!(
+        v_denial.recommended_action(),
+        "Wipe CoW layer; abort session immediately."
+    );
 
     // 3. Fail [Strong] - unauthorized writes
     let v_write = VerdictEngine::evaluate(&contract, 0, 2, 0, true, 0);
@@ -150,7 +162,13 @@ fn test_verdict_engine_all_matrix_states() {
 
     // 6. Fail [Unsupported] - platform capability deficit
     let v_unsupp = VerdictEngine::evaluate_with_strength(
-        &contract, 0, 0, 0, true, 0, EvidenceStrength::Unsupported,
+        &contract,
+        0,
+        0,
+        0,
+        true,
+        0,
+        EvidenceStrength::Unsupported,
     );
     assert_eq!(v_unsupp.status, VerdictStatus::Fail);
     assert_eq!(v_unsupp.strength, EvidenceStrength::Unsupported);
@@ -186,7 +204,8 @@ fn test_multi_agent_fleet_concurrency_and_cgroups_fair_share() {
     for i in 0..workers.len() - 1 {
         let a = &workers[i];
         let b = &workers[i + 1];
-        fleet.verify_isolation(&a.worker_id, &b.worker_id)
+        fleet
+            .verify_isolation(&a.worker_id, &b.worker_id)
             .expect("isolation invariants must hold between all worker pairs");
     }
 
@@ -206,57 +225,37 @@ fn test_multi_agent_fleet_concurrency_and_cgroups_fair_share() {
 #[test]
 fn test_process_tree_extinction_theorem_cases() {
     // 1. Linux Tier 1: Proven extinction (survivors = 0, elapsed <= 500ms)
-    let linux_proof = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::LinuxTier1Proven,
-        0,
-        0,
-        250,
-    )
-    .expect("Linux extinction must succeed");
+    let linux_proof =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 0, 250)
+            .expect("Linux extinction must succeed");
     assert_eq!(linux_proof.surviving_processes, 0);
     assert_eq!(linux_proof.surviving_resources, 0);
     assert!(linux_proof.mathematically_proven);
 
     // 2. Windows Tier 3: Proven extinction via Job Object
-    let win_proof = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::WindowsTier3Proven,
-        0,
-        0,
-        300,
-    )
-    .expect("Windows extinction must succeed");
+    let win_proof =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::WindowsTier3Proven, 0, 0, 300)
+            .expect("Windows extinction must succeed");
     assert!(win_proof.mathematically_proven);
 
     // 3. macOS Tier 2: Best-effort (unverified against double-fork)
-    let mac_proof = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::MacOsTier2BestEffort,
-        0,
-        0,
-        150,
-    )
-    .expect("macOS best effort succeeds");
+    let mac_proof =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::MacOsTier2BestEffort, 0, 0, 150)
+            .expect("macOS best effort succeeds");
     assert!(!mac_proof.mathematically_proven, "macOS is non-authoritative");
 
     // 4. Survivor breach triggers Exit 125 fail-closed
-    let survivor_breach = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::LinuxTier1Proven,
-        1,
-        0,
-        100,
-    )
-    .unwrap_err();
+    let survivor_breach =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 1, 0, 100)
+            .unwrap_err();
     assert_eq!(survivor_breach.exit_code, FAIL_CLOSED_EXTINCTION_EXIT_CODE);
     assert_eq!(survivor_breach.exit_code, 125);
     assert!(survivor_breach.reason.contains("Lifecycle breach"));
 
     // 5. Leaked resources trigger Exit 125
-    let resource_breach = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::LinuxTier1Proven,
-        0,
-        2,
-        100,
-    )
-    .unwrap_err();
+    let resource_breach =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 2, 100)
+            .unwrap_err();
     assert_eq!(resource_breach.exit_code, 125);
     assert!(resource_breach.reason.contains("Resource breach"));
 
@@ -269,7 +268,9 @@ fn test_process_tree_extinction_theorem_cases() {
     )
     .unwrap_err();
     assert_eq!(timeout_breach.exit_code, 125);
-    assert!(timeout_breach.reason.contains("Extinction deadline exceeded"));
+    assert!(timeout_breach
+        .reason
+        .contains("Extinction deadline exceeded"));
 }
 
 #[test]
@@ -279,8 +280,10 @@ fn test_enterprise_policy_synchronization_and_drift_detection() {
     let contract_claude = create_sealed_contract("claude");
     let contract_codex = create_sealed_contract("codex");
 
-    sync.register_contract(contract_claude.clone()).expect("register claude");
-    sync.register_contract(contract_codex.clone()).expect("register codex");
+    sync.register_contract(contract_claude.clone())
+        .expect("register claude");
+    sync.register_contract(contract_codex.clone())
+        .expect("register codex");
 
     assert_eq!(sync.count(), 2);
 
