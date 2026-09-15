@@ -1,10 +1,21 @@
-//! Policy IR: requested → compile → validate → execute pipeline (P2 slice).
+//! Policy IR & Canonical Security Contract: requested → compile → validate → execute pipeline.
 //!
-//! The IR is a normalized, lint-checked form of a policy request. `compile`
-//! normalizes and enforces fail-closed lint rules (root-read/root-write);
-//! `validate` checks structural coherence (every write root must sit under a
-//! read root). Enforcement itself stays in the sandbox backends — this module
-//! only produces a checked plan, never executes it.
+//! Includes:
+//! - Legacy P2 slice: normalize, lint-check, validate structural containment
+//! - Phase 2 NEXT_GEN §7: Canonical Security Contract & cryptographic sealing (`contract`)
+//! - Phase 2 NEXT_GEN §8: Policy Compiler translating intent into immutable contracts (`compiler`)
+//! - Phase 2 NEXT_GEN §10: 12-state Execution Finite State Machine (`fsm`)
+
+pub mod compiler;
+pub mod contract;
+pub mod fsm;
+
+pub use compiler::{CompilerError, PolicyCompiler};
+pub use contract::{
+    AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract, NetworkContract,
+    NetworkMode, ResourceContract, SecurityContract, UnsealedSecurityContract,
+};
+pub use fsm::{ExecutionState, ExecutionStateMachine, StateTransitionError};
 
 /// Security level of a requested policy. Orthogonal to enforcement tier:
 /// the level describes how much the policy *asks for*, the tier describes
@@ -147,7 +158,6 @@ mod policy_ir_tests {
     #[test]
     fn write_outside_read_fails_closed() {
         assert!(compile(&req(SecurityLevel::Standard, &["/proj"], &["/etc/x"])).is_err());
-        // Prefix confusion is not coverage: /proj2 is not under /proj.
         assert!(compile(&req(SecurityLevel::Standard, &["/proj"], &["/proj2/o"])).is_err());
     }
 
