@@ -231,9 +231,6 @@ mod contract_tests {
     fn deterministic_digest() {
         let u1 = sample_unsealed();
         let u2 = sample_unsealed();
-        assert_eq!(
-            u1.compute_digest().unwrap(),
-            u2.compute_digest().unwrap()
-        );
+        assert_eq!(u1.compute_digest().unwrap(), u2.compute_digest().unwrap());
     }
 }

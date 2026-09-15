@@ -178,9 +178,9 @@ impl PolicyCompiler {
                 max_pids: 128,
                 max_memory_bytes: 2 * 1024 * 1024 * 1024, // 2 GB
                 max_cpu_percent: 100,
-                max_wall_time_ms: 120_000,                // 2 minutes
-                max_stdout_bytes: 10 * 1024 * 1024,       // 10 MB
-                max_file_size_bytes: 100 * 1024 * 1024,   // 100 MB
+                max_wall_time_ms: 120_000,              // 2 minutes
+                max_stdout_bytes: 10 * 1024 * 1024,     // 10 MB
+                max_file_size_bytes: 100 * 1024 * 1024, // 100 MB
             },
             environment: env_contract,
             attestation: AttestationContract {
@@ -262,15 +262,12 @@ mod compiler_tests {
         std::fs::create_dir_all(&ws).unwrap();
 
         let outside_write = temp_dir.join("outside_target.txt");
-        let result = PolicyCompiler::compile(
-            "codex",
-            &ws,
-            None,
-            &[ws.clone()],
-            &[outside_write],
-        );
+        let result = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[outside_write]);
 
-        assert!(matches!(result, Err(CompilerError::ConflictingPermissions(_))));
+        assert!(matches!(
+            result,
+            Err(CompilerError::ConflictingPermissions(_))
+        ));
 
         let _ = std::fs::remove_dir_all(&ws);
     }
@@ -282,15 +279,12 @@ mod compiler_tests {
         std::fs::create_dir_all(&ws).unwrap();
 
         let env_file = ws.join(".env");
-        let result = PolicyCompiler::compile(
-            "codex",
-            &ws,
-            None,
-            &[ws.clone()],
-            &[env_file],
-        );
+        let result = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[env_file]);
 
-        assert!(matches!(result, Err(CompilerError::ConflictingPermissions(_))));
+        assert!(matches!(
+            result,
+            Err(CompilerError::ConflictingPermissions(_))
+        ));
 
         let _ = std::fs::remove_dir_all(&ws);
     }

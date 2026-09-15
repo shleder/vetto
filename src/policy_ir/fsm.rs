@@ -194,7 +194,10 @@ mod fsm_tests {
         let mut fsm = ExecutionStateMachine::new();
         // Cannot jump directly from Intent to Spawn
         let err = fsm.transition(ExecutionState::Spawn).unwrap_err();
-        assert!(matches!(err, StateTransitionError::InvalidTransition { .. }));
+        assert!(matches!(
+            err,
+            StateTransitionError::InvalidTransition { .. }
+        ));
         assert_eq!(fsm.current_state(), ExecutionState::Intent);
     }
 

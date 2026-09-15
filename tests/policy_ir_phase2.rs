@@ -20,7 +20,9 @@ fn test_legacy_policy_ir_compatibility() {
 
 #[test]
 fn test_policy_compiler_contract_sealing() {
-    let temp_dir = std::env::temp_dir().canonicalize().expect("canonicalize temp dir");
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonicalize temp dir");
     let ws = temp_dir.join(format!("vetto_p2_test_{}", std::process::id()));
     std::fs::create_dir_all(&ws).expect("create test workspace");
 
@@ -43,26 +45,25 @@ fn test_policy_compiler_contract_sealing() {
     // Anti-tamper verification
     let mut tampered = contract.clone();
     tampered.resources.max_pids = 99999;
-    assert!(!tampered.verify_digest(), "tampered contract must fail digest verification");
+    assert!(
+        !tampered.verify_digest(),
+        "tampered contract must fail digest verification"
+    );
 
     let _ = std::fs::remove_dir_all(&ws);
 }
 
 #[test]
 fn test_policy_compiler_ancestor_containment_and_escape() {
-    let temp_dir = std::env::temp_dir().canonicalize().expect("canonicalize temp dir");
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonicalize temp dir");
     let ws = temp_dir.join(format!("vetto_p2_escape_{}", std::process::id()));
     std::fs::create_dir_all(&ws).expect("create test workspace");
 
     // Write path that escapes the workspace
     let escape_target = temp_dir.join("escaped_file.txt");
-    let res = PolicyCompiler::compile(
-        "codex",
-        &ws,
-        None,
-        &[ws.clone()],
-        &[escape_target],
-    );
+    let res = PolicyCompiler::compile("codex", &ws, None, &[ws.clone()], &[escape_target]);
 
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
@@ -74,19 +75,15 @@ fn test_policy_compiler_ancestor_containment_and_escape() {
 
 #[test]
 fn test_policy_compiler_mask_path_collision() {
-    let temp_dir = std::env::temp_dir().canonicalize().expect("canonicalize temp dir");
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonicalize temp dir");
     let ws = temp_dir.join(format!("vetto_p2_mask_{}", std::process::id()));
     std::fs::create_dir_all(&ws).expect("create test workspace");
 
     // Attempting to target .env inside workspace
     let env_target = ws.join(".env");
-    let res = PolicyCompiler::compile(
-        "aider",
-        &ws,
-        None,
-        &[ws.clone()],
-        &[env_target],
-    );
+    let res = PolicyCompiler::compile("aider", &ws, None, &[ws.clone()], &[env_target]);
 
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
@@ -124,7 +121,10 @@ fn test_execution_state_machine_transitions() {
 
     // Transitioning from Terminal should fail
     let err = fsm.transition(ExecutionState::Intent).unwrap_err();
-    assert!(matches!(err, StateTransitionError::InvalidTransition { .. }));
+    assert!(matches!(
+        err,
+        StateTransitionError::InvalidTransition { .. }
+    ));
 }
 
 #[test]
