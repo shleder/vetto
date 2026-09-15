@@ -229,7 +229,8 @@ fn test_policy_compiler_directory_traversal_rejection() {
     );
 
     let sep = if cfg!(windows) { '\\' } else { '/' };
-    let traversal_abs = std::path::PathBuf::from(format!("{}{sep}sub{sep}..{sep}leak", ws.display()));
+    let traversal_abs =
+        std::path::PathBuf::from(format!("{}{sep}sub{sep}..{sep}leak", ws.display()));
     let res_abs = PolicyCompiler::compile("claude", &ws, None, &[], &[traversal_abs]);
     assert!(
         matches!(res_abs, Err(CompilerError::ConflictingPermissions(_))),
