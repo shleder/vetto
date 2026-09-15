@@ -50,9 +50,11 @@ impl PolicyCompiler {
             } else {
                 path.clone()
             };
-            if clean_path
-                .components()
-                .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
+            let path_str = path.to_string_lossy();
+            if path_str.split(['/', '\\']).any(|c| c == "..")
+                || clean_path
+                    .components()
+                    .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
             {
                 return Err(CompilerError::ConflictingPermissions(format!(
                     "Read target {:?} attempts directory traversal",
@@ -93,9 +95,11 @@ impl PolicyCompiler {
             } else {
                 path.clone()
             };
-            if clean_path
-                .components()
-                .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
+            let path_str = path.to_string_lossy();
+            if path_str.split(['/', '\\']).any(|c| c == "..")
+                || clean_path
+                    .components()
+                    .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
             {
                 return Err(CompilerError::ConflictingPermissions(format!(
                     "Write target {:?} attempts directory traversal",
