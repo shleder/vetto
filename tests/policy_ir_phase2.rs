@@ -89,13 +89,7 @@ fn test_policy_compiler_mask_path_collision() {
 
     // Attempting to target .env inside workspace
     let env_target = ws.join(".env");
-    let res = PolicyCompiler::compile(
-        "aider",
-        &ws,
-        None,
-        std::slice::from_ref(&ws),
-        &[env_target],
-    );
+    let res = PolicyCompiler::compile("aider", &ws, None, std::slice::from_ref(&ws), &[env_target]);
 
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
