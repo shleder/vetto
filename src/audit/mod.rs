@@ -1,9 +1,10 @@
-//! Audit history indexing, session security inspection, and daily digest.
+//! Audit history indexing, session security inspection, daily digest, and verdict evaluation.
 
 pub mod chain;
 pub mod digest;
 pub mod history;
 pub mod recap;
+pub mod verdict;
 
 pub use digest::run_digest;
 pub use history::{
@@ -11,3 +12,4 @@ pub use history::{
     run_audit, run_audit_command, AuditRecord, SessionAuditDetail,
 };
 pub use recap::{format_session_recap, SessionRecapInput, RECAP_TOP_N};
+pub use verdict::{EvidenceStrength, FinalVerdict, VerdictEngine, VerdictStatus};

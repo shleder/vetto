@@ -9,6 +9,7 @@
 pub mod compiler;
 pub mod contract;
 pub mod fsm;
+pub mod sync;
 
 pub use compiler::{CompilerError, PolicyCompiler};
 pub use contract::{
@@ -16,6 +17,9 @@ pub use contract::{
     NetworkMode, ResourceContract, SecurityContract, UnsealedSecurityContract,
 };
 pub use fsm::{ExecutionState, ExecutionStateMachine, StateTransitionError};
+pub use sync::{
+    EnterprisePolicySync, EnterpriseSyncManifest, PolicyManifestEntry, PolicySyncError,
+};
 
 /// Security level of a requested policy. Orthogonal to enforcement tier:
 /// the level describes how much the policy *asks for*, the tier describes
