@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 use crate::sandbox::linux::proctrack;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 #[cfg(windows)]
@@ -74,6 +76,8 @@ pub struct SandboxHandle {
     pub strategy: Option<KillStrategy>,
     #[cfg(target_os = "linux")]
     pub _cgroup: Option<crate::sandbox::linux::cgroup::CgroupHandle>,
+    #[cfg(target_os = "linux")]
+    pub pidfd: Option<OwnedFd>,
 }
 
 impl SandboxHandle {
@@ -120,6 +124,22 @@ impl SandboxHandle {
 
     /// Non-blocking poll: Some(exit_code) once the process is gone.
     pub fn try_wait(&mut self) -> Option<i32> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(ref pfd) = self.pidfd {
+                let mut pfd_poll = libc::pollfd {
+                    fd: pfd.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let r = unsafe { libc::poll(&mut pfd_poll, 1, 0) };
+                if r <= 0
+                    || (pfd_poll.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) == 0
+                {
+                    return None;
+                }
+            }
+        }
         #[cfg(unix)]
         {
             let pid = self.root_pid as i32;
@@ -167,6 +187,25 @@ impl SandboxHandle {
 
     /// Kill everything inside the sandbox. Safe to call multiple times.
     pub fn terminate(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            const SYS_PIDFD_SEND_SIGNAL: libc::c_long = 424;
+            if let Some(ref pfd) = self.pidfd {
+                // Pin the process and deliver SIGKILL directly to the pidfd
+                unsafe {
+                    libc::syscall(
+                        SYS_PIDFD_SEND_SIGNAL,
+                        pfd.as_raw_fd(),
+                        libc::SIGKILL,
+                        std::ptr::null::<libc::siginfo_t>(),
+                        0u32,
+                    );
+                }
+            }
+            if let Some(cg) = self._cgroup.as_ref() {
+                cg.cleanup();
+            }
+        }
         if let Some(strategy) = self.strategy.take() {
             match strategy {
                 #[cfg(target_os = "linux")]

@@ -56,8 +56,8 @@ pub const PROD_SCENARIO_ID: &str = "PROD";
 pub const PROD_NONCE_ENV: &str = "VETTO_PROD_NONCE";
 /// Registry binding for production runs (not a scenario-registry hash).
 pub const PROD_REGISTRY: &str = "production";
-/// Stdio drain budget after termination.
-pub const PROD_DRAIN_BUDGET: Duration = Duration::from_secs(5);
+/// Stdio drain budget after termination (200ms deadline per Phase 1 spec).
+pub const PROD_DRAIN_BUDGET: Duration = Duration::from_millis(200);
 /// Per-stream capture cap.
 pub const PROD_MAX_STDIO: usize = 1 << 20;
 /// Exit poll interval for the deadline loop.
@@ -234,7 +234,23 @@ pub fn prod_tier_mapping(tier: Option<Tier>, net: &NetMode) -> TierMapping {
                     SecurityCapability::HostEvidence,
                 ]
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            {
+                let mut caps = vec![
+                    SecurityCapability::FilesystemIsolation,
+                    SecurityCapability::ExecutionRootIsolation,
+                    SecurityCapability::ProcessIsolation,
+                    SecurityCapability::ProcessTreeContainment,
+                    SecurityCapability::ResourceLimits,
+                    SecurityCapability::SyscallRestriction,
+                    SecurityCapability::HostEvidence,
+                ];
+                if net_off {
+                    caps.push(SecurityCapability::NetworkIsolation);
+                }
+                caps
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             {
                 vec![SecurityCapability::HostEvidence]
             }
@@ -976,6 +992,91 @@ pub fn execute_with_backend(
     )
 }
 
+/// Non-blocking async pipe reader for captured stdio streams.
+/// Drains the pipe concurrently while the child is executing, preventing
+/// the 64KB kernel buffer deadlock (FS-01). Enforces memory ceilings
+/// and post-exit drain deadlines (Phase 1 / INV-25).
+#[cfg(unix)]
+pub struct AsyncPipeReader {
+    handle: Option<std::thread::JoinHandle<Vec<u8>>>,
+    child_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(unix)]
+impl AsyncPipeReader {
+    pub fn spawn(fd: OwnedFd, max_bytes: usize, drain_deadline: Duration) -> Self {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let child_done = Arc::new(AtomicBool::new(false));
+        let child_done_clone = Arc::clone(&child_done);
+
+        let handle = std::thread::spawn(move || {
+            let raw_fd = fd.as_raw_fd();
+            let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFL) };
+            if flags >= 0 {
+                unsafe { libc::fcntl(raw_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+            }
+
+            let mut out = Vec::new();
+            let mut buf = [0u8; 8192];
+            let mut post_exit_start: Option<Instant> = None;
+
+            loop {
+                if child_done_clone.load(Ordering::Relaxed) {
+                    let start = *post_exit_start.get_or_insert_with(Instant::now);
+                    if start.elapsed() >= drain_deadline {
+                        break;
+                    }
+                }
+
+                let mut pfd = libc::pollfd {
+                    fd: raw_fd,
+                    events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
+                    revents: 0,
+                };
+                let r = unsafe { libc::poll(&mut pfd, 1, 10) };
+                if r > 0 {
+                    let n = unsafe { libc::read(raw_fd, buf.as_mut_ptr().cast(), buf.len()) };
+                    if n > 0 {
+                        let to_copy = (n as usize).min(max_bytes.saturating_sub(out.len()));
+                        if to_copy > 0 {
+                            out.extend_from_slice(&buf[..to_copy]);
+                        }
+                    } else if n == 0 {
+                        break;
+                    } else {
+                        let err = std::io::Error::last_os_error();
+                        let code = err.raw_os_error().unwrap_or(0);
+                        if code != libc::EAGAIN && code != libc::EWOULDBLOCK && code != libc::EINTR
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            out
+        });
+
+        Self {
+            handle: Some(handle),
+            child_done,
+        }
+    }
+
+    pub fn notify_child_exited(&self) {
+        self.child_done
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn join(mut self) -> Vec<u8> {
+        if let Some(h) = self.handle.take() {
+            h.join().unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
 /// Shared headless core: real-detected mechanics + typestate boundary.
 /// `capability=None` prepares the platform backend; `Some` injects a test
 /// double for the capability side only.
@@ -1000,6 +1101,13 @@ fn execute_inner(
         if mechanics.tier() != Some(t) {
             anyhow::bail!("explicit tier does not match detected tier (fail-closed)");
         }
+    }
+    #[cfg(target_os = "linux")]
+    if crate::sandbox::linux::landlock::abi_version().is_none() && tier != Some(Tier::Seccomp) {
+        return Err(anyhow::Error::new(crate::error::VettoError::Landlock(
+            "missing Landlock LSM support on this kernel; refusing silent downgrade (fail-closed exit 125)\n\
+             action: upgrade your kernel (Linux 5.13+) or enable CONFIG_SECURITY_LANDLOCK=y; run `vetto doctor` for the full capability picture".into()
+        )));
     }
     #[cfg(unix)]
     let (stdout_r, stdout_w, stderr_r, stderr_w) = piped_stdio_fds()?;
@@ -1033,15 +1141,23 @@ fn execute_inner(
         drop(stdout_w);
         drop(stderr_w);
     }
+    #[cfg(unix)]
+    let (stdout_reader, stderr_reader) = {
+        (
+            AsyncPipeReader::spawn(stdout_r, PROD_MAX_STDIO, PROD_DRAIN_BUDGET),
+            AsyncPipeReader::spawn(stderr_r, PROD_MAX_STDIO, PROD_DRAIN_BUDGET),
+        )
+    };
     // `mut` is unconditional: the unix branch below assigns stdout/stderr,
     // and `cfg`-gated `mut` would diverge between platforms.
     #[allow(unused_mut)]
     let mut result = spawned.wait_collect();
     #[cfg(unix)]
     {
-        let (out, err) = collect_piped(stdout_r, stderr_r, PROD_DRAIN_BUDGET);
-        result.stdout = out;
-        result.stderr = err;
+        stdout_reader.notify_child_exited();
+        stderr_reader.notify_child_exited();
+        result.stdout = stdout_reader.join();
+        result.stderr = stderr_reader.join();
     }
     Ok(result)
 }
@@ -1070,6 +1186,11 @@ fn piped_stdio_fds() -> anyhow::Result<(OwnedFd, OwnedFd, OwnedFd, OwnedFd)> {
                 }
                 anyhow::bail!("fcntl CLOEXEC: {error}");
             }
+        }
+        // Set O_NONBLOCK on the read end so read operations never block indefinitely.
+        let read_flags = unsafe { libc::fcntl(fds[0], libc::F_GETFL) };
+        if read_flags >= 0 {
+            unsafe { libc::fcntl(fds[0], libc::F_SETFL, read_flags | libc::O_NONBLOCK) };
         }
         // SAFETY: fresh descriptors from a successful pipe+CLOEXEC setup.
         Ok((unsafe { OwnedFd::from_raw_fd(fds[0]) }, unsafe {
@@ -1402,5 +1523,53 @@ mod production_unit_tests {
         assert!(out.spawn_via_backend);
         assert!(!out.allows_pass(&[SecurityCapability::FilesystemIsolation]));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_async_pipe_reader_large_payload() {
+        use std::os::fd::FromRawFd;
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+
+        let reader = AsyncPipeReader::spawn(read_fd, PROD_MAX_STDIO, Duration::from_millis(200));
+
+        let payload_size = 128 * 1024; // 128 KB, exceeds 64KB pipe buffer
+        let payload = vec![b'A'; payload_size];
+        let payload_clone = payload.clone();
+
+        let writer = std::thread::spawn(move || {
+            use std::io::Write;
+            let mut file = std::fs::File::from(write_fd);
+            file.write_all(&payload_clone).expect("write payload");
+        });
+
+        writer.join().expect("writer finished");
+        reader.notify_child_exited();
+        let collected = reader.join();
+
+        assert_eq!(collected.len(), payload_size);
+        assert_eq!(collected, payload);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_async_pipe_reader_drain_deadline() {
+        use std::os::fd::FromRawFd;
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let _write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) }; // Held open
+
+        let start = Instant::now();
+        let reader = AsyncPipeReader::spawn(read_fd, PROD_MAX_STDIO, Duration::from_millis(100));
+        reader.notify_child_exited();
+        let _ = reader.join();
+        let elapsed = start.elapsed();
+
+        assert!(elapsed >= Duration::from_millis(80));
+        assert!(elapsed < Duration::from_millis(1000));
     }
 }

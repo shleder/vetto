@@ -107,25 +107,46 @@ pub fn find_cgroup_root() -> Option<PathBuf> {
         return None;
     }
 
-    // 1. Check user slice under systemd: /sys/fs/cgroup/user.slice/user-<uid>.slice/user@<uid>.service/
+    // 1. Check /proc/self/cgroup to attach to caller's current delegated cgroup subtree
+    if let Ok(cgroup_content) = fs::read_to_string("/proc/self/cgroup") {
+        for line in cgroup_content.lines() {
+            // format: 0::<path>
+            if let Some(path_part) = line.strip_prefix("0::") {
+                let rel = path_part.trim().trim_start_matches('/');
+                let mut cur = cgroup2_mount.join(rel);
+                while cur.starts_with(cgroup2_mount) {
+                    if is_dir_writable(&cur) {
+                        return Some(cur);
+                    }
+                    if let Some(parent) = cur.parent() {
+                        cur = parent.to_path_buf();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Check user slice under systemd: /sys/fs/cgroup/user.slice/user-<uid>.slice/user@<uid>.service/
     let uid = unsafe { libc::getuid() };
     let user_slice = cgroup2_mount.join(format!("user.slice/user-{uid}.slice/user@{uid}.service"));
     if is_dir_writable(&user_slice) {
         return Some(user_slice);
     }
 
-    // 2. Check general user.slice
+    // 3. Check general user.slice
     let user_slice_general = cgroup2_mount.join(format!("user.slice/user-{uid}.slice"));
     if is_dir_writable(&user_slice_general) {
         return Some(user_slice_general);
     }
 
-    // 3. Direct cgroup root if running privileged/root
+    // 4. Direct cgroup root if running privileged/root
     if is_dir_writable(cgroup2_mount) {
         return Some(cgroup2_mount.to_path_buf());
     }
 
-    // 4. Check user home cgroup (~/.cgroup or $XDG_RUNTIME_DIR/cgroup)
+    // 5. Check user home cgroup (~/.cgroup or $XDG_RUNTIME_DIR/cgroup)
     if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
         let runtime_cgroup = PathBuf::from(runtime_dir).join("cgroup");
         if is_dir_writable(&runtime_cgroup) {
@@ -149,13 +170,13 @@ fn is_dir_writable(path: &Path) -> bool {
     }
 }
 
-/// Create a transient cgroup v2 for the session.
+/// Create a transient cgroup v2 scope for the session.
 pub fn setup_cgroup(
     cgroup_config: Option<&CgroupConfig>,
     cpu_max_override: Option<&str>,
 ) -> VettoResult<Option<CgroupHandle>> {
     let effective_cgroup = match (cgroup_config, cpu_max_override) {
-        (None, None) => return Ok(None),
+        (None, None) => CgroupConfig::default(),
         (Some(c), None) => c.clone(),
         (None, Some(cpu)) => CgroupConfig {
             cpu_max: Some(cpu.to_string()),
@@ -169,9 +190,9 @@ pub fn setup_cgroup(
     };
 
     let Some(root) = find_cgroup_root() else {
-        tracing::warn!(
+        tracing::debug!(
             "cgroup v2 is unavailable or not writable on this system; \
-             continuing without cgroup resource quotas (WARNING)"
+             continuing without cgroup resource quotas"
         );
         return Ok(None);
     };
@@ -186,10 +207,10 @@ pub fn setup_cgroup(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let cgroup_dir = root.join(format!("vetto-{}-{}", std::process::id(), nonce));
+    let cgroup_dir = root.join(format!("vetto-session-{}-{}", std::process::id(), nonce));
 
     if let Err(e) = fs::create_dir(&cgroup_dir) {
-        tracing::warn!(
+        tracing::debug!(
             "failed to create cgroup directory {}: {e}; continuing without cgroup",
             cgroup_dir.display()
         );
@@ -242,5 +263,12 @@ mod tests {
         assert_eq!(parse_cpu_max("200%"), Some("200000 100000".into()));
         assert_eq!(parse_cpu_max("50000 100000"), Some("50000 100000".into()));
         assert_eq!(parse_cpu_max("max"), Some("max 100000".into()));
+    }
+
+    #[test]
+    fn test_cgroup_root_or_graceful_none() {
+        let _root = find_cgroup_root();
+        let scope = setup_cgroup(None, None);
+        assert!(scope.is_ok());
     }
 }
