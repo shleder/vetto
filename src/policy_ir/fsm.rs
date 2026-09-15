@@ -125,7 +125,10 @@ impl ExecutionStateMachine {
             (ExecutionState::Verdict, ExecutionState::FailClosed) => true,
 
             // Fail-closed recovery & terminal paths
+            (ExecutionState::FailClosed, ExecutionState::FailClosed) => true,
             (ExecutionState::FailClosed, ExecutionState::EmergencyCleanup) => true,
+            (ExecutionState::EmergencyCleanup, ExecutionState::EmergencyCleanup) => true,
+            (ExecutionState::EmergencyCleanup, ExecutionState::FailClosed) => true,
             (ExecutionState::EmergencyCleanup, ExecutionState::Terminal) => true,
 
             _ => false,

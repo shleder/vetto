@@ -41,10 +41,16 @@ impl PolicyCompiler {
             CompilerError::PathCanonicalizationFailed(format!("Workspace invalid: {e}"))
         })?;
 
-        // Phase 2: Canonicalize and filter read paths
-        let mut allow_read = Vec::new();
+        // Phase 2: Canonicalize and filter read paths.
+        // Always include workspace_root as a readable base.
+        let mut allow_read = vec![workspace_root.clone()];
         for path in raw_reads {
-            if let Ok(canon) = path.canonicalize() {
+            let normalized = if path.is_absolute() {
+                path.clone()
+            } else {
+                workspace_root.join(path)
+            };
+            if let Ok(canon) = normalized.canonicalize() {
                 allow_read.push(canon);
             } else {
                 return Err(CompilerError::PathCanonicalizationFailed(format!(
@@ -72,8 +78,19 @@ impl PolicyCompiler {
             let mut ancestor = normalized.clone();
             let mut suffix_components = Vec::new();
             while !ancestor.exists() {
-                if let Some(name) = ancestor.file_name() {
-                    suffix_components.push(name.to_os_string());
+                if let Some(comp) = ancestor.components().next_back() {
+                    match comp {
+                        std::path::Component::Normal(name) => {
+                            suffix_components.push(name.to_os_string());
+                        }
+                        std::path::Component::ParentDir => {
+                            return Err(CompilerError::ConflictingPermissions(format!(
+                                "Write target {:?} attempts directory traversal",
+                                path
+                            )));
+                        }
+                        _ => {}
+                    }
                 }
                 if !ancestor.pop() {
                     break;
@@ -116,10 +133,11 @@ impl PolicyCompiler {
             workspace_root.join(".git/config"),
         ];
 
-        // Mask paths take absolute precedence over write paths
+        // Mask paths take absolute precedence over write paths.
+        // Rejects if write target matches mask, is inside mask, or encompasses mask (except workspace_root).
         for w in &allow_write {
             for m in &mask_paths {
-                if w == m || w.starts_with(m) {
+                if w == m || w.starts_with(m) || (w != &workspace_root && m.starts_with(w)) {
                     return Err(CompilerError::ConflictingPermissions(format!(
                         "Write target {:?} collides with mandatory secret mask {:?}",
                         w, m
@@ -147,6 +165,14 @@ impl PolicyCompiler {
 
         // Phase 4: Contract Sealing & BLAKE3/SHA-256 Digest Generation
         let session_nonce = generate_session_nonce();
+
+        #[cfg(windows)]
+        let default_exec = vec![PathBuf::from(
+            std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()),
+        )];
+        #[cfg(not(windows))]
+        let default_exec = vec![PathBuf::from("/usr"), PathBuf::from("/bin")];
+
         let unsealed = UnsealedSecurityContract {
             contract_version: 1,
             contract_id: format!("contract-{}", &session_nonce[..12]),
@@ -162,7 +188,7 @@ impl PolicyCompiler {
                 workspace_root,
                 allow_read,
                 allow_write,
-                allow_execute: vec![PathBuf::from("/usr"), PathBuf::from("/bin")],
+                allow_execute: default_exec,
                 mask_paths,
                 cow_overlay: true,
                 execution_root_ro: true,
@@ -209,22 +235,9 @@ fn get_home_dir() -> Option<PathBuf> {
 }
 
 fn generate_session_nonce() -> String {
+    use rand_core::RngCore;
     let mut bytes = [0u8; 16];
-    let read_ok = std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| {
-            use std::io::Read;
-            f.read_exact(&mut bytes).map(|_| ())
-        })
-        .is_ok();
-    if !read_ok {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = ((t >> (8 * (i % 8))) ^ (std::process::id() as u128) ^ (i as u128 * 0x9E37)) as u8;
-        }
-    }
+    rand_core::OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -292,6 +305,21 @@ mod compiler_tests {
             result,
             Err(CompilerError::ConflictingPermissions(_))
         ));
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn compile_empty_reads_includes_workspace() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let ws = temp_dir.join(format!("vetto_test_ws_{}", generate_session_nonce()));
+        std::fs::create_dir_all(&ws).unwrap();
+
+        let contract = PolicyCompiler::compile("claude", &ws, None, &[], &[])
+            .expect("compilation should succeed with empty raw reads");
+
+        assert!(contract.filesystem.allow_read.contains(&ws));
+        assert!(contract.verify_digest());
 
         let _ = std::fs::remove_dir_all(&ws);
     }
