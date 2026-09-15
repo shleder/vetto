@@ -120,7 +120,7 @@ jobs:
         # The full suite above already runs these; this step keeps the
         # macOS proof visible per-module in the job log (mirrors the
         # Windows verbose suite below).
-        run: cargo test --test integration macos_prod --all-features
+        run: cargo test --test integration macos_prod --all-features -- --test-threads=1
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Intel macOS cross-check
         run: cargo check --target x86_64-apple-darwin --all-features

@@ -35,6 +35,14 @@ use vetto::verify_ng::sandbox_backend::{
 static MACOS_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
+static MACOS_PROD_SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn macos_prod_serial() -> &'static std::sync::Mutex<()> {
+    MACOS_PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(target_os = "macos")]
 fn scratch(tag: &str) -> PathBuf {
     let n = MACOS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir =
@@ -369,6 +377,7 @@ fn test_macos_no_direct_bypass_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_child_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     use vetto::sandbox::production::UnpreparedProductionExecution;
     use vetto::sandbox::{Backend, StdioMode};
     let root = scratch("child");
@@ -453,6 +462,7 @@ fn test_macos_prod_child_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_fs_deny_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     let root = scratch("fs-deny");
     let forbid_dir = scratch("fs-forbid");
     let forbid = forbid_dir.join("top-secret");
@@ -534,6 +544,7 @@ fn test_macos_prod_fs_deny_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_net_deny_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     let root = scratch("net-deny");
     let staged = root.join("connect.sh");
     std::fs::write(
@@ -592,6 +603,7 @@ fn test_macos_prod_net_deny_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_pgroup_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     use vetto::sandbox::production::UnpreparedProductionExecution;
     use vetto::sandbox::{Backend, StdioMode};
     let root = scratch("pgroup");
@@ -635,6 +647,7 @@ fn test_macos_prod_pgroup_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_timeout_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     let root = scratch("timeout");
     let start = std::time::Instant::now();
     let mut log = ProdSpawnLog::new();
@@ -667,6 +680,7 @@ fn test_macos_prod_timeout_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_prepare_fail_no_spawn_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     use vetto::sandbox::production::{
         UnpreparedProductionExecution, PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
     };
@@ -717,6 +731,7 @@ fn test_macos_prod_prepare_fail_no_spawn_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_drift_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     use vetto::sandbox::production::UnpreparedProductionExecution;
     use vetto::sandbox::{Backend, StdioMode};
     let root = scratch("drift");
@@ -785,6 +800,7 @@ fn test_macos_prod_drift_001() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_macos_prod_identity_001() {
+    let _guard = macos_prod_serial().lock().unwrap();
     let root = scratch("identity");
     let mut log = ProdSpawnLog::new();
     let out = execute_simple(
