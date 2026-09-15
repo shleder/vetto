@@ -807,12 +807,10 @@ fn extract_sni(buf: &[u8]) -> Result<Option<String>, ()> {
                 let name_type = buf[sni_pos];
                 let name_len = u16::from_be_bytes([buf[sni_pos + 1], buf[sni_pos + 2]]) as usize;
                 sni_pos += 3;
-                if name_type == 0 {
-                    if sni_pos + name_len <= pos + ext_len {
-                        return Ok(Some(
-                            String::from_utf8_lossy(&buf[sni_pos..sni_pos + name_len]).to_string(),
-                        ));
-                    }
+                if name_type == 0 && sni_pos + name_len <= pos + ext_len {
+                    return Ok(Some(
+                        String::from_utf8_lossy(&buf[sni_pos..sni_pos + name_len]).to_string(),
+                    ));
                 }
                 sni_pos += name_len;
             }
