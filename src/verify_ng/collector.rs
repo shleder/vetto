@@ -19,7 +19,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 /// grandchild holds the write end: FM-04 HANG-GRANDCHILD-001).
 ///
 /// Unix-only: pipe draining needs raw fds. On Windows the evidence path is
-/// host-fact-only (see docs/verify-ng.md); the stub below returns
+/// host-fact-only (see docs/architecture/verify-ng.md); the stub below returns
 /// not-EOF so the oracle degrades to INCONCLUSIVE, never PASS.
 #[cfg(unix)]
 pub fn drain_with_deadline(fd: &OwnedFd, deadline: Instant) -> (Vec<u8>, bool) {

@@ -1,3 +1,10 @@
+vetto (0.2.24-1) unstable; urgency=medium
+
+  * CI stabilization (MACOS_PROD_SERIAL), repository hygiene and docs cleanup,
+    enterprise README overhaul, cryptographic attestation engine.
+
+ -- vetto contributors <noreply@github.com>  Tue, 15 Sep 2026 00:00:00 +0300
+
 vetto (0.2.23-1) unstable; urgency=medium
 
   * Cross-platform release: unified execution pipeline, macOS Seatbelt

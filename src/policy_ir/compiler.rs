@@ -221,7 +221,7 @@ impl PolicyCompiler {
             agent_identity: AgentIdentity {
                 agent_name: agent_name.to_string(),
                 agent_preset: "default".to_string(),
-                agent_version: "0.2.23".to_string(),
+                agent_version: env!("CARGO_PKG_VERSION").to_string(),
                 invoked_binary: PathBuf::from("/bin/sh"),
                 invoked_args: vec![],
             },

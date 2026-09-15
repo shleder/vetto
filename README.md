@@ -1,22 +1,15 @@
 <div align="center">
 
-# VETTO — Daemon-less kernel sandbox for AI coding agents
+# vetto
 
-<p align="center">
-  <b>Run Claude Code, Codex, and Cursor unattended with zero credential-leak anxiety.</b><br/>
-  <i>Enforced directly by Linux Landlock &amp; Seccomp. No Docker, no root, no daemon.</i>
-</p>
+**Lightweight, zero-leak security sandbox and isolation boundary for AI agents and developer workflows.**
 
-[![Release](https://img.shields.io/github/v/release/shleder/vetto?include_prereleases&label=release&color=blue&style=flat-square)](https://github.com/shleder/vetto/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions)
+[![Version](https://img.shields.io/badge/version-0.2.24-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.2.24)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license)
+[![Platform support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational?style=flat-square)](#core-architecture--backends)
+[![Security Model](https://img.shields.io/badge/security-fail--closed-success?style=flat-square)](#zero-leak-design)
 [![npm version](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
-[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
-[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#platform-support)
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](LICENSE)
-[![Fail-Closed](https://img.shields.io/badge/fallback-none%20%2F%20fail--closed-success?style=flat-square)](#honest-status)
-<br/>
-[![cargo-deny](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=cargo-deny&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
-[![cargo-audit](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=cargo-audit&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
-[![gitleaks](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=gitleaks&style=flat-square)](https://github.com/shleder/vetto/actions/workflows/ci.yml)
 
 <br/>
 
@@ -26,423 +19,273 @@
 
 ---
 
-## Stop Fearing `--dangerously-skip-permissions`
+## What is vetto?
 
-AI coding agents write impressive code, but running them unprompted on your local workstation is terrifying:
-a single hallucination, rogue bash loop, or prompt injection can exfiltrate your `~/.ssh` keys, wipe your home directory (`rm -rf ~`), or leak `.env` secrets.
+**vetto** provides unprivileged, kernel-enforced isolation for autonomous AI coding agents and developer automation tools. It protects host systems from rogue LLM commands, supply-chain attacks, unauthorized network egress, and secret exfiltration during autonomous agent execution across **Claude Code**, **Windsurf**, **OpenDevin**, **Cursor**, **OpenCode**, **Aider**, and custom CLI agents.
 
-**VETTO** wraps Claude Code, Codex, Antigravity, Cursor, and Aider in an OS-level kernel sandbox **before the agent process starts**:
-- **Zero Credential Theft**: `~/.ssh`, `~/.aws`, `~/.gnupg`, and `.env*` are physically unreadable by the agent.
-- **Zero Destructive Writes**: Agent file modifications are strictly confined to your project root and `/tmp`.
-- **Zero Performance Penalty**: **~4ms** startup overhead, 0 MB idle RAM, unprivileged execution without Docker.
+When autonomous agents run with full execution privileges (e.g. `--dangerously-skip-permissions` or unattended loops), a single hallucination, compromised dependency hook, or prompt injection can wipe host files or leak sensitive developer keys (`~/.ssh`, `~/.aws`, `.env`). **vetto** neutralizes these risks at the OS kernel boundary **before** untrusted processes execute:
+
+- **Zero Secret Leakage**: Credential stores (`~/.ssh`, `~/.aws`, `~/.gnupg`) and intra-project secrets (`.env*`, `*.pem`, `*.key`) are physically stripped from environment variables and masked at the filesystem layer.
+- **Strict Write Containment**: Filesystem writes are locked strictly to the target workspace root and `/tmp`. Destructive host modifications are blocked fail-closed.
+- **Governed Network Egress**: Network access is blocked by default (`--net off`) or routed exclusively through a loopback relay broker enforcing domain allowlists and anti-DNS rebinding defenses.
+- **Deterministic Process Teardown**: Fail-closed process supervision sweeps all descendant fork trees, preventing runaway zombie daemons and orphaned background processes.
+- **Ultra-Low Latency**: Near-zero startup overhead (~4ms), 0 MB idle RAM, and zero background daemons.
+
+---
+
+## Core Architecture & Backends
+
+vetto enforces isolation using native operating system kernel primitives without requiring root privileges or container daemons:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        vetto Supervisor Engine                         │
+│   (Fail-Closed Lifecycle · Env Sanitizer · Secret Masker · Audit Log)   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+         ┌─────────────────────────┴─────────────────────────┐
+         ▼                                                   ▼
+┌─────────────────────────────────┐         ┌─────────────────────────────────┐
+│          Linux Backend          │         │          macOS Backend          │
+│ ─────────────────────────────── │         │ ─────────────────────────────── │
+│ • Rootless Namespaces (bwrap)   │         │ • Apple Seatbelt Sandbox C API  │
+│ • Landlock LSM Inode Scoping    │         │ • Dynamic Scheme SBPL Engine    │
+│ • Seccomp-BPF Syscall Filter    │         │ • Strict Workspace Write Bounds │
+│ • PID Namespace / Deathsig      │         │ • Watchdog Supervision & kqueue │
+│ • cgroups v2 / rlimit Ceilings  │         │ • Process-Group Death Sweep     │
+└─────────────────────────────────┘         └─────────────────────────────────┘
+```
+
+### Linux Backend
+- **Rootless Namespaces & Bubblewrap (`bwrap`)**: Isolates Mount (`CLONE_NEWNS`), Network (`CLONE_NEWNET`), PID (`CLONE_NEWPID`), and IPC (`CLONE_NEWIPC`) namespaces entirely in unprivileged user space.
+- **Landlock LSM**: Kernel-level VFS inode access control (ABI v1–v6) restricting filesystem reads and writes.
+- **Seccomp-BPF**: Enforces fine-grained system call interception before `execve` (`UnixOnly` and `AgentMin`), terminating debugger attachment (`ptrace`), eBPF injections (`bpf`), userfaultfd exploits, and raw socket allocations.
+- **cgroups v2 & rlimits**: Immutable resource ceilings on CPU time (`RLIMIT_CPU`), virtual memory address space (`RLIMIT_AS`), process limits (`RLIMIT_NPROC`), and file size (`RLIMIT_FSIZE`).
+
+### macOS Backend
+- **Native Seatbelt**: Dynamic Scheme SBPL (Sandbox Profile Language) compilation loaded via Apple's private C API (`libsandbox.1.dylib`), bypassing brittle CLI wrappers.
+- **Filesystem Confinement**: Strict write isolation locked to the workspace root and `/tmp`. Known secret paths (`~/.ssh`, `~/.aws`, `.env`) are masked via tail denials (`deny_resolved`).
+- **Process Lifecycle Supervision**: Watchdog supervisor thread monitoring parent death via `kqueue` and executing clean process-group (`pgroup`) SIGKILL sweeps on termination.
+
+### Zero-Leak Design
+- **Sanitized Environment Variables**: Strips all sensitive credentials (`HARD_DENY_PREFIXES`: 35 secret patterns including `AWS_*`, `GITHUB_*`, `OPENAI_*`, `ANTHROPIC_*`, SSH keys, and auth tokens) and normalizes `$PATH` to prevent directory traversal and binary hijacking.
+- **Secret Masking Overlays**: High-risk paths (`~/.ssh`, `~/.aws`, `.env*`, `*.pem`, `*.key`) are masked with mode-000 tmpfs overlays or `/dev/null` binds.
+- **Gated Network Egress**: Network namespaces maintain loopback-only visibility under `--net off`. When domain egress is granted, traffic routes through an in-process TCP broker with DNS pinning.
+- **Fail-Closed Guarantees**: If any requested boundary or kernel security primitive is unavailable, vetto exits immediately with code `125` (`EXIT_FAIL_CLOSED`) rather than running unconfined.
 
 ---
 
 ## Installation
 
-Choose your preferred installation method:
+### Quick Install Script (Linux, macOS, WSL2)
+Install the official pre-compiled standalone binary to `~/.local/bin`:
 
 ```bash
-# Standalone POSIX script (Linux, macOS, WSL2 — zero dependencies)
-curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | sh
 ```
 
+System-wide installation:
 ```bash
-# Via npm (global binary for Node.js environments)
-npm install --global @shledery/vetto
+curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | sh -s -- --system
 ```
 
+### Cargo (crates.io)
+Compile and install directly from crates.io:
+
 ```bash
-# Via Cargo (crates.io — compiled from source)
 cargo install vetto --locked
 ```
 
+### NPM Global Package
+Install as a global Node.js binary wrapper with bundled native executables:
+
 ```bash
-# Via Homebrew (macOS & Linux)
+npm install --global @shledery/vetto
+```
+
+### Homebrew (macOS & Linux)
+```bash
 brew tap shleder/vetto
 brew install vetto
-# Or directly: brew install shleder/vetto/vetto
 ```
+
+### Docker / Containerized Workflows
+To run vetto inside CI containers or Docker devcontainers, ensure unprivileged user namespaces are enabled:
 
 ```bash
-# Via Arch Linux AUR (Arch, Manjaro, EndeavourOS)
-yay -S vetto          # Or: yay -S vetto-git
-# Or install built package directly with pacman:
-sudo pacman -U vetto-0.2.23-1-x86_64.pkg.tar.zst
+docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.2.24 vetto doctor
 ```
 
-```powershell
-# Via Chocolatey (Windows)
-choco install vetto
-
-# Via Scoop (Windows)
-scoop install https://github.com/shleder/vetto/releases/download/v0.2.23/vetto.json
-```
-
-```bash
-# Run one-off without installing (npx)
-npx @shledery/vetto doctor
-```
-
-```yaml
-# In GitHub Actions CI (unattended agent runs, evals, SWE-bench)
-- uses: shleder/vetto@v0.2.23
-```
-
-*Prebuilt standalone archives with SHA256 checksums and CycloneDX SBOMs for all architectures (`x86_64`, `aarch64`, Windows `.zip`, Linux/macOS `.tar.gz`) are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
-
-*Every release archive is signed with minisign (key id `75ECEC9B5080C590`, public key: `packaging/release.pub`). Verify before running:*
-
-```bash
-# one-time: install minisign (cargo install minisign / apt install minisign / brew install minisign)
-minisign -V -p packaging/release.pub -m vetto-linux-x86_64.tar.gz
-# → "Signature and comment signature verified"
-```
-
-*Every release binary is additionally attested with SLSA Build Provenance (Level 3) via GitHub Sigstore. Verify provenance ([guide](docs/security/slsa-provenance.md)):*
-```bash
-gh attestation verify vetto-linux-x86_64.tar.gz --owner shleder
-# → "Verification succeeded!"
-```
+*Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*
 
 ---
 
-## Quick Start
+## Quickstart & Common Commands
 
-Protect your workstation and run any AI coding agent unattended in seconds:
-
-### 1. Enable Your Agent
-```bash
-# Wrap any agent of choice (creates transparent zero-overhead shims):
-vetto enable opencode      # OpenCode CLI
-vetto enable claude        # Claude Code
-vetto enable codex         # OpenAI Codex CLI
-vetto enable windsurf      # Codeium Windsurf
-vetto enable goose         # Block Goose
-vetto enable cursor        # Cursor Agent
-vetto enable aider         # Aider
-```
-*Creates transparent, zero-latency shims in `~/.vetto/shims/` and configures shell PATH priority.*
-
-#### Supported AI Coding Agents (20 Native Presets)
-Vetto provides tailored sandbox presets, project marker auto-detection, and zero-config network allowlists for 20 AI coding tools:
-- **`opencode`** (OpenCode) · **`claude`** (Claude Code) · **`codex`** (OpenAI Codex) · **`gemini`** (Google Gemini)
-- **`antigravity`** (Google Antigravity / `agy`) · **`cursor`** (Cursor Agent) · **`aider`** (Aider) · **`cline`** (Cline)
-- **`copilot`** (GitHub Copilot CLI) · **`windsurf`** (Codeium Windsurf) · **`continue`** (Continue CLI) · **`goose`** (Block Goose)
-- **`openhands`** (All-Hands OpenHands) · **`swe-agent`** (SWE-agent) · **`plandex`** (Plandex) · **`mentat`** (Mentat)
-- **`gpt-engineer`** (GPT Engineer) · **`devin`** (Cognition Devin) · **`crust`** (Crust AI) · **`amp`** (Amp AI)
-
-### 2. Run Completely Unattended
-Launch your agent with full autonomy:
-```bash
-# OpenAI Codex
-codex exec --full-auto
-
-# Claude Code
-claude --dangerously-skip-permissions
-
-# Antigravity CLI
-antigravity run --autonomous
-
-# Aider
-aider --yes
-
-# Or run any agent directly inside vetto:
-vetto -- claude
-vetto -- aider
-vetto -- cursor
-vetto -- <agent> [args...]
-```
-*Files outside the workspace are blocked, host credentials (`~/.ssh`, `~/.aws`, `.env`) are masked, and network egress is locked down to provider APIs.*
-
-To check wrapped status or unwrap at any time:
-```bash
-vetto enable --status      # Check all active shims
-vetto disable <agent>      # Unwrap agent (e.g. vetto disable codex)
-```
-
----
-
-## Why Not Docker?
-
-Containers were designed for packaging backend microservices—not for interactive developer coding loops. Vetto enforces OS-level kernel confinement directly around your host processes:
-
-| Dimension | VETTO | Docker Containers | Why It Matters |
-| :--- | :--- | :--- | :--- |
-| **Startup Overhead** | **~4ms** (CI-gated spawn overhead) | **3.5s – 8.0s** | Subagents and test loops execute with zero perceptible latency |
-| **Daemon** | **None** (zero background processes) | `dockerd` background service | No background daemon to crash, stall, or consume idle resources |
-| **RAM Overhead** | **0 MB** | **1.5 GB+** (VM / daemon engine) | Leaves all workstation RAM free for compilation and local models |
-| **Permissions** | **Unprivileged** (no root / no sudo) | Root / `docker` group (root-equivalent) | Completely eliminates root-escalation attack surface on your host |
-| **Host File Sync** | **Native Filesystem** (instant) | Volume mounts (slow I/O, UID sync bugs) | Edits, hot-reloading, and git diffs reflect immediately |
-| **Kernel Barrier** | **Linux Landlock + Seccomp-BPF** | Namespaces + cgroups | In-process confinement applied before `execve`, strictly fail-closed |
-| **Network Egress** | **Per-Domain Allowlist** (`api.anthropic.com`) | All-or-nothing bridge | Prevents unauthorized data exfiltration without breaking inference |
-
----
-
-## <a id="platform-support"></a>Platform Support
-
-Security tooling frequently makes misleading cross-platform claims. Vetto rejects snake oil and is architecturally transparent about what each operating system kernel can and cannot enforce unprivileged.
-
-Vetto establishes an immutable 3-tier boundary architecture:
-- **Tier 1 (Production-Grade)**: **Linux (Native)** and **Linux (WSL2)**. Full kernel isolation via Landlock LSM (ABI v1–v6), Seccomp-BPF (`UnixOnly` / `AgentMin`), rlimit ceilings (AS, NPROC, CPU, FSIZE), sticky `NO_NEW_PRIVS`, dedicated process groups, private Mount/PID/Network namespaces, and full `/proc` nonce tree-sweep.
-- **Tier 1 via VM (Uniform path)**: **macOS → Linux VM** (`mac-vm`, Virtualization.framework) and **Windows → WSL2** (guest vetto + sync-back). Same Tier-1 stack inside the guest; default on macOS/Windows when the VM is configured, fail-closed with an actionable message when it is not.
-- **Tier 2 (Experimental, maximum-achievable)**: **macOS native (Seatbelt)**. Seatbelt write isolation, network lockdown (`--net off`), pgroup host verification, and group-death sweep. Reads stay broad — the SBPL matrix proves only Shape A runs (all fragmented shapes SIGABRT incl. static Go), so narrow read-deny is closed until Apple fixes dyld (#62). For full read isolation, run inside OrbStack or a Linux VM.
-- **Tier 3 (Preview, maximum-achievable)**: **Windows native (AppContainer/LPAC + Job Objects)**. Job Objects tree containment with kill-on-close (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), AppContainer process and network-off (`--net off`) boundary, policy-conditional ceilings. No seccomp or BPF on Windows; syscall filtering and exec-root isolation remain unsupported. Use WSL2 for full Tier 1 kernel boundary.
-
-### Canonical 5-Factor Capability Matrix
-
-| Platform / Tier | Filesystem Write | Filesystem Read | Network Namespace | Process Reaping | Secret Overlays per OS | Assurance Status |
-| :--- | :--- | :--- | :---: | :--- | :---: | :--- |
-| **Linux (Native)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O Mounts) | **100% Scoped Read** (Landlock VFS Inode checks, `~/.ssh` / `.env` blocked) | **Yes** (`CLONE_NEWNET`, loopback-only + local TCP/TLS broker) | **100% PID Namespace** (`CLONE_NEWPID` init teardown + `PR_SET_PDEATHSIG` + full `/proc` nonce tree sweep) | **Yes** (tmpfs mode-000 and `/dev/null` bind-mounts over secrets) | **Tier 1 (Proven)**: Complete hardware & kernel isolation (Landlock, seccomp UnixOnly/AgentMin, rlimits, sticky NO_NEW_PRIVS) |
-| **Linux (WSL2)**<br/>*Tier 1 (Production)* | **100% Kernel Deny** (Landlock via WSL2 Linux Kernel) | **100% Scoped Read** (Landlock VFS Inode checks) | **Yes** (`CLONE_NEWNET` inside WSL2 VM) | **100% PID Namespace** teardown + `/proc` sweep | **Yes** (tmpfs mount overlays inside WSL2) | **Tier 1 (Production)**: Recommended path for Windows workstations |
-| **macOS (Darwin)**<br/>*Tier 2 (Experimental)* | **100% Locked** (Seatbelt SBPL `(allow file-write*)` to workspace & `/tmp`) | **Broad Reads** (System `/` read due to dyld bug; tail `deny` on known secrets) | **No** (Unsupported by Darwin; `--net=off` via SBPL `(deny network*)`) | **pgroup host sweep** (Watchdog `kqueue` `pdeath_watch` + group-death SIGKILL sweep) | **No** (VFS overlays unavailable unprivileged; SBPL static deny only) | **Tier 2 (Experimental)**: Write confinement and `--net=off` network lockdown. Unprivileged read-isolation and syscall filtering unsupported (use OrbStack/Linux VM for full read isolation) |
-| **Windows Native**<br/>*Tier 3 (Preview)* | **Workspace Only** (AppContainer DACL + LPAC `S-1-15-2-2` write grants) | **ACL Fallback** (AppContainer default-deny; partial token restriction) | **No** (Network namespaces unavailable; `--net=off` via AppContainer caps) | **100% Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates process tree) | **No** (No unprivileged mount namespaces; fails closed on collision) | **Tier 3 (Preview)**: Process guardrails with kill-on-close and `--net off`; no seccomp/BPF or exec-root isolation. Use WSL2 for full kernel boundary |
-| **Windows Sandbox**<br/>*Tier 3 (VM Isolated)* | **VM Isolated** (Dedicated virtual disk, mapped read-write folders only) | **VM Isolated** (Host secrets never mapped into `.wsb` specification) | **Virtual Switch** (Hyper-V vSwitch disabled under `--net=off`) | **VM Teardown** (Hyper-V VM instance termination) | **Full Isolation** (Physically separated filesystem in disposable VM) | **Disposable VM**: Hardware-virtualized container (requires Hyper-V) |
-
----
-
-## <a id="honest-status"></a>Honest Status
-
-### Fail-Closed Principle
-Vetto strictly enforces a fail-closed contract across all platforms. If a requested security boundary cannot be guaranteed by the current operating system kernel or runtime environment, Vetto exits immediately with code `125` (`EXIT_FAIL_CLOSED`). Vetto never silently degrades to an unconfined or insecure execution state.
-
-### The Honest macOS Disclosure
-Apple has deprecated SBPL (`sandbox-exec`) and Darwin kernels impose severe constraints on unprivileged file-read denial:
-- Modern versions of Apple's dynamic linker (`dyld`) on macOS 13, 14, and 15 crash with `SIGABRT` when SBPL file-read rules are fragmented across multiple discrete path clauses.
-- Vetto transparently tracks this platform defect via `vetto doctor` under the `sbpl-read-fragment` probe.
-- Rather than crashing agent workflows or manufacturing illusory read security, Vetto on macOS grants broad system reads while strictly enforcing 100% filesystem write lockouts, `--net=off` network isolation, and process supervision (pgroup host verification and group-death sweep).
-- **Recommendation**: If your threat model requires 100% hardware-enforced kernel read-denial of host credentials (`~/.ssh`, `~/.aws`, `.env`) on macOS, execute Vetto inside **OrbStack**, a lightweight Linux VM, or Docker devcontainers where Linux Landlock and mount namespaces are available.
-
-### The Honest Windows Disclosure
-Native Windows isolation uses Job Objects and Less Privileged AppContainers (LPAC). While Job Objects guarantee 100% child process termination on close (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) and AppContainer isolates network egress (`--net off`):
-- Windows kernels do not support unprivileged mount namespaces, seccomp, or BPF. Syscall filtering and exec-root isolation remain unsupported.
-- Native Windows is designated **Tier 3 (Preview)**.
-- For production-grade **Tier 1** protection on Windows workstations, use **WSL2** (`wsl -- vetto ...`), which provides the native Linux kernel Landlock LSM, seccomp-bpf, and namespace isolation stack.
-
-### Scope Closure: Issues #26, #62, #63
-Issue #26 tracks the honest per-OS matrix. #62 (macOS read-isolation) is closed as maximum-achievable: the SBPL matrix proves Shape A is the only runnable shape. #63 (Windows hardening) is closed as maximum-achievable: AppContainer/LPAC + Job at ceiling, WFP admin-gated, signing status explicit. Vetto permanently repudiates ungrounded claims of cross-platform parity:
-1. Platform capabilities are strictly tiered (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows).
-2. All capability claims are continuously verified in CI via automated red-team matrices and diagnostic doctor probes.
-3. Pull requests or features claiming parity without underlying OS kernel enforcement proofs will be rejected.
-
----
-
-## Ecosystem Integration Guides
-
-Vetto natively integrates with modern AI coding workflows:
-
-| Agent / Tool | Guide & Details | Setup Command |
-| :--- | :--- | :--- |
-| **Claude Code** | [Claude Code Guide](docs/integrations/claude-code.md) · Unprompted mode, `PreToolUse` hook, Anthropic API allowlist | `vetto enable claude` |
-| **Cursor** | [Cursor Guide](docs/integrations/cursor.md) · Agent & Composer sandboxing, terminal execution, storage masking | `vetto enable cursor` |
-| **Cline** | [Cline Guide](docs/integrations/cline.md) · VS Code extension terminal task isolation, zero-config shims | `vetto hook install` |
-| **Aider** | [Aider Guide](docs/integrations/aider.md) · Zero-config network allowlists, git protection, automated tests | `vetto enable aider` |
-| **OpenCode & Codex** | [OpenCode Guide](docs/integrations/opencode.md) · CLI runners, subagent supervision, and model sandboxing | `vetto enable codex` |
-| **Claude Desktop & Codex Desktop** | [Desktop Integration Guide](docs/integrations/desktop.md) · Native MCP server (`vetto mcp`), terminal shims, sandboxed subtools | `vetto mcp` · `vetto enable` |
-
----
-
-## Boundary Verification & Audit
-
-Trust nothing—verify the sandbox boundary and audit past operations:
+### 1. Diagnose Environment & Permissions
+Verify platform capabilities, kernel LSM status, and isolation readiness:
 
 ```bash
-# Probe running kernel capabilities (Landlock ABI, seccomp, userns)
 vetto doctor
-
-# Show concrete OS remediation steps for missing primitives (Seatbelt, Job Objects, Hyper-V)
+```
+Add `--fix` to display OS-specific remediation commands for missing primitives:
+```bash
 vetto doctor --fix
+```
 
-# Additionally verify that every denied path is truly unreachable in a throwaway sandbox
-vetto doctor --probe
+### 2. Run Commands Under the Sandbox
+Execute any arbitrary command or agent under the default strict sandbox:
 
-# Run active leak battery (tests secret paths and loopback isolation)
+```bash
+# Execute command under default strict sandbox
+vetto run -- python script.py
+
+# Direct shortcut syntax
+vetto -- npm test
+```
+
+### 3. Wrap Commands with Developer Profiles
+Use developer profiles for full toolchain compatibility:
+
+```bash
+# Run with the 'dev' profile (permits compiler & package caches)
+vetto wrap --profile dev -- cargo test
+
+# Shortcut using direct execution flag
+vetto --profile dev -- go test ./...
+```
+
+### 4. Verify & Audit Policies
+Check policies, test path rules, and inspect security violations:
+
+```bash
+# Check configuration and verify policies without spawning
+vetto check
+# Or lint the policy for dangerous broad paths
+vetto lint --strict
+
+# Run throwaway leak-detection battery on current policy
 vetto verify
 
-# Inspect effective policy and test path blocks
-vetto policy explain
-vetto policy explain --why ~/.ssh/id_rsa
-
-# Inspect intercepted security violations and blocked paths from past sessions
-vetto audit
+# Inspect blocked filesystem attempts, syscalls, and network egress from past runs
 vetto audit --latest
 
-# End-of-session security recap (top denied paths, egress split, intent)
-# printed automatically after every session; post-hoc on demand:
+# Print post-session security recap
 vetto audit --latest --recap
 ```
 
-### Dynamic Policy Grants (No Manual TOML Editing)
-When an agent is blocked from accessing a legitimate project path, Vetto prints an immediate grant command:
+### 5. Transparent Agent Shims (`vetto enable`)
+Activate zero-overhead transparent shims for your AI coding assistant:
 
 ```bash
-vetto allow ./vendor                    # Grant read+write to a folder
+# Enable transparent sandbox wrapping for your agent
+vetto enable claude        # Claude Code
+vetto enable codex         # OpenAI Codex CLI
+vetto enable cursor        # Cursor Agent
+vetto enable windsurf      # Codeium Windsurf
+vetto enable opencode      # OpenCode CLI
+vetto enable aider         # Aider
+
+# Now run your agent normally — it runs sandboxed under the hood!
+claude --dangerously-skip-permissions
+codex exec --full-auto
+
+# Inspect or disable shims
+vetto enable --status
+vetto disable claude
+```
+
+### 6. Dynamic Policy Grants (No Manual TOML Editing)
+When an agent requires additional access during execution, grant permissions instantly:
+
+```bash
+vetto allow ./target                    # Grant read+write to a folder
 vetto allow --read-only /usr/share/doc  # Grant read-only access
-vetto allow --net registry.npmjs.org    # Allow egress to a package registry
-vetto deny ~/.aws/credentials           # Explicitly mask a secret file
+vetto allow --net api.github.com        # Allow egress to domain
+vetto deny ~/.aws/credentials           # Mask sensitive file
 ```
 
 ---
 
-## Advanced CLI Execution
+## Security & Profile Model
 
-Beyond transparent `vetto enable` shims, you can run one-off commands or custom agents directly:
+Policies in vetto are hierarchical, additive, and strictly typed. Unknown configuration keys fail closed.
+
+### Built-in Security Profiles
+
+| Profile | Target Use Case | Filesystem Bounds | Network Egress | Resource Ceilings |
+| :--- | :--- | :--- | :--- | :--- |
+| **`strict`** *(default)* | Untrusted scripts, unattended autonomous agent runs | `$PROJECT` and `/dev/null` only; `/tmp` writes denied; secrets masked | Denied (`--net off`) | Strict: 1h CPU, 8GB RAM, 256 procs, 1024 FDs |
+| **`dev`** | Active interactive development with compilers and tools | `$PROJECT`, `/tmp`, and standard build tool caches (`~/.cargo`, `~/.npm`) | Denied or provider allowlist | Balanced developer ceilings |
+| **`network-isolated`** | Hermetic builds, compliance auditing, zero-leak validation | `$PROJECT` and `/tmp`; read-only system tools | Completely disabled (`CLONE_NEWNET` / SBPL deny) | Default limits |
+| **`ci`** | GitHub Actions, GitLab CI, headless evaluation pipelines | Workspace root; automated report output directory | Allowlisted or off | Headless, `--tui none`, JSON summary on stdout |
+
+For complete threat surface documentation and policy syntax:
+- [Threat Model & Boundary Guarantees](docs/threat-model.md)
+- [Profile Inheritance & Agent Presets](docs/profiles.md)
+- [Platform Backends & Parity Matrix](docs/platform-backends.md)
+- [Exit Codes Specification](docs/exit-codes.md)
+
+---
+
+## AI Agent Ecosystem Roster
+
+vetto includes 20 native agent presets with automatic credential isolation, configuration path allowlisting, and zero-config network profiles:
+
+| Agent | Preset | Guide | Agent | Preset | Guide |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Claude Code** | `claude` | [Guide](docs/integrations/claude-code.md) | **OpenCode** | `opencode` | [Guide](docs/integrations/opencode.md) |
+| **OpenAI Codex** | `codex` | [Tutorial](docs/tutorials/codex.md) | **Google Gemini** | `gemini` | Built-in preset |
+| **Cursor Agent** | `cursor` | [Guide](docs/integrations/cursor.md) | **Antigravity** | `antigravity` | Built-in preset |
+| **Aider** | `aider` | [Guide](docs/integrations/aider.md) | **Cline** | `cline` | [Guide](docs/integrations/cline.md) |
+| **Codeium Windsurf** | `windsurf` | Built-in preset | **GitHub Copilot CLI** | `copilot` | Built-in preset |
+| **Continue CLI** | `continue` | Built-in preset | **Block Goose** | `goose` | Built-in preset |
+| **OpenHands** | `openhands` | Built-in preset | **SWE-agent** | `swe-agent` | Built-in preset |
+| **Plandex** | `plandex` | Built-in preset | **Mentat** | `mentat` | Built-in preset |
+| **GPT Engineer** | `gpt-engineer` | Built-in preset | **Cognition Devin** | `devin` | Built-in preset |
+| **Crust AI** | `crust` | Built-in preset | **Amp AI** | `amp` | Built-in preset |
+
+### Model Context Protocol (MCP) Support
+Isolate third-party MCP servers connected to Claude Desktop or Codex Desktop:
 
 ```bash
-# Auto-detect agent in current workspace and run inside sandbox
-vetto
-
-# Explicit command supervision
-vetto -- claude -p "fix failing tests"
-vetto -- aider --model sonnet
-vetto -- codex exec "refactor auth module"
-
-# Security presets: balanced (default) | paranoid | yolo
-vetto --preset paranoid -- npm test
-
-# Network modes: off (default) | ask | allowlist:<domains> | strict:<host:port>
-vetto --net allowlist:api.anthropic.com,github.com -- cargo check
-vetto --net strict:github.com:22 --git-ssh -- git fetch origin
-
-# Explicit sandbox backend: auto (default) | process | win-sandbox (Hyper-V disposable VM)
-vetto --backend auto -- npm test
-
-# Terminal UI modes: statusline (default) | full (dashboard) | none (headless)
-vetto --tui full -- claude
-
-# Non-interactive CI mode (implies --tui=none and emits structured JSON summary)
-vetto --ci -- npm test
-
-# Shadow mode: policy layer logs "would deny" during preflight without blocking
-# (Note: kernel sandboxes Landlock/Seatbelt cannot be shadowed)
-vetto --shadow -- cargo test
-
-# Output detailed HTML / SARIF audit reports
-vetto --report html,sarif --jsonl session.jsonl -- cargo test
+vetto mcp wrap --allow ./data --allow-read /usr/share --net off -- <mcp-server-binary> [args...]
 ```
-
-> **Note on `--tier`**: Vetto automatically detects and negotiates the highest available sandbox tier based on kernel capabilities (Tier 1 Linux, Tier 2 macOS, Tier 3 Windows). `--tier` is not a top-level runner flag (use `--backend` for backend selection); `--tier` exists on `vetto shell-env --tier` for shell exports. On Linux, test degraded tiers via `VETTO_FORCE_TIER`.
 
 ---
 
-## Model Context Protocol (MCP) & Multi-Agent
+## Comparison: vetto vs. Alternatives
 
-### Sandboxing MCP Servers (`vetto mcp wrap`)
-
-Wrap and isolate third-party Model Context Protocol (MCP) servers (e.g. filesystem tools, API connectors):
-
-```bash
-# Wrap an external MCP server binary:
-vetto mcp wrap --allow ./data --allow-read /usr/share --net off -- <server-binary> [args...]
-```
-
-- **Windows Path Hardening**: Automatically resolves and grants read access to canonical `%SystemRoot%` (`C:\Windows`), `System32` (verified against `cmd.exe`/`kernel32.dll` to prevent ENV-POISON attacks), `%ProgramFiles%`, and temporary directories.
-- **Platform Network Boundary**: Network egress relay requires Linux network namespaces (`CLONE_NEWNET`). On non-Linux platforms (macOS and Windows), `vetto mcp wrap` requires `--net off` (default); other network modes fail closed.
-
-### Multi-Agent Orchestration (`vetto multi`)
-
-Run multiple AI coding agents concurrently, each in an independent sandbox with an interactive split-pane dashboard:
-
-```bash
-# Run multiple agents defined in a TOML manifest:
-vetto multi --manifest vetto-agents.toml
-
-# Or specify multiple named agents directly:
-vetto multi --agent coder=claude --agent reviewer=codex
-```
-
-- **Platform Constraint**: The multi-agent orchestrator is fully supported on Unix platforms (Linux and macOS). On Windows, `vetto multi` is blocked fail-closed with `UnsupportedPlatform: multi-agent`.
+| Dimension | `vetto` | Built-in LLM Sandbox | Docker Containers | MicroVMs (Firecracker) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Startup Overhead** | **~4ms** (instant) | 0ms (app-level prompt) | 3.5s – 8s (daemon boot) | 100ms – 500ms |
+| **Daemon Required** | **None** (zero daemons) | None | `dockerd` service required | KVM / containerd |
+| **RAM Footprint** | **0 MB** idle | 0 MB | 1.5 GB+ (engine/VM) | 500 MB+ |
+| **Privilege Level** | **Unprivileged** (no root) | User-level | Root-equivalent (`docker` group) | Root / KVM group |
+| **Filesystem Sync** | **Instant native I/O** | Native | Slow bind mounts / UID issues | 9p / virtio-fs sync |
+| **Secret Masking** | **Automatic VFS overlays** | None (reads `.env`, `~/.ssh`) | Manual `.dockerignore` | Guest VM disk image |
+| **Network Egress** | **Per-domain loopback broker** | Unfiltered or app-level | Bridge network or none | Virtualized netstack |
+| **Fail-Closed Contract** | **100% Fail-Closed** | Varies / Fail-Open | Container fallback | VM error |
 
 ---
 
-## What Vetto Deliberately Excludes
+## Contributing
 
-- **No background daemon** — zero idle CPU, zero RAM consumption, no service to stall or crash.
-- **No root / sudo** — runs completely unprivileged; cannot escalate host permissions.
-- **No TLS interception** — zero MITM, no custom root certificate authority; moves opaque bytes only.
-- **No telemetry or tracking** — completely private by default. No telemetry or project/user data is ever transmitted. The only network calls vetto itself initiates are short, non-blocking version checks against the npm registry and GitHub Releases (24h cache, 2s timeout, silent offline via cache). Self-update never runs unless explicitly opted in, and never in CI (`VETTO_NO_SELF_UPDATE=1` disables everything update-related).
-- **No Docker dependency** — instant ~4ms startup directly on your native OS kernel.
+We welcome contributions from security researchers, systems engineers, and AI developers!
 
----
+1. Fork the repository and create your branch from `main`.
+2. Follow strict code hygiene: adhere to formatting, clippy lints, and existing error-handling idioms.
+3. Ensure every capability claim is backed by real kernel tests:
+   - **No mock tests for kernel boundaries**: all boundary checks must assert real kernel enforcement.
+   - **No silent downgrades**: any failure to establish isolation must fail closed with exit code `125`.
+4. Open a Pull Request with a clear description of changes and test evidence.
 
-<details>
-<summary><b>Deep Architecture & Kernel Enforcement (Click to expand)</b></summary>
-
-### 1. The Fail-Closed Discipline
-Vetto puts the agent process inside an OS-level sandbox **before the agent process starts**. The foundational guarantee of Vetto is fail-closed execution:
-> **If the requested boundary cannot be established on the current host, `vetto` exits immediately instead of starting the agent.** There is no fallback to an unconfined process anywhere in the codebase.
-
-### 2. Linux Landlock LSM & Seccomp-BPF
-- **Landlock ABI Negotiation**: Automatically negotiates Landlock ABI versions 1 through 6 with the running kernel. Landlock restricts filesystem operations (`open`, `read`, `write`, `unlink`, `rename`) directly in kernel space.
-- **Seccomp-BPF**: Enforces fine-grained syscall restrictions before `execve`. Disallowed syscalls receive `EPERM` or `ENOSYS`.
-- **Secret Masking (`display_only_deny`)**: Because Landlock is a pure allowlist and cannot subtract subpaths from an allowed directory tree, Vetto masks secret files (such as `~/.ssh`, `~/.aws`, `~/.gnupg`, `.env`, tokens) by mounting an empty tmpfs or `/dev/null` over them on the Linux `full` tier, or by carving them out of generated read allowlists.
-- **Path Resolution**: Symlinks and globs are expanded to concrete filesystem paths before rules reach the kernel. Patterns never reach the kernel.
-
-### 3. In-Process Network Relay Broker
-- **Network Namespaces**: When network filtering is enabled (`--net=allowlist:...`), Vetto isolates the child process in a dedicated Linux network namespace with only a loopback device.
-- **Broker Relay**: Outbound TCP connections route through an in-process local CONNECT/SOCKS broker.
-- **DNS Validation & Anti-Rebinding**: The host broker performs DNS resolution itself and pins addresses per rule. Any DNS response resolving to private IP ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.169.254`) is rejected.
-- **Zero TLS MITM**: The broker moves opaque bytes. There is no TLS interception, no custom certificate authority, and no MITM proxy.
-
-### 4. Recursion Barriers & Transparent Shims
-- When `vetto enable <agent>` creates shims in `~/.vetto/shims`, recursion barriers (`VETTO_WRAPPED`, `VETTO_SANDBOXED`, `VETTO_SHIM_ACTIVE`) guarantee that subagent tool invocations (such as an agent invoking `git`, `python`, or nested compiler toolchains) resolve directly to real host binaries without recursive supervisor overhead or infinite loops.
-- `vetto enable` refuses to overwrite non-Vetto binaries without `--force`.
-
-### 5. Policy Layer Hierarchy
-Policies merge in a deterministic, strict hierarchy where every TOML struct rejects unknown fields:
-```text
-Host Global (/etc/vetto/config.toml)
-  └── User Global (~/.vetto/config.toml)
-        └── Built-in Profile (default, strict, paranoid)
-              └── Agent Preset (claude, cursor, aider, cline, codex)
-                    └── Project Policy (./vetto.toml + policy.d/)
-                          └── Local Override (./vetto.local.toml)
-                                └── CLI Overrides (--allow, --net, --limits)
-```
-
-</details>
-
----
-
-<details>
-<summary><b>Session Rescue & Diagnostics (Click to expand)</b></summary>
-
-Recover interrupted, frozen, or corrupted agent sessions without losing progress:
-
-```bash
-# Scan recent sessions
-vetto rescue --json scan --limit 25
-
-# Diagnose Claude Code or Cursor sessions
-vetto rescue --adapter claude diagnose <session-id>
-vetto rescue --adapter cursor snapshot <session-id> --output ./recovered.jsonl
-
-# Rollback a failed repair
-vetto rescue rollback --receipt <receipt-path>
-```
-
-Adapters supported: `claude`, `cursor`, `codex`. Snapshots are verified with SHA-256 and created strictly outside the original state root.
-</details>
-
----
-
-## Documentation
-
-- [Architecture & Startup Order](ARCHITECTURE.md)
-- [Docker vs. Vetto Comparison](docs/comparison.md)
-- [Claude Code Integration](docs/integrations/claude-code.md)
-- [Cursor Integration](docs/integrations/cursor.md)
-- [Cline Integration](docs/integrations/cline.md)
-- [Aider Integration](docs/integrations/aider.md)
-- [Claude & Codex Desktop Integration](docs/integrations/desktop.md)
-- [Threat Model](docs/threat-model.md)
-- [Network Internals](docs/network.md)
-- [Platform Backends](docs/platform-backends.md)
-- [Exit Codes Reference](docs/exit-codes.md)
-- [Security Policy](SECURITY.md) · [Changelog](CHANGELOG.md)
+For security vulnerabilities, please refer to [SECURITY.md](SECURITY.md) and report responsibly via GitHub Security Advisories.
 
 ---
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+vetto is distributed under the dual **Apache-2.0 / MIT** license.
+
+See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full terms.

@@ -92,7 +92,7 @@ vetto rescue --json snapshot "sessions/2026/08/23/session.jsonl" --output "./rec
 
 Codex scan is index-first and returns at most 50 verified index candidates,
 with `--limit N`, explicit `--all`, and the JSON `discovery` object shipping in
-the current `0.2.23` package. `discovery.complete` describes only the selected
+the current `0.2.24` package. `discovery.complete` describes only the selected
 evidence source; it will not prove that the provider index covers every file under the
 state root. The public result shapes are defined in
 [`docs/schema/rescue-output-v1.schema.json`](schema/rescue-output-v1.schema.json).

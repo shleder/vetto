@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.24] - 2026-09-15
+
+### Fixed
+- Resolved static atomic counter test race conditions on macOS via `MACOS_PROD_SERIAL` mutex; full CI green stabilization across Linux and macOS.
+
+### Features
+- Complete zero-leak isolation hardening, fail-closed Seatbelt/bwrap orchestration.
+- Enforced cryptographic audit attestation engine (`src/audit/chain.rs`) with hash chaining and Ed25519 signatures.
+- Hardened secret-stripping boundary across command lines, logs, and telemetry sinks.
+
+### Hygiene & Documentation
+- Cleaned repository documentation, removed obsolete `-proposal.md` scratchpads from `docs/`, and transitioned verification specs to `docs/architecture/verify-ng.md`.
+- Refreshed threat model (`docs/threat-model.md`), SBOM guidelines (`docs/SBOM.md`), telemetry documentation, and public developer guides.
+- Complete enterprise-grade overhaul of `README.md` reflecting production-ready architecture.
+
 ## [0.2.23] - 2026-09-13
 
 ### Added

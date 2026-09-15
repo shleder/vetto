@@ -12,7 +12,7 @@
 //! execution provides no containment).
 //!
 //! Windows parity is out of scope for this stage: no HANDLE capture exists
-//! in the backend yet (see docs/verify-ng.md), so these tests stay unix.
+//! in the backend yet (see docs/architecture/verify-ng.md), so these tests stay unix.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

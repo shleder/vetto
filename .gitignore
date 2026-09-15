@@ -16,3 +16,11 @@ vetto-wiki/
 *.log
 __pycache__/
 *.pyc
+
+# OS and Editor metadata
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
