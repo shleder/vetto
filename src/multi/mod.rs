@@ -24,8 +24,14 @@ use tokio::sync::broadcast;
 use crate::error::VettoError;
 use crate::events::{Event, EventBus, FileAccess};
 
+pub mod fleet;
 pub mod isolation;
 pub mod runtime;
+
+pub use fleet::{
+    AgentWorkerScope, FleetConfig, FleetManager, DEFAULT_BASE_PORT, DEFAULT_CPU_WEIGHT,
+    DEFAULT_FLEET_CGROUP_ROOT, DEFAULT_MAX_AGENTS, DEFAULT_MEMORY_LIMIT_BYTES, DEFAULT_PIDS_MAX,
+};
 
 const MAX_AGENTS: usize = 32;
 const MAX_ARG_BYTES: usize = 64 * 1024;
