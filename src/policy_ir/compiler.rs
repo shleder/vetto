@@ -45,10 +45,30 @@ impl PolicyCompiler {
         // Always include workspace_root as a readable base.
         let mut allow_read = vec![workspace_root.clone()];
         for path in raw_reads {
-            let normalized = if path.is_absolute() {
-                path.clone()
+            let clean_path = if cfg!(windows) {
+                PathBuf::from(path.to_string_lossy().replace('/', "\\"))
             } else {
-                workspace_root.join(path)
+                path.clone()
+            };
+            if clean_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(CompilerError::ConflictingPermissions(format!(
+                    "Read target {:?} attempts directory traversal",
+                    path
+                )));
+            }
+            let normalized = if clean_path.is_absolute() {
+                clean_path
+            } else {
+                let mut base = workspace_root.clone();
+                for comp in clean_path.components() {
+                    if let std::path::Component::Normal(c) = comp {
+                        base.push(c);
+                    }
+                }
+                base
             };
             if let Ok(canon) = normalized.canonicalize() {
                 allow_read.push(canon);
@@ -68,10 +88,30 @@ impl PolicyCompiler {
         // verifying that this ancestor resides within workspace_root.
         let mut allow_write = Vec::new();
         for path in raw_writes {
-            let normalized = if path.is_absolute() {
-                path.clone()
+            let clean_path = if cfg!(windows) {
+                PathBuf::from(path.to_string_lossy().replace('/', "\\"))
             } else {
-                workspace_root.join(path)
+                path.clone()
+            };
+            if clean_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(CompilerError::ConflictingPermissions(format!(
+                    "Write target {:?} attempts directory traversal",
+                    path
+                )));
+            }
+            let normalized = if clean_path.is_absolute() {
+                clean_path
+            } else {
+                let mut base = workspace_root.clone();
+                for comp in clean_path.components() {
+                    if let std::path::Component::Normal(c) = comp {
+                        base.push(c);
+                    }
+                }
+                base
             };
 
             // Ascend directory hierarchy to locate nearest existing ancestor

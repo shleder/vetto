@@ -221,11 +221,18 @@ fn test_policy_compiler_directory_traversal_rejection() {
     let ws = temp_dir.join(format!("vetto_p2_trav_{}", std::process::id()));
     std::fs::create_dir_all(&ws).expect("create test workspace");
 
-    let traversal_write = ws.join("nonexistent/sub/../leak");
-    let res = PolicyCompiler::compile("claude", &ws, None, &[], &[traversal_write]);
+    let traversal_rel = std::path::PathBuf::from("nonexistent/sub/../leak");
+    let res = PolicyCompiler::compile("claude", &ws, None, &[], &[traversal_rel]);
     assert!(
         matches!(res, Err(CompilerError::ConflictingPermissions(_))),
-        "directory traversal in non-existent write target must be rejected"
+        "relative directory traversal in write target must be rejected"
+    );
+
+    let traversal_abs = ws.join("sub").join("..").join("leak");
+    let res_abs = PolicyCompiler::compile("claude", &ws, None, &[], &[traversal_abs]);
+    assert!(
+        matches!(res_abs, Err(CompilerError::ConflictingPermissions(_))),
+        "absolute directory traversal in write target must be rejected"
     );
 
     let _ = std::fs::remove_dir_all(&ws);
