@@ -37,6 +37,7 @@ pub mod net_relay;
 pub mod observe_seccomp;
 pub mod proctrack;
 pub mod seccomp_netblock;
+pub mod vfs_overlays;
 pub mod visibility;
 
 use std::ffi::CString;
@@ -1148,6 +1149,13 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
                 121,
                 &format!("mask overlay {}: {e}", entry.path.display()),
             ),
+        }
+    }
+
+    // Phase 3: mask ~/.ssh and .env
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        if let Err(e) = vfs_overlays::mask_ssh_and_env(&home, Some(&opts.cwd)) {
+            child_fail(err_w, 121, &format!("mask ssh/env: {e}"));
         }
     }
 
