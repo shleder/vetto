@@ -53,7 +53,7 @@ fn create_sealed_contract(name: &str) -> SecurityContract {
             execution_root_ro: true,
         },
         network: NetworkContract {
-            mode: NetworkMode::Strict,
+            mode: NetworkMode::Off,
             allowed_domains: vec![],
             allowed_ports: vec![],
             block_cloud_metadata: true,
