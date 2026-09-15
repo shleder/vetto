@@ -25,7 +25,8 @@ pub struct UnsealedSecurityContract {
 impl UnsealedSecurityContract {
     /// Compute deterministic cryptographic digest (SHA-256) of canonical serialization.
     pub fn compute_digest(&self) -> Result<String, serde_json::Error> {
-        let json_bytes = serde_json::to_vec(self)?;
+        let value = serde_json::to_value(self)?;
+        let json_bytes = serde_json::to_vec(&value)?;
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&json_bytes);
@@ -64,7 +65,7 @@ pub struct SecurityContract {
     pub attestation: AttestationContract,
     /// Cryptographic digest of CanonicalJSON(UnsealedSecurityContract).
     /// Skipped during canonical serialization to avoid circular dependencies.
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub contract_digest_blake3: String,
 }
 
