@@ -12,6 +12,7 @@ pub mod classifier;
 pub mod cli;
 pub mod config;
 pub mod cred_broker;
+pub mod crypto;
 pub mod daemon;
 pub mod doctor;
 pub mod error;
