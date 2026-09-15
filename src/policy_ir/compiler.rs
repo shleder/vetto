@@ -52,7 +52,7 @@ impl PolicyCompiler {
             };
             if clean_path
                 .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
+                .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
             {
                 return Err(CompilerError::ConflictingPermissions(format!(
                     "Read target {:?} attempts directory traversal",
@@ -64,8 +64,8 @@ impl PolicyCompiler {
             } else {
                 let mut base = workspace_root.clone();
                 for comp in clean_path.components() {
-                    if let std::path::Component::Normal(c) = comp {
-                        base.push(c);
+                    if comp.as_os_str() != "." && !matches!(comp, std::path::Component::CurDir) {
+                        base.push(comp.as_os_str());
                     }
                 }
                 base
@@ -95,7 +95,7 @@ impl PolicyCompiler {
             };
             if clean_path
                 .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
+                .any(|c| c.as_os_str() == ".." || matches!(c, std::path::Component::ParentDir))
             {
                 return Err(CompilerError::ConflictingPermissions(format!(
                     "Write target {:?} attempts directory traversal",
@@ -107,8 +107,8 @@ impl PolicyCompiler {
             } else {
                 let mut base = workspace_root.clone();
                 for comp in clean_path.components() {
-                    if let std::path::Component::Normal(c) = comp {
-                        base.push(c);
+                    if comp.as_os_str() != "." && !matches!(comp, std::path::Component::CurDir) {
+                        base.push(comp.as_os_str());
                     }
                 }
                 base
@@ -119,17 +119,14 @@ impl PolicyCompiler {
             let mut suffix_components = Vec::new();
             while !ancestor.exists() {
                 if let Some(comp) = ancestor.components().next_back() {
-                    match comp {
-                        std::path::Component::Normal(name) => {
-                            suffix_components.push(name.to_os_string());
-                        }
-                        std::path::Component::ParentDir => {
-                            return Err(CompilerError::ConflictingPermissions(format!(
-                                "Write target {:?} attempts directory traversal",
-                                path
-                            )));
-                        }
-                        _ => {}
+                    if comp.as_os_str() == ".." || matches!(comp, std::path::Component::ParentDir) {
+                        return Err(CompilerError::ConflictingPermissions(format!(
+                            "Write target {:?} attempts directory traversal",
+                            path
+                        )));
+                    }
+                    if comp.as_os_str() != "." && !matches!(comp, std::path::Component::CurDir) {
+                        suffix_components.push(comp.as_os_str().to_os_string());
                     }
                 }
                 if !ancestor.pop() {
