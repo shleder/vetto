@@ -500,8 +500,8 @@ pub mod blake3 {
             while !input.is_empty() {
                 if self.buf_len == 64 {
                     let mut block_words = [0u32; 16];
-                    for i in 0..16 {
-                        block_words[i] = u32::from_le_bytes([
+                    for (i, word) in block_words.iter_mut().enumerate() {
+                        *word = u32::from_le_bytes([
                             self.buf[i * 4],
                             self.buf[i * 4 + 1],
                             self.buf[i * 4 + 2],
@@ -530,10 +530,10 @@ pub mod blake3 {
 
         fn output(&self) -> Output {
             let mut block_words = [0u32; 16];
-            for i in 0..16 {
+            for (i, word) in block_words.iter_mut().enumerate() {
                 let offset = i * 4;
                 if offset + 4 <= self.buf_len {
-                    block_words[i] = u32::from_le_bytes([
+                    *word = u32::from_le_bytes([
                         self.buf[offset],
                         self.buf[offset + 1],
                         self.buf[offset + 2],
@@ -541,12 +541,11 @@ pub mod blake3 {
                     ]);
                 } else if offset < self.buf_len {
                     let mut b = [0u8; 4];
-                    for j in 0..(self.buf_len - offset) {
-                        b[j] = self.buf[offset + j];
-                    }
-                    block_words[i] = u32::from_le_bytes(b);
+                    let rem = self.buf_len - offset;
+                    b[..rem].copy_from_slice(&self.buf[offset..offset + rem]);
+                    *word = u32::from_le_bytes(b);
                 } else {
-                    block_words[i] = 0;
+                    *word = 0;
                 }
             }
             let mut flags = self.flags | CHUNK_END;

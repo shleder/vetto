@@ -429,8 +429,7 @@ mod tests {
         let hdr_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr) };
         buf.extend_from_slice(&hdr_bytes);
         let err_code: libc::c_int = -ENOBUFS_CODE;
-        let err_bytes: [u8; std::mem::size_of::<libc::c_int>()] =
-            unsafe { std::mem::transmute(err_code) };
+        let err_bytes = err_code.to_ne_bytes();
         buf.extend_from_slice(&err_bytes);
 
         process_netlink_buffer(&buf, &mut last_seq, None);

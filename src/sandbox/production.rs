@@ -823,6 +823,7 @@ impl SpawnedProductionExecution {
         }
 
         let extinction_start = Instant::now();
+        #[allow(unused_assignments)]
         let mut surviving_processes = 0usize;
         let surviving_resources = 0usize;
 

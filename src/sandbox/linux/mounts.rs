@@ -449,17 +449,15 @@ pub fn remount_proc_sys_readonly() -> VettoResult<()> {
             MS_BIND | MS_REC,
             std::ptr::null(),
         ) == 0
-        {
-            if libc::mount(
+            && libc::mount(
                 std::ptr::null(),
                 dst.as_ptr(),
                 std::ptr::null(),
                 MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_REC,
                 std::ptr::null(),
             ) == 0
-            {
-                return Ok(());
-            }
+        {
+            return Ok(());
         }
     }
     // Fallback: mask /proc/sys with empty tmpfs if remount read-only is rejected

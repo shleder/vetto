@@ -236,7 +236,7 @@ mod envfilter_tests {
     fn wildcard_matching_patterns() {
         assert!(matches_wildcard_pattern("*_KEY", "OPENAI_API_KEY"));
         assert!(matches_wildcard_pattern("*_KEY", "CUSTOM_KEY"));
-        assert!(matches_wildcard_pattern("*_KEY", "key"));
+        assert!(matches_wildcard_pattern("*_KEY", "api_key"));
         assert!(matches_wildcard_pattern("*_TOKEN", "GITHUB_TOKEN"));
         assert!(matches_wildcard_pattern("*_TOKEN", "USER_TOKEN"));
         assert!(matches_wildcard_pattern("*_SECRET", "CLIENT_SECRET"));
@@ -245,6 +245,7 @@ mod envfilter_tests {
         assert!(matches_wildcard_pattern("GITHUB_*", "GITHUB_SHA"));
 
         assert!(!matches_wildcard_pattern("*_KEY", "KEYBOARD"));
+        assert!(!matches_wildcard_pattern("*_KEY", "key"));
         assert!(!matches_wildcard_pattern("*_KEY", "PATH"));
         assert!(!matches_wildcard_pattern("AWS_*", "NOT_AWS"));
     }

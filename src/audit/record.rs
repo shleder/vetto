@@ -19,10 +19,12 @@ pub enum RecordType {
 
 /// Platform isolation tier classification (§17.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TierClassification {
+    #[serde(rename = "TIER_1_LINUX")]
     Tier1Linux,
+    #[serde(rename = "TIER_2_MACOS")]
     Tier2Macos,
+    #[serde(rename = "TIER_3_WINDOWS")]
     Tier3Windows,
 }
 
