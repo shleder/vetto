@@ -91,7 +91,12 @@ impl ExecutionStateMachine {
         matches!(
             self.current_state,
             ExecutionState::FailClosed | ExecutionState::EmergencyCleanup
-        )
+        ) || self.history.iter().any(|(s, _)| {
+            matches!(
+                s,
+                ExecutionState::FailClosed | ExecutionState::EmergencyCleanup
+            )
+        })
     }
 
     pub fn transition(&mut self, next: ExecutionState) -> Result<(), StateTransitionError> {
@@ -221,5 +226,6 @@ mod fsm_tests {
         assert!(fsm.transition(ExecutionState::EmergencyCleanup).is_ok());
         assert!(fsm.transition(ExecutionState::Terminal).is_ok());
         assert!(fsm.is_terminal());
+        assert!(fsm.is_fail_closed());
     }
 }

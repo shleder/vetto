@@ -23,6 +23,50 @@ pub mod macos_net_proxy;
 pub mod windows;
 
 pub use handle::{SandboxHandle, SpawnOptions, StdioMode};
+pub use production::SupervisorEngine;
+
+#[cfg(target_os = "linux")]
+pub use linux::audit_reader::{
+    buffer_overflow_count, is_evidence_channel_intact, mark_evidence_channel_disrupted,
+    packet_drop_count, reset_evidence_channel,
+};
+
+#[cfg(not(target_os = "linux"))]
+static NON_LINUX_EVIDENCE_CHANNEL_INTACT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+#[cfg(not(target_os = "linux"))]
+static NON_LINUX_BUFFER_OVERFLOW_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(not(target_os = "linux"))]
+static NON_LINUX_PACKET_DROP_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_evidence_channel_intact() -> bool {
+    NON_LINUX_EVIDENCE_CHANNEL_INTACT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn mark_evidence_channel_disrupted() {
+    NON_LINUX_EVIDENCE_CHANNEL_INTACT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn reset_evidence_channel() {
+    NON_LINUX_EVIDENCE_CHANNEL_INTACT.store(true, std::sync::atomic::Ordering::SeqCst);
+    NON_LINUX_BUFFER_OVERFLOW_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+    NON_LINUX_PACKET_DROP_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn buffer_overflow_count() -> u64 {
+    NON_LINUX_BUFFER_OVERFLOW_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn packet_drop_count() -> u64 {
+    NON_LINUX_PACKET_DROP_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 #[cfg(unix)]
 use std::os::fd::OwnedFd;

@@ -31,6 +31,9 @@ pub fn map_session_exit_code(
     timed_out: bool,
     fail_on_block_triggered: bool,
 ) -> i32 {
+    if raw_exit_code == EXIT_FAIL_CLOSED {
+        return EXIT_FAIL_CLOSED;
+    }
     if timed_out {
         return EXIT_TIMEOUT;
     }
@@ -244,15 +247,40 @@ mod tests {
     }
 
     #[test]
-    fn prop_timeout_dominates_everything() {
+    fn prop_timeout_dominates_everything_except_fail_closed() {
         let mut rng = Lcg(0x1234_5678_9abc_def0);
         for _ in 0..512 {
             let raw = arb_raw(&mut rng);
             let fail = rng.below(2) == 1;
-            assert_eq!(map_session_exit_code(raw, true, fail), EXIT_TIMEOUT);
+            let expected = if raw == EXIT_FAIL_CLOSED {
+                EXIT_FAIL_CLOSED
+            } else {
+                EXIT_TIMEOUT
+            };
+            assert_eq!(map_session_exit_code(raw, true, fail), expected);
         }
         assert_eq!(map_session_exit_code(i32::MIN, true, true), EXIT_TIMEOUT);
         assert_eq!(map_session_exit_code(i32::MAX, true, true), EXIT_TIMEOUT);
+    }
+
+    #[test]
+    fn prop_fail_closed_dominates_timeout() {
+        assert_eq!(
+            map_session_exit_code(EXIT_FAIL_CLOSED, true, false),
+            EXIT_FAIL_CLOSED
+        );
+        assert_eq!(
+            map_session_exit_code(EXIT_FAIL_CLOSED, true, true),
+            EXIT_FAIL_CLOSED
+        );
+        assert_eq!(
+            map_session_exit_code(EXIT_FAIL_CLOSED, false, false),
+            EXIT_FAIL_CLOSED
+        );
+        assert_eq!(
+            map_session_exit_code(EXIT_FAIL_CLOSED, false, true),
+            EXIT_FAIL_CLOSED
+        );
     }
 
     #[test]

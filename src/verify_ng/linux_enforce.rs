@@ -333,13 +333,8 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
         let (matched, blind) = scan_nonce_pids(needle, root_pid, me, me_uid);
-        if blind {
-            outcome.blind = true;
-            outcome.residual = last_nonce_pids(nonce, root_pid, me);
-            return outcome;
-        }
-        if matched.is_empty() {
-            // Final complete scan already shows zero nonce bearers.
+        if !blind && matched.is_empty() {
+            // Final complete scan already shows zero nonce bearers and no blind spots.
             outcome.clean = true;
             return outcome;
         }
@@ -353,6 +348,9 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
             unsafe { libc::waitpid(*pid, &mut status, libc::WNOHANG) };
         }
         if Instant::now() >= deadline {
+            if blind {
+                outcome.blind = true;
+            }
             outcome.residual = last_nonce_pids(nonce, root_pid, me);
             return outcome;
         }
@@ -423,7 +421,15 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
                 continue;
             }
             Err(_) => {
-                if pid_is_zombie(&status) {
+                if pid_is_zombie(&status) || !pid_alive(pid as u32) {
+                    continue;
+                }
+                // Process could have exited or transitioned to zombie right after reading /proc/{pid}/status
+                if let Ok(latest_status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+                    if pid_is_zombie(&latest_status) {
+                        continue;
+                    }
+                } else {
                     continue;
                 }
                 if crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me) {
@@ -469,12 +475,13 @@ fn last_nonce_pids(nonce: &str, root_pid: u32, me: u32) -> Vec<i32> {
     out
 }
 
-/// True when a `/proc/<pid>/status` body describes a zombie.
+/// True when a `/proc/<pid>/status` body describes a zombie or dead process.
 #[cfg(target_os = "linux")]
 fn pid_is_zombie(status: &str) -> bool {
     for line in status.lines() {
         if let Some(rest) = line.trim_start().strip_prefix("State:") {
-            return rest.trim_start().starts_with('Z');
+            let s = rest.trim_start();
+            return s.starts_with('Z') || s.starts_with('X');
         }
     }
     false

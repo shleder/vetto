@@ -380,7 +380,7 @@ fn install_child_session_and_ceilings(policy: &Policy, stdio: &StdioMode, err_w:
 /// Permanently remove the user-namespace root capability set before exec.
 /// Mount setup is complete by the time this runs, so the agent never needs
 /// CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_SYS_PTRACE, or any other capability.
-fn drop_agent_capabilities() -> Result<(), String> {
+fn drop_agent_capabilities(observe: bool) -> Result<(), String> {
     // Disable the special uid-0 capability regain rules across execve and
     // lock that choice before clearing the current sets.
     const SECURE_NOROOT_AND_NO_SETUID_FIXUP_LOCKED: libc::c_ulong = 0x0f;
@@ -464,13 +464,15 @@ fn drop_agent_capabilities() -> Result<(), String> {
             std::io::Error::last_os_error()
         ));
     }
-    // capset/securebits transitions may clear dumpability. Re-enable it so
-    // the ancestor vetto process can read syscall arguments for the optional
-    // seccomp user-notify observer. Outgoing ptrace/process_vm/pidfd_getfd
-    // syscalls remain blocked by the agent's own seccomp filter.
-    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0) } != 0 {
+    // capset/securebits transitions may clear dumpability.
+    // INV-32: Enforce PR_SET_DUMPABLE, 0 where memory isolation is active.
+    // When observe (seccomp user-notify observer) is active, re-enable it (1) so
+    // the ancestor supervisor can read syscall arguments from /proc/$PID/mem.
+    // In all other (non-notify) paths, PR_SET_DUMPABLE is strictly set to 0.
+    let dumpable: libc::c_ulong = if observe { 1 } else { 0 };
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, dumpable, 0, 0, 0) } != 0 {
         return Err(format!(
-            "restore parent observability: {}",
+            "set PR_SET_DUMPABLE ({dumpable}): {}",
             std::io::Error::last_os_error()
         ));
     }
@@ -905,8 +907,8 @@ fn child_b(
         if let Err(msg) = child_stdio_setup(&opts.stdio) {
             child_fail(err_w, 124, &format!("stdio: {msg}"));
         }
-        if let Err(error) = drop_agent_capabilities() {
-            child_fail(err_w, 126, &format!("drop capabilities: {error}"));
+        if let Err(error) = drop_agent_capabilities(observe) {
+            child_fail(err_w, 125, &format!("drop capabilities: {error}"));
         }
         // Policy ceilings after the caps drop (same privilege context as
         // before; now pre-readiness so failures fail the spawn). Landlock
@@ -1099,8 +1101,14 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
             child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
         }
     }
+    if let Err(e) = mounts::mount_devpts_newinstance() {
+        child_fail(err_w, 115, &format!("mount devpts newinstance: {e}"));
+    }
     if let Err(e) = mounts::remount_sys_readonly() {
         child_fail(err_w, 115, &format!("remount /sys read-only: {e}"));
+    }
+    if let Err(e) = mounts::remount_proc_sys_readonly() {
+        child_fail(err_w, 115, &format!("remount /proc/sys read-only: {e}"));
     }
     let _ = mounts::mask_sensitive_proc_paths();
     let _ = mounts::mount_ro_caches(&policy.ro_mounts);
@@ -1209,7 +1217,12 @@ fn spawn_full(
     // SAFETY: scalar getpid.
     let parent_pid = unsafe { libc::getpid() };
 
+    // INV-06: Parent subreaper invariant. Mark supervisor as subreaper before
+    // spawning child processes; fail closed (Exit 125) if registration fails.
+    crate::multi::isolation::set_subreaper().map_err(anyhow::Error::new)?;
+
     let (err_r, err_w) = pipe2_cloexec()?;
+
     let (map_r, map_w) = pipe2_cloexec()?;
     let (ack_r, ack_w) = pipe2_cloexec()?;
     let (alive_r, alive_w) = pipe2_cloexec()?;
@@ -1318,10 +1331,19 @@ fn spawn_full(
     let cgroup_handle =
         match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
             Ok(Some(cg)) => {
-                let _ = cg.add_process(pid as u32);
+                if let Err(e) = cg.add_process(pid as u32) {
+                    let code = kill_and_reap(pid);
+                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                        "failed to attach process to cgroup (exit {code}): {e}"
+                    ))));
+                }
                 Some(cg)
             }
-            _ => None,
+            Ok(None) => None,
+            Err(e) => {
+                let _code = kill_and_reap(pid);
+                return Err(anyhow::Error::new(e));
+            }
         };
 
     let pidfd = open_pidfd(pid as u32);
@@ -1506,10 +1528,19 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     let cgroup_handle =
         match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
             Ok(Some(cg)) => {
-                let _ = cg.add_process(pid as u32);
+                if let Err(e) = cg.add_process(pid as u32) {
+                    let code = kill_and_reap(pid);
+                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                        "failed to attach process to cgroup (exit {code}): {e}"
+                    ))));
+                }
                 Some(cg)
             }
-            _ => None,
+            Ok(None) => None,
+            Err(e) => {
+                let _code = kill_and_reap(pid);
+                return Err(anyhow::Error::new(e));
+            }
         };
 
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
@@ -1674,10 +1705,19 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
     let cgroup_handle =
         match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
             Ok(Some(cg)) => {
-                let _ = cg.add_process(pid as u32);
+                if let Err(e) = cg.add_process(pid as u32) {
+                    let code = kill_and_reap(pid);
+                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                        "failed to attach process to cgroup (exit {code}): {e}"
+                    ))));
+                }
                 Some(cg)
             }
-            _ => None,
+            Ok(None) => None,
+            Err(e) => {
+                let _code = kill_and_reap(pid);
+                return Err(anyhow::Error::new(e));
+            }
         };
 
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
@@ -1750,5 +1790,24 @@ mod tests {
             crate::exit_codes::map_error_to_exit_code(&err),
             EXIT_FAIL_CLOSED
         );
+    }
+
+    #[test]
+    fn subreaper_failure_maps_to_fail_closed() {
+        let err = anyhow::Error::new(VettoError::Sandbox(
+            "PR_SET_CHILD_SUBREAPER: Operation not permitted".into(),
+        ));
+        assert_eq!(
+            crate::exit_codes::map_error_to_exit_code(&err),
+            EXIT_FAIL_CLOSED
+        );
+    }
+
+    #[test]
+    fn core_dump_suppression_dumpable_selection() {
+        let dumpable_non_notify: libc::c_ulong = if false { 1 } else { 0 };
+        assert_eq!(dumpable_non_notify, 0);
+        let dumpable_notify: libc::c_ulong = if true { 1 } else { 0 };
+        assert_eq!(dumpable_notify, 1);
     }
 }

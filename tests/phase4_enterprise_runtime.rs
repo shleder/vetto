@@ -13,7 +13,11 @@ use std::path::PathBuf;
 use ed25519_dalek::SigningKey;
 use rand_core::OsRng;
 
+use vetto::audit::record::{
+    FsMutationType, SyscallActionTaken, TierClassification, VettoAuditRecord,
+};
 use vetto::audit::verdict::{EvidenceStrength, VerdictEngine, VerdictStatus};
+use vetto::crypto::attest::AuditLedger;
 use vetto::crypto::slsa::{
     CosignSlsaBuilder, IN_TOTO_PAYLOAD_TYPE, IN_TOTO_STATEMENT_V1, SLSA_PROVENANCE_V1,
 };
@@ -25,11 +29,18 @@ use vetto::policy_ir::contract::{
     AgentIdentity, AttestationContract, EnvironmentContract, FilesystemContract, NetworkContract,
     NetworkMode, ResourceContract, SecurityContract, UnsealedSecurityContract,
 };
+use vetto::policy_ir::fsm::ExecutionState;
 use vetto::policy_ir::sync::{EnterprisePolicySync, PolicySyncError};
 use vetto::proctree::{
     ExtinctionVerifier, PlatformExtinctionTier, FAIL_CLOSED_EXTINCTION_EXIT_CODE,
     MAX_EXTINCTION_DEADLINE_MS,
 };
+use vetto::sandbox::{
+    is_evidence_channel_intact, mark_evidence_channel_disrupted, reset_evidence_channel,
+    SupervisorEngine,
+};
+
+static EVIDENCE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn create_sealed_contract(name: &str) -> SecurityContract {
     let unsealed = UnsealedSecurityContract {
@@ -365,4 +376,284 @@ fn test_enterprise_policy_synchronization_and_drift_detection() {
     let re_reg_err = sync.register_contract(tampered).unwrap_err();
     assert_eq!(re_reg_err.exit_code(), 125);
     assert!(matches!(re_reg_err, PolicySyncError::PolicyDrift { .. }));
+}
+
+#[test]
+fn test_section17_1_audit_records_json_schema() {
+    let session_id = "550e8400-e29b-41d4-a716-446655440000";
+    let contract_digest = "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a";
+
+    // 1. SESSION_INIT
+    let init_rec = VettoAuditRecord::session_init(
+        session_id,
+        contract_digest,
+        "linux",
+        "6.8.0",
+        "claude-code",
+        TierClassification::Tier1Linux,
+    );
+    let init_json = init_rec.to_json_line().unwrap();
+    assert!(init_json.contains("\"record_type\":\"SESSION_INIT\""));
+    assert!(init_json.contains("\"tier\":\"TIER_1_LINUX\""));
+    assert!(init_json.contains("\"platform\":\"linux\""));
+
+    // 2. SYSCALL_DENIAL
+    let denial_rec = VettoAuditRecord::syscall_denial(
+        session_id,
+        contract_digest,
+        "openat",
+        "/etc/shadow",
+        "landlock",
+        SyscallActionTaken::Blocked,
+    );
+    let denial_json = denial_rec.to_json_line().unwrap();
+    assert!(denial_json.contains("\"record_type\":\"SYSCALL_DENIAL\""));
+    assert!(denial_json.contains("\"action_taken\":\"BLOCKED\""));
+    assert!(denial_json.contains("\"syscall_name\":\"openat\""));
+
+    // 3. FS_MUTATION
+    let fs_rec = VettoAuditRecord::fs_mutation(
+        session_id,
+        contract_digest,
+        "src/main.rs",
+        FsMutationType::Modified,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    let fs_json = fs_rec.to_json_line().unwrap();
+    assert!(fs_json.contains("\"record_type\":\"FS_MUTATION\""));
+    assert!(fs_json.contains("\"mutation_type\":\"MODIFIED\""));
+
+    // 4. RESOURCE_SAMPLE
+    let res_rec =
+        VettoAuditRecord::resource_sample(session_id, contract_digest, 42.5, 1024 * 1024 * 64, 8);
+    let res_json = res_rec.to_json_line().unwrap();
+    assert!(res_json.contains("\"record_type\":\"RESOURCE_SAMPLE\""));
+    assert!(res_json.contains("\"cpu_percent\":42.5"));
+
+    // 5. TREE_EXTINCTION
+    let ext_rec = VettoAuditRecord::tree_extinction(
+        session_id,
+        contract_digest,
+        "LinuxTier1Proven",
+        0,
+        9,
+        120,
+        true,
+    );
+    let ext_json = ext_rec.to_json_line().unwrap();
+    assert!(ext_json.contains("\"record_type\":\"TREE_EXTINCTION\""));
+    assert!(ext_json.contains("\"clean\":true"));
+
+    // 6. SESSION_VERDICT
+    let contract = create_sealed_contract("claude");
+    let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+    let verdict_rec = VettoAuditRecord::session_verdict(
+        session_id,
+        contract_digest,
+        &verdict,
+        "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a",
+    );
+    let verdict_json = verdict_rec.to_json_line().unwrap();
+    assert!(verdict_json.contains("\"record_type\":\"SESSION_VERDICT\""));
+    assert!(verdict_json.contains("\"verdict\":\"PASS\""));
+    assert!(verdict_json.contains("\"evidence_strength\":\"STRONG\""));
+    assert!(verdict_json.contains("\"exit_code\":0"));
+}
+
+#[test]
+fn test_contract_blake3_sealing_and_digest_verification() {
+    let contract = create_sealed_contract("claude");
+    assert!(!contract.contract_digest_blake3.is_empty());
+    assert_eq!(contract.contract_digest_blake3.len(), 64);
+    assert!(contract.verify_digest());
+
+    // Tampering unsealed content breaks verification
+    let mut tampered = contract.clone();
+    tampered.network.mode = NetworkMode::Direct;
+    assert!(!tampered.verify_digest());
+}
+
+#[test]
+fn test_audit_ledger_record_and_sign() {
+    use std::fs;
+    let dir = std::env::temp_dir().join(format!("vetto-test-audit-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let ledger_path = dir.join("vetto-audit.jsonl");
+
+    let mut ledger = AuditLedger::new(&ledger_path).expect("open ledger");
+
+    let rec1 = VettoAuditRecord::session_init(
+        "session-1",
+        "digest-1",
+        "linux",
+        "6.8.0",
+        "claude",
+        TierClassification::Tier1Linux,
+    );
+    let hash1 = ledger.record_audit_record(&rec1).expect("record rec1");
+    assert!(!hash1.is_empty());
+
+    let rec2 = VettoAuditRecord::fs_mutation(
+        "session-1",
+        "digest-1",
+        "Cargo.toml",
+        FsMutationType::Modified,
+        "sha-cargo-toml",
+    );
+    let hash2 = ledger.record_audit_record(&rec2).expect("record rec2");
+    assert!(!hash2.is_empty());
+    assert_ne!(hash1, hash2);
+
+    let mut csprng = OsRng;
+    let signing_key = SigningKey::generate(&mut csprng);
+    let sig = ledger.sign_and_close(&signing_key).expect("sign ledger");
+    assert_eq!(sig.len(), 128); // 64 bytes in hex
+
+    let contents = fs::read_to_string(&ledger_path).expect("read ledger");
+    assert!(contents.contains("SESSION_INIT"));
+    assert!(contents.contains("FS_MUTATION"));
+    assert!(contents.contains(&sig));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_inv37_netlink_disruption_forces_inconclusive_verdict() {
+    let _lock = EVIDENCE_TEST_MUTEX.lock().unwrap();
+    let contract = create_sealed_contract("claude-worker");
+
+    reset_evidence_channel();
+    assert!(is_evidence_channel_intact());
+
+    // Clean execution with intact evidence channel yields PASS [STRONG]
+    let clean_verdict =
+        VerdictEngine::evaluate(&contract, 0, 0, 0, is_evidence_channel_intact(), 0);
+    assert_eq!(clean_verdict.status, VerdictStatus::Pass);
+    assert_eq!(clean_verdict.strength, EvidenceStrength::Strong);
+    assert_eq!(clean_verdict.exit_code, 0);
+    assert!(clean_verdict.is_success());
+    assert_eq!(
+        clean_verdict.recommended_action(),
+        "Commit CoW changes to host workspace."
+    );
+
+    // Disruption trigger (INV-37: Netlink buffer overflow / packet drop)
+    mark_evidence_channel_disrupted();
+    assert!(!is_evidence_channel_intact());
+
+    let disrupted_verdict =
+        VerdictEngine::evaluate(&contract, 0, 0, 0, is_evidence_channel_intact(), 0);
+    assert_eq!(disrupted_verdict.status, VerdictStatus::Inconclusive);
+    assert_eq!(disrupted_verdict.strength, EvidenceStrength::Strong);
+    assert_eq!(disrupted_verdict.exit_code, 125);
+    assert_eq!(disrupted_verdict.display_badge(), "INCONCLUSIVE [STRONG]");
+    assert_eq!(
+        disrupted_verdict.recommended_action(),
+        "Wipe CoW layer; audit ledger inconclusive."
+    );
+    assert!(!disrupted_verdict.is_success());
+    assert!(!disrupted_verdict.is_contract_satisfied());
+    assert!(disrupted_verdict
+        .reason
+        .contains("Evidence capture channel dropped events"));
+
+    // CoW policy decisions
+    assert!(!SupervisorEngine::should_commit_cow(&disrupted_verdict));
+    assert!(SupervisorEngine::should_wipe_cow(&disrupted_verdict));
+
+    // Reset channel state after test
+    reset_evidence_channel();
+    assert!(is_evidence_channel_intact());
+}
+
+#[test]
+fn test_triplane_supervisor_engine_full_lifecycle_and_invariants() {
+    let _lock = EVIDENCE_TEST_MUTEX.lock().unwrap();
+    let contract = create_sealed_contract("claude-supervisor");
+
+    // 1. Initial state validation
+    let mut supervisor = SupervisorEngine::new(contract.clone()).expect("supervisor init succeeds");
+    assert_eq!(supervisor.current_state(), ExecutionState::ContractSealed);
+    assert_eq!(supervisor.contract().contract_id, contract.contract_id);
+
+    // 2. Tampered contract rejection
+    let mut tampered = contract.clone();
+    tampered.resources.max_pids = 99999;
+    assert!(SupervisorEngine::new(tampered).is_err());
+
+    // 3. Happy-path lifecycle
+    supervisor.prepare().expect("prepare succeeds");
+    assert_eq!(supervisor.current_state(), ExecutionState::Prepare);
+
+    supervisor.spawn_guard().expect("spawn guard succeeds");
+    assert_eq!(supervisor.current_state(), ExecutionState::Observe);
+
+    supervisor.terminate().expect("terminate succeeds");
+    assert_eq!(supervisor.current_state(), ExecutionState::Terminate);
+
+    let proof = supervisor
+        .cleanup_and_verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 0, 120)
+        .expect("cleanup and extinction verification succeeds");
+    assert_eq!(proof.surviving_processes, 0);
+    assert_eq!(proof.surviving_resources, 0);
+    assert!(proof.mathematically_proven);
+    assert_eq!(supervisor.current_state(), ExecutionState::Verify);
+
+    reset_evidence_channel();
+    let verdict = supervisor
+        .evaluate_verdict(0, 0, 0, 0)
+        .expect("evaluate verdict succeeds");
+    assert_eq!(verdict.status, VerdictStatus::Pass);
+    assert_eq!(verdict.strength, EvidenceStrength::Strong);
+    assert_eq!(verdict.exit_code, 0);
+    assert!(verdict.is_success());
+    assert_eq!(supervisor.current_state(), ExecutionState::Terminal);
+    assert!(SupervisorEngine::should_commit_cow(&verdict));
+    assert!(!SupervisorEngine::should_wipe_cow(&verdict));
+
+    // 4. Audit ledger recording of the verdict
+    let dir = std::env::temp_dir().join(format!("vetto-test-sup-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let ledger_path = dir.join("vetto-audit.jsonl");
+    let mut ledger = AuditLedger::new(&ledger_path).expect("open audit ledger");
+    let root_digest = "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a";
+    let rec_hash = supervisor
+        .record_verdict_to_ledger(&mut ledger, &verdict, root_digest)
+        .expect("record verdict to ledger");
+    assert!(!rec_hash.is_empty());
+    let ledger_content = std::fs::read_to_string(&ledger_path).expect("read ledger");
+    assert!(ledger_content.contains("SESSION_VERDICT"));
+    assert!(ledger_content.contains("\"verdict\":\"PASS\""));
+    assert!(ledger_content.contains("\"exit_code\":0"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // 5. Fail-closed path: zombie processes trigger Exit 125
+    let mut sup2 = SupervisorEngine::new(contract.clone()).expect("sup2 init");
+    sup2.prepare().unwrap();
+    sup2.spawn_guard().unwrap();
+    sup2.terminate().unwrap();
+    let breach = sup2
+        .cleanup_and_verify(PlatformExtinctionTier::LinuxTier1Proven, 2, 0, 100)
+        .unwrap_err();
+    assert_eq!(breach.exit_code, 125);
+    assert_eq!(sup2.current_state(), ExecutionState::FailClosed);
+
+    // 6. Fail-closed path: INV-37 evidence channel disruption triggers INCONCLUSIVE
+    let mut sup3 = SupervisorEngine::new(contract).expect("sup3 init");
+    sup3.prepare().unwrap();
+    sup3.spawn_guard().unwrap();
+    sup3.terminate().unwrap();
+    sup3.cleanup_and_verify(PlatformExtinctionTier::LinuxTier1Proven, 0, 0, 100)
+        .unwrap();
+    mark_evidence_channel_disrupted();
+    let inconcl_verdict = sup3
+        .evaluate_verdict(0, 0, 0, 0)
+        .expect("verdict evaluated");
+    assert_eq!(inconcl_verdict.status, VerdictStatus::Inconclusive);
+    assert_eq!(inconcl_verdict.exit_code, 125);
+    assert_eq!(sup3.current_state(), ExecutionState::Terminal);
+    assert!(!SupervisorEngine::should_commit_cow(&inconcl_verdict));
+    assert!(SupervisorEngine::should_wipe_cow(&inconcl_verdict));
+
+    reset_evidence_channel();
 }
