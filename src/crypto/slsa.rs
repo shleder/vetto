@@ -127,8 +127,8 @@ impl SignedSlsaEnvelope {
         }
 
         let mut sig_bytes = [0u8; 64];
-        for i in 0..64 {
-            sig_bytes[i] = u8::from_str_radix(&self.signature[i * 2..i * 2 + 2], 16)
+        for (i, byte) in sig_bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&self.signature[i * 2..i * 2 + 2], 16)
                 .map_err(|e| anyhow::anyhow!("Invalid hex byte in signature: {}", e))?;
         }
 
@@ -347,7 +347,7 @@ mod tests {
 
         // Verification fails on tampered payload
         let mut tampered = signed.clone();
-        tampered.payload.push_str(" ");
+        tampered.payload.push(' ');
         assert!(tampered.verify(&verifying_key).is_err());
 
         // Verification fails on tampered signature
