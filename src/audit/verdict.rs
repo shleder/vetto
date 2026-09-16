@@ -5,8 +5,8 @@
 //! fail-closed exit code assignment (Exit 125 on contract breaches), and
 //! CoW layer commit/wipe decisions.
 
-use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
 
 use crate::policy_ir::SecurityContract;
 
