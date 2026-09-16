@@ -40,5 +40,5 @@ This produces `vetto-vscode-0.2.25.vsix`.
 
 ### 3. Install in VS Code
 ```bash
-code --install-extension vetto-vscode-0.2.24.vsix
+code --install-extension vetto-vscode-0.2.25.vsix
 ```
