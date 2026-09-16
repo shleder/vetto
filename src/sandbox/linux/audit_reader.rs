@@ -89,6 +89,18 @@ pub fn open_audit_feed() -> Result<OwnedFd, String> {
             std::io::Error::last_os_error()
         ));
     }
+    // Set 4MB SO_RCVBUF to absorb burst traffic and prevent spurious ENOBUFS (INV-37).
+    let rcvbuf: libc::c_int = 4 * 1024 * 1024;
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            &rcvbuf as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+    }
+
     #[repr(C)]
     struct SockAddrNl {
         nl_family: libc::sa_family_t,
@@ -119,6 +131,116 @@ pub fn open_audit_feed() -> Result<OwnedFd, String> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
+/// Processes a buffer of Netlink datagrams, iterating over composite messages
+/// aligned to 4-byte boundaries (NLMSG_ALIGN). Fulfills INV-37.
+pub fn process_netlink_buffer(
+    bytes: &[u8],
+    last_seq: &mut Option<u32>,
+    bus: Option<&EventBus>,
+) {
+    let mut offset = 0;
+    let hdr_size = std::mem::size_of::<NlMsgHdr>();
+
+    while offset + hdr_size <= bytes.len() {
+        let msg_bytes = &bytes[offset..];
+        // Read unaligned to avoid UB across raw byte slices.
+        let nlm: NlMsgHdr = unsafe {
+            std::ptr::read_unaligned(msg_bytes.as_ptr() as *const NlMsgHdr)
+        };
+        let msg_len = nlm.nlmsg_len as usize;
+        if msg_len < hdr_size || offset + msg_len > bytes.len() {
+            break;
+        }
+
+        // 1. Sequence gap detection: packet drop
+        if nlm.nlmsg_seq > 0 {
+            if let Some(prev) = *last_seq {
+                if nlm.nlmsg_seq > prev + 1 {
+                    let dropped = (nlm.nlmsg_seq - prev - 1) as u64;
+                    PACKET_DROP_COUNT.fetch_add(dropped, Ordering::SeqCst);
+                    mark_evidence_channel_disrupted();
+                    if let Some(bus) = bus {
+                        bus.publish(Event::Notice {
+                            ts: crate::events::types::now(),
+                            message: format!(
+                                "Netlink audit packet drop detected: seq gap from {} to {} (INV-37)",
+                                prev, nlm.nlmsg_seq
+                            ),
+                        });
+                    }
+                }
+            }
+            *last_seq = Some(nlm.nlmsg_seq);
+        }
+
+        // 2. NLMSG_OVERRUN: kernel buffer overrun
+        if nlm.nlmsg_type == NLMSG_OVERRUN {
+            BUFFER_OVERFLOW_COUNT.fetch_add(1, Ordering::SeqCst);
+            mark_evidence_channel_disrupted();
+            if let Some(bus) = bus {
+                bus.publish(Event::Notice {
+                    ts: crate::events::types::now(),
+                    message: "Netlink audit buffer overrun (NLMSG_OVERRUN): evidence channel disrupted (INV-37)".to_string(),
+                });
+            }
+        }
+
+        // 3. NLMSG_ERROR: check error payload for ENOBUFS
+        if nlm.nlmsg_type == NLMSG_ERROR
+            && msg_len >= hdr_size + std::mem::size_of::<libc::c_int>()
+        {
+            let err_code = unsafe {
+                std::ptr::read_unaligned(
+                    msg_bytes[hdr_size..].as_ptr() as *const libc::c_int,
+                )
+            };
+            if err_code == -ENOBUFS_CODE
+                || err_code == ENOBUFS_CODE
+                || err_code == -libc::ENOBUFS
+                || err_code == libc::ENOBUFS
+            {
+                BUFFER_OVERFLOW_COUNT.fetch_add(1, Ordering::SeqCst);
+                mark_evidence_channel_disrupted();
+                if let Some(bus) = bus {
+                    bus.publish(Event::Notice {
+                        ts: crate::events::types::now(),
+                        message: "Netlink audit message error ENOBUFS: evidence channel disrupted (INV-37)".to_string(),
+                    });
+                }
+            }
+        }
+
+        // 4. Extract audit text payload (strictly bounded within this message)
+        if msg_len > hdr_size {
+            let payload = &msg_bytes[hdr_size..msg_len];
+            let text = String::from_utf8_lossy(payload);
+            let lower = text.to_ascii_lowercase();
+            if lower.contains("landlock") && lower.contains("denied") {
+                if let Some(bus) = bus {
+                    bus.publish(Event::BlockedAttempt {
+                        ts: crate::events::types::now(),
+                        pid: parse_audit_pid(&text),
+                        comm: "?".into(),
+                        path: extract_denied_path(&text).unwrap_or_default(),
+                        source: "kernel-audit".into(),
+                    });
+                }
+            }
+        }
+
+        if nlm.nlmsg_type == NLMSG_DONE {
+            break;
+        }
+
+        // Advance offset aligned to 4 bytes (NLMSG_ALIGN)
+        let aligned_len = (msg_len + 3) & !3;
+        if aligned_len == 0 {
+            break;
+        }
+        offset += aligned_len;
+    }
+}
+
 /// Spawn a reader thread if the feed is readable. Returns the reason it
 /// could NOT be started otherwise (for the persistent notice).
 pub fn spawn_reader_if_available(bus: EventBus) -> Option<String> {
@@ -143,81 +265,7 @@ pub fn spawn_reader_if_available(bus: EventBus) -> Option<String> {
                     )
                 };
                 if n > 0 {
-                    let bytes = &buf[..n as usize];
-                    if bytes.len() >= std::mem::size_of::<NlMsgHdr>() {
-                        let nlm = unsafe {
-                            std::ptr::read_unaligned(bytes.as_ptr() as *const NlMsgHdr)
-                        };
-
-                        // Sequence gap detection: packet drop
-                        if nlm.nlmsg_seq > 0 {
-                            if let Some(prev) = last_seq {
-                                if nlm.nlmsg_seq > prev + 1 {
-                                    let dropped = (nlm.nlmsg_seq - prev - 1) as u64;
-                                    PACKET_DROP_COUNT.fetch_add(dropped, Ordering::SeqCst);
-                                    mark_evidence_channel_disrupted();
-                                    bus.publish(Event::Notice {
-                                        ts: crate::events::types::now(),
-                                        message: format!(
-                                            "Netlink audit packet drop detected: seq gap from {} to {} (INV-37)",
-                                            prev, nlm.nlmsg_seq
-                                        ),
-                                    });
-                                }
-                            }
-                            last_seq = Some(nlm.nlmsg_seq);
-                        }
-
-                        // NLMSG_OVERRUN: kernel buffer overrun
-                        if nlm.nlmsg_type == NLMSG_OVERRUN {
-                            BUFFER_OVERFLOW_COUNT.fetch_add(1, Ordering::SeqCst);
-                            mark_evidence_channel_disrupted();
-                            bus.publish(Event::Notice {
-                                ts: crate::events::types::now(),
-                                message: "Netlink audit buffer overrun (NLMSG_OVERRUN): evidence channel disrupted (INV-37)".to_string(),
-                            });
-                        }
-
-                        // NLMSG_ERROR: check error payload for ENOBUFS
-                        if nlm.nlmsg_type == NLMSG_ERROR
-                            && bytes.len() >= std::mem::size_of::<NlMsgHdr>() + std::mem::size_of::<libc::c_int>()
-                        {
-                            let err_code = unsafe {
-                                std::ptr::read_unaligned(
-                                    bytes.as_ptr().add(std::mem::size_of::<NlMsgHdr>())
-                                        as *const libc::c_int,
-                                )
-                            };
-                            if err_code == -ENOBUFS_CODE
-                                || err_code == ENOBUFS_CODE
-                                || err_code == -libc::ENOBUFS
-                                || err_code == libc::ENOBUFS
-                            {
-                                BUFFER_OVERFLOW_COUNT.fetch_add(1, Ordering::SeqCst);
-                                mark_evidence_channel_disrupted();
-                                bus.publish(Event::Notice {
-                                    ts: crate::events::types::now(),
-                                    message: "Netlink audit message error ENOBUFS: evidence channel disrupted (INV-37)".to_string(),
-                                });
-                            }
-                        }
-
-                        // Extract audit text payload (follows NlMsgHdr)
-                        let payload_offset = std::mem::size_of::<NlMsgHdr>();
-                        if bytes.len() > payload_offset {
-                            let text = String::from_utf8_lossy(&bytes[payload_offset..]);
-                            let lower = text.to_ascii_lowercase();
-                            if lower.contains("landlock") && lower.contains("denied") {
-                                bus.publish(Event::BlockedAttempt {
-                                    ts: crate::events::types::now(),
-                                    pid: parse_audit_pid(&text),
-                                    comm: "?".into(),
-                                    path: extract_denied_path(&text).unwrap_or_default(),
-                                    source: "kernel-audit".into(),
-                                });
-                            }
-                        }
-                    }
+                    process_netlink_buffer(&buf[..n as usize], &mut last_seq, Some(&bus));
                 } else if n == 0 {
                     // Socket closed
                     break;
@@ -294,5 +342,100 @@ mod tests {
     fn test_extract_denied_path() {
         let line = "type=LANDLOCK_DENIED msg=audit(1726488345.123:45): pid=4242 comm=\"bash\" path=\"/etc/shadow\"";
         assert_eq!(extract_denied_path(line), Some("/etc/shadow".to_string()));
+    }
+
+    #[test]
+    fn test_process_netlink_buffer_composite_and_overflow() {
+        reset_evidence_channel();
+        let mut last_seq = None;
+
+        let hdr_size = std::mem::size_of::<NlMsgHdr>();
+        let mut buf = Vec::new();
+
+        let hdr1 = NlMsgHdr {
+            nlmsg_len: hdr_size as u32,
+            nlmsg_type: NLMSG_NOOP,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 100,
+        };
+        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr1) };
+        buf.extend_from_slice(&hdr1_bytes);
+
+        let hdr2 = NlMsgHdr {
+            nlmsg_len: hdr_size as u32,
+            nlmsg_type: NLMSG_OVERRUN,
+            nlmsg_flags: 0,
+            nlmsg_seq: 2,
+            nlmsg_pid: 100,
+        };
+        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr2) };
+        buf.extend_from_slice(&hdr2_bytes);
+
+        process_netlink_buffer(&buf, &mut last_seq, None);
+
+        assert!(!is_evidence_channel_intact(), "NLMSG_OVERRUN in composite packet must disrupt channel");
+        assert_eq!(buffer_overflow_count(), 1);
+        assert_eq!(last_seq, Some(2));
+    }
+
+    #[test]
+    fn test_process_netlink_buffer_sequence_gap() {
+        reset_evidence_channel();
+        let mut last_seq = None;
+        let hdr_size = std::mem::size_of::<NlMsgHdr>();
+
+        let hdr1 = NlMsgHdr {
+            nlmsg_len: hdr_size as u32,
+            nlmsg_type: NLMSG_NOOP,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 100,
+        };
+        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr1) };
+        process_netlink_buffer(&hdr1_bytes, &mut last_seq, None);
+        assert!(is_evidence_channel_intact());
+        assert_eq!(packet_drop_count(), 0);
+
+        let hdr2 = NlMsgHdr {
+            nlmsg_len: hdr_size as u32,
+            nlmsg_type: NLMSG_NOOP,
+            nlmsg_flags: 0,
+            nlmsg_seq: 5,
+            nlmsg_pid: 100,
+        };
+        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr2) };
+        process_netlink_buffer(&hdr2_bytes, &mut last_seq, None);
+
+        assert!(!is_evidence_channel_intact());
+        assert_eq!(packet_drop_count(), 3);
+        assert_eq!(last_seq, Some(5));
+    }
+
+    #[test]
+    fn test_process_netlink_buffer_enobufs_error() {
+        reset_evidence_channel();
+        let mut last_seq = None;
+        let hdr_size = std::mem::size_of::<NlMsgHdr>();
+        let err_size = std::mem::size_of::<libc::c_int>();
+
+        let hdr = NlMsgHdr {
+            nlmsg_len: (hdr_size + err_size) as u32,
+            nlmsg_type: NLMSG_ERROR,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 100,
+        };
+        let mut buf = Vec::new();
+        let hdr_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr) };
+        buf.extend_from_slice(&hdr_bytes);
+        let err_code: libc::c_int = -ENOBUFS_CODE;
+        let err_bytes: [u8; std::mem::size_of::<libc::c_int>()] = unsafe { std::mem::transmute(err_code) };
+        buf.extend_from_slice(&err_bytes);
+
+        process_netlink_buffer(&buf, &mut last_seq, None);
+
+        assert!(!is_evidence_channel_intact());
+        assert_eq!(buffer_overflow_count(), 1);
     }
 }

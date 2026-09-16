@@ -568,8 +568,7 @@ fn test_triplane_supervisor_engine_full_lifecycle_and_invariants() {
     let contract = create_sealed_contract("claude-supervisor");
 
     // 1. Initial state validation
-    let mut supervisor =
-        SupervisorEngine::new(contract.clone()).expect("supervisor init succeeds");
+    let mut supervisor = SupervisorEngine::new(contract.clone()).expect("supervisor init succeeds");
     assert_eq!(supervisor.current_state(), ExecutionState::ContractSealed);
     assert_eq!(supervisor.contract().contract_id, contract.contract_id);
 

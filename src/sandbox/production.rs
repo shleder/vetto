@@ -33,11 +33,11 @@
 use std::collections::{BTreeMap, HashMap};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::audit::record::VettoAuditRecord;
+use crate::audit::record::{TierClassification, VettoAuditRecord};
 use crate::audit::verdict::{EvidenceStrength, FinalVerdict, VerdictEngine, VerdictStatus};
 use crate::config::NetMode;
 use crate::crypto::attest::AuditLedger;
@@ -47,6 +47,7 @@ use crate::policy_ir::{
 };
 use crate::proctree::{
     ExtinctionBreach, ExtinctionProof, ExtinctionVerifier, PlatformExtinctionTier,
+    FAIL_CLOSED_EXTINCTION_EXIT_CODE, MAX_EXTINCTION_DEADLINE_MS,
 };
 use crate::sandbox::{Backend, SandboxHandle, SpawnOptions, StdioMode};
 use crate::verify_ng::engine;
@@ -633,6 +634,7 @@ impl PreparedProductionExecution {
             env_extra,
             stdio: self.stdio,
         };
+        crate::sandbox::reset_evidence_channel();
         PROD_BACKEND_ENTERED.fetch_add(1, Ordering::SeqCst);
         // THE single production spawn boundary: the moved mechanics object
         // applies the frozen bundle to the real child. No other production
@@ -694,6 +696,15 @@ impl PreparedProductionExecution {
             let verification = crate::sandbox::macos::prod_verify::verify_child_host(pid);
             self.capability.note_host_verified(&verification);
         }
+
+        let mut fsm = ExecutionStateMachine::new();
+        let _ = fsm.transition(ExecutionState::PolicyCompiled);
+        let _ = fsm.transition(ExecutionState::ContractSealed);
+        let _ = fsm.transition(ExecutionState::Prepare);
+        let _ = fsm.transition(ExecutionState::Spawn);
+        let _ = fsm.transition(ExecutionState::Enforce);
+        let _ = fsm.transition(ExecutionState::Observe);
+
         Ok(SpawnedProductionExecution {
             handle: spawned.handle,
             #[cfg(unix)]
@@ -709,6 +720,7 @@ impl PreparedProductionExecution {
             scenario: self.scenario.clone(),
             timeout: self.timeout,
             capability: self.capability,
+            fsm,
         })
     }
 }
@@ -737,9 +749,14 @@ pub struct SpawnedProductionExecution {
     scenario: String,
     timeout: Option<Duration>,
     capability: Box<dyn SandboxBackend>,
+    fsm: ExecutionStateMachine,
 }
 
 impl SpawnedProductionExecution {
+    /// FSM lifecycle state machine for this execution.
+    pub fn fsm(&self) -> &ExecutionStateMachine {
+        &self.fsm
+    }
     /// Actual agent root PID (host-observed, used for verification/sweep).
     pub fn pid(&self) -> u32 {
         self.pid
@@ -1026,14 +1043,7 @@ impl SupervisorEngine {
         fsm.transition(ExecutionState::PolicyCompiled)?;
         fsm.transition(ExecutionState::ContractSealed)?;
 
-        #[cfg(target_os = "linux")]
-        let backend_kind = BackendKind::LinuxLandlock;
-        #[cfg(target_os = "macos")]
-        let backend_kind = BackendKind::MacosSeatbelt;
-        #[cfg(target_os = "windows")]
-        let backend_kind = BackendKind::WindowsAppContainer;
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        let backend_kind = BackendKind::Unsupported;
+        let backend_kind = BackendKind::current_platform();
 
         Ok(Self {
             contract,
