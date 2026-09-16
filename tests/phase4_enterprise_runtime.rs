@@ -114,6 +114,19 @@ fn test_slsa_l3_attestation_envelope_and_signature() {
     assert!(statement_json.contains(contract_id));
     assert!(statement_json.contains(agent_name));
     assert!(statement_json.contains("git-commit:b3ea2af"));
+
+    // Cryptographically verify with public key
+    let verifying_key = signing_key.verifying_key();
+    assert!(signed_envelope.verify(&verifying_key).is_ok());
+
+    // Wrong public key rejects
+    let wrong_key = SigningKey::generate(&mut csprng).verifying_key();
+    assert!(signed_envelope.verify(&wrong_key).is_err());
+
+    // Tampered payload rejects
+    let mut tampered_envelope = signed_envelope.clone();
+    tampered_envelope.payload.push(' ');
+    assert!(tampered_envelope.verify(&verifying_key).is_err());
 }
 
 #[test]
@@ -174,6 +187,13 @@ fn test_verdict_engine_all_matrix_states() {
     assert_eq!(v_unsupp.strength, EvidenceStrength::Unsupported);
     assert_eq!(v_unsupp.exit_code, 125);
     assert_eq!(v_unsupp.display_badge(), "FAIL [UNSUPPORTED]");
+
+    // 7. Non-zero agent exit code: security invariants satisfied, but workload failed
+    let v_err_exit = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 1);
+    assert_eq!(v_err_exit.status, VerdictStatus::Pass);
+    assert_eq!(v_err_exit.exit_code, 1);
+    assert!(v_err_exit.is_contract_satisfied());
+    assert!(!v_err_exit.is_success());
 }
 
 #[test]
@@ -314,4 +334,35 @@ fn test_enterprise_policy_synchronization_and_drift_detection() {
     assert_eq!(manifest.policies.len(), 2);
     assert!(manifest.policies.contains_key("claude"));
     assert!(manifest.policies.contains_key("codex"));
+
+    // Manifest verification succeeds for registered contracts
+    assert!(manifest.verify_contract(&contract_claude).is_ok());
+    assert!(manifest.verify_contract(&contract_codex).is_ok());
+
+    // Manifest rejects unregistered agent
+    assert!(matches!(
+        manifest.verify_contract(&unregistered).unwrap_err(),
+        PolicySyncError::UnregisteredPolicy(_)
+    ));
+
+    // Manifest rejects drifted contract
+    assert!(matches!(
+        manifest.verify_contract(&tampered).unwrap_err(),
+        PolicySyncError::PolicyDrift { .. }
+    ));
+
+    // Manifest with invalid schema version rejects with InvalidManifest
+    let mut invalid_manifest = manifest.clone();
+    invalid_manifest.schema_version = 99;
+    assert!(matches!(
+        invalid_manifest
+            .verify_contract(&contract_claude)
+            .unwrap_err(),
+        PolicySyncError::InvalidManifest(_)
+    ));
+
+    // Registering conflicting contract for same agent name fails (immutability guarantee)
+    let re_reg_err = sync.register_contract(tampered).unwrap_err();
+    assert_eq!(re_reg_err.exit_code(), 125);
+    assert!(matches!(re_reg_err, PolicySyncError::PolicyDrift { .. }));
 }

@@ -58,6 +58,44 @@ pub struct EnterpriseSyncManifest {
     pub policies: BTreeMap<String, PolicyManifestEntry>,
 }
 
+impl EnterpriseSyncManifest {
+    /// Validates the manifest schema version and structure.
+    pub fn validate(&self) -> Result<(), PolicySyncError> {
+        if self.schema_version != 1 {
+            return Err(PolicySyncError::InvalidManifest(format!(
+                "unsupported schema version {}; expected 1",
+                self.schema_version
+            )));
+        }
+        Ok(())
+    }
+
+    /// Verifies a worker's SecurityContract against this distributed policy manifest.
+    pub fn verify_contract(&self, contract: &SecurityContract) -> Result<(), PolicySyncError> {
+        self.validate()?;
+
+        if !contract.verify_digest() {
+            return Err(PolicySyncError::DigestVerificationFailed);
+        }
+
+        let agent_name = &contract.agent_identity.agent_name;
+        let entry = self
+            .policies
+            .get(agent_name)
+            .ok_or_else(|| PolicySyncError::UnregisteredPolicy(agent_name.clone()))?;
+
+        if entry.contract_digest_blake3 != contract.contract_digest_blake3 {
+            return Err(PolicySyncError::PolicyDrift {
+                agent_name: agent_name.clone(),
+                expected: entry.contract_digest_blake3.clone(),
+                actual: contract.contract_digest_blake3.clone(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 /// Enterprise Policy Synchronizer managing canonical contracts for agent fleets.
 #[derive(Debug, Clone, Default)]
 pub struct EnterprisePolicySync {
@@ -72,12 +110,23 @@ impl EnterprisePolicySync {
     }
 
     /// Registers a canonical, sealed SecurityContract for an agent.
+    /// Fails closed with PolicyDrift if an attempt is made to register a conflicting policy.
     pub fn register_contract(&mut self, contract: SecurityContract) -> Result<(), PolicySyncError> {
         if !contract.verify_digest() {
             return Err(PolicySyncError::DigestVerificationFailed);
         }
+        let agent_name = &contract.agent_identity.agent_name;
+        if let Some(existing) = self.canonical_contracts.get(agent_name) {
+            if existing.contract_digest_blake3 != contract.contract_digest_blake3 {
+                return Err(PolicySyncError::PolicyDrift {
+                    agent_name: agent_name.clone(),
+                    expected: existing.contract_digest_blake3.clone(),
+                    actual: contract.contract_digest_blake3.clone(),
+                });
+            }
+        }
         self.canonical_contracts
-            .insert(contract.agent_identity.agent_name.clone(), contract);
+            .insert(agent_name.clone(), contract);
         Ok(())
     }
 
@@ -243,14 +292,57 @@ mod tests {
     }
 
     #[test]
-    fn test_export_manifest() {
+    fn test_register_conflicting_contract_fails_closed() {
         let mut sync = EnterprisePolicySync::new();
-        sync.register_contract(sample_contract("agent-a")).unwrap();
-        sync.register_contract(sample_contract("agent-b")).unwrap();
+        let canonical = sample_contract("claude");
+        sync.register_contract(canonical.clone()).unwrap();
+
+        // Registering identical contract is idempotent
+        assert!(sync.register_contract(canonical.clone()).is_ok());
+
+        // Registering conflicting contract for same agent fails with PolicyDrift
+        let mut unsealed = canonical.unsealed();
+        unsealed.resources.max_pids = 999;
+        let altered = unsealed.seal().unwrap();
+
+        let err = sync.register_contract(altered).unwrap_err();
+        assert_eq!(err.exit_code(), 125);
+        assert!(matches!(err, PolicySyncError::PolicyDrift { .. }));
+    }
+
+    #[test]
+    fn test_export_and_verify_manifest() {
+        let mut sync = EnterprisePolicySync::new();
+        let ca = sample_contract("agent-a");
+        let cb = sample_contract("agent-b");
+        sync.register_contract(ca.clone()).unwrap();
+        sync.register_contract(cb.clone()).unwrap();
 
         let manifest = sync.export_manifest().expect("export manifest");
         assert_eq!(manifest.policies.len(), 2);
         assert!(manifest.policies.contains_key("agent-a"));
         assert!(manifest.policies.contains_key("agent-b"));
+
+        // Manifest verifies registered contracts
+        assert!(manifest.verify_contract(&ca).is_ok());
+        assert!(manifest.verify_contract(&cb).is_ok());
+
+        // Manifest rejects unregistered agent
+        let unregistered = sample_contract("agent-c");
+        let unreg_err = manifest.verify_contract(&unregistered).unwrap_err();
+        assert!(matches!(unreg_err, PolicySyncError::UnregisteredPolicy(_)));
+
+        // Manifest rejects drifted contract
+        let mut unsealed = ca.unsealed();
+        unsealed.resources.max_memory_bytes = 4 * 1024 * 1024 * 1024;
+        let drifted = unsealed.seal().unwrap();
+        let drift_err = manifest.verify_contract(&drifted).unwrap_err();
+        assert!(matches!(drift_err, PolicySyncError::PolicyDrift { .. }));
+
+        // Invalid manifest schema version fails closed
+        let mut invalid_manifest = manifest.clone();
+        invalid_manifest.schema_version = 2;
+        let inv_err = invalid_manifest.verify_contract(&ca).unwrap_err();
+        assert!(matches!(inv_err, PolicySyncError::InvalidManifest(_)));
     }
 }

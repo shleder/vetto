@@ -80,8 +80,15 @@ impl FinalVerdict {
         }
     }
 
-    /// Whether the execution cleanly succeeded and is safe to commit.
+    /// Whether the execution cleanly succeeded (contract satisfied and workload exit code == 0).
     pub fn is_success(&self) -> bool {
+        self.status == VerdictStatus::Pass
+            && self.strength != EvidenceStrength::Unsupported
+            && self.exit_code == 0
+    }
+
+    /// Whether the security contract invariants were satisfied (regardless of workload exit code).
+    pub fn is_contract_satisfied(&self) -> bool {
         self.status == VerdictStatus::Pass && self.strength != EvidenceStrength::Unsupported
     }
 }
@@ -266,10 +273,22 @@ mod tests {
         assert_eq!(verdict.exit_code, 0);
         assert_eq!(verdict.display_badge(), "PASS [STRONG]");
         assert!(verdict.is_success());
+        assert!(verdict.is_contract_satisfied());
         assert_eq!(
             verdict.recommended_action(),
             "Commit CoW changes to host workspace."
         );
+    }
+
+    #[test]
+    fn test_workload_nonzero_exit_code() {
+        let contract = mock_contract();
+        let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 1);
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.strength, EvidenceStrength::Strong);
+        assert_eq!(verdict.exit_code, 1);
+        assert!(verdict.is_contract_satisfied());
+        assert!(!verdict.is_success()); // Failed workload exit code is not a success
     }
 
     #[test]

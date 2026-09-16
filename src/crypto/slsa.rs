@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::Result;
-use ed25519_dalek::{Signer, SigningKey};
+use anyhow::{bail, Result};
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 pub const IN_TOTO_STATEMENT_V1: &str = "https://in-toto.io/Statement/v1";
@@ -115,6 +115,44 @@ pub struct SignedSlsaEnvelope {
     pub statement: InTotoStatement,
 }
 
+impl SignedSlsaEnvelope {
+    /// Cryptographically verifies the Ed25519 signature over the payload,
+    /// and validates that the enclosed statement matches the signed payload bytes.
+    pub fn verify(&self, public_key: &VerifyingKey) -> Result<()> {
+        if self.signature.len() != 128 {
+            bail!(
+                "Invalid signature length: expected 128 hex characters, got {}",
+                self.signature.len()
+            );
+        }
+
+        let mut sig_bytes = [0u8; 64];
+        for (i, byte) in sig_bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&self.signature[i * 2..i * 2 + 2], 16)
+                .map_err(|e| anyhow::anyhow!("Invalid hex byte in signature: {}", e))?;
+        }
+
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+
+        public_key
+            .verify(self.payload.as_bytes(), &signature)
+            .map_err(|e| {
+                anyhow::anyhow!("SLSA cryptographic signature verification failed: {}", e)
+            })?;
+
+        let payload_statement: InTotoStatement = serde_json::from_str(&self.payload)
+            .map_err(|e| anyhow::anyhow!("Failed to parse payload as InTotoStatement: {}", e))?;
+
+        if payload_statement != self.statement {
+            bail!(
+                "Envelope integrity violation: embedded statement does not match verified payload"
+            );
+        }
+
+        Ok(())
+    }
+}
+
 /// Builder for SLSA Level 3 In-Toto statements and signed envelopes.
 #[derive(Debug, Clone)]
 pub struct CosignSlsaBuilder {
@@ -218,20 +256,19 @@ impl CosignSlsaBuilder {
     }
 }
 
-fn uuid_or_random() -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    let seed = format!(
-        "{}:{}",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-    );
-    hasher.update(seed.as_bytes());
-    let hash = hasher.finalize();
+pub fn uuid_or_random() -> String {
+    use rand_core::RngCore;
+    let mut bytes = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut bytes);
+    // RFC 4122 / 9562 UUID v4:
+    // Set version 4: 0b0100 in high 4 bits of time_hi_and_version (byte 6)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    // Set variant 1: 0b10 in high 2 bits of clock_seq_hi_and_reserved (byte 8)
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7],
-        hash[8], hash[9], hash[10], hash[11], hash[12], hash[13], hash[14], hash[15]
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
     )
 }
 
@@ -289,6 +326,7 @@ mod tests {
     fn test_slsa_signed_envelope() {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
 
         let builder = CosignSlsaBuilder::new("contract-456", "opencode").subject(
             "test-artifact",
@@ -299,5 +337,35 @@ mod tests {
         assert_eq!(signed.payload_type, IN_TOTO_PAYLOAD_TYPE);
         assert_eq!(signed.signature.len(), 128); // 64-byte Ed25519 signature in hex
         assert!(signed.payload.contains("contract-456"));
+
+        // Cryptographic verification must succeed with valid key
+        assert!(signed.verify(&verifying_key).is_ok());
+
+        // Verification fails with wrong key
+        let wrong_key = SigningKey::generate(&mut csprng).verifying_key();
+        assert!(signed.verify(&wrong_key).is_err());
+
+        // Verification fails on tampered payload
+        let mut tampered = signed.clone();
+        tampered.payload.push(' ');
+        assert!(tampered.verify(&verifying_key).is_err());
+
+        // Verification fails on tampered signature
+        let mut tampered_sig = signed.clone();
+        tampered_sig.signature.replace_range(0..2, "00");
+        assert!(tampered_sig.verify(&verifying_key).is_err());
+    }
+
+    #[test]
+    fn test_uuid_v4_format() {
+        let uuid = uuid_or_random();
+        assert_eq!(uuid.len(), 36);
+        let chars: Vec<char> = uuid.chars().collect();
+        assert_eq!(chars[8], '-');
+        assert_eq!(chars[13], '-');
+        assert_eq!(chars[14], '4'); // Version 4
+        assert_eq!(chars[18], '-');
+        assert!(matches!(chars[19], '8' | '9' | 'a' | 'b')); // Variant 1
+        assert_eq!(chars[23], '-');
     }
 }
