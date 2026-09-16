@@ -125,7 +125,7 @@ fn test_slsa_l3_attestation_envelope_and_signature() {
 
     // Tampered payload rejects
     let mut tampered_envelope = signed_envelope.clone();
-    tampered_envelope.payload.push_str(" ");
+    tampered_envelope.payload.push(' ');
     assert!(tampered_envelope.verify(&verifying_key).is_err());
 }
 
