@@ -42,7 +42,7 @@ The packaging workflow consists of:
    ```
 6. **Verifying with Gatekeeper**:
    ```bash
-   spctl --assess --type install --verbose target/pkg_out/vetto-0.2.24-aarch64-apple-darwin.pkg
+   spctl --assess --type install --verbose target/pkg_out/vetto-0.2.25-aarch64-apple-darwin.pkg
    ```
 
 ---
