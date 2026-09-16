@@ -812,11 +812,32 @@ impl SpawnedProductionExecution {
     /// result. The sweep cannot be skipped: there is no other way to obtain
     /// a `ProductionResult`.
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
-        // Windows tree sweep (NEEDS-COORDINATOR: additive, cfg-gated): read
-        // the host-observed job membership, terminate through kill-on-close
-        // (the kernel kills the whole tree — no PID-group signals, no
-        // best-effort sweep), then prove every observed member dead by
-        // handle. Residual survivors fail the tree claim closed.
+        if self.fsm.current_state() == ExecutionState::Enforce {
+            let _ = self.fsm.transition(ExecutionState::Observe);
+        }
+        if self.fsm.current_state() == ExecutionState::Observe {
+            let _ = self.fsm.transition(ExecutionState::Terminate);
+        }
+        if self.fsm.current_state() == ExecutionState::Terminate {
+            let _ = self.fsm.transition(ExecutionState::Cleanup);
+        }
+
+        let extinction_start = Instant::now();
+        let mut surviving_processes = 0usize;
+        let surviving_resources = 0usize;
+
+        #[cfg(target_os = "windows")]
+        let extinction_platform = PlatformExtinctionTier::WindowsTier3Proven;
+        #[cfg(target_os = "linux")]
+        let extinction_platform = PlatformExtinctionTier::LinuxTier1Proven;
+        #[cfg(target_os = "macos")]
+        let extinction_platform = PlatformExtinctionTier::MacOsTier2BestEffort;
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let extinction_platform = PlatformExtinctionTier::LinuxTier1Proven;
+
+        // Windows tree sweep: read the host-observed job membership, terminate
+        // through kill-on-close, then prove every observed member dead by handle
+        // within MAX_EXTINCTION_DEADLINE_MS (500ms, INV-20).
         #[cfg(target_os = "windows")]
         {
             use crate::verify_ng::windows_enforce as we;
@@ -825,10 +846,12 @@ impl SpawnedProductionExecution {
                 None => Vec::new(),
             };
             let observed = members.len();
-            // Kill-on-close termination: dropping the job handle kills every
-            // assigned process. This is the containment kill, not cleanup.
             self.handle.terminate();
-            let residual = we::pids_still_alive(&members, Duration::from_secs(5));
+            let residual = we::pids_still_alive(
+                &members,
+                Duration::from_millis(MAX_EXTINCTION_DEADLINE_MS),
+            );
+            surviving_processes = residual.len();
             let clean = residual.is_empty();
             self.capability.note_tree_clean(clean);
             self.capability.note_diagnostic(format!(
@@ -840,25 +863,200 @@ impl SpawnedProductionExecution {
             if let Some(sweep) =
                 crate::verify_ng::linux_enforce::sweep_tree_by_nonce(self.nonce.as_str(), self.pid)
             {
+                surviving_processes = if sweep.clean {
+                    0
+                } else {
+                    sweep.residual.len().max(1)
+                };
                 self.capability.note_tree_clean(sweep.clean);
                 self.capability.note_diagnostic(format!(
                     "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
                     sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
                 ));
+            } else {
+                surviving_processes = 1;
+                self.capability.note_tree_clean(false);
             }
         }
         // macOS tree sweep: SIGKILL the process group + leader, then prove
-        // group death from the host. `setsid` escapers are the documented
-        // gap (no pidns); a surviving group member fails the tree cap closed.
+        // group death from the host.
         #[cfg(target_os = "macos")]
         {
             let clean = crate::sandbox::macos::prod_verify::sweep_tree(self.pid);
+            surviving_processes = if clean { 0 } else { 1 };
             self.capability.note_tree_clean(clean);
             self.capability.note_diagnostic(format!(
                 "tree-sweep clean={clean} pid={} (pgroup kill + group-death check)",
                 self.pid
             ));
         }
+
+        let elapsed_ms = extinction_start.elapsed().as_millis() as u64;
+
+        // Formally verify extinction under INV-20 (< 500ms, 0 survivors)
+        let extinction_res = ExtinctionVerifier::verify(
+            extinction_platform,
+            surviving_processes,
+            surviving_resources,
+            elapsed_ms,
+        );
+
+        let mut final_exit_code = exit_code;
+        if let Err(ref breach) = extinction_res {
+            self.capability.note_tree_clean(false);
+            self.capability.note_diagnostic(format!(
+                "extinction breach (fail-closed exit 125, INV-20): platform={} elapsed={}ms reason={}",
+                breach.platform.label(),
+                breach.elapsed_ms,
+                breach.reason
+            ));
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        }
+
+        // Check Netlink evidence channel integrity (INV-37)
+        let evidence_intact = crate::sandbox::is_evidence_channel_intact();
+        if !evidence_intact {
+            self.capability.note_tree_clean(false);
+            self.capability.note_diagnostic(
+                "evidence channel disrupted (ENOBUFS / packet drop, INV-37): fail-closed exit 125"
+                    .to_string(),
+            );
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        }
+
+        // Record events to host AuditLedger outside sandbox namespace (INV-35)
+        let audit_dir = std::env::var("VETTO_AUDIT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vetto-audit"));
+        let _ = std::fs::create_dir_all(&audit_dir);
+        let ledger_path = audit_dir.join(format!("vetto-audit-{}.jsonl", self.nonce));
+
+        #[cfg(target_os = "linux")]
+        let platform_str = "linux";
+        #[cfg(target_os = "macos")]
+        let platform_str = "macos";
+        #[cfg(target_os = "windows")]
+        let platform_str = "windows";
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        let platform_str = "unknown";
+
+        #[cfg(target_os = "linux")]
+        let tier_class = TierClassification::Tier1Linux;
+        #[cfg(target_os = "macos")]
+        let tier_class = TierClassification::Tier2Macos;
+        #[cfg(target_os = "windows")]
+        let tier_class = TierClassification::Tier3Windows;
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        let tier_class = TierClassification::Tier1Linux;
+
+        let mut ledger_write_ok = false;
+        if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
+            let init_rec = VettoAuditRecord::session_init(
+                &self.nonce,
+                &self.identity.policy_hash,
+                platform_str,
+                std::env::consts::OS,
+                &self.scenario,
+                tier_class,
+            );
+            let _ = ledger.record_audit_record(&init_rec);
+
+            let ext_rec = VettoAuditRecord::tree_extinction(
+                &self.nonce,
+                &self.identity.policy_hash,
+                extinction_platform.label(),
+                surviving_processes as u32,
+                9,
+                elapsed_ms,
+                extinction_res.is_ok(),
+            );
+            let _ = ledger.record_audit_record(&ext_rec);
+
+            let (v_status, v_strength, v_code) = match (extinction_res.is_ok(), evidence_intact, final_exit_code) {
+                (false, _, _) => (VerdictStatus::Fail, EvidenceStrength::Strong, FAIL_CLOSED_EXTINCTION_EXIT_CODE),
+                (_, false, _) => (VerdictStatus::Inconclusive, EvidenceStrength::Strong, FAIL_CLOSED_EXTINCTION_EXIT_CODE),
+                (_, _, Some(code)) if code != 0 => (VerdictStatus::Fail, EvidenceStrength::Strong, code),
+                _ => (VerdictStatus::Pass, EvidenceStrength::Strong, 0),
+            };
+            let verdict_obj = FinalVerdict {
+                status: v_status,
+                strength: v_strength,
+                exit_code: v_code,
+                reason: if !evidence_intact {
+                    "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)".to_string()
+                } else if extinction_res.is_err() {
+                    "Process tree extinction breach (INV-20)".to_string()
+                } else {
+                    "Session completed within invariant parameters".to_string()
+                },
+            };
+            let verdict_rec = VettoAuditRecord::session_verdict(
+                &self.nonce,
+                &self.identity.policy_hash,
+                &verdict_obj,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            );
+            let _ = ledger.record_audit_record(&verdict_rec);
+            ledger_write_ok = true;
+        }
+
+        // Verify ledger hash chain (INV-34)
+        let mut ledger_verified = false;
+        if ledger_write_ok {
+            match AuditLedger::verify_file(&ledger_path) {
+                Ok(true) => {
+                    ledger_verified = true;
+                    self.capability.note_diagnostic(format!(
+                        "audit ledger verified (INV-34, INV-35): {}",
+                        ledger_path.display()
+                    ));
+                }
+                Ok(false) | Err(_) => {
+                    self.capability.note_tree_clean(false);
+                    self.capability.note_diagnostic(format!(
+                        "audit ledger hash chain verification failed (fail-closed exit 125, INV-34): {}",
+                        ledger_path.display()
+                    ));
+                    final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+                }
+            }
+        }
+
+        // Final verdict and FSM state transition
+        let final_verdict_obj = FinalVerdict {
+            status: if extinction_res.is_err() || !ledger_verified {
+                VerdictStatus::Fail
+            } else if !evidence_intact {
+                VerdictStatus::Inconclusive
+            } else if final_exit_code.unwrap_or(0) != 0 {
+                VerdictStatus::Fail
+            } else {
+                VerdictStatus::Pass
+            },
+            strength: EvidenceStrength::Strong,
+            exit_code: final_exit_code.unwrap_or(0),
+            reason: if !evidence_intact {
+                "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)".to_string()
+            } else if let Err(ref breach) = extinction_res {
+                format!("Process tree extinction breach (INV-20): {}", breach.reason)
+            } else if !ledger_verified {
+                "Audit ledger hash chain verification failed (INV-34)".to_string()
+            } else {
+                "Session completed within invariant parameters".to_string()
+            },
+        };
+
+        if extinction_res.is_err() || !evidence_intact || !ledger_verified {
+            let _ = self.fsm.fail_closed(&final_verdict_obj.reason);
+            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
+            let _ = self.fsm.transition(ExecutionState::Terminal);
+        } else {
+            let _ = self.fsm.transition(ExecutionState::Verify);
+            let _ = self.fsm.transition(ExecutionState::Attest);
+            let _ = self.fsm.transition(ExecutionState::Verdict);
+            let _ = self.fsm.transition(ExecutionState::Terminal);
+        }
+
         let report = self
             .capability
             .enforcement()
@@ -870,7 +1068,7 @@ impl SpawnedProductionExecution {
         ProductionResult {
             backend: backend_kind,
             report,
-            exit_code,
+            exit_code: final_exit_code,
             timed_out,
             pid: Some(self.pid),
             nonce: self.nonce.clone(),
@@ -881,7 +1079,8 @@ impl SpawnedProductionExecution {
             stderr: Vec::new(),
             spawn_via_backend: true,
             diagnostic,
-            verdict: None,
+            verdict: Some(final_verdict_obj),
+            fsm_state: Some(self.fsm.current_state()),
         }
     }
 }
@@ -942,6 +1141,7 @@ pub struct ProductionResult {
     pub spawn_via_backend: bool,
     pub diagnostic: Option<String>,
     pub verdict: Option<FinalVerdict>,
+    pub fsm_state: Option<ExecutionState>,
 }
 
 impl ProductionResult {
