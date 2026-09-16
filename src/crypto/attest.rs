@@ -139,6 +139,7 @@ impl AuditLedger {
         let mut expected_prev = GENESIS_HASH.to_string();
         let mut expected_seq: u64 = 0;
         let mut seen_signature = false;
+        let mut has_terminal_record = false;
 
         for line_res in reader.lines() {
             let line = line_res?;
@@ -159,7 +160,7 @@ impl AuditLedger {
                 _ => return Ok(false),
             };
 
-            if obj.contains_key("signature") {
+            if !obj.contains_key("hash") && obj.contains_key("signature") {
                 let prev_hash = match obj.get("prev_hash").and_then(|v| v.as_str()) {
                     Some(p) => p,
                     None => return Ok(false),
@@ -173,6 +174,12 @@ impl AuditLedger {
                 }
                 seen_signature = true;
                 continue;
+            }
+
+            if let Some(record_type) = obj.get("record_type").and_then(|v| v.as_str()) {
+                if record_type == "SESSION_VERDICT" {
+                    has_terminal_record = true;
+                }
             }
 
             let seq = match obj.remove("seq").and_then(|v| v.as_u64()) {
@@ -209,7 +216,7 @@ impl AuditLedger {
             expected_seq += 1;
         }
 
-        Ok(expected_seq > 0)
+        Ok(expected_seq > 0 && (has_terminal_record || seen_signature))
     }
 }
 
@@ -231,19 +238,24 @@ mod tests {
         struct TestPayload {
             message: String,
             code: i32,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            record_type: Option<String>,
         }
 
         let p1 = TestPayload {
             message: "init".into(),
             code: 0,
+            record_type: None,
         };
         let p2 = TestPayload {
             message: "mutation".into(),
             code: 1,
+            record_type: None,
         };
         let p3 = TestPayload {
             message: "verdict".into(),
             code: 0,
+            record_type: Some("SESSION_VERDICT".into()),
         };
 
         assert!(ledger.record_event(&p1).is_ok());
@@ -349,6 +361,40 @@ mod tests {
 
         let verified = AuditLedger::verify_file(&ledger_path).expect("verify ledger");
         assert!(!verified, "Reordered lines must fail verification (INV-34)");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_audit_ledger_truncation_detection() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-trunc-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let ledger_path = temp_dir.join("truncated_ledger.jsonl");
+        let _ = std::fs::remove_file(&ledger_path);
+
+        let mut ledger = AuditLedger::new(&ledger_path).expect("create ledger");
+
+        #[derive(Serialize)]
+        struct EventData {
+            message: String,
+        }
+
+        ledger
+            .record_event(&EventData {
+                message: "event_1".into(),
+            })
+            .unwrap();
+        ledger
+            .record_event(&EventData {
+                message: "event_2".into(),
+            })
+            .unwrap();
+        drop(ledger);
+
+        // Truncated ledger without terminal record or signature must fail verification
+        let verified = AuditLedger::verify_file(&ledger_path).expect("verify ledger");
+        assert!(!verified, "Truncated ledger must fail verification");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

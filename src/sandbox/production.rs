@@ -949,6 +949,7 @@ impl SpawnedProductionExecution {
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         let tier_class = TierClassification::Tier1Linux;
 
+        let mut ext_hash_opt: Option<String> = None;
         let mut ledger_write_ok = false;
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
             let init_rec = VettoAuditRecord::session_init(
@@ -970,7 +971,9 @@ impl SpawnedProductionExecution {
                 elapsed_ms,
                 extinction_res.is_ok(),
             );
-            let _ = ledger.record_audit_record(&ext_rec);
+            if let Ok(h) = ledger.record_audit_record(&ext_rec) {
+                ext_hash_opt = Some(h);
+            }
 
             let (v_status, v_strength, v_code) =
                 match (extinction_res.is_ok(), evidence_intact, final_exit_code) {
@@ -1002,11 +1005,12 @@ impl SpawnedProductionExecution {
                     "Session completed within invariant parameters".to_string()
                 },
             };
+            let root_dag_digest = ext_hash_opt.clone().unwrap_or_else(|| "0".repeat(64));
             let verdict_rec = VettoAuditRecord::session_verdict(
                 &self.nonce,
                 &self.identity.frozen_hash,
                 &verdict_obj,
-                "0000000000000000000000000000000000000000000000000000000000000000",
+                &root_dag_digest,
             );
             let _ = ledger.record_audit_record(&verdict_rec);
             ledger_write_ok = true;
@@ -1032,6 +1036,13 @@ impl SpawnedProductionExecution {
                     final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
                 }
             }
+        } else {
+            self.capability.note_tree_clean(false);
+            self.capability.note_diagnostic(format!(
+                "audit ledger unavailable on host (fail-closed exit 125, INV-35): {}",
+                ledger_path.display()
+            ));
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         }
 
         // Final verdict and FSM state transition

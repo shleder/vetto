@@ -40,6 +40,8 @@ use vetto::sandbox::{
     SupervisorEngine,
 };
 
+static EVIDENCE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn create_sealed_contract(name: &str) -> SecurityContract {
     let unsealed = UnsealedSecurityContract {
         contract_version: 1,
@@ -517,6 +519,7 @@ fn test_audit_ledger_record_and_sign() {
 
 #[test]
 fn test_inv37_netlink_disruption_forces_inconclusive_verdict() {
+    let _lock = EVIDENCE_TEST_MUTEX.lock().unwrap();
     let contract = create_sealed_contract("claude-worker");
 
     reset_evidence_channel();
@@ -565,6 +568,7 @@ fn test_inv37_netlink_disruption_forces_inconclusive_verdict() {
 
 #[test]
 fn test_triplane_supervisor_engine_full_lifecycle_and_invariants() {
+    let _lock = EVIDENCE_TEST_MUTEX.lock().unwrap();
     let contract = create_sealed_contract("claude-supervisor");
 
     // 1. Initial state validation

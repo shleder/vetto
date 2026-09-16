@@ -525,17 +525,20 @@ fn activate_pending(
                 .unwrap_or(-1);
             // `finish` consumes the SAME execution: nonce-targeted sweep
             // for THIS run, backend teardown, typed report. Cannot skip.
-            let finished_report = wait_execution.lock().map(|mut slot| {
-                slot.take().map(|e| {
-                    let pid = e.pid();
-                    let result = e.finish(Some(code), false);
-                    (pid, result.report.render_deterministic())
+            let finished_exit_code = wait_execution
+                .lock()
+                .map(|mut slot| {
+                    slot.take().map(|e| {
+                        let result = e.finish(Some(code), false);
+                        result.exit_code.unwrap_or(code)
+                    })
                 })
-            });
-            let _ = finished_report;
+                .unwrap_or(None)
+                .unwrap_or(code);
+
             wait_bus.publish(Event::SessionEnded {
                 ts: crate::events::types::now(),
-                exit_code: code,
+                exit_code: finished_exit_code,
                 duration_secs: 0,
             });
             barrier_clone.unregister_agent(&agent_name);
