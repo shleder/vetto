@@ -13,7 +13,7 @@
         in {
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "vetto";
-            version = "0.2.24";
+            version = "0.2.25";
             src = self;
             cargoLock.lockFile = ./Cargo.lock;
             nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];

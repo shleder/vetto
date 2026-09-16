@@ -121,7 +121,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "flake.nix"), r'version\s*=\s*"[^"]+"', f'version = "{target}"')
     update_file(os.path.join(REPO_ROOT, "scripts", "gen-sbom.sh"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"')
     
-    desc = "Платформенный паритет (#26: Tier 1 Linux, Tier 2 macOS exp, Tier 3 Win), CI redteam 8-вектор матрица ($GITHUB_STEP_SUMMARY), Criterion бенчмарки, Threat model границы (non-defenses), Gitleaks аудит"
+    desc = "Enterprise Runtime Hardening (Phase 4): proctree extinction (INV-20), tamper-proof Merkle DAG audit logging (INV-34/35), netlink overflow fail-closed (INV-37), exit 125 precedence"
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 

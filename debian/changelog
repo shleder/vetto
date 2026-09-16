@@ -1,3 +1,11 @@
+vetto (0.2.25-1) unstable; urgency=medium
+
+  * Enterprise Runtime Hardening (Phase 4): process tree extinction deadline
+    (INV-20), tamper-proof Merkle DAG audit logging (INV-34, INV-35), netlink
+    buffer overflow fail-closed isolation (INV-37), exit 125 precedence.
+
+ -- vetto contributors <noreply@github.com>  Wed, 16 Sep 2026 00:00:00 +0300
+
 vetto (0.2.24-1) unstable; urgency=medium
 
   * CI stabilization (MACOS_PROD_SERIAL), repository hygiene and docs cleanup,

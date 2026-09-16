@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.2.25] - 2026-09-16
+
+### Enterprise Runtime Hardening (Phase 4)
+- `INV-20`: Enforced 500ms process tree extinction deadline with mandatory Exit 125 on survivor processes.
+- `INV-34` & `INV-35`: Tamper-proof Merkle DAG audit logging outside sandbox with cryptographic binding to session verdict.
+- `INV-37`: Netlink buffer overflow detection (`ENOBUFS`, `NLMSG_OVERRUN`) triggering fail-closed isolation and CoW purge.
+- Fail-closed exit code precedence: Exit 125 unconditionally takes precedence over timeout 124.
+- Full cross-platform verification on Linux (x86_64, aarch64 via QEMU), macOS (arm64, x86_64), and Windows.
+
 ## [0.2.24] - 2026-09-15
 
 ### Fixed

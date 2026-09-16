@@ -36,7 +36,7 @@ npm install -g @vscode/vsce
 cd vscode
 npx @vscode/vsce package
 ```
-This produces `vetto-vscode-0.2.24.vsix`.
+This produces `vetto-vscode-0.2.25.vsix`.
 
 ### 3. Install in VS Code
 ```bash
