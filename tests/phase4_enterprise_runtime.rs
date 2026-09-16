@@ -417,13 +417,8 @@ fn test_section17_1_audit_records_json_schema() {
     assert!(fs_json.contains("\"mutation_type\":\"MODIFIED\""));
 
     // 4. RESOURCE_SAMPLE
-    let res_rec = VettoAuditRecord::resource_sample(
-        session_id,
-        contract_digest,
-        42.5,
-        1024 * 1024 * 64,
-        8,
-    );
+    let res_rec =
+        VettoAuditRecord::resource_sample(session_id, contract_digest, 42.5, 1024 * 1024 * 64, 8);
     let res_json = res_rec.to_json_line().unwrap();
     assert!(res_json.contains("\"record_type\":\"RESOURCE_SAMPLE\""));
     assert!(res_json.contains("\"cpu_percent\":42.5"));

@@ -317,11 +317,8 @@ mod contract_tests {
         let contract = sample_unsealed().seal().unwrap();
         assert!(!contract.crypto.minisign_enabled);
 
-        let signed = contract.with_minisign(
-            true,
-            Some("abcd".to_string()),
-            Some("1234".to_string()),
-        );
+        let signed =
+            contract.with_minisign(true, Some("abcd".to_string()), Some("1234".to_string()));
         assert!(signed.crypto.minisign_enabled);
         assert_eq!(signed.crypto.signature.as_deref(), Some("abcd"));
         assert_eq!(signed.crypto.public_key.as_deref(), Some("1234"));
@@ -341,13 +338,11 @@ pub mod blake3 {
     pub const ROOT: u32 = 1 << 3;
 
     pub const IV: [u32; 8] = [
-        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
-        0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB,
+        0x5BE0CD19,
     ];
 
-    const MSG_PERMUTATION: [usize; 16] = [
-        2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8,
-    ];
+    const MSG_PERMUTATION: [usize; 16] = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8];
 
     #[inline(always)]
     fn g(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my: u32) {
@@ -361,20 +356,17 @@ pub mod blake3 {
         state[b] = (state[b] ^ state[c]).rotate_right(7);
     }
 
-    #[inline(always)]
     fn round(state: &mut [u32; 16], m: &[u32; 16]) {
         g(state, 0, 4, 8, 12, m[0], m[1]);
         g(state, 1, 5, 9, 13, m[2], m[3]);
         g(state, 2, 6, 10, 14, m[4], m[5]);
         g(state, 3, 7, 11, 15, m[6], m[7]);
-
         g(state, 0, 5, 10, 15, m[8], m[9]);
         g(state, 1, 6, 11, 12, m[10], m[11]);
         g(state, 2, 7, 8, 13, m[12], m[13]);
         g(state, 3, 4, 9, 14, m[14], m[15]);
     }
 
-    #[inline(always)]
     fn permute(m: &mut [u32; 16]) {
         let mut p = [0u32; 16];
         for i in 0..16 {
@@ -391,9 +383,18 @@ pub mod blake3 {
         flags: u32,
     ) -> [u32; 16] {
         let mut state = [
-            cv[0], cv[1], cv[2], cv[3],
-            cv[4], cv[5], cv[6], cv[7],
-            IV[0], IV[1], IV[2], IV[3],
+            cv[0],
+            cv[1],
+            cv[2],
+            cv[3],
+            cv[4],
+            cv[5],
+            cv[6],
+            cv[7],
+            IV[0],
+            IV[1],
+            IV[2],
+            IV[3],
             counter as u32,
             (counter >> 32) as u32,
             block_len,

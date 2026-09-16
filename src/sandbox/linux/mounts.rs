@@ -206,9 +206,11 @@ pub fn mount_restricted_proc() -> VettoResult<ProcVisibility> {
         Ok(()) => ProcVisibility::HidePid,
         Err((first, errno)) if hidepid_unsupported(errno) => match mount_proc(None) {
             Ok(()) => ProcVisibility::Fallback,
-            Err((second, _)) => return Err(VettoError::Mount(format!(
-                "proc hidepid unsupported and fallback mount failed: {first}; {second}"
-            ))),
+            Err((second, _)) => {
+                return Err(VettoError::Mount(format!(
+                    "proc hidepid unsupported and fallback mount failed: {first}; {second}"
+                )))
+            }
         },
         Err((error, _)) => return Err(error),
     };
@@ -216,7 +218,6 @@ pub fn mount_restricted_proc() -> VettoResult<ProcVisibility> {
     let _ = remount_proc_sys_readonly();
     Ok(visibility)
 }
-
 
 fn hidepid_unsupported(errno: Option<i32>) -> bool {
     matches!(
@@ -314,7 +315,6 @@ pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> Vetto
 
     Ok(())
 }
-
 
 /// Mask restricted and dangerous device nodes inside the mount namespace.
 /// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
