@@ -133,20 +133,15 @@ pub fn open_audit_feed() -> Result<OwnedFd, String> {
 
 /// Processes a buffer of Netlink datagrams, iterating over composite messages
 /// aligned to 4-byte boundaries (NLMSG_ALIGN). Fulfills INV-37.
-pub fn process_netlink_buffer(
-    bytes: &[u8],
-    last_seq: &mut Option<u32>,
-    bus: Option<&EventBus>,
-) {
+pub fn process_netlink_buffer(bytes: &[u8], last_seq: &mut Option<u32>, bus: Option<&EventBus>) {
     let mut offset = 0;
     let hdr_size = std::mem::size_of::<NlMsgHdr>();
 
     while offset + hdr_size <= bytes.len() {
         let msg_bytes = &bytes[offset..];
         // Read unaligned to avoid UB across raw byte slices.
-        let nlm: NlMsgHdr = unsafe {
-            std::ptr::read_unaligned(msg_bytes.as_ptr() as *const NlMsgHdr)
-        };
+        let nlm: NlMsgHdr =
+            unsafe { std::ptr::read_unaligned(msg_bytes.as_ptr() as *const NlMsgHdr) };
         let msg_len = nlm.nlmsg_len as usize;
         if msg_len < hdr_size || offset + msg_len > bytes.len() {
             break;
@@ -186,13 +181,10 @@ pub fn process_netlink_buffer(
         }
 
         // 3. NLMSG_ERROR: check error payload for ENOBUFS
-        if nlm.nlmsg_type == NLMSG_ERROR
-            && msg_len >= hdr_size + std::mem::size_of::<libc::c_int>()
+        if nlm.nlmsg_type == NLMSG_ERROR && msg_len >= hdr_size + std::mem::size_of::<libc::c_int>()
         {
             let err_code = unsafe {
-                std::ptr::read_unaligned(
-                    msg_bytes[hdr_size..].as_ptr() as *const libc::c_int,
-                )
+                std::ptr::read_unaligned(msg_bytes[hdr_size..].as_ptr() as *const libc::c_int)
             };
             if err_code == -ENOBUFS_CODE
                 || err_code == ENOBUFS_CODE
@@ -359,7 +351,8 @@ mod tests {
             nlmsg_seq: 1,
             nlmsg_pid: 100,
         };
-        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr1) };
+        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] =
+            unsafe { std::mem::transmute(hdr1) };
         buf.extend_from_slice(&hdr1_bytes);
 
         let hdr2 = NlMsgHdr {
@@ -369,12 +362,16 @@ mod tests {
             nlmsg_seq: 2,
             nlmsg_pid: 100,
         };
-        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr2) };
+        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] =
+            unsafe { std::mem::transmute(hdr2) };
         buf.extend_from_slice(&hdr2_bytes);
 
         process_netlink_buffer(&buf, &mut last_seq, None);
 
-        assert!(!is_evidence_channel_intact(), "NLMSG_OVERRUN in composite packet must disrupt channel");
+        assert!(
+            !is_evidence_channel_intact(),
+            "NLMSG_OVERRUN in composite packet must disrupt channel"
+        );
         assert_eq!(buffer_overflow_count(), 1);
         assert_eq!(last_seq, Some(2));
     }
@@ -392,7 +389,8 @@ mod tests {
             nlmsg_seq: 1,
             nlmsg_pid: 100,
         };
-        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr1) };
+        let hdr1_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] =
+            unsafe { std::mem::transmute(hdr1) };
         process_netlink_buffer(&hdr1_bytes, &mut last_seq, None);
         assert!(is_evidence_channel_intact());
         assert_eq!(packet_drop_count(), 0);
@@ -404,7 +402,8 @@ mod tests {
             nlmsg_seq: 5,
             nlmsg_pid: 100,
         };
-        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr2) };
+        let hdr2_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] =
+            unsafe { std::mem::transmute(hdr2) };
         process_netlink_buffer(&hdr2_bytes, &mut last_seq, None);
 
         assert!(!is_evidence_channel_intact());
@@ -430,7 +429,8 @@ mod tests {
         let hdr_bytes: [u8; std::mem::size_of::<NlMsgHdr>()] = unsafe { std::mem::transmute(hdr) };
         buf.extend_from_slice(&hdr_bytes);
         let err_code: libc::c_int = -ENOBUFS_CODE;
-        let err_bytes: [u8; std::mem::size_of::<libc::c_int>()] = unsafe { std::mem::transmute(err_code) };
+        let err_bytes: [u8; std::mem::size_of::<libc::c_int>()] =
+            unsafe { std::mem::transmute(err_code) };
         buf.extend_from_slice(&err_bytes);
 
         process_netlink_buffer(&buf, &mut last_seq, None);

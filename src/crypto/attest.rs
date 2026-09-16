@@ -154,12 +154,17 @@ impl AuditLedger {
                 Err(_) => return Ok(false),
             };
 
-            if value.get("signature").is_some() {
-                let prev_hash = match value.get("prev_hash").and_then(|v| v.as_str()) {
+            let mut obj = match value {
+                serde_json::Value::Object(map) => map,
+                _ => return Ok(false),
+            };
+
+            if obj.contains_key("signature") {
+                let prev_hash = match obj.get("prev_hash").and_then(|v| v.as_str()) {
                     Some(p) => p,
                     None => return Ok(false),
                 };
-                let seq = match value.get("seq").and_then(|v| v.as_u64()) {
+                let seq = match obj.get("seq").and_then(|v| v.as_u64()) {
                     Some(s) => s,
                     None => return Ok(false),
                 };
@@ -170,15 +175,21 @@ impl AuditLedger {
                 continue;
             }
 
-            let seq = match value.get("seq").and_then(|v| v.as_u64()) {
+            let seq = match obj.remove("seq").and_then(|v| v.as_u64()) {
                 Some(s) => s,
                 None => return Ok(false),
             };
-            let prev_hash = match value.get("prev_hash").and_then(|v| v.as_str()) {
+            let prev_hash = match obj
+                .remove("prev_hash")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+            {
                 Some(p) => p,
                 None => return Ok(false),
             };
-            let hash = match value.get("hash").and_then(|v| v.as_str()) {
+            let hash = match obj
+                .remove("hash")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+            {
                 Some(h) => h,
                 None => return Ok(false),
             };
@@ -187,14 +198,6 @@ impl AuditLedger {
                 return Ok(false);
             }
 
-            let mut obj = match value {
-                serde_json::Value::Object(map) => map,
-                _ => return Ok(false),
-            };
-            obj.remove("seq");
-            obj.remove("prev_hash");
-            obj.remove("hash");
-
             let payload_json = serde_json::to_string(&serde_json::Value::Object(obj))?;
             let data_to_hash = format!("{}:{}:{}", prev_hash, seq, payload_json);
             let recomputed = manual_hex_hash(&data_to_hash);
@@ -202,7 +205,7 @@ impl AuditLedger {
                 return Ok(false);
             }
 
-            expected_prev = hash.to_string();
+            expected_prev = hash;
             expected_seq += 1;
         }
 
@@ -216,7 +219,8 @@ mod tests {
 
     #[test]
     fn test_audit_ledger_lifecycle_and_verification() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-test-ledger-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-ledger-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let ledger_path = temp_dir.join("ledger.jsonl");
         let _ = std::fs::remove_file(&ledger_path);
@@ -229,9 +233,18 @@ mod tests {
             code: i32,
         }
 
-        let p1 = TestPayload { message: "init".into(), code: 0 };
-        let p2 = TestPayload { message: "mutation".into(), code: 1 };
-        let p3 = TestPayload { message: "verdict".into(), code: 0 };
+        let p1 = TestPayload {
+            message: "init".into(),
+            code: 0,
+        };
+        let p2 = TestPayload {
+            message: "mutation".into(),
+            code: 1,
+        };
+        let p3 = TestPayload {
+            message: "verdict".into(),
+            code: 0,
+        };
 
         assert!(ledger.record_event(&p1).is_ok());
         assert!(ledger.record_event(&p2).is_ok());
@@ -246,7 +259,8 @@ mod tests {
 
     #[test]
     fn test_audit_ledger_signed_verification() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-test-signed-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-signed-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let ledger_path = temp_dir.join("signed_ledger.jsonl");
         let _ = std::fs::remove_file(&ledger_path);
@@ -273,7 +287,8 @@ mod tests {
 
     #[test]
     fn test_audit_ledger_tamper_detection() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-test-tamper-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-tamper-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let ledger_path = temp_dir.join("tampered_ledger.jsonl");
         let _ = std::fs::remove_file(&ledger_path);
@@ -285,8 +300,16 @@ mod tests {
             action: String,
         }
 
-        ledger.record_event(&EventData { action: "read".into() }).unwrap();
-        ledger.record_event(&EventData { action: "write".into() }).unwrap();
+        ledger
+            .record_event(&EventData {
+                action: "read".into(),
+            })
+            .unwrap();
+        ledger
+            .record_event(&EventData {
+                action: "write".into(),
+            })
+            .unwrap();
         drop(ledger);
 
         let content = std::fs::read_to_string(&ledger_path).unwrap();
@@ -301,7 +324,8 @@ mod tests {
 
     #[test]
     fn test_audit_ledger_reorder_detection() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-test-reorder-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-reorder-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let ledger_path = temp_dir.join("reordered_ledger.jsonl");
         let _ = std::fs::remove_file(&ledger_path);
@@ -331,7 +355,8 @@ mod tests {
 
     #[test]
     fn test_audit_ledger_empty_file() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-test-empty-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-test-empty-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let ledger_path = temp_dir.join("empty.jsonl");
         std::fs::write(&ledger_path, "").unwrap();
