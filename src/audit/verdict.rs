@@ -6,6 +6,7 @@
 //! CoW layer commit/wipe decisions.
 
 use serde::{Deserialize, Serialize};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use crate::policy_ir::SecurityContract;
 
@@ -106,7 +107,7 @@ impl VerdictEngine {
     /// - Interrupted evidence channel -> INCONCLUSIVE [STRONG] (Exit 125)
     /// - Clean execution -> PASS [STRONG] (Agent exit code)
     pub fn evaluate(
-        _contract: &SecurityContract,
+        contract: &SecurityContract,
         kernel_denials: usize,
         unauthorized_writes: usize,
         zombies_survived: usize,
@@ -114,7 +115,7 @@ impl VerdictEngine {
         agent_exit_code: i32,
     ) -> FinalVerdict {
         Self::evaluate_with_strength(
-            _contract,
+            contract,
             kernel_denials,
             unauthorized_writes,
             zombies_survived,
@@ -126,7 +127,7 @@ impl VerdictEngine {
 
     /// Evaluates execution with custom evidence strength (e.g. for unsupported or partial platforms).
     pub fn evaluate_with_strength(
-        _contract: &SecurityContract,
+        contract: &SecurityContract,
         kernel_denials: usize,
         unauthorized_writes: usize,
         zombies_survived: usize,
@@ -192,7 +193,22 @@ impl VerdictEngine {
             };
         }
 
-        // Invariant 3: Clean execution yields PASS
+        // Invariant 3: Mandatory cryptographic signing (INV-36)
+        if contract.crypto.minisign_enabled {
+            if let Err(err) = verify_contract_signature(contract) {
+                return FinalVerdict {
+                    status: VerdictStatus::Fail,
+                    strength: EvidenceStrength::Strong,
+                    exit_code: 125,
+                    reason: format!(
+                        "Cryptographic signing verification failed (INV-36): {}",
+                        err
+                    ),
+                };
+            }
+        }
+
+        // Invariant 4: Clean execution yields PASS
         FinalVerdict {
             status: VerdictStatus::Pass,
             strength,
@@ -201,6 +217,86 @@ impl VerdictEngine {
                 .to_string(),
         }
     }
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return Err("hex string must have even length".to_string());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|e| format!("invalid hex byte at index {i}: {e}"))
+        })
+        .collect()
+}
+
+fn verify_contract_signature(contract: &SecurityContract) -> Result<(), String> {
+    let sig_hex = contract
+        .crypto
+        .signature
+        .as_deref()
+        .ok_or_else(|| "cryptographic signature is missing from contract".to_string())?;
+
+    if sig_hex.trim().is_empty() {
+        return Err("cryptographic signature is empty".to_string());
+    }
+
+    let pubkey_hex = contract
+        .crypto
+        .public_key
+        .as_deref()
+        .ok_or_else(|| "cryptographic public key is missing from contract".to_string())?;
+
+    if pubkey_hex.trim().is_empty() {
+        return Err("cryptographic public key is empty".to_string());
+    }
+
+    let pubkey_bytes = decode_hex(pubkey_hex)?;
+    if pubkey_bytes.len() != 32 {
+        return Err(format!(
+            "invalid public key length: expected 32 bytes, got {}",
+            pubkey_bytes.len()
+        ));
+    }
+    let mut pk_arr = [0u8; 32];
+    pk_arr.copy_from_slice(&pubkey_bytes);
+
+    let verifying_key = VerifyingKey::from_bytes(&pk_arr)
+        .map_err(|e| format!("invalid ed25519 public key: {e}"))?;
+
+    let sig_bytes = decode_hex(sig_hex)?;
+    if sig_bytes.len() != 64 {
+        return Err(format!(
+            "invalid signature length: expected 64 bytes, got {}",
+            sig_bytes.len()
+        ));
+    }
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+
+    let signature = Signature::from_bytes(&sig_arr);
+
+    // Verify signature against contract BLAKE3 digest or session nonce
+    let digest_bytes = contract.contract_digest_blake3.as_bytes();
+    if verifying_key.verify(digest_bytes, &signature).is_ok() {
+        return Ok(());
+    }
+
+    if let Ok(raw_digest) = decode_hex(&contract.contract_digest_blake3) {
+        if verifying_key.verify(&raw_digest, &signature).is_ok() {
+            return Ok(());
+        }
+    }
+
+    let nonce_bytes = contract.session_nonce.as_bytes();
+    if verifying_key.verify(nonce_bytes, &signature).is_ok() {
+        return Ok(());
+    }
+
+    Err("ed25519 signature verification failed against contract digest and nonce".to_string())
 }
 
 #[cfg(test)]
@@ -347,5 +443,80 @@ mod tests {
         assert_eq!(verdict.strength, EvidenceStrength::Unsupported);
         assert_eq!(verdict.exit_code, 125);
         assert_eq!(verdict.display_badge(), "FAIL [UNSUPPORTED]");
+    }
+
+    #[test]
+    fn test_inv36_missing_signature_downgrades_to_fail_125() {
+        let mut contract = mock_contract();
+        contract.crypto.minisign_enabled = true;
+        contract.crypto.signature = None;
+        contract.crypto.public_key = None;
+
+        let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.strength, EvidenceStrength::Strong);
+        assert_eq!(verdict.exit_code, 125);
+        assert!(verdict.reason.contains("INV-36"));
+        assert!(verdict.reason.contains("missing"));
+    }
+
+    #[test]
+    fn test_inv36_invalid_signature_downgrades_to_fail_125() {
+        let mut contract = mock_contract();
+        contract.crypto.minisign_enabled = true;
+        contract.crypto.public_key = Some("00".repeat(32));
+        contract.crypto.signature = Some("ff".repeat(64));
+
+        let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.strength, EvidenceStrength::Strong);
+        assert_eq!(verdict.exit_code, 125);
+        assert!(verdict.reason.contains("INV-36"));
+    }
+
+    #[test]
+    fn test_inv36_valid_signature_awards_pass_strong() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use rand_core::OsRng;
+
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+
+        let mut contract = mock_contract();
+        let digest_bytes = contract.contract_digest_blake3.as_bytes();
+        let signature = signing_key.sign(digest_bytes);
+
+        let sig_hex: String = signature
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let pk_hex: String = verifying_key
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        contract = contract.with_minisign(true, Some(sig_hex), Some(pk_hex));
+
+        let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.strength, EvidenceStrength::Strong);
+        assert_eq!(verdict.exit_code, 0);
+        assert!(verdict.is_success());
+        assert!(verdict.is_contract_satisfied());
+    }
+
+    #[test]
+    fn test_inv36_disabled_awards_pass_without_signature() {
+        let contract = mock_contract();
+        assert!(!contract.crypto.minisign_enabled);
+
+        let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.strength, EvidenceStrength::Strong);
+        assert_eq!(verdict.exit_code, 0);
+        assert!(verdict.is_success());
     }
 }

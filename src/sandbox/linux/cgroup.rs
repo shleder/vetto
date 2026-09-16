@@ -175,6 +175,10 @@ pub fn setup_cgroup(
     cgroup_config: Option<&CgroupConfig>,
     cpu_max_override: Option<&str>,
 ) -> VettoResult<Option<CgroupHandle>> {
+    let quotas_mandated = cgroup_config.is_some()
+        || cpu_max_override.is_some()
+        || std::env::var_os("VETTO_REQUIRE_CGROUP").is_some();
+
     let effective_cgroup = match (cgroup_config, cpu_max_override) {
         (None, None) => CgroupConfig::default(),
         (Some(c), None) => c.clone(),
@@ -189,7 +193,21 @@ pub fn setup_cgroup(
         }
     };
 
+    let has_quotas = effective_cgroup.memory_max.is_some()
+        || effective_cgroup.swap_max.is_some()
+        || effective_cgroup.pids_max.is_some()
+        || effective_cgroup.cpu_max.is_some();
+
+    let is_required = quotas_mandated || has_quotas;
+
     let Some(root) = find_cgroup_root() else {
+        if is_required {
+            return Err(VettoError::Sandbox(
+                "cgroup v2 is unavailable or not writable on this system; \
+                 cannot enforce mandated cgroup resource quotas (fail-closed exit 125)"
+                    .into(),
+            ));
+        }
         tracing::debug!(
             "cgroup v2 is unavailable or not writable on this system; \
              continuing without cgroup resource quotas"
@@ -210,6 +228,12 @@ pub fn setup_cgroup(
     let cgroup_dir = root.join(format!("vetto-session-{}-{}", std::process::id(), nonce));
 
     if let Err(e) = fs::create_dir(&cgroup_dir) {
+        if is_required {
+            return Err(VettoError::Sandbox(format!(
+                "failed to create cgroup directory {}: {e} (fail-closed exit 125)",
+                cgroup_dir.display()
+            )));
+        }
         tracing::debug!(
             "failed to create cgroup directory {}: {e}; continuing without cgroup",
             cgroup_dir.display()
@@ -220,20 +244,48 @@ pub fn setup_cgroup(
     // Write limits
     if let Some(mem) = &effective_cgroup.memory_max {
         if let Some(bytes) = parse_memory_bytes(mem) {
-            let _ = fs::write(cgroup_dir.join("memory.max"), bytes);
+            if let Err(e) = fs::write(cgroup_dir.join("memory.max"), &bytes) {
+                if is_required {
+                    let _ = fs::remove_dir(&cgroup_dir);
+                    return Err(VettoError::Sandbox(format!(
+                        "failed to write memory.max ({bytes}): {e} (fail-closed exit 125)"
+                    )));
+                }
+            }
         }
     }
     if let Some(swap) = &effective_cgroup.swap_max {
         if let Some(bytes) = parse_memory_bytes(swap) {
-            let _ = fs::write(cgroup_dir.join("memory.swap.max"), bytes);
+            if let Err(e) = fs::write(cgroup_dir.join("memory.swap.max"), &bytes) {
+                if is_required {
+                    let _ = fs::remove_dir(&cgroup_dir);
+                    return Err(VettoError::Sandbox(format!(
+                        "failed to write memory.swap.max ({bytes}): {e} (fail-closed exit 125)"
+                    )));
+                }
+            }
         }
     }
     if let Some(pids) = &effective_cgroup.pids_max {
-        let _ = fs::write(cgroup_dir.join("pids.max"), pids);
+        if let Err(e) = fs::write(cgroup_dir.join("pids.max"), pids) {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+                return Err(VettoError::Sandbox(format!(
+                    "failed to write pids.max ({pids}): {e} (fail-closed exit 125)"
+                )));
+            }
+        }
     }
     if let Some(cpu) = &effective_cgroup.cpu_max {
         if let Some(val) = parse_cpu_max(cpu) {
-            let _ = fs::write(cgroup_dir.join("cpu.max"), val);
+            if let Err(e) = fs::write(cgroup_dir.join("cpu.max"), &val) {
+                if is_required {
+                    let _ = fs::remove_dir(&cgroup_dir);
+                    return Err(VettoError::Sandbox(format!(
+                        "failed to write cpu.max ({val}): {e} (fail-closed exit 125)"
+                    )));
+                }
+            }
         }
     }
 
@@ -270,5 +322,21 @@ mod tests {
         let _root = find_cgroup_root();
         let scope = setup_cgroup(None, None);
         assert!(scope.is_ok());
+    }
+
+    #[test]
+    fn test_mandated_cgroup_fails_closed_when_unavailable() {
+        let cfg = CgroupConfig {
+            memory_max: Some("2g".into()),
+            pids_max: Some("128".into()),
+            ..CgroupConfig::default()
+        };
+        let res = setup_cgroup(Some(&cfg), None);
+        if find_cgroup_root().is_none() {
+            assert!(res.is_err());
+            if let Err(e) = res {
+                assert_eq!(e.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
+            }
+        }
     }
 }

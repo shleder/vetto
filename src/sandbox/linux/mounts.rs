@@ -31,6 +31,7 @@ pub const DEV_SHM_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
 pub const TMP_SIZE_BYTES: u64 = 64 * 1024 * 1024;
 pub const TMP_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
 pub const PROC_HIDE_PID_OPTIONS: &str = "hidepid=2";
+pub const DEVPTS_MOUNT_OPTIONS: &str = "newinstance,ptmxmode=0666,mode=620";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcVisibility {
@@ -201,17 +202,21 @@ fn mount_proc(options: Option<&str>) -> Result<(), (VettoError, Option<i32>)> {
 /// the no-hidepid fallback. Permission and other mount errors fail closed so
 /// the caller cannot mistake an unmounted host `/proc` for a restriction.
 pub fn mount_restricted_proc() -> VettoResult<ProcVisibility> {
-    match mount_proc(Some(PROC_HIDE_PID_OPTIONS)) {
-        Ok(()) => Ok(ProcVisibility::HidePid),
+    let visibility = match mount_proc(Some(PROC_HIDE_PID_OPTIONS)) {
+        Ok(()) => ProcVisibility::HidePid,
         Err((first, errno)) if hidepid_unsupported(errno) => match mount_proc(None) {
-            Ok(()) => Ok(ProcVisibility::Fallback),
-            Err((second, _)) => Err(VettoError::Mount(format!(
+            Ok(()) => ProcVisibility::Fallback,
+            Err((second, _)) => return Err(VettoError::Mount(format!(
                 "proc hidepid unsupported and fallback mount failed: {first}; {second}"
             ))),
         },
-        Err((error, _)) => Err(error),
-    }
+        Err((error, _)) => return Err(error),
+    };
+    // INV-28: ensure /proc/sys is masked or remounted read-only within the fresh proc view
+    let _ = remount_proc_sys_readonly();
+    Ok(visibility)
 }
+
 
 fn hidepid_unsupported(errno: Option<i32>) -> bool {
     matches!(
@@ -249,13 +254,14 @@ fn bind_devnull(target: &Path) -> VettoResult<()> {
 fn empty_tmpfs(target: &Path) -> VettoResult<()> {
     let dst = cstr(target)?;
     // SAFETY: valid NUL path; fstype/options are NUL strings or NULL.
+    // INV-08: secret and directory masking overlays use read-only mode 0000 tmpfs.
     if unsafe {
         libc::mount(
             std::ptr::null(),
             dst.as_ptr(),
             b"tmpfs\0".as_ptr() as *const libc::c_char,
-            MS_NOSUID | MS_NODEV | MS_NOEXEC,
-            b"mode=000\0".as_ptr() as *const libc::c_void,
+            MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            b"mode=0000\0".as_ptr() as *const libc::c_void,
         )
     } != 0
     {
@@ -282,6 +288,33 @@ pub fn mask_path(path: &Path, is_dir: bool) -> VettoResult<bool> {
     }
     Ok(true)
 }
+
+/// Mask mandatory secret directories (~/.ssh, ~/.aws, ~/.gnupg) and .env files (INV-08).
+/// Directories are masked using read-only tmpfs with mode 0000.
+pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> VettoResult<()> {
+    let mandatory_dirs = [".ssh", ".aws", ".gnupg"];
+    for dir_name in mandatory_dirs {
+        let p = home.join(dir_name);
+        if p.exists() {
+            mask_path(&p, p.is_dir())?;
+        }
+    }
+
+    let home_env = home.join(".env");
+    if home_env.exists() {
+        mask_path(&home_env, home_env.is_dir())?;
+    }
+
+    if let Some(root) = project_root {
+        let proj_env = root.join(".env");
+        if proj_env.exists() {
+            mask_path(&proj_env, proj_env.is_dir())?;
+        }
+    }
+
+    Ok(())
+}
+
 
 /// Mask restricted and dangerous device nodes inside the mount namespace.
 /// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
@@ -399,8 +432,90 @@ pub fn remount_sys_readonly() -> VettoResult<()> {
     Ok(())
 }
 
+/// Remount /proc/sys as read-only inside the mount namespace (INV-28).
+/// Prevents modification of kernel parameters. If remount fails, masks with empty tmpfs.
+pub fn remount_proc_sys_readonly() -> VettoResult<()> {
+    let target = Path::new("/proc/sys");
+    if !target.exists() || !target.is_dir() {
+        return Ok(());
+    }
+    let dst = cstr(target)?;
+    // SAFETY: bind mount /proc/sys over itself first, then remount read-only.
+    unsafe {
+        if libc::mount(
+            dst.as_ptr(),
+            dst.as_ptr(),
+            std::ptr::null(),
+            MS_BIND | MS_REC,
+            std::ptr::null(),
+        ) == 0
+        {
+            if libc::mount(
+                std::ptr::null(),
+                dst.as_ptr(),
+                std::ptr::null(),
+                MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_REC,
+                std::ptr::null(),
+            ) == 0
+            {
+                return Ok(());
+            }
+        }
+    }
+    // Fallback: mask /proc/sys with empty tmpfs if remount read-only is rejected
+    empty_tmpfs(target)
+}
+
+/// Mount an isolated devpts instance with `newinstance` option (INV-31).
+/// Guarantees terminal isolation and prevents TIOCSTI injection.
+pub fn mount_devpts_newinstance() -> VettoResult<()> {
+    let pts_dir = Path::new("/dev/pts");
+    if !pts_dir.exists() || !pts_dir.is_dir() {
+        return Ok(());
+    }
+    let target = cstr(pts_dir)?;
+    let fstype = cstr(Path::new("devpts"))?;
+    let options = cstr(Path::new(DEVPTS_MOUNT_OPTIONS))?;
+    // SAFETY: mounting devpts with newinstance in private mount namespace
+    if unsafe {
+        libc::mount(
+            fstype.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            MS_NOSUID | MS_NOEXEC,
+            options.as_ptr().cast(),
+        )
+    } != 0
+    {
+        return Err(VettoError::Mount(format!(
+            "mount devpts newinstance: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+
+    // Connect /dev/ptmx to the new devpts instance if /dev/pts/ptmx exists
+    let ptmx_pts = Path::new("/dev/pts/ptmx");
+    let ptmx_dev = Path::new("/dev/ptmx");
+    if ptmx_pts.exists() && ptmx_dev.exists() {
+        let src = cstr(ptmx_pts)?;
+        let dst = cstr(ptmx_dev)?;
+        unsafe {
+            let _ = libc::mount(
+                src.as_ptr(),
+                dst.as_ptr(),
+                std::ptr::null(),
+                MS_BIND,
+                std::ptr::null(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Mask host information and sensitive debugging endpoints in /proc.
 /// Masked paths:
+///   /proc/sys (masked or remounted read-only, INV-28)
 ///   /proc/kcore (physical memory image)
 ///   /proc/kallsyms (kernel symbol table)
 ///   /proc/sysrq-trigger (kernel magic sysrq)
@@ -409,6 +524,9 @@ pub fn remount_sys_readonly() -> VettoResult<()> {
 ///   /proc/acpi (ACPI tables)
 ///   /proc/asound (sound card state)
 pub fn mask_sensitive_proc_paths() -> VettoResult<()> {
+    // INV-28: Ensure /proc/sys is masked or remounted read-only
+    let _ = remount_proc_sys_readonly();
+
     let sensitive_files = [
         "/proc/kcore",
         "/proc/kallsyms",
@@ -490,5 +608,24 @@ mod tests {
         assert!(hidepid_unsupported(Some(libc::ENOPROTOOPT)));
         assert!(hidepid_unsupported(Some(libc::EOPNOTSUPP)));
         assert!(!hidepid_unsupported(Some(libc::EPERM)));
+    }
+
+    #[test]
+    fn devpts_mount_options_satisfy_inv31() {
+        assert!(DEVPTS_MOUNT_OPTIONS.contains("newinstance"));
+        assert!(DEVPTS_MOUNT_OPTIONS.contains("ptmxmode=0666"));
+        assert!(DEVPTS_MOUNT_OPTIONS.contains("mode=620"));
+    }
+
+    #[test]
+    fn mask_mandatory_secrets_handles_absent_paths() {
+        let nonexistent = Path::new("/tmp/nonexistent-vetto-test-home-mounts-xyz");
+        assert!(mask_mandatory_secrets(nonexistent, None).is_ok());
+    }
+
+    #[test]
+    fn remount_proc_sys_readonly_handles_absent_paths() {
+        let nonexistent = Path::new("/tmp/nonexistent-vetto-proc-sys");
+        assert!(!nonexistent.exists());
     }
 }

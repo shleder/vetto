@@ -88,6 +88,14 @@ impl AuditLedger {
         Ok(current_hash)
     }
 
+    /// Records a typed audit entry adhering to §17.1 machine-verifiable schema.
+    pub fn record_audit_record(
+        &mut self,
+        record: &crate::audit::VettoAuditRecord,
+    ) -> Result<String> {
+        self.record_event(record)
+    }
+
     /// Appends an Ed25519 signature of the final ledger state.
     /// Fulfills INV-36: Mandatory Cryptographic Signing.
     pub fn sign_and_close(mut self, key: &SigningKey) -> Result<String> {

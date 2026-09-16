@@ -48,24 +48,45 @@ pub fn setup_cow_overlay(
     Ok(())
 }
 
-/// Mask ~/.ssh and .env via tmpfs.
+/// Mask ~/.ssh, ~/.aws, ~/.gnupg, and .env via read-only tmpfs / devnull (INV-08).
 pub fn mask_ssh_and_env(home: &Path, project_root: Option<&Path>) -> VettoResult<()> {
-    let ssh_dir = home.join(".ssh");
-    if ssh_dir.exists() {
-        let _ = mounts::mask_path(&ssh_dir, ssh_dir.is_dir());
+    mask_mandatory_secrets(home, project_root)
+}
+
+/// Mandatory secret masking for ~/.ssh, ~/.aws, ~/.gnupg, and .env (INV-08).
+/// Directories are masked using read-only mode 0000 tmpfs overlays.
+pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> VettoResult<()> {
+    let mandatory_dirs = [".ssh", ".aws", ".gnupg"];
+    for dir_name in mandatory_dirs {
+        let dir_path = home.join(dir_name);
+        if dir_path.exists() {
+            mounts::mask_path(&dir_path, dir_path.is_dir())?;
+        }
     }
 
     let home_env = home.join(".env");
     if home_env.exists() {
-        let _ = mounts::mask_path(&home_env, home_env.is_dir());
+        mounts::mask_path(&home_env, home_env.is_dir())?;
     }
 
     if let Some(root) = project_root {
         let proj_env = root.join(".env");
         if proj_env.exists() {
-            let _ = mounts::mask_path(&proj_env, proj_env.is_dir());
+            mounts::mask_path(&proj_env, proj_env.is_dir())?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mask_mandatory_secrets_handles_absent_paths() {
+        let nonexistent = Path::new("/tmp/nonexistent-vetto-test-home-xyz");
+        assert!(mask_mandatory_secrets(nonexistent, None).is_ok());
+        assert!(mask_ssh_and_env(nonexistent, None).is_ok());
+    }
 }

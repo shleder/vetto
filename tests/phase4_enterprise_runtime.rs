@@ -13,7 +13,11 @@ use std::path::PathBuf;
 use ed25519_dalek::SigningKey;
 use rand_core::OsRng;
 
+use vetto::audit::record::{
+    FsMutationType, SyscallActionTaken, TierClassification, VettoAuditRecord,
+};
 use vetto::audit::verdict::{EvidenceStrength, VerdictEngine, VerdictStatus};
+use vetto::crypto::attest::AuditLedger;
 use vetto::crypto::slsa::{
     CosignSlsaBuilder, IN_TOTO_PAYLOAD_TYPE, IN_TOTO_STATEMENT_V1, SLSA_PROVENANCE_V1,
 };
@@ -365,4 +369,148 @@ fn test_enterprise_policy_synchronization_and_drift_detection() {
     let re_reg_err = sync.register_contract(tampered).unwrap_err();
     assert_eq!(re_reg_err.exit_code(), 125);
     assert!(matches!(re_reg_err, PolicySyncError::PolicyDrift { .. }));
+}
+
+#[test]
+fn test_section17_1_audit_records_json_schema() {
+    let session_id = "550e8400-e29b-41d4-a716-446655440000";
+    let contract_digest = "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a";
+
+    // 1. SESSION_INIT
+    let init_rec = VettoAuditRecord::session_init(
+        session_id,
+        contract_digest,
+        "linux",
+        "6.8.0",
+        "claude-code",
+        TierClassification::Tier1Linux,
+    );
+    let init_json = init_rec.to_json_line().unwrap();
+    assert!(init_json.contains("\"record_type\":\"SESSION_INIT\""));
+    assert!(init_json.contains("\"tier\":\"TIER_1_LINUX\""));
+    assert!(init_json.contains("\"platform\":\"linux\""));
+
+    // 2. SYSCALL_DENIAL
+    let denial_rec = VettoAuditRecord::syscall_denial(
+        session_id,
+        contract_digest,
+        "openat",
+        "/etc/shadow",
+        "landlock",
+        SyscallActionTaken::Blocked,
+    );
+    let denial_json = denial_rec.to_json_line().unwrap();
+    assert!(denial_json.contains("\"record_type\":\"SYSCALL_DENIAL\""));
+    assert!(denial_json.contains("\"action_taken\":\"BLOCKED\""));
+    assert!(denial_json.contains("\"syscall_name\":\"openat\""));
+
+    // 3. FS_MUTATION
+    let fs_rec = VettoAuditRecord::fs_mutation(
+        session_id,
+        contract_digest,
+        "src/main.rs",
+        FsMutationType::Modified,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    let fs_json = fs_rec.to_json_line().unwrap();
+    assert!(fs_json.contains("\"record_type\":\"FS_MUTATION\""));
+    assert!(fs_json.contains("\"mutation_type\":\"MODIFIED\""));
+
+    // 4. RESOURCE_SAMPLE
+    let res_rec = VettoAuditRecord::resource_sample(
+        session_id,
+        contract_digest,
+        42.5,
+        1024 * 1024 * 64,
+        8,
+    );
+    let res_json = res_rec.to_json_line().unwrap();
+    assert!(res_json.contains("\"record_type\":\"RESOURCE_SAMPLE\""));
+    assert!(res_json.contains("\"cpu_percent\":42.5"));
+
+    // 5. TREE_EXTINCTION
+    let ext_rec = VettoAuditRecord::tree_extinction(
+        session_id,
+        contract_digest,
+        "LinuxTier1Proven",
+        0,
+        9,
+        120,
+        true,
+    );
+    let ext_json = ext_rec.to_json_line().unwrap();
+    assert!(ext_json.contains("\"record_type\":\"TREE_EXTINCTION\""));
+    assert!(ext_json.contains("\"clean\":true"));
+
+    // 6. SESSION_VERDICT
+    let contract = create_sealed_contract("claude");
+    let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
+    let verdict_rec = VettoAuditRecord::session_verdict(
+        session_id,
+        contract_digest,
+        &verdict,
+        "8f434346648f6b96df89dda901c5176b10f60047a0641b98b95886ac8f6eec6a",
+    );
+    let verdict_json = verdict_rec.to_json_line().unwrap();
+    assert!(verdict_json.contains("\"record_type\":\"SESSION_VERDICT\""));
+    assert!(verdict_json.contains("\"verdict\":\"PASS\""));
+    assert!(verdict_json.contains("\"evidence_strength\":\"STRONG\""));
+    assert!(verdict_json.contains("\"exit_code\":0"));
+}
+
+#[test]
+fn test_contract_blake3_sealing_and_digest_verification() {
+    let contract = create_sealed_contract("claude");
+    assert!(!contract.contract_digest_blake3.is_empty());
+    assert_eq!(contract.contract_digest_blake3.len(), 64);
+    assert!(contract.verify_digest());
+
+    // Tampering unsealed content breaks verification
+    let mut tampered = contract.clone();
+    tampered.network.mode = NetworkMode::Direct;
+    assert!(!tampered.verify_digest());
+}
+
+#[test]
+fn test_audit_ledger_record_and_sign() {
+    use std::fs;
+    let dir = std::env::temp_dir().join(format!("vetto-test-audit-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let ledger_path = dir.join("vetto-audit.jsonl");
+
+    let mut ledger = AuditLedger::new(&ledger_path).expect("open ledger");
+
+    let rec1 = VettoAuditRecord::session_init(
+        "session-1",
+        "digest-1",
+        "linux",
+        "6.8.0",
+        "claude",
+        TierClassification::Tier1Linux,
+    );
+    let hash1 = ledger.record_audit_record(&rec1).expect("record rec1");
+    assert!(!hash1.is_empty());
+
+    let rec2 = VettoAuditRecord::fs_mutation(
+        "session-1",
+        "digest-1",
+        "Cargo.toml",
+        FsMutationType::Modified,
+        "sha-cargo-toml",
+    );
+    let hash2 = ledger.record_audit_record(&rec2).expect("record rec2");
+    assert!(!hash2.is_empty());
+    assert_ne!(hash1, hash2);
+
+    let mut csprng = OsRng;
+    let signing_key = SigningKey::generate(&mut csprng);
+    let sig = ledger.sign_and_close(&signing_key).expect("sign ledger");
+    assert_eq!(sig.len(), 128); // 64 bytes in hex
+
+    let contents = fs::read_to_string(&ledger_path).expect("read ledger");
+    assert!(contents.contains("SESSION_INIT"));
+    assert!(contents.contains("FS_MUTATION"));
+    assert!(contents.contains(&sig));
+
+    let _ = fs::remove_dir_all(&dir);
 }
