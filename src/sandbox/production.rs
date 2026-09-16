@@ -33,12 +33,21 @@
 use std::collections::{BTreeMap, HashMap};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::audit::record::VettoAuditRecord;
+use crate::audit::verdict::{EvidenceStrength, FinalVerdict, VerdictEngine, VerdictStatus};
 use crate::config::NetMode;
+use crate::crypto::attest::AuditLedger;
 use crate::policy::{Policy, Tier};
+use crate::policy_ir::{
+    ExecutionState, ExecutionStateMachine, SecurityContract, StateTransitionError,
+};
+use crate::proctree::{
+    ExtinctionBreach, ExtinctionProof, ExtinctionVerifier, PlatformExtinctionTier,
+};
 use crate::sandbox::{Backend, SandboxHandle, SpawnOptions, StdioMode};
 use crate::verify_ng::engine;
 use crate::verify_ng::evidence::ExecutionIdentity;
@@ -855,6 +864,7 @@ impl SpawnedProductionExecution {
             stderr: Vec::new(),
             spawn_via_backend: true,
             diagnostic,
+            verdict: None,
         }
     }
 }
@@ -914,6 +924,7 @@ pub struct ProductionResult {
     pub stderr: Vec<u8>,
     pub spawn_via_backend: bool,
     pub diagnostic: Option<String>,
+    pub verdict: Option<FinalVerdict>,
 }
 
 impl ProductionResult {
@@ -957,6 +968,267 @@ impl ProductionResult {
         }
         parts.push(format!("preparation_ok={}", self.report.preparation_ok));
         parts.join("|")
+    }
+
+    /// Sets the final execution verdict.
+    pub fn with_verdict(mut self, verdict: FinalVerdict) -> Self {
+        self.verdict = Some(verdict);
+        self
+    }
+
+    /// Evaluates the final execution verdict based on host facts (§18).
+    /// Enforces INV-37 Netlink buffer overflow detection (`is_evidence_channel_intact()`).
+    pub fn evaluate_verdict(
+        &mut self,
+        contract: &SecurityContract,
+        kernel_denials: usize,
+        unauthorized_writes: usize,
+        zombies_survived: usize,
+    ) -> FinalVerdict {
+        let evidence_channel_intact = crate::sandbox::is_evidence_channel_intact();
+        let agent_code = self
+            .exit_code
+            .unwrap_or(if self.timed_out { 124 } else { 125 });
+        let verdict = VerdictEngine::evaluate(
+            contract,
+            kernel_denials,
+            unauthorized_writes,
+            zombies_survived,
+            evidence_channel_intact,
+            agent_code,
+        );
+        self.verdict = Some(verdict.clone());
+        verdict
+    }
+}
+
+/// Tri-Plane Supervisor Engine coordinating Control, Data, and Verification planes (§20, §30).
+#[derive(Debug)]
+pub struct SupervisorEngine {
+    contract: SecurityContract,
+    fsm: ExecutionStateMachine,
+    backend_kind: BackendKind,
+}
+
+impl SupervisorEngine {
+    /// Initialize a new SupervisorEngine with a sealed SecurityContract.
+    /// Drives the FSM through Intent -> PolicyCompiled -> ContractSealed.
+    pub fn new(contract: SecurityContract) -> Result<Self, StateTransitionError> {
+        if !contract.verify_digest() {
+            return Err(StateTransitionError::FailClosed {
+                state: ExecutionState::ContractSealed,
+                error: "Contract BLAKE3 digest verification failed: unsealed or tampered contract"
+                    .to_string(),
+            });
+        }
+
+        let mut fsm = ExecutionStateMachine::new();
+        fsm.transition(ExecutionState::PolicyCompiled)?;
+        fsm.transition(ExecutionState::ContractSealed)?;
+
+        #[cfg(target_os = "linux")]
+        let backend_kind = BackendKind::LinuxLandlock;
+        #[cfg(target_os = "macos")]
+        let backend_kind = BackendKind::MacosSeatbelt;
+        #[cfg(target_os = "windows")]
+        let backend_kind = BackendKind::WindowsAppContainer;
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        let backend_kind = BackendKind::Unsupported;
+
+        Ok(Self {
+            contract,
+            fsm,
+            backend_kind,
+        })
+    }
+
+    pub fn contract(&self) -> &SecurityContract {
+        &self.contract
+    }
+
+    pub fn fsm(&self) -> &ExecutionStateMachine {
+        &self.fsm
+    }
+
+    pub fn current_state(&self) -> ExecutionState {
+        self.fsm.current_state()
+    }
+
+    pub fn backend_kind(&self) -> BackendKind {
+        self.backend_kind
+    }
+
+    /// Prepare step: verifies contract integrity and enters Prepare state.
+    pub fn prepare(&mut self) -> Result<(), StateTransitionError> {
+        if !self.contract.verify_digest() {
+            let _ = self.fsm.fail_closed("Contract digest verification failed");
+            return Err(StateTransitionError::FailClosed {
+                state: self.fsm.current_state(),
+                error: "Contract digest mismatch".to_string(),
+            });
+        }
+        self.fsm.transition(ExecutionState::Prepare)
+    }
+
+    /// Spawn guard: advances through Prepare -> Spawn -> Enforce -> Observe.
+    pub fn spawn_guard(&mut self) -> Result<(), StateTransitionError> {
+        self.fsm.transition(ExecutionState::Spawn)?;
+        self.fsm.transition(ExecutionState::Enforce)?;
+        self.fsm.transition(ExecutionState::Observe)
+    }
+
+    /// Termination: advances Observe -> Terminate.
+    pub fn terminate(&mut self) -> Result<(), StateTransitionError> {
+        self.fsm.transition(ExecutionState::Terminate)
+    }
+
+    /// Cleanup and process tree extinction verification (§12.1).
+    /// Advances Terminate -> Cleanup -> Verify.
+    pub fn cleanup_and_verify(
+        &mut self,
+        extinction_tier: PlatformExtinctionTier,
+        surviving_processes: usize,
+        surviving_resources: usize,
+        elapsed_ms: u64,
+    ) -> Result<ExtinctionProof, ExtinctionBreach> {
+        if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
+            return Err(ExtinctionBreach {
+                platform: extinction_tier,
+                exit_code: 125,
+                reason: format!("State machine transition to Cleanup failed: {e}"),
+                surviving_processes,
+                surviving_resources,
+                elapsed_ms,
+            });
+        }
+
+        let proof = match ExtinctionVerifier::verify(
+            extinction_tier,
+            surviving_processes,
+            surviving_resources,
+            elapsed_ms,
+        ) {
+            Ok(proof) => proof,
+            Err(breach) => {
+                let _ = self.fsm.fail_closed(&breach.reason);
+                return Err(breach);
+            }
+        };
+
+        if let Err(e) = self.fsm.transition(ExecutionState::Verify) {
+            return Err(ExtinctionBreach {
+                platform: extinction_tier,
+                exit_code: 125,
+                reason: format!("State machine transition to Verify failed: {e}"),
+                surviving_processes,
+                surviving_resources,
+                elapsed_ms,
+            });
+        }
+
+        Ok(proof)
+    }
+
+    /// Evaluates the final execution verdict based on host facts (§18).
+    /// Advances Verify -> Attest -> Verdict -> Terminal.
+    /// Checks INV-37 Netlink buffer overflow detection (`is_evidence_channel_intact()`).
+    pub fn evaluate_verdict(
+        &mut self,
+        kernel_denials: usize,
+        unauthorized_writes: usize,
+        zombies_survived: usize,
+        agent_exit_code: i32,
+    ) -> Result<FinalVerdict, StateTransitionError> {
+        let evidence_channel_intact = crate::sandbox::is_evidence_channel_intact();
+
+        self.fsm.transition(ExecutionState::Attest)?;
+        self.fsm.transition(ExecutionState::Verdict)?;
+
+        let verdict = VerdictEngine::evaluate(
+            &self.contract,
+            kernel_denials,
+            unauthorized_writes,
+            zombies_survived,
+            evidence_channel_intact,
+            agent_exit_code,
+        );
+
+        if verdict.exit_code == 125
+            || verdict.status == VerdictStatus::Fail
+            || verdict.status == VerdictStatus::Inconclusive
+        {
+            let _ = self.fsm.fail_closed(&verdict.reason);
+            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
+            let _ = self.fsm.transition(ExecutionState::Terminal);
+        } else {
+            self.fsm.transition(ExecutionState::Terminal)?;
+        }
+
+        Ok(verdict)
+    }
+
+    /// Evaluates verdict with explicit evidence strength.
+    pub fn evaluate_verdict_with_strength(
+        &mut self,
+        kernel_denials: usize,
+        unauthorized_writes: usize,
+        zombies_survived: usize,
+        agent_exit_code: i32,
+        strength: EvidenceStrength,
+    ) -> Result<FinalVerdict, StateTransitionError> {
+        let evidence_channel_intact = crate::sandbox::is_evidence_channel_intact();
+
+        self.fsm.transition(ExecutionState::Attest)?;
+        self.fsm.transition(ExecutionState::Verdict)?;
+
+        let verdict = VerdictEngine::evaluate_with_strength(
+            &self.contract,
+            kernel_denials,
+            unauthorized_writes,
+            zombies_survived,
+            evidence_channel_intact,
+            agent_exit_code,
+            strength,
+        );
+
+        if verdict.exit_code == 125
+            || verdict.status == VerdictStatus::Fail
+            || verdict.status == VerdictStatus::Inconclusive
+        {
+            let _ = self.fsm.fail_closed(&verdict.reason);
+            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
+            let _ = self.fsm.transition(ExecutionState::Terminal);
+        } else {
+            self.fsm.transition(ExecutionState::Terminal)?;
+        }
+
+        Ok(verdict)
+    }
+
+    /// Whether the CoW ephemeral overlay should be committed to the host workspace (§18.2).
+    pub fn should_commit_cow(verdict: &FinalVerdict) -> bool {
+        verdict.is_success()
+    }
+
+    /// Whether the CoW ephemeral overlay must be wiped immediately (§18.2).
+    pub fn should_wipe_cow(verdict: &FinalVerdict) -> bool {
+        !Self::should_commit_cow(verdict)
+    }
+
+    /// Appends the final session verdict to the audit ledger (§17.1).
+    pub fn record_verdict_to_ledger(
+        &self,
+        ledger: &mut AuditLedger,
+        verdict: &FinalVerdict,
+        root_dag_digest: &str,
+    ) -> anyhow::Result<String> {
+        let record = VettoAuditRecord::session_verdict(
+            &self.contract.contract_id,
+            &self.contract.contract_digest_blake3,
+            verdict,
+            root_dag_digest,
+        );
+        ledger.record_audit_record(&record)
     }
 }
 

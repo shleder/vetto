@@ -1341,7 +1341,7 @@ fn spawn_full(
             }
             Ok(None) => None,
             Err(e) => {
-                let code = kill_and_reap(pid);
+                let _code = kill_and_reap(pid);
                 return Err(anyhow::Error::new(e));
             }
         };
@@ -1538,7 +1538,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
             }
             Ok(None) => None,
             Err(e) => {
-                let code = kill_and_reap(pid);
+                let _code = kill_and_reap(pid);
                 return Err(anyhow::Error::new(e));
             }
         };
@@ -1715,7 +1715,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
             }
             Ok(None) => None,
             Err(e) => {
-                let code = kill_and_reap(pid);
+                let _code = kill_and_reap(pid);
                 return Err(anyhow::Error::new(e));
             }
         };

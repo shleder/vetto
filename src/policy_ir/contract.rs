@@ -470,6 +470,7 @@ pub mod blake3 {
         }
     }
 
+    #[derive(Clone)]
     struct ChunkState {
         cv: [u32; 8],
         chunk_counter: u64,

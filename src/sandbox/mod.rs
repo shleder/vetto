@@ -23,6 +23,34 @@ pub mod macos_net_proxy;
 pub mod windows;
 
 pub use handle::{SandboxHandle, SpawnOptions, StdioMode};
+pub use production::SupervisorEngine;
+
+#[cfg(target_os = "linux")]
+pub use linux::audit_reader::{
+    buffer_overflow_count, is_evidence_channel_intact, mark_evidence_channel_disrupted,
+    packet_drop_count, reset_evidence_channel,
+};
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_evidence_channel_intact() -> bool {
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn mark_evidence_channel_disrupted() {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn reset_evidence_channel() {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn buffer_overflow_count() -> u64 {
+    0
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn packet_drop_count() -> u64 {
+    0
+}
 
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
