@@ -47,7 +47,7 @@ use crate::policy_ir::{
 };
 use crate::proctree::{
     ExtinctionBreach, ExtinctionProof, ExtinctionVerifier, PlatformExtinctionTier,
-    FAIL_CLOSED_EXTINCTION_EXIT_CODE, MAX_EXTINCTION_DEADLINE_MS,
+    FAIL_CLOSED_EXTINCTION_EXIT_CODE,
 };
 use crate::sandbox::{Backend, SandboxHandle, SpawnOptions, StdioMode};
 use crate::verify_ng::engine;
@@ -840,6 +840,7 @@ impl SpawnedProductionExecution {
         // within MAX_EXTINCTION_DEADLINE_MS (500ms, INV-20).
         #[cfg(target_os = "windows")]
         {
+            use crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
             use crate::verify_ng::windows_enforce as we;
             let members = match self.handle.windows_raw_handles() {
                 Some((_, job)) => unsafe { we::job_assigned_pids(job) },
@@ -847,10 +848,8 @@ impl SpawnedProductionExecution {
             };
             let observed = members.len();
             self.handle.terminate();
-            let residual = we::pids_still_alive(
-                &members,
-                Duration::from_millis(MAX_EXTINCTION_DEADLINE_MS),
-            );
+            let residual =
+                we::pids_still_alive(&members, Duration::from_millis(MAX_EXTINCTION_DEADLINE_MS));
             surviving_processes = residual.len();
             let clean = residual.is_empty();
             self.capability.note_tree_clean(clean);
@@ -953,7 +952,7 @@ impl SpawnedProductionExecution {
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
             let init_rec = VettoAuditRecord::session_init(
                 &self.nonce,
-                &self.identity.policy_hash,
+                &self.identity.frozen_hash,
                 platform_str,
                 std::env::consts::OS,
                 &self.scenario,
@@ -963,7 +962,7 @@ impl SpawnedProductionExecution {
 
             let ext_rec = VettoAuditRecord::tree_extinction(
                 &self.nonce,
-                &self.identity.policy_hash,
+                &self.identity.frozen_hash,
                 extinction_platform.label(),
                 surviving_processes as u32,
                 9,
@@ -972,18 +971,30 @@ impl SpawnedProductionExecution {
             );
             let _ = ledger.record_audit_record(&ext_rec);
 
-            let (v_status, v_strength, v_code) = match (extinction_res.is_ok(), evidence_intact, final_exit_code) {
-                (false, _, _) => (VerdictStatus::Fail, EvidenceStrength::Strong, FAIL_CLOSED_EXTINCTION_EXIT_CODE),
-                (_, false, _) => (VerdictStatus::Inconclusive, EvidenceStrength::Strong, FAIL_CLOSED_EXTINCTION_EXIT_CODE),
-                (_, _, Some(code)) if code != 0 => (VerdictStatus::Fail, EvidenceStrength::Strong, code),
-                _ => (VerdictStatus::Pass, EvidenceStrength::Strong, 0),
-            };
+            let (v_status, v_strength, v_code) =
+                match (extinction_res.is_ok(), evidence_intact, final_exit_code) {
+                    (false, _, _) => (
+                        VerdictStatus::Fail,
+                        EvidenceStrength::Strong,
+                        FAIL_CLOSED_EXTINCTION_EXIT_CODE,
+                    ),
+                    (_, false, _) => (
+                        VerdictStatus::Inconclusive,
+                        EvidenceStrength::Strong,
+                        FAIL_CLOSED_EXTINCTION_EXIT_CODE,
+                    ),
+                    (_, _, Some(code)) if code != 0 => {
+                        (VerdictStatus::Fail, EvidenceStrength::Strong, code)
+                    }
+                    _ => (VerdictStatus::Pass, EvidenceStrength::Strong, 0),
+                };
             let verdict_obj = FinalVerdict {
                 status: v_status,
                 strength: v_strength,
                 exit_code: v_code,
                 reason: if !evidence_intact {
-                    "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)".to_string()
+                    "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)"
+                        .to_string()
                 } else if extinction_res.is_err() {
                     "Process tree extinction breach (INV-20)".to_string()
                 } else {
@@ -992,7 +1003,7 @@ impl SpawnedProductionExecution {
             };
             let verdict_rec = VettoAuditRecord::session_verdict(
                 &self.nonce,
-                &self.identity.policy_hash,
+                &self.identity.frozen_hash,
                 &verdict_obj,
                 "0000000000000000000000000000000000000000000000000000000000000000",
             );
@@ -1036,7 +1047,8 @@ impl SpawnedProductionExecution {
             strength: EvidenceStrength::Strong,
             exit_code: final_exit_code.unwrap_or(0),
             reason: if !evidence_intact {
-                "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)".to_string()
+                "Evidence capture channel dropped events: audit ledger inconclusive (INV-37)"
+                    .to_string()
             } else if let Err(ref breach) = extinction_res {
                 format!("Process tree extinction breach (INV-20): {}", breach.reason)
             } else if !ledger_verified {
