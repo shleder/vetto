@@ -44,6 +44,7 @@ static EVIDENCE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn create_sealed_contract(name: &str) -> SecurityContract {
     let unsealed = UnsealedSecurityContract {
+        production: None,
         crypto: Default::default(),
         contract_version: 1,
         contract_id: format!("contract-{}", name),

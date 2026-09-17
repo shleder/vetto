@@ -125,7 +125,7 @@ impl PolicySourceKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DenyEntry {
     pub path: PathBuf,
     pub is_dir: bool,
@@ -242,7 +242,7 @@ pub struct SubtractiveRules {
     pub deny_network: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
     pub name: String,
     /// Metadata from the effective policy layers.

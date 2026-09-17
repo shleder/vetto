@@ -356,6 +356,80 @@ pub fn freeze_production(
     (spec, canonical, identity)
 }
 
+/// Project a verified production contract into the existing capability API.
+/// The envelope retains the detached digest without hashing it into itself.
+fn freeze_production_contract(
+    scenario: &str,
+    contract: &SecurityContract,
+    tier: &str,
+    backend: &str,
+) -> anyhow::Result<(CanonicalPolicy, ExecutionIdentity)> {
+    anyhow::ensure!(
+        contract.verify_digest(),
+        "invalid production contract digest"
+    );
+    let production = contract
+        .production
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing production installation contract"))?;
+    anyhow::ensure!(
+        production.backend == backend
+            && production.tier.map(|t| t.label()).unwrap_or("none") == tier,
+        "production contract/backend mismatch"
+    );
+    let mut argv = vec![contract
+        .agent_identity
+        .invoked_binary
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF8 production executable"))?
+        .to_string()];
+    argv.extend(contract.agent_identity.invoked_args.clone());
+    // v1 summary fields cannot compete with the lossless installation values.
+    // Reject contradictory projections even if a caller re-seals the payload.
+    let expected = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+        crate::policy_ir::compiler::EffectivePolicyInput {
+            policy: &production.installation_policy,
+            argv: &argv,
+            cwd: &contract.filesystem.workspace_root,
+            env: &contract.environment.explicit_vars,
+            net: &production.net,
+            nonce: &contract.session_nonce,
+            timeout: production.timeout,
+            tier: production.tier,
+            backend: production.backend.clone(),
+            observe_seccomp: production.observe_seccomp,
+        },
+    )?;
+    anyhow::ensure!(
+        expected == *contract,
+        "inconsistent production contract projection"
+    );
+    let mut spec = frozen::freeze_spec(
+        scenario,
+        PROD_REGISTRY,
+        &production.installation_policy,
+        tier,
+        &production.net,
+        backend,
+        &argv,
+        &contract.environment.explicit_vars,
+        &contract.filesystem.workspace_root,
+        &contract.session_nonce,
+    );
+    spec.policy_bytes = serde_json::to_vec(&serde_json::json!({
+        "contract": contract,
+        "digest": contract.contract_digest_blake3,
+    }))?;
+    let canonical = CanonicalPolicy::from_frozen(&spec);
+    let identity = ExecutionIdentity::new(
+        scenario,
+        &contract.session_nonce,
+        PROD_REGISTRY,
+        &spec.hash(),
+    );
+    Ok((canonical, identity))
+}
+
 /// Unprepared production execution: OWNED frozen inputs, NO spawn method.
 ///
 /// Construction snapshots everything the child will install
@@ -480,17 +554,30 @@ impl UnpreparedProductionExecution {
         env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
         let env = build_production_env(&self.policy, &env_extra);
 
-        let (_spec, canonical, identity) = freeze_production(
-            &self.scenario,
-            &self.policy,
-            &tier_label,
-            &self.net,
-            &self.mechanics.describe(),
-            &self.argv,
-            &env,
-            &self.cwd,
-            &nonce,
+        let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+            crate::policy_ir::compiler::EffectivePolicyInput {
+                policy: &self.policy,
+                argv: &self.argv,
+                cwd: &self.cwd,
+                env: &env,
+                net: &self.net,
+                nonce: &nonce,
+                timeout: self.timeout,
+                tier,
+                backend: self.mechanics.describe(),
+                observe_seccomp: self.mechanics.observes_seccomp(),
+            },
+        )?;
+        anyhow::ensure!(
+            contract.verify_digest(),
+            "invalid production contract digest"
         );
+        let (canonical, identity) = freeze_production_contract(
+            &self.scenario,
+            &contract,
+            &tier_label,
+            &self.mechanics.describe(),
+        )?;
         capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
         let prepared_ok = capability
             .enforcement()
@@ -503,7 +590,8 @@ impl UnpreparedProductionExecution {
         }
         Ok(PreparedProductionExecution {
             mechanics: self.mechanics,
-            policy: self.policy,
+            contract,
+            canonical,
             argv: self.argv,
             cwd: self.cwd,
             env,
@@ -528,7 +616,8 @@ impl UnpreparedProductionExecution {
 /// No setters, no re-freeze, no policy mutation.
 pub struct PreparedProductionExecution {
     mechanics: Backend,
-    policy: Policy,
+    contract: SecurityContract,
+    canonical: CanonicalPolicy,
     argv: Vec<String>,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
@@ -590,7 +679,16 @@ impl PreparedProductionExecution {
     /// (`Policy` has no `PartialEq`); the frozen hash binding in the
     /// `EnforcementReport` is the authoritative identity check.
     pub fn frozen_policy(&self) -> &Policy {
-        &self.policy
+        &self
+            .contract
+            .production
+            .as_ref()
+            .expect("validated production contract")
+            .installation_policy
+    }
+
+    pub fn contract(&self) -> &SecurityContract {
+        &self.contract
     }
 
     /// Perform exactly one real production spawn. Consumes `self`: no retry
@@ -604,6 +702,31 @@ impl PreparedProductionExecution {
     /// Fail-closed: any preparation/freeze mismatch bails with the spawn
     /// ledger untouched and no fallback execution.
     pub fn spawn(mut self) -> anyhow::Result<SpawnedProductionExecution> {
+        let tier_label = self.tier.map(|t| t.label()).unwrap_or("none");
+        let (canonical, identity) = freeze_production_contract(
+            &self.scenario,
+            &self.contract,
+            tier_label,
+            &self.mechanics.describe(),
+        )?;
+        let production = self
+            .contract
+            .production
+            .as_ref()
+            .expect("validated contract");
+        anyhow::ensure!(
+            canonical == self.canonical
+                && identity.frozen_hash == self.identity.frozen_hash
+                && canonical.argv == self.argv
+                && canonical.cwd == self.cwd
+                && canonical.env == self.env
+                && production.net == self.net
+                && production.timeout == self.timeout
+                && production.tier == self.tier
+                && production.observe_seccomp == self.mechanics.observes_seccomp(),
+            "production contract/frozen input drift (fail-closed, no agent execution)"
+        );
+        let policy = &production.installation_policy;
         // Tripwire: the mechanics object must agree with the frozen net.
         // Both originate from the detection-mode value moved in at
         // construction; any divergence fails closed with no spawn.
@@ -642,7 +765,7 @@ impl PreparedProductionExecution {
         // verify-ng harness spawns (fork-safety).
         let spawned = {
             let _serial = engine::spawn_serial().lock().unwrap();
-            self.mechanics.spawn(&self.policy, opts)?
+            self.mechanics.spawn(policy, opts)?
         };
         PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
         let pid = spawned.handle.root_pid;
@@ -673,7 +796,7 @@ impl PreparedProductionExecution {
             use crate::verify_ng::linux_enforce as le;
             let mut verification = le::verify_child_host(pid);
             if let Ok(limits_body) = std::fs::read_to_string(format!("/proc/{pid}/limits")) {
-                let lim = &self.policy.limits;
+                let lim = &policy.limits;
                 let expect = |row: &str, v: Option<u64>| match v {
                     Some(x) => le::limits_field_is(&limits_body, row, x),
                     // No ceiling configured: nothing installed, nothing to
@@ -706,6 +829,7 @@ impl PreparedProductionExecution {
         let _ = fsm.transition(ExecutionState::Observe);
 
         Ok(SpawnedProductionExecution {
+            contract: self.contract,
             handle: spawned.handle,
             #[cfg(unix)]
             broker_ctrl_fd: spawned.broker_ctrl_fd,
@@ -732,6 +856,7 @@ impl PreparedProductionExecution {
 /// or [`finish`](Self::finish), both of which run the nonce-targeted tree
 /// sweep and the backend teardown.
 pub struct SpawnedProductionExecution {
+    contract: SecurityContract,
     pub handle: SandboxHandle,
     /// Broker end of the relay control socketpair (allowlist modes).
     #[cfg(unix)]
@@ -753,6 +878,10 @@ pub struct SpawnedProductionExecution {
 }
 
 impl SpawnedProductionExecution {
+    pub fn contract(&self) -> &SecurityContract {
+        &self.contract
+    }
+
     /// FSM lifecycle state machine for this execution.
     pub fn fsm(&self) -> &ExecutionStateMachine {
         &self.fsm
@@ -1891,6 +2020,15 @@ mod production_unit_tests {
                 assert_ne!(contract.contract_digest_blake3, identity.frozen_hash);
                 assert_eq!(contract.session_nonce, identity.session_nonce);
                 assert_eq!(contract.filesystem.allow_read, vec![PathBuf::from("/usr")]);
+                assert_eq!(contract.resources.max_memory_bytes, 384 * 1024 * 1024);
+                assert_eq!(
+                    contract
+                        .environment
+                        .explicit_vars
+                        .get("VETTO_PHASE1_OVERRIDE"),
+                    Some(&"effective-value".to_string())
+                );
+                assert_eq!(contract.environment.explicit_vars, input.env);
                 assert_eq!(
                     contract.agent_identity.invoked_binary,
                     PathBuf::from("/bin/true")
@@ -1912,6 +2050,10 @@ mod production_unit_tests {
         let backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
         let policy = Policy {
             allow_read: vec![PathBuf::from("/usr")],
+            limits: crate::policy::ResourceLimits {
+                address_space_bytes: Some(384 * 1024 * 1024),
+                ..Default::default()
+            },
             ..Policy::default()
         };
         let execution = UnpreparedProductionExecution::new(
@@ -1919,7 +2061,10 @@ mod production_unit_tests {
             policy,
             vec!["/bin/true".to_string()],
             std::env::temp_dir(),
-            HashMap::new(),
+            HashMap::from([(
+                "VETTO_PHASE1_OVERRIDE".to_string(),
+                "effective-value".to_string(),
+            )]),
             NetMode::Off,
             None,
             StdioMode::Inherit,

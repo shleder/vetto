@@ -11,6 +11,8 @@ use std::path::PathBuf;
 /// Unsealed contract payload used for deterministic canonical hashing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UnsealedSecurityContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production: Option<ProductionContract>,
     pub contract_version: u32,
     pub contract_id: String,
     pub session_nonce: String,
@@ -42,6 +44,7 @@ impl UnsealedSecurityContract {
     pub fn seal(self) -> Result<SecurityContract, serde_json::Error> {
         let digest = self.compute_digest()?;
         Ok(SecurityContract {
+            production: self.production,
             contract_version: self.contract_version,
             contract_id: self.contract_id,
             session_nonce: self.session_nonce,
@@ -60,6 +63,8 @@ impl UnsealedSecurityContract {
 /// Authoritative Sealed Security Contract.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecurityContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production: Option<ProductionContract>,
     pub contract_version: u32,
     pub contract_id: String,
     pub session_nonce: String,
@@ -81,6 +86,7 @@ impl SecurityContract {
     /// Extract unsealed payload.
     pub fn unsealed(&self) -> UnsealedSecurityContract {
         UnsealedSecurityContract {
+            production: self.production.clone(),
             contract_version: self.contract_version,
             contract_id: self.contract_id.clone(),
             session_nonce: self.session_nonce.clone(),
@@ -128,6 +134,19 @@ impl SecurityContract {
             .expect("contract contains only JSON-serializable values");
         self
     }
+}
+
+/// Lossless installation values for the existing OS mechanics. This is part
+/// of the sealed payload, never an independently retained caller policy.
+/// Optional limits and ordered rules keep their existing interpretation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductionContract {
+    pub installation_policy: crate::policy::Policy,
+    pub net: crate::config::NetMode,
+    pub timeout: Option<std::time::Duration>,
+    pub tier: Option<crate::policy::Tier>,
+    pub backend: String,
+    pub observe_seccomp: bool,
 }
 
 /// Cryptographic signing configuration and state for the security contract (Phase 4 / INV-36).
@@ -184,6 +203,8 @@ pub struct FilesystemContract {
 pub enum NetworkMode {
     Off,
     Allowlist,
+    Strict,
+    Ask,
     Direct,
 }
 
@@ -228,6 +249,7 @@ mod contract_tests {
 
     fn sample_unsealed() -> UnsealedSecurityContract {
         UnsealedSecurityContract {
+            production: None,
             crypto: CryptoContract::default(),
             contract_version: 1,
             contract_id: "test-contract-001".to_string(),

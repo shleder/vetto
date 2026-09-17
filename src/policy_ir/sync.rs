@@ -206,6 +206,7 @@ mod tests {
 
     fn sample_contract(name: &str) -> SecurityContract {
         let unsealed = UnsealedSecurityContract {
+            production: None,
             crypto: Default::default(),
             contract_version: 1,
             contract_id: format!("contract-{}", name),

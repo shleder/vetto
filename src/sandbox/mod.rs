@@ -209,6 +209,17 @@ impl Backend {
         }
     }
 
+    pub fn observes_seccomp(&self) -> bool {
+        match self {
+            #[cfg(target_os = "linux")]
+            Backend::Linux(s) => s.observe_seccomp,
+            #[cfg(target_os = "macos")]
+            Backend::Macos(_) => false,
+            #[cfg(target_os = "windows")]
+            Backend::Windows(_) => false,
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             #[cfg(target_os = "linux")]

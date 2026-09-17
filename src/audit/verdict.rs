@@ -310,6 +310,7 @@ mod tests {
 
     fn mock_contract() -> SecurityContract {
         let unsealed = UnsealedSecurityContract {
+            production: None,
             crypto: Default::default(),
             contract_version: 1,
             contract_id: "test-contract-001".to_string(),
