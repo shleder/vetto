@@ -490,14 +490,17 @@ pub fn run_one_with_backend(
             }
         }
         for (k, v) in &contract.environment.explicit_vars {
-            if !k.is_empty() && !k.contains('=') && !k.contains('\0') && !v.contains('\0') {
-                if !crate::sandbox::envfilter::is_redacted(
+            if !k.is_empty()
+                && !k.contains('=')
+                && !k.contains('\0')
+                && !v.contains('\0')
+                && !crate::sandbox::envfilter::is_redacted(
                     k,
                     &contract.environment.redacted_patterns,
-                ) && !policy.environment.deny.iter().any(|d| d == k)
-                {
-                    out.insert(k.clone(), v.clone());
-                }
+                )
+                && !policy.environment.deny.iter().any(|d| d == k)
+            {
+                out.insert(k.clone(), v.clone());
             }
         }
         if contract.environment.inject_session_nonce {

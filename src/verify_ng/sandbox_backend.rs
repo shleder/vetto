@@ -809,7 +809,7 @@ impl LinuxBackend {
     }
 
     fn restrict_seccomp_records(&mut self) {
-        let net_not_off = self.plan.as_ref().map_or(false, |p| !p.net_deny);
+        let net_not_off = self.plan.as_ref().is_some_and(|p| !p.net_deny);
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if matches!(
@@ -829,7 +829,7 @@ impl LinuxBackend {
     }
 
     fn restrict_fsonly_records(&mut self) {
-        let net_not_off = self.plan.as_ref().map_or(false, |p| !p.net_deny);
+        let net_not_off = self.plan.as_ref().is_some_and(|p| !p.net_deny);
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if record.capability == SecurityCapability::ProcessTreeContainment {

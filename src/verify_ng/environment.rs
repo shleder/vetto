@@ -212,10 +212,8 @@ pub fn is_allowed_by_contract(
                 });
             }
         }
-        if key == "USERPROFILE" {
-            if Path::new(val) == h.isolated_home {
-                return Ok(());
-            }
+        if key == "USERPROFILE" && Path::new(val) == h.isolated_home {
+            return Ok(());
         }
         if key == "VETTO_RUN_NONCE" && val == h.session_nonce {
             return Ok(());
@@ -327,7 +325,7 @@ pub fn verify_execution_environment(
             mutated_keys.push(format!("mutated:{k}"));
         }
     }
-    for (k, _) in host_env_after {
+    for k in host_env_after.keys() {
         if !host_env_before.contains_key(k) {
             mutated_keys.push(format!("added:{k}"));
         }

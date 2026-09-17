@@ -28,6 +28,8 @@
 //! No separate network security model is created: existing relay/broker/security contract semantics are consumed.
 
 use std::net::IpAddr;
+#[cfg(test)]
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::config::NetRule;
 #[cfg(test)]
@@ -381,6 +383,7 @@ pub fn eval_forbidden_destination(ip: IpAddr) -> bool {
 }
 
 /// Evaluates TLS ClientHello SNI inspection using existing production broker implementation.
+#[allow(clippy::result_unit_err)]
 pub fn eval_sni(buf: &[u8]) -> Result<Option<String>, ()> {
     #[cfg(target_os = "linux")]
     {

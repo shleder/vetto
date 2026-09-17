@@ -466,7 +466,7 @@ impl Evidence {
             f.tier == EvidenceTier::HostFact
                 && f.can_support_pass()
                 && f.name == HOST_CONTROL_FACT
-                && f.provenance.as_ref().map_or(false, |p| p.matches(identity))
+                && f.provenance.as_ref().is_some_and(|p| p.matches(identity))
         })
     }
 
