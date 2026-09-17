@@ -583,6 +583,7 @@ impl UnpreparedProductionExecution {
         env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
         let env = build_production_env(&self.policy, &env_extra);
 
+        let mut fsm = ExecutionStateMachine::new();
         let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
             crate::policy_ir::compiler::EffectivePolicyInput {
                 policy: &self.policy,
@@ -598,6 +599,12 @@ impl UnpreparedProductionExecution {
                 debug_ports: self.debug_ports.as_ref(),
             },
         )?;
+        fsm.transition(ExecutionState::PolicyCompiled)?;
+        anyhow::ensure!(
+            contract.verify_digest(),
+            "invalid compiled production contract"
+        );
+        fsm.transition(ExecutionState::ContractSealed)?;
         let (canonical, identity) = prepare_production_contract(
             &self.scenario,
             &contract,
@@ -605,6 +612,7 @@ impl UnpreparedProductionExecution {
             &self.mechanics.describe(),
             capability,
         )?;
+        fsm.transition(ExecutionState::Prepare)?;
         Ok(PreparedProductionExecution {
             mechanics: self.mechanics,
             contract,
@@ -619,6 +627,7 @@ impl UnpreparedProductionExecution {
             scenario: self.scenario,
             nonce,
             identity,
+            fsm,
             // Overwritten by the caller with the prepared backend object.
             capability: crate::verify_ng::sandbox_backend::select_backend(BackendKind::Direct),
         })
@@ -645,6 +654,7 @@ pub struct PreparedProductionExecution {
     scenario: String,
     nonce: String,
     identity: ExecutionIdentity,
+    fsm: ExecutionStateMachine,
     capability: Box<dyn SandboxBackend>,
 }
 
@@ -719,6 +729,10 @@ impl PreparedProductionExecution {
     /// Fail-closed: any preparation/freeze mismatch bails with the spawn
     /// ledger untouched and no fallback execution.
     pub fn spawn(mut self) -> anyhow::Result<SpawnedProductionExecution> {
+        anyhow::ensure!(
+            self.fsm.current_state() == ExecutionState::Prepare,
+            "production lifecycle is not prepared (fail-closed, no agent execution)"
+        );
         let tier_label = self.tier.map(|t| t.label()).unwrap_or("none");
         let (canonical, identity) = freeze_production_contract(
             &self.scenario,
@@ -782,8 +796,10 @@ impl PreparedProductionExecution {
         // verify-ng harness spawns (fork-safety).
         let spawned = {
             let _serial = engine::spawn_serial().lock().unwrap();
+            self.fsm.transition(ExecutionState::Spawn)?;
             self.mechanics.spawn(policy, opts)?
         };
+        self.fsm.transition(ExecutionState::Enforce)?;
         PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
         let pid = spawned.handle.root_pid;
         self.capability.note_spawned(pid);
@@ -837,13 +853,7 @@ impl PreparedProductionExecution {
             self.capability.note_host_verified(&verification);
         }
 
-        let mut fsm = ExecutionStateMachine::new();
-        let _ = fsm.transition(ExecutionState::PolicyCompiled);
-        let _ = fsm.transition(ExecutionState::ContractSealed);
-        let _ = fsm.transition(ExecutionState::Prepare);
-        let _ = fsm.transition(ExecutionState::Spawn);
-        let _ = fsm.transition(ExecutionState::Enforce);
-        let _ = fsm.transition(ExecutionState::Observe);
+        self.fsm.transition(ExecutionState::Observe)?;
 
         Ok(SpawnedProductionExecution {
             contract: self.contract,
@@ -861,7 +871,7 @@ impl PreparedProductionExecution {
             scenario: self.scenario.clone(),
             timeout: self.timeout,
             capability: self.capability,
-            fsm,
+            fsm: self.fsm,
         })
     }
 }
