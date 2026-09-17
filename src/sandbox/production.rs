@@ -1860,6 +1860,75 @@ mod production_unit_tests {
         assert_eq!(id.frozen_hash, spec.hash());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_production_preparation_receives_sealed_contract() {
+        struct InspectContract;
+        impl SandboxBackend for InspectContract {
+            fn kind(&self) -> BackendKind {
+                BackendKind::Linux
+            }
+            fn name(&self) -> &'static str {
+                "contract input inspector (never spawns)"
+            }
+            fn supports(&self, _cap: SecurityCapability) -> bool {
+                false
+            }
+            fn prepare(
+                &mut self,
+                input: &CanonicalPolicy,
+                identity: &ExecutionIdentity,
+            ) -> EnforcementReport {
+                let envelope: serde_json::Value = serde_json::from_slice(&input.policy_bytes)
+                    .expect("production preparation must receive a serialized sealed contract");
+                let mut contract: SecurityContract =
+                    serde_json::from_value(envelope["contract"].clone()).expect("contract payload");
+                contract.contract_digest_blake3 = envelope["digest"]
+                    .as_str()
+                    .expect("separate contract digest")
+                    .to_string();
+                assert!(contract.verify_digest());
+                assert_ne!(contract.contract_digest_blake3, identity.frozen_hash);
+                assert_eq!(contract.session_nonce, identity.session_nonce);
+                assert_eq!(contract.filesystem.allow_read, vec![PathBuf::from("/usr")]);
+                assert_eq!(
+                    contract.agent_identity.invoked_binary,
+                    PathBuf::from("/bin/true")
+                );
+                EnforcementReport::build(
+                    BackendKind::Linux,
+                    input,
+                    identity,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    false,
+                )
+            }
+            fn enforcement(&self) -> Option<&EnforcementReport> {
+                None
+            }
+            fn teardown(&mut self) {}
+        }
+        let backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let policy = Policy {
+            allow_read: vec![PathBuf::from("/usr")],
+            ..Policy::default()
+        };
+        let execution = UnpreparedProductionExecution::new(
+            backend,
+            policy,
+            vec!["/bin/true".to_string()],
+            std::env::temp_dir(),
+            HashMap::new(),
+            NetMode::Off,
+            None,
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.to_string(),
+        );
+        // The inspector deliberately refuses preparation; it never yields a spawnable object.
+        assert!(execution.prepare_with_backend(Box::new(InspectContract)).is_err());
+    }
+
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.
     /// No execution object exists on `Err`, so no child can exist either.
     /// Non-Unix: mechanics detection fails closed first (Windows sandbox
