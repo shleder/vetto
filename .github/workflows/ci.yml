@@ -44,6 +44,9 @@ jobs:
           cargo test --all-features --lib audit::verdict::tests::test_inv36
           cargo test --all-features --test phase4_enterprise_runtime
 
+      - name: Production contract authority regressions
+        run: cargo test --all-features --lib sandbox::production::production_unit_tests::phase1_
+
       - name: Tests + coverage
         # Runs the full suite under llvm-cov so one job produces both test
         # results and an lcov artifact. Enforcement tests self-skip when the

@@ -1083,7 +1083,7 @@ impl SpawnedProductionExecution {
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
             let init_rec = VettoAuditRecord::session_init(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 platform_str,
                 std::env::consts::OS,
                 &self.scenario,
@@ -1093,7 +1093,7 @@ impl SpawnedProductionExecution {
 
             let ext_rec = VettoAuditRecord::tree_extinction(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 extinction_platform.label(),
                 surviving_processes as u32,
                 9,
@@ -1137,7 +1137,7 @@ impl SpawnedProductionExecution {
             let root_dag_digest = ext_hash_opt.clone().unwrap_or_else(|| "0".repeat(64));
             let verdict_rec = VettoAuditRecord::session_verdict(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 &verdict_obj,
                 &root_dag_digest,
             );
@@ -2074,6 +2074,62 @@ mod production_unit_tests {
         assert!(execution
             .prepare_with_backend(Box::new(InspectContract))
             .is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_production_audit_binds_actual_contract() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-contract-audit-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prepared = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            functional_test_policy(&tmp),
+            vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare production execution");
+        let digest = prepared.contract().contract_digest_blake3.clone();
+        let frozen_hash = prepared.identity().frozen_hash.clone();
+        assert_ne!(digest, frozen_hash);
+        let audit_dir = std::env::var("VETTO_AUDIT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vetto-audit"));
+        let ledger = audit_dir.join(format!("vetto-audit-{}.jsonl", prepared.nonce()));
+        let spawned = prepared.spawn().expect("spawn benign child");
+        assert_eq!(spawned.contract().contract_digest_blake3, digest);
+        let _result = spawned.wait_collect();
+        let body = std::fs::read_to_string(&ledger).expect("production audit ledger");
+        let records: Vec<VettoAuditRecord> = body
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records[0].record_type,
+            crate::audit::record::RecordType::SessionInit
+        );
+        assert_eq!(
+            records[1].record_type,
+            crate::audit::record::RecordType::TreeExtinction
+        );
+        assert_eq!(
+            records[2].record_type,
+            crate::audit::record::RecordType::SessionVerdict
+        );
+        for record in records {
+            assert_eq!(record.contract_digest, digest);
+            assert_ne!(record.contract_digest, frozen_hash);
+        }
+        assert!(AuditLedger::verify_file(&ledger).unwrap());
+        std::fs::remove_file(ledger).unwrap();
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.
