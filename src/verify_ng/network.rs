@@ -323,7 +323,18 @@ pub fn eval_domain_allowlist(host: &str, allowlist: &[String]) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        crate::cred_broker::is_domain_allowed(host, allowlist)
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        allowlist.iter().any(|pat| {
+            let pat = pat.trim().trim_end_matches('.').to_ascii_lowercase();
+            if pat == "*" {
+                return true;
+            }
+            if let Some(suffix) = pat.strip_prefix("*.") {
+                host.ends_with(&format!(".{suffix}"))
+            } else {
+                host == pat || host.ends_with(&format!(".{pat}"))
+            }
+        })
     }
 }
 
@@ -335,8 +346,25 @@ pub fn eval_strict_allowlist(host: &str, port: u16, rules: &[NetRule]) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (host, port, rules);
-        false
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        rules.iter().any(|rule| {
+            if rule.port != port {
+                return false;
+            }
+            let pat = rule
+                .domain
+                .trim()
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
+            if pat == "*" || pat.is_empty() {
+                return false;
+            }
+            if let Some(suffix) = pat.strip_prefix("*.") {
+                host.ends_with(&format!(".{suffix}"))
+            } else {
+                host == pat || host.ends_with(&format!(".{pat}"))
+            }
+        })
     }
 }
 
@@ -391,8 +419,77 @@ pub fn eval_sni(buf: &[u8]) -> Result<Option<String>, ()> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = buf;
-        Err(())
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        if buf[0] != 0x16 {
+            return Err(());
+        }
+        if buf.len() < 5 {
+            return Ok(None);
+        }
+        let record_len = u16::from_be_bytes([buf[3], buf[4]]) as usize;
+        if buf.len() < 5 + record_len {
+            return Ok(None);
+        }
+        if buf[5] != 0x01 {
+            return Err(());
+        }
+        let handshake_len = (u32::from_be_bytes([0, buf[6], buf[7], buf[8]])) as usize;
+        if record_len < 4 + handshake_len {
+            return Err(());
+        }
+        let mut pos = 9 + 2 + 32;
+        if pos >= buf.len() {
+            return Err(());
+        }
+        let session_id_len = buf[pos] as usize;
+        pos += 1 + session_id_len;
+        if pos + 2 > buf.len() {
+            return Err(());
+        }
+        let cipher_suites_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+        pos += 2 + cipher_suites_len;
+        if pos >= buf.len() {
+            return Err(());
+        }
+        let compression_methods_len = buf[pos] as usize;
+        pos += 1 + compression_methods_len;
+        if pos + 2 > buf.len() {
+            return Ok(None);
+        }
+        let extensions_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+        pos += 2;
+        let extensions_end = pos + extensions_len;
+        if extensions_end > buf.len() {
+            return Err(());
+        }
+        while pos + 4 <= extensions_end {
+            let ext_type = u16::from_be_bytes([buf[pos], buf[pos + 1]]);
+            let ext_len = u16::from_be_bytes([buf[pos + 2], buf[pos + 3]]) as usize;
+            pos += 4;
+            if pos + ext_len > extensions_end {
+                return Err(());
+            }
+            if ext_type == 0 {
+                if ext_len < 5 {
+                    return Err(());
+                }
+                let name_type = buf[pos + 2];
+                if name_type != 0 {
+                    return Err(());
+                }
+                let name_len = u16::from_be_bytes([buf[pos + 3], buf[pos + 4]]) as usize;
+                if pos + 5 + name_len > extensions_end {
+                    return Err(());
+                }
+                let host_bytes = &buf[pos + 5..pos + 5 + name_len];
+                let host_str = std::str::from_utf8(host_bytes).map_err(|_| ())?;
+                return Ok(Some(host_str.to_string()));
+            }
+            pos += ext_len;
+        }
+        Ok(None)
     }
 }
 
@@ -404,7 +501,56 @@ pub fn eval_is_doh_or_dot(host: &str, port: u16, ip: Option<IpAddr>) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (host, port, ip);
+        if port == 853 {
+            return true;
+        }
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        const DOH_DOMAINS: &[&str] = &[
+            "cloudflare-dns.com",
+            "one.one.one.one",
+            "mozilla.cloudflare-dns.com",
+            "dns.cloudflare.com",
+            "dns.google",
+            "dns.google.com",
+            "dns.quad9.net",
+            "doh.opendns.com",
+            "dns.adguard-dns.com",
+            "unfiltered.adguard-dns.com",
+            "freedns.controld.com",
+            "dns.nextdns.io",
+        ];
+        if DOH_DOMAINS
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+        {
+            return true;
+        }
+        const DOH_IPS: &[&str] = &[
+            "1.1.1.1",
+            "1.0.0.1",
+            "8.8.8.8",
+            "8.8.4.4",
+            "9.9.9.9",
+            "149.112.112.112",
+            "208.67.222.222",
+            "208.67.220.220",
+            "94.140.14.14",
+            "94.140.15.15",
+            "76.76.2.0",
+            "76.76.10.0",
+        ];
+        if let Ok(ip_addr) = host.parse::<IpAddr>() {
+            let ip_s = ip_addr.to_string();
+            if DOH_IPS.iter().any(|&denied| denied == ip_s) {
+                return true;
+            }
+        }
+        if let Some(ip) = ip {
+            let ip_s = ip.to_string();
+            if DOH_IPS.iter().any(|&denied| denied == ip_s) {
+                return true;
+            }
+        }
         false
     }
 }

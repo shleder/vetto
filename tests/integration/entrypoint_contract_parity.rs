@@ -35,7 +35,7 @@ use vetto::policy::Policy;
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
 use vetto::policy_ir::contract::SecurityContract;
 use vetto::sandbox::production::{
-    PreparedProductionExecution, UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
+    UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
 };
 use vetto::sandbox::{Backend, StdioMode};
 
