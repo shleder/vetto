@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 
 use crate::config::NetMode;
+#[cfg(unix)]
+use crate::policy;
 use crate::policy::Policy;
 use crate::sandbox;
 
