@@ -609,7 +609,7 @@ fn test_secret_isolation_symlink_traversal_spelling() {
     policy.deny_read.push(ssh_key.clone());
     policy.deny_resolved.push(vetto::policy::DenyEntry {
         path: ssh_key.clone(),
-        pattern: None,
+        is_dir: false,
     });
 
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-secret-01");
@@ -680,7 +680,7 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
     policy.deny_read.push(masked_file.clone());
     policy.deny_resolved.push(vetto::policy::DenyEntry {
         path: masked_file.clone(),
-        pattern: None,
+        is_dir: false,
     });
 
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-precopy-01");

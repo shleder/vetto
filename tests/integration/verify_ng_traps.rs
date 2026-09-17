@@ -795,9 +795,7 @@ fn trap_evidence_model_integrity_verification_rejects_fraudulent_host_facts() {
 /// Master Task Section 12: Binding to contract digest, execution identity, and nonce.
 #[test]
 fn trap_evidence_model_provenance_execution_identity_and_contract_digest_binding() {
-    use evidence::{
-        attest_control, derive_expected_response, Evidence, ExecutionIdentity, HOST_CONTROL_CHANNEL,
-    };
+    use evidence::{attest_control, derive_expected_response, Evidence, ExecutionIdentity};
 
     let base_id =
         ExecutionIdentity::new("SCEN-BINDING", "nonce-valid", "reg-hash-1", "frozen-hash-1")

@@ -72,7 +72,7 @@ fn compile_and_seal_test_contract(
     workspace: &Path,
     policy: &Policy,
     argv: &[&str],
-    scenario: &str,
+    _scenario: &str,
 ) -> SecurityContract {
     let argv_strings: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     let env_vars = BTreeMap::new();
@@ -89,12 +89,7 @@ fn compile_and_seal_test_contract(
         observe_seccomp: false,
         debug_ports: None,
     };
-    let mut contract =
-        PolicyCompiler::compile_effective(input).expect("compile effective contract");
-    contract.metadata.scenario_id = scenario.to_string();
-    // Re-seal after updating scenario_id
-    contract.seal();
-    contract
+    PolicyCompiler::compile_effective(input).expect("compile effective contract")
 }
 
 #[test]
@@ -243,7 +238,7 @@ fn test_multi_agent_entrypoint_uses_production_boundary() {
         "multi-agent prepared contract digest must be valid"
     );
     assert_eq!(
-        prepared.contract().metadata.scenario_id,
+        prepared.identity().scenario_id,
         "multi:worker-parity",
         "scenario_id must match multi-agent specification"
     );

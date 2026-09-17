@@ -26,7 +26,8 @@ use vetto::policy_ir::contract::SecurityContract;
 use vetto::verify_ng::environment::{
     verify_execution_environment, EnvironmentViolation, HarnessEnvContext,
 };
-use vetto::verify_ng::model::{Category, ClaimStrength, EvidenceTier, Verdict};
+use vetto::verify_ng::evidence::EvidenceTier;
+use vetto::verify_ng::model::{Category, ClaimStrength, Verdict};
 use vetto::verify_ng::registry::{registry, Scenario, Severity};
 use vetto::verify_ng::sandbox_backend::{EnforcementState, LinuxBackend, SecurityCapability};
 use vetto::verify_ng::{engine, runner};
@@ -209,14 +210,14 @@ fn test_env_arbitrary_host_var_not_leaked() {
     let has_leak_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "env-violation"
-            && f.detail.contains(arbitrary_key)
+            && f.value.contains(arbitrary_key)
     });
     assert!(!has_leak_fact, "arbitrary host variable must not leak");
 
     let has_clean_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "env-isolated"
-            && f.detail.contains("clean:contract-conforming")
+            && f.value.contains("clean:contract-conforming")
     });
     assert!(has_clean_fact, "clean env fact must be stamped");
     assert_eq!(out.result.verdict, Verdict::Pass);
@@ -284,7 +285,7 @@ fn test_env_sensitive_looking_variables_not_leaked() {
             .evidence
             .facts
             .iter()
-            .any(|f| f.name == "env-violation" && f.detail.contains(k));
+            .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "sensitive var '{k}' must not leak");
         std::env::remove_var(k);
     }
@@ -342,7 +343,7 @@ fn test_env_path_manipulation_sanitized() {
     let hygiene_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "vector:env-hygiene"
-            && f.detail.contains("clean:path-and-internal")
+            && f.value.contains("clean:path-and-internal")
     });
     assert!(hygiene_fact, "path hygiene vector must be attested");
 
@@ -406,7 +407,7 @@ fn test_env_inherited_environment_scrubbed_clean_room() {
             .evidence
             .facts
             .iter()
-            .any(|f| f.name == "env-violation" && f.detail.contains(k));
+            .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "unallowed host variable '{k}' must not leak");
         std::env::remove_var(k);
     }
@@ -468,7 +469,7 @@ fn test_env_internal_vetto_variables_not_leaked() {
             .evidence
             .facts
             .iter()
-            .any(|f| f.name == "env-violation" && f.detail.contains(k));
+            .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "internal variable '{k}' must not leak");
         std::env::remove_var(k);
     }
@@ -521,7 +522,7 @@ fn test_env_explicitly_denied_variables_blocked() {
         .evidence
         .facts
         .iter()
-        .any(|f| f.name == "env-violation" && f.detail.contains(denied_var));
+        .any(|f| f.name == "env-violation" && f.value.contains(denied_var));
     assert!(!leaked, "explicitly denied variable must be stripped");
 
     std::env::remove_var(denied_var);
@@ -632,7 +633,7 @@ fn test_env_verifier_distinguishes_allowed_by_contract_from_host_leaked() {
     let contract_var_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "env-item"
-            && f.detail == "allowed_by_contract:CONTRACT_AUTHORIZED_VAR"
+            && f.value == "allowed_by_contract:CONTRACT_AUTHORIZED_VAR"
     });
     assert!(
         contract_var_fact,
@@ -642,7 +643,7 @@ fn test_env_verifier_distinguishes_allowed_by_contract_from_host_leaked() {
     let path_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "env-item"
-            && f.detail == "allowed_by_contract:PATH"
+            && f.value == "allowed_by_contract:PATH"
     });
     assert!(path_fact, "PATH must be stamped allowed_by_contract");
 
@@ -761,7 +762,7 @@ fn test_env_leak_001_pass_with_sealed_contract() {
     let scrub_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "vector:env-scrub"
-            && f.detail == "clean:scrubbed"
+            && f.value == "clean:scrubbed"
     });
     assert!(scrub_fact, "env scrub vector must be stamped");
 
@@ -819,7 +820,7 @@ fn test_env_arbitrary_leak_detection_yields_fail() {
     let has_leak_fact = out.evidence.facts.iter().any(|f| {
         f.tier == EvidenceTier::HostFact
             && f.name == "env-item"
-            && f.detail == format!("leaked_from_host:{leaked_key}")
+            && f.value == format!("leaked_from_host:{leaked_key}")
     });
     assert!(has_leak_fact, "verifier must record leaked_from_host fact");
 

@@ -1141,7 +1141,7 @@ fn test_unsupported_tier_relay_mode_fails_closed() {
         "nonce-unsupported-relay-01",
     );
 
-    let (out, log) = run_linux_contract(
+    let (out, _log) = run_linux_contract(
         &scen,
         &contract,
         "exit 0\n",

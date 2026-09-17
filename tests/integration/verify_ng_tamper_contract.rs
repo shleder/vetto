@@ -27,13 +27,13 @@ use vetto::policy::{DenyEntry, Policy, Tier};
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
 use vetto::policy_ir::contract::{NetworkMode, SecurityContract};
 use vetto::sandbox::production::{
-    PreparedProductionExecution, UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
+    UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
 };
 use vetto::sandbox::{Backend, StdioMode};
-use vetto::verify_ng::evidence::{Evidence, EvidenceTier, ExecutionIdentity};
+use vetto::verify_ng::evidence::ExecutionIdentity;
 use vetto::verify_ng::model::{Category, ClaimStrength, Verdict};
 use vetto::verify_ng::oracle::{self, OracleInput};
-use vetto::verify_ng::registry::{registry, Scenario, Severity};
+use vetto::verify_ng::registry::{Scenario, Severity};
 use vetto::verify_ng::sandbox_backend::LinuxBackend;
 use vetto::verify_ng::{engine, runner};
 

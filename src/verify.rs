@@ -32,6 +32,7 @@ const STATUS_SKIPPED: &str = "skipped";
 
 /// One battery check. `name` is a stable machine-readable identifier; the
 /// variable part of the finding (path, byte counts) lives in `detail`.
+#[derive(Debug, Clone)]
 pub struct CheckResult {
     pub name: &'static str,
     pub status: &'static str,
@@ -40,6 +41,7 @@ pub struct CheckResult {
 
 /// Battery outcome for one resolved policy. `tier`/`net` mirror the session
 /// context the battery ran under.
+#[derive(Debug, Clone)]
 pub struct VerifyReport {
     pub tier: String,
     pub net: String,
