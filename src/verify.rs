@@ -133,16 +133,15 @@ pub fn run_cli(
             return Ok(());
         }
     };
-    let tier = backend.tier().unwrap_or(policy::Tier::Full);
-    let project = std::env::current_dir().context("getcwd")?;
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .context("neither $HOME nor %USERPROFILE% is set")?;
-    let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
-
     #[cfg(unix)]
     let report = {
+        let tier = backend.tier().unwrap_or(policy::Tier::Full);
+        let project = std::env::current_dir().context("getcwd")?;
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .context("neither $HOME nor %USERPROFILE% is set")?;
+        let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
         let unprepared = sandbox::production::UnpreparedProductionExecution::new(
             backend,
             pol,
@@ -158,7 +157,10 @@ pub fn run_cli(
         preflight_contract(prepared.contract())?
     };
     #[cfg(not(unix))]
-    let report = unavailable(net, "n/a", "verification battery is unix-only".to_string());
+    let report = {
+        let _ = (profile, policy_path, &backend);
+        unavailable(net, "n/a", "verification battery is unix-only".to_string())
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report.to_json())?);

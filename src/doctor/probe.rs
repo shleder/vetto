@@ -110,7 +110,7 @@ pub fn run_probe_script(
         "probe".to_string(),
     );
     let prepared = unprepared.prepare()?;
-    let mut spawned = prepared.spawn()?;
+    let spawned = prepared.spawn()?;
     drop(out_w);
     drop(err_w);
 

@@ -89,7 +89,7 @@ use std::time::{Duration, Instant};
 
 use super::collector::collect_child_stdio;
 use super::engine;
-use super::evidence::{Evidence, ExecutionIdentity};
+use super::evidence::{Evidence, EvidenceTier, ExecutionIdentity};
 use super::fixture::{hash_bytes, Fixture};
 use super::frozen;
 use super::host_evidence::{ControlChannel, CONTROL_READ_BUDGET};

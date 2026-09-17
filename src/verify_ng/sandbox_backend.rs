@@ -809,6 +809,7 @@ impl LinuxBackend {
     }
 
     fn restrict_seccomp_records(&mut self) {
+        let net_not_off = self.plan.as_ref().map_or(false, |p| !p.net_deny);
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if matches!(
@@ -819,9 +820,7 @@ impl LinuxBackend {
                     record.state = EnforcementState::Unsupported;
                     record.failure = None;
                 }
-                if record.capability == SecurityCapability::NetworkIsolation
-                    && report.policy.net_mode != "off"
-                {
+                if record.capability == SecurityCapability::NetworkIsolation && net_not_off {
                     record.state = EnforcementState::Unsupported;
                     record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }
@@ -830,15 +829,14 @@ impl LinuxBackend {
     }
 
     fn restrict_fsonly_records(&mut self) {
+        let net_not_off = self.plan.as_ref().map_or(false, |p| !p.net_deny);
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if record.capability == SecurityCapability::ProcessTreeContainment {
                     record.state = EnforcementState::Unsupported;
                     record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }
-                if record.capability == SecurityCapability::NetworkIsolation
-                    && report.policy.net_mode != "off"
-                {
+                if record.capability == SecurityCapability::NetworkIsolation && net_not_off {
                     record.state = EnforcementState::Unsupported;
                     record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }

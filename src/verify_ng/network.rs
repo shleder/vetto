@@ -27,10 +27,12 @@
 //! Grounded strictly in independent runtime evidence (HOST_FACT, kernel errno, socket failure).
 //! No separate network security model is created: existing relay/broker/security contract semantics are consumed.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 
 use crate::config::NetRule;
-use crate::policy_ir::contract::{NetworkMode, SecurityContract};
+#[cfg(test)]
+use crate::policy_ir::contract::NetworkMode;
+use crate::policy_ir::contract::SecurityContract;
 use crate::verify_ng::model::Category;
 
 /// Violation categories defined by Master Task Section 7.
@@ -555,11 +557,11 @@ mod tests {
         assert!(report
             .host_facts
             .iter()
-            .any(|(k, v)| k == "vector:net-off-families"));
+            .any(|(k, _)| k == "vector:net-off-families"));
         assert!(report
             .host_facts
             .iter()
-            .any(|(k, v)| k == "vector:net-off-tcp"));
+            .any(|(k, _)| k == "vector:net-off-tcp"));
     }
 
     #[test]
