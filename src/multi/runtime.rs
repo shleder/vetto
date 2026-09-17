@@ -89,9 +89,6 @@ pub struct MultiSession {
 #[cfg(unix)]
 struct PendingSession {
     spec: AgentSpec,
-    net: NetMode,
-    tier: policy::Tier,
-    policy: policy::Policy,
     bus: EventBus,
     execution: crate::sandbox::production::SpawnedProductionExecution,
     stdout_r: OwnedFd,
@@ -189,7 +186,6 @@ impl MultiRuntime {
                 backend: Some(backend),
                 policy,
                 command,
-                tier,
                 allocated_ports,
             });
         }
@@ -316,7 +312,6 @@ struct Prepared {
     backend: Option<Backend>,
     policy: policy::Policy,
     command: Vec<String>,
-    tier: policy::Tier,
     allocated_ports: Vec<u16>,
 }
 
@@ -328,7 +323,6 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
         backend,
         policy,
         command,
-        tier,
         allocated_ports,
     } = prepared;
     let backend = backend.ok_or_else(|| anyhow::anyhow!("sandbox backend was consumed"))?;
@@ -344,11 +338,11 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
     let extra = relay_env(&net);
     let unprepared = crate::sandbox::production::UnpreparedProductionExecution::new(
         backend,
-        policy.clone(),
+        policy,
         command,
         project.to_path_buf(),
         extra,
-        net.clone(),
+        net,
         // Multi-agent sessions are interactive (dashboard/bridge driven):
         // no headless deadline is frozen; the wait thread below polls to
         // natural exit through the proven killer path.
@@ -358,7 +352,8 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
             stderr_w: stderr_w.as_raw_fd(),
         },
         format!("multi:{}", spec.name),
-    );
+    )
+    .with_debug_ports(spec.debug_ports.clone().unwrap_or_default());
     let prepared_exec = unprepared
         .prepare()
         .with_context(|| format!("prepare sandbox for agent '{}'", spec.name))?;
@@ -371,9 +366,6 @@ fn spawn_one(prepared: Prepared, project: &Path) -> Result<PendingSession> {
 
     Ok(PendingSession {
         spec,
-        net,
-        tier,
-        policy,
         bus: EventBus::new(),
         execution,
         stdout_r,
@@ -396,15 +388,20 @@ fn activate_pending(
     #[allow(unused_mut)]
     let PendingSession {
         spec,
-        net,
-        tier,
-        policy,
         bus,
         mut execution,
         stdout_r,
         stderr_r,
         allocated_ports,
     } = pending;
+    let contract = execution.contract().clone();
+    let production = contract
+        .production
+        .as_ref()
+        .expect("validated production contract");
+    let policy = &production.installation_policy;
+    let net = &production.net;
+    let tier = production.tier;
     // Per-run identity owned by the boundary spawn: nonce binds the frozen
     // spec, the backend report and the nonce-targeted tree sweep below.
     let prod_nonce = execution.nonce().to_string();
@@ -412,7 +409,7 @@ fn activate_pending(
     let root_pid = execution.handle.root_pid;
 
     // Register agent in the isolation barrier
-    let is_full = tier == policy::Tier::Full;
+    let is_full = tier == Some(policy::Tier::Full);
     isolation_barrier.register_agent(
         &spec.name,
         root_pid,
@@ -426,7 +423,7 @@ fn activate_pending(
     bus.publish(Event::SessionStarted {
         ts: crate::events::types::now(),
         pid: root_pid,
-        tier: tier.label().to_string(),
+        tier: tier.map(|tier| tier.label()).unwrap_or("none").to_string(),
         net_mode: net.label(),
         profile: policy.name.clone(),
     });
@@ -434,7 +431,7 @@ fn activate_pending(
     #[cfg(target_os = "linux")]
     {
         if let Some(fd) = execution.take_broker_ctrl_fd() {
-            let broker_policy = match &net {
+            let broker_policy = match net {
                 NetMode::Allowlist(domains) => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(domains.clone())
                 }
@@ -446,7 +443,7 @@ fn activate_pending(
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new())
                 }
             };
-            let debug_config = spec
+            let debug_config = production
                 .debug_ports
                 .as_ref()
                 .map(|p| crate::sandbox::linux::debug_guard::DebugPortConfig {
@@ -455,7 +452,7 @@ fn activate_pending(
                     isolate_debugpy: p.isolate_debugpy,
                     allowed_ports: p.allowed_ports.clone(),
                 })
-                .unwrap_or_default();
+                .expect("multi preparation binds resolved debug port configuration");
             let debug_guard = crate::sandbox::linux::debug_guard::DebugPortGuard::new(debug_config);
             let broker_config = crate::sandbox::linux::net_relay::BrokerConfig {
                 policy: broker_policy,

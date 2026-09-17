@@ -41,6 +41,7 @@ pub struct EffectivePolicyInput<'a> {
     pub tier: Option<crate::policy::Tier>,
     pub backend: String,
     pub observe_seccomp: bool,
+    pub debug_ports: Option<&'a crate::multi::DebugPortConfig>,
 }
 
 impl PolicyCompiler {
@@ -83,6 +84,7 @@ impl PolicyCompiler {
                 tier: input.tier,
                 backend: input.backend,
                 observe_seccomp: input.observe_seccomp,
+                debug_ports: input.debug_ports.cloned(),
             }),
             crypto: Default::default(),
             contract_version: 1,

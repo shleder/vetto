@@ -398,6 +398,7 @@ fn freeze_production_contract(
             tier: production.tier,
             backend: production.backend.clone(),
             observe_seccomp: production.observe_seccomp,
+            debug_ports: production.debug_ports.as_ref(),
         },
     )?;
     anyhow::ensure!(
@@ -430,6 +431,26 @@ fn freeze_production_contract(
     Ok((canonical, identity))
 }
 
+fn prepare_production_contract(
+    scenario: &str,
+    contract: &SecurityContract,
+    tier: &str,
+    backend: &str,
+    capability: &mut dyn SandboxBackend,
+) -> anyhow::Result<(CanonicalPolicy, ExecutionIdentity)> {
+    let (canonical, identity) = freeze_production_contract(scenario, contract, tier, backend)?;
+    capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
+    let prepared_ok = capability
+        .enforcement()
+        .map(|r| r.preparation_ok && r.binds_identity(&identity))
+        .unwrap_or(false);
+    anyhow::ensure!(
+        prepared_ok,
+        "production backend preparation failed (fail-closed, no agent execution)"
+    );
+    Ok((canonical, identity))
+}
+
 /// Unprepared production execution: OWNED frozen inputs, NO spawn method.
 ///
 /// Construction snapshots everything the child will install
@@ -448,6 +469,7 @@ pub struct UnpreparedProductionExecution {
     timeout: Option<Duration>,
     stdio: StdioMode,
     scenario: String,
+    debug_ports: Option<crate::multi::DebugPortConfig>,
 }
 
 impl UnpreparedProductionExecution {
@@ -480,7 +502,14 @@ impl UnpreparedProductionExecution {
             timeout,
             stdio,
             scenario,
+            debug_ports: None,
         }
+    }
+
+    /// Resolve multi-session relay settings before contract compilation.
+    pub fn with_debug_ports(mut self, config: crate::multi::DebugPortConfig) -> Self {
+        self.debug_ports = Some(config);
+        self
     }
 
     /// Detected execution tier for this production run.
@@ -566,28 +595,16 @@ impl UnpreparedProductionExecution {
                 tier,
                 backend: self.mechanics.describe(),
                 observe_seccomp: self.mechanics.observes_seccomp(),
+                debug_ports: self.debug_ports.as_ref(),
             },
         )?;
-        anyhow::ensure!(
-            contract.verify_digest(),
-            "invalid production contract digest"
-        );
-        let (canonical, identity) = freeze_production_contract(
+        let (canonical, identity) = prepare_production_contract(
             &self.scenario,
             &contract,
             &tier_label,
             &self.mechanics.describe(),
+            capability,
         )?;
-        capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
-        let prepared_ok = capability
-            .enforcement()
-            .map(|r| r.preparation_ok && r.binds_identity(&identity))
-            .unwrap_or(false);
-        if !prepared_ok {
-            anyhow::bail!(
-                "production backend preparation failed (fail-closed, no agent execution)"
-            );
-        }
         Ok(PreparedProductionExecution {
             mechanics: self.mechanics,
             contract,
@@ -2078,6 +2095,122 @@ mod production_unit_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn phase1_invalid_contract_never_prepares_capabilities() {
+        struct CountPreparation(usize);
+        impl SandboxBackend for CountPreparation {
+            fn kind(&self) -> BackendKind {
+                BackendKind::Linux
+            }
+            fn name(&self) -> &'static str {
+                "preparation counter (never spawns)"
+            }
+            fn supports(&self, _cap: SecurityCapability) -> bool {
+                false
+            }
+            fn prepare(
+                &mut self,
+                input: &CanonicalPolicy,
+                identity: &ExecutionIdentity,
+            ) -> EnforcementReport {
+                self.0 += 1;
+                EnforcementReport::build(
+                    BackendKind::Linux,
+                    input,
+                    identity,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    false,
+                )
+            }
+            fn enforcement(&self) -> Option<&EnforcementReport> {
+                None
+            }
+            fn teardown(&mut self) {}
+        }
+        let policy = test_policy();
+        let original = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+            crate::policy_ir::compiler::EffectivePolicyInput {
+                policy: &policy,
+                argv: &["/bin/true".into()],
+                cwd: std::path::Path::new("/tmp"),
+                env: &BTreeMap::new(),
+                net: &NetMode::Off,
+                nonce: "preparation-guard-test",
+                timeout: None,
+                tier: Some(Tier::Full),
+                backend: "test-mechanics".into(),
+                observe_seccomp: false,
+                debug_ports: None,
+            },
+        )
+        .unwrap();
+        let mut capability = CountPreparation(0);
+        for case in ["digest", "projection", "missing", "backend", "debug-ports"] {
+            let mut contract = original.clone();
+            let expected_error = match case {
+                "digest" => {
+                    contract
+                        .environment
+                        .explicit_vars
+                        .insert("CHANGED".into(), "1".into());
+                    "invalid production contract digest"
+                }
+                "projection" => {
+                    contract.resources.max_memory_bytes ^= 1;
+                    contract = contract.unsealed().seal().unwrap();
+                    "inconsistent production contract projection"
+                }
+                "missing" => {
+                    contract.production = None;
+                    contract = contract.unsealed().seal().unwrap();
+                    "missing production installation contract"
+                }
+                "backend" => {
+                    contract.production.as_mut().unwrap().backend = "other-mechanics".into();
+                    contract = contract.unsealed().seal().unwrap();
+                    "production contract/backend mismatch"
+                }
+                "debug-ports" => {
+                    contract.production.as_mut().unwrap().debug_ports =
+                        Some(crate::multi::DebugPortConfig::default());
+                    "invalid production contract digest"
+                }
+                _ => unreachable!(),
+            };
+            let error = prepare_production_contract(
+                PROD_SCENARIO_ID,
+                &contract,
+                Tier::Full.label(),
+                "test-mechanics",
+                &mut capability,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(expected_error),
+                "{case}: {error:#}"
+            );
+            assert_eq!(
+                capability.0, 0,
+                "{case}: invalid contract reached capability preparation"
+            );
+        }
+        // The valid control must reach the same backend, which deliberately refuses preparation.
+        let error = prepare_production_contract(
+            PROD_SCENARIO_ID,
+            &original,
+            Tier::Full.label(),
+            "test-mechanics",
+            &mut capability,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("production backend preparation failed"));
+        assert_eq!(capability.0, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn phase1_contract_tamper_rejected_before_spawn() {
         let tmp =
             std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
@@ -2174,6 +2307,11 @@ mod production_unit_tests {
     fn phase1_caller_policy_cannot_change_canonical_backend_input() {
         let tmp = std::env::temp_dir();
         let mut policy = functional_test_policy(&tmp);
+        let mut debug_ports = crate::multi::DebugPortConfig {
+            allowed_ports: vec![9229, 5678],
+            isolate_node_inspect: false,
+            ..Default::default()
+        };
         let prepared = UnpreparedProductionExecution::new(
             Backend::detect(NetMode::Off, false).expect("detect mechanics"),
             policy.clone(),
@@ -2185,9 +2323,26 @@ mod production_unit_tests {
             StdioMode::Inherit,
             PROD_SCENARIO_ID.into(),
         )
+        .with_debug_ports(debug_ports.clone())
         .prepare()
         .expect("prepare production execution");
         let original = prepared.contract().clone();
+        assert_eq!(
+            original.production.as_ref().unwrap().debug_ports.as_ref(),
+            Some(&debug_ports)
+        );
+        debug_ports.allowed_ports.clear();
+        debug_ports.isolate_node_inspect = true;
+        assert_ne!(
+            prepared
+                .contract()
+                .production
+                .as_ref()
+                .unwrap()
+                .debug_ports
+                .as_ref(),
+            Some(&debug_ports)
+        );
         policy.allow_read.clear();
         policy.allow_write.clear();
         policy.deny_network = !policy.deny_network;

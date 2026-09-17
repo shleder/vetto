@@ -982,7 +982,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     };
     let unprepared = sandbox::production::UnpreparedProductionExecution::new(
         *backend,
-        pol.clone(),
+        pol,
         agent_cmd.clone(),
         project.clone(),
         env_extra,
@@ -992,6 +992,13 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         sandbox::production::PROD_SCENARIO_ID.to_string(),
     );
     let prepared = unprepared.prepare()?;
+    // Supervisor installation values come from the same verified contract as spawn.
+    let contract = prepared.contract().clone();
+    let production = contract
+        .production
+        .as_ref()
+        .expect("validated production contract");
+    let pol = production.installation_policy.clone();
 
     let started = std::time::Instant::now();
     // `take_*`/`&mut handle` are `cfg`-gated (Linux/unix): `mut` is dead on
@@ -1112,7 +1119,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
                 host_secrets.insert(key.clone(), val);
             }
         }
-        let allowlist_domains = match &cfg.net {
+        let allowlist_domains = match &production.net {
             vetto::config::NetMode::Allowlist(d) => d.clone(),
             vetto::config::NetMode::Strict(rules) => {
                 rules.iter().map(|r| r.domain.clone()).collect()
@@ -1172,7 +1179,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         if let Some(fd) = spawned.take_broker_ctrl_fd() {
-            let broker_policy = match &cfg.net {
+            let broker_policy = match &production.net {
                 NetMode::Allowlist(d) => {
                     sandbox::linux::net_relay::BrokerPolicy::Allowlist(d.clone())
                 }

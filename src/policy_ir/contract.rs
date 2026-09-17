@@ -147,6 +147,7 @@ pub struct ProductionContract {
     pub tier: Option<crate::policy::Tier>,
     pub backend: String,
     pub observe_seccomp: bool,
+    pub debug_ports: Option<crate::multi::DebugPortConfig>,
 }
 
 /// Cryptographic signing configuration and state for the security contract (Phase 4 / INV-36).
