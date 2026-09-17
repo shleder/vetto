@@ -305,10 +305,11 @@ mod contract_tests {
 
     #[test]
     fn signing_requirements_are_sealed_but_signature_is_detached() {
-        let sealed = sample_unsealed()
-            .seal()
-            .unwrap()
-            .with_minisign(true, None, Some("trusted-key".into()));
+        let sealed =
+            sample_unsealed()
+                .seal()
+                .unwrap()
+                .with_minisign(true, None, Some("trusted-key".into()));
         assert!(sealed.verify_digest());
         let mut detached = sealed.clone();
         detached.crypto.signature = Some("detached-signature".into());

@@ -476,8 +476,8 @@ fn test_contract_blake3_sealing_and_digest_verification() {
 
 #[test]
 fn test_crypto_tamper_rejected_at_supervisor_initialization() {
-    let contract = create_sealed_contract("claude")
-        .with_minisign(true, None, Some("trusted-key".to_string()));
+    let contract =
+        create_sealed_contract("claude").with_minisign(true, None, Some("trusted-key".to_string()));
     assert!(SupervisorEngine::new(contract.clone()).is_ok());
 
     let mut disabled = contract.clone();
