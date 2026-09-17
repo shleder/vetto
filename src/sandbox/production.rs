@@ -1926,7 +1926,11 @@ mod production_unit_tests {
             PROD_SCENARIO_ID.to_string(),
         );
         // The inspector deliberately refuses preparation; it never yields a spawnable object.
-        assert!(execution.prepare_with_backend(Box::new(InspectContract)).is_err());
+        assert!(
+            execution
+                .prepare_with_backend(Box::new(InspectContract))
+                .is_err()
+        );
     }
 
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.
