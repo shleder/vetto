@@ -37,6 +37,100 @@ pub enum EvidenceTier {
     SelfReport,
 }
 
+/// Trust level hierarchy alias per verify-ng contract:
+/// HOST_FACT > CONSTRAINED > SELF_REPORT
+pub type TrustLevel = EvidenceTier;
+
+impl PartialOrd for EvidenceTier {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EvidenceTier {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority().cmp(&other.priority())
+    }
+}
+
+impl EvidenceTier {
+    #[inline]
+    pub fn priority(&self) -> u8 {
+        match self {
+            EvidenceTier::HostFact => 3,
+            EvidenceTier::Constrained => 2,
+            EvidenceTier::SelfReport => 1,
+        }
+    }
+
+    #[inline]
+    pub fn can_support_pass(&self) -> bool {
+        matches!(self, EvidenceTier::HostFact)
+    }
+
+    #[inline]
+    pub fn is_proof(&self) -> bool {
+        matches!(self, EvidenceTier::HostFact | EvidenceTier::Constrained)
+    }
+}
+
+/// Source classification for evidence items.
+///
+/// Master Task Section 12:
+/// НЕ доказательство: agent self-report; stdout; произвольный JSON от sandboxed
+/// process; snapshot без provenance; observation без связи с execution identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EvidenceSource {
+    /// Trusted host observation after wait status, stat, or canary check.
+    HostObservation,
+    /// Narrow nonce-bound constrained channel from inside sandbox.
+    ConstrainedChannel,
+    /// Agent self-report marker. Never proof.
+    AgentSelfReport,
+    /// Process stdout. Never proof.
+    ProcessStdout,
+    /// Process stderr. Never proof.
+    ProcessStderr,
+    /// Arbitrary JSON from sandboxed process. Never proof.
+    SandboxedArbitraryJson,
+    /// Filesystem or memory snapshot lacking provenance. Never proof.
+    UnprovenancedSnapshot,
+    /// Observation lacking execution identity binding. Never proof.
+    UnboundObservation,
+}
+
+impl EvidenceSource {
+    pub fn tier(&self) -> EvidenceTier {
+        match self {
+            EvidenceSource::HostObservation => EvidenceTier::HostFact,
+            EvidenceSource::ConstrainedChannel => EvidenceTier::Constrained,
+            EvidenceSource::AgentSelfReport
+            | EvidenceSource::ProcessStdout
+            | EvidenceSource::ProcessStderr
+            | EvidenceSource::SandboxedArbitraryJson
+            | EvidenceSource::UnprovenancedSnapshot
+            | EvidenceSource::UnboundObservation => EvidenceTier::SelfReport,
+        }
+    }
+
+    /// Master Task Section 12: can this source ever count as proof?
+    pub fn counts_as_proof(&self) -> bool {
+        match self {
+            EvidenceSource::HostObservation | EvidenceSource::ConstrainedChannel => true,
+            EvidenceSource::AgentSelfReport
+            | EvidenceSource::ProcessStdout
+            | EvidenceSource::ProcessStderr
+            | EvidenceSource::SandboxedArbitraryJson
+            | EvidenceSource::UnprovenancedSnapshot
+            | EvidenceSource::UnboundObservation => false,
+        }
+    }
+
+    pub fn can_support_pass(&self) -> bool {
+        matches!(self, EvidenceSource::HostObservation)
+    }
+}
+
 /// Host-owned positive-control channel label. Only facts stamped over this
 /// channel (by [`Evidence::host_control_fact`], which requires a
 /// [`VerifiedControl`]) can satisfy the oracle's identity gate.
@@ -54,6 +148,8 @@ pub struct ExecutionIdentity {
     pub session_nonce: String,
     pub registry_hash: String,
     pub frozen_hash: String,
+    #[serde(default)]
+    pub contract_digest: Option<String>,
 }
 
 impl ExecutionIdentity {
@@ -68,7 +164,20 @@ impl ExecutionIdentity {
             session_nonce: session_nonce.to_string(),
             registry_hash: registry_hash.to_string(),
             frozen_hash: frozen_hash.to_string(),
+            contract_digest: None,
         }
+    }
+
+    pub fn with_contract_digest(mut self, contract_digest: &str) -> Self {
+        self.contract_digest = Some(contract_digest.to_string());
+        self
+    }
+
+    pub fn execution_id(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.scenario_id, self.session_nonce, self.frozen_hash
+        )
     }
 
     /// Malformed identities (any empty field) can never support PASS.
@@ -77,6 +186,10 @@ impl ExecutionIdentity {
             && !self.session_nonce.is_empty()
             && !self.registry_hash.is_empty()
             && !self.frozen_hash.is_empty()
+            && self
+                .contract_digest
+                .as_ref()
+                .map_or(true, |d| !d.is_empty())
     }
 }
 
@@ -91,6 +204,8 @@ pub struct HostProvenance {
     pub registry_hash: String,
     pub frozen_hash: String,
     pub channel: String,
+    #[serde(default)]
+    pub contract_digest: Option<String>,
 }
 
 impl HostProvenance {
@@ -100,6 +215,12 @@ impl HostProvenance {
             && self.session_nonce == identity.session_nonce
             && self.registry_hash == identity.registry_hash
             && self.frozen_hash == identity.frozen_hash
+            && match (&self.contract_digest, &identity.contract_digest) {
+                (Some(p_dig), Some(id_dig)) => p_dig == id_dig,
+                (Some(_), None) => false,
+                (None, Some(_)) => false,
+                (None, None) => true,
+            }
     }
 }
 
@@ -184,6 +305,32 @@ pub struct Fact {
     /// `#[serde(default)]` keeps previously serialized evidence readable.
     #[serde(default)]
     pub provenance: Option<HostProvenance>,
+    /// Source classification of this fact.
+    #[serde(default)]
+    pub source: Option<EvidenceSource>,
+    /// Optional timestamp in milliseconds since UNIX epoch.
+    #[serde(default)]
+    pub timestamp_epoch_ms: Option<u64>,
+}
+
+impl Fact {
+    pub fn counts_as_proof(&self) -> bool {
+        if let Some(src) = self.source {
+            if !src.counts_as_proof() {
+                return false;
+            }
+        }
+        self.tier.is_proof()
+    }
+
+    pub fn can_support_pass(&self) -> bool {
+        if let Some(src) = self.source {
+            if !src.can_support_pass() {
+                return false;
+            }
+        }
+        self.tier.can_support_pass()
+    }
 }
 
 /// Collected evidence for one scenario run.
@@ -193,12 +340,49 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    fn current_timestamp_ms() -> Option<u64> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as u64)
+    }
+
     pub fn push(&mut self, tier: EvidenceTier, name: &str, value: String) {
+        let source = match tier {
+            EvidenceTier::HostFact => Some(EvidenceSource::HostObservation),
+            EvidenceTier::Constrained => Some(EvidenceSource::ConstrainedChannel),
+            EvidenceTier::SelfReport => Some(EvidenceSource::AgentSelfReport),
+        };
         self.facts.push(Fact {
             tier,
             name: name.to_string(),
             value,
             provenance: None,
+            source,
+            timestamp_epoch_ms: Self::current_timestamp_ms(),
+        });
+    }
+
+    pub fn push_with_source(
+        &mut self,
+        tier: EvidenceTier,
+        source: EvidenceSource,
+        name: &str,
+        value: String,
+    ) {
+        // Enforce hierarchy: untrusted source can NEVER count as proof or support pass
+        let effective_tier = if !source.counts_as_proof() {
+            EvidenceTier::SelfReport
+        } else {
+            tier.min(source.tier())
+        };
+        self.facts.push(Fact {
+            tier: effective_tier,
+            name: name.to_string(),
+            value,
+            provenance: None,
+            source: Some(source),
+            timestamp_epoch_ms: Self::current_timestamp_ms(),
         });
     }
 
@@ -212,6 +396,42 @@ impl Evidence {
 
     pub fn self_report(&mut self, name: &str, value: String) {
         self.push(EvidenceTier::SelfReport, name, value);
+    }
+
+    pub fn add_stdout(&mut self, name: &str, value: String) {
+        self.push_with_source(
+            EvidenceTier::SelfReport,
+            EvidenceSource::ProcessStdout,
+            name,
+            value,
+        );
+    }
+
+    pub fn add_arbitrary_json(&mut self, name: &str, value: String) {
+        self.push_with_source(
+            EvidenceTier::SelfReport,
+            EvidenceSource::SandboxedArbitraryJson,
+            name,
+            value,
+        );
+    }
+
+    pub fn add_unprovenanced_snapshot(&mut self, name: &str, value: String) {
+        self.push_with_source(
+            EvidenceTier::SelfReport,
+            EvidenceSource::UnprovenancedSnapshot,
+            name,
+            value,
+        );
+    }
+
+    pub fn add_unbound_observation(&mut self, name: &str, value: String) {
+        self.push_with_source(
+            EvidenceTier::SelfReport,
+            EvidenceSource::UnboundObservation,
+            name,
+            value,
+        );
     }
 
     /// Stamp the verified host-owned positive control. Requires the
@@ -231,7 +451,10 @@ impl Evidence {
                 registry_hash: id.registry_hash.clone(),
                 frozen_hash: id.frozen_hash.clone(),
                 channel: HOST_CONTROL_CHANNEL.to_string(),
+                contract_digest: id.contract_digest.clone(),
             }),
+            source: Some(EvidenceSource::HostObservation),
+            timestamp_epoch_ms: Self::current_timestamp_ms(),
         });
     }
 
@@ -241,21 +464,47 @@ impl Evidence {
     pub fn has_verified_control(&self, identity: &ExecutionIdentity) -> bool {
         self.facts.iter().any(|f| {
             f.tier == EvidenceTier::HostFact
+                && f.can_support_pass()
                 && f.name == HOST_CONTROL_FACT
-                && f.provenance.as_ref().is_some_and(|p| p.matches(identity))
+                && f.provenance.as_ref().map_or(false, |p| p.matches(identity))
         })
     }
 
     /// PASS requires at least one host fact (FM-01 structural rule).
     pub fn has_host_fact(&self) -> bool {
-        self.facts.iter().any(|f| f.tier == EvidenceTier::HostFact)
+        self.facts
+            .iter()
+            .any(|f| f.tier == EvidenceTier::HostFact && f.can_support_pass())
     }
 
     pub fn host_fact_value(&self, name: &str) -> Option<&str> {
         self.facts
             .iter()
-            .find(|f| f.tier == EvidenceTier::HostFact && f.name == name)
+            .find(|f| f.tier == EvidenceTier::HostFact && f.name == name && f.can_support_pass())
             .map(|f| f.value.as_str())
+    }
+
+    /// Structural integrity of the evidence set.
+    /// Returns false if any fact claims a tier higher than allowed by its source,
+    /// or if a control fact lacks valid host channel provenance.
+    pub fn verify_integrity(&self) -> bool {
+        for fact in &self.facts {
+            if let Some(src) = fact.source {
+                if !src.counts_as_proof() && fact.tier != EvidenceTier::SelfReport {
+                    return false;
+                }
+                if fact.tier > src.tier() {
+                    return false;
+                }
+            }
+            if fact.name == HOST_CONTROL_FACT && fact.tier == EvidenceTier::HostFact {
+                match &fact.provenance {
+                    Some(prov) if prov.channel == HOST_CONTROL_CHANNEL => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
     }
 }
 
@@ -271,6 +520,106 @@ mod evidence_tests {
         assert!(!e.has_host_fact());
         e.host_fact("postmortem", "absent".to_string());
         assert!(e.has_host_fact());
+    }
+
+    #[test]
+    fn evidence_tier_trust_hierarchy_ordering() {
+        // Contract: HOST_FACT > CONSTRAINED > SELF_REPORT
+        assert!(EvidenceTier::HostFact > EvidenceTier::Constrained);
+        assert!(EvidenceTier::Constrained > EvidenceTier::SelfReport);
+        assert!(EvidenceTier::HostFact > EvidenceTier::SelfReport);
+        assert_eq!(EvidenceTier::HostFact.priority(), 3);
+        assert_eq!(EvidenceTier::Constrained.priority(), 2);
+        assert_eq!(EvidenceTier::SelfReport.priority(), 1);
+
+        assert!(EvidenceTier::HostFact.can_support_pass());
+        assert!(!EvidenceTier::Constrained.can_support_pass());
+        assert!(!EvidenceTier::SelfReport.can_support_pass());
+
+        assert!(EvidenceTier::HostFact.is_proof());
+        assert!(EvidenceTier::Constrained.is_proof());
+        assert!(!EvidenceTier::SelfReport.is_proof());
+    }
+
+    #[test]
+    fn evidence_source_classification_and_proof_rules() {
+        // Master Task Section 12: НЕ доказательство: agent self-report; stdout;
+        // произвольный JSON от sandboxed process; snapshot без provenance; observation без связи с execution identity.
+        let untrusted = [
+            EvidenceSource::AgentSelfReport,
+            EvidenceSource::ProcessStdout,
+            EvidenceSource::ProcessStderr,
+            EvidenceSource::SandboxedArbitraryJson,
+            EvidenceSource::UnprovenancedSnapshot,
+            EvidenceSource::UnboundObservation,
+        ];
+        for src in untrusted {
+            assert!(!src.counts_as_proof(), "{src:?} must never count as proof");
+            assert!(!src.can_support_pass(), "{src:?} must never support PASS");
+            assert_eq!(src.tier(), EvidenceTier::SelfReport);
+        }
+
+        assert!(EvidenceSource::HostObservation.counts_as_proof());
+        assert!(EvidenceSource::HostObservation.can_support_pass());
+        assert_eq!(
+            EvidenceSource::HostObservation.tier(),
+            EvidenceTier::HostFact
+        );
+
+        assert!(EvidenceSource::ConstrainedChannel.counts_as_proof());
+        assert!(!EvidenceSource::ConstrainedChannel.can_support_pass());
+        assert_eq!(
+            EvidenceSource::ConstrainedChannel.tier(),
+            EvidenceTier::Constrained
+        );
+    }
+
+    #[test]
+    fn evidence_push_with_source_enforces_hierarchy() {
+        let mut e = Evidence::default();
+        // Attempting to push stdout as HostFact is downgraded to SelfReport
+        e.push_with_source(
+            EvidenceTier::HostFact,
+            EvidenceSource::ProcessStdout,
+            "fake_host",
+            "escaped".to_string(),
+        );
+        assert_eq!(e.facts.last().unwrap().tier, EvidenceTier::SelfReport);
+        assert!(!e.has_host_fact());
+
+        // Attempting to push arbitrary JSON as HostFact is downgraded
+        e.add_arbitrary_json("status", "{\"verdict\": \"PASS\"}".to_string());
+        assert_eq!(e.facts.last().unwrap().tier, EvidenceTier::SelfReport);
+        assert!(!e.has_host_fact());
+
+        // Snapshot without provenance cannot be host fact
+        e.add_unprovenanced_snapshot("fs_tree", "/".to_string());
+        assert_eq!(e.facts.last().unwrap().tier, EvidenceTier::SelfReport);
+        assert!(!e.has_host_fact());
+
+        // Unbound observation cannot be host fact
+        e.add_unbound_observation("event", "open".to_string());
+        assert_eq!(e.facts.last().unwrap().tier, EvidenceTier::SelfReport);
+        assert!(!e.has_host_fact());
+    }
+
+    #[test]
+    fn evidence_integrity_rejects_escalated_source() {
+        let mut e = Evidence::default();
+        e.host_fact("valid", "ok".to_string());
+        assert!(e.verify_integrity());
+
+        // Forged fact: tier is HostFact but source is SandboxedArbitraryJson
+        e.facts.push(Fact {
+            tier: EvidenceTier::HostFact,
+            name: "forged".to_string(),
+            value: "hack".to_string(),
+            provenance: None,
+            source: Some(EvidenceSource::SandboxedArbitraryJson),
+            timestamp_epoch_ms: None,
+        });
+        assert!(!e.verify_integrity());
+        assert!(!e.facts.last().unwrap().can_support_pass());
     }
 
     fn test_identity() -> ExecutionIdentity {
@@ -373,5 +722,33 @@ mod evidence_tests {
         let mut other = id.clone();
         other.frozen_hash = "frozen-b".to_string();
         assert!(!e.has_verified_control(&other));
+    }
+
+    #[test]
+    fn contract_digest_binding_in_identity_and_provenance() {
+        let id_with_digest = ExecutionIdentity::new("SCEN-A", "nonce-a", "reg-a", "frozen-a")
+            .with_contract_digest("digest-123");
+        assert_eq!(
+            id_with_digest.contract_digest.as_deref(),
+            Some("digest-123")
+        );
+        assert!(id_with_digest.is_well_formed());
+
+        let expected = derive_expected_response(TEST_CHALLENGE, &id_with_digest.session_nonce);
+        let verified =
+            attest_control(&id_with_digest, &expected, expected.as_bytes()).expect("mint");
+        let mut e = Evidence::default();
+        e.host_control_fact(&verified);
+        assert!(e.has_verified_control(&id_with_digest));
+
+        // Different contract digest fails matching
+        let mismatched_digest = id_with_digest
+            .clone()
+            .with_contract_digest("digest-TAMPERED");
+        assert!(!e.has_verified_control(&mismatched_digest));
+
+        // Identity without digest rejects evidence carrying digest
+        let no_digest_id = test_identity();
+        assert!(!e.has_verified_control(&no_digest_id));
     }
 }

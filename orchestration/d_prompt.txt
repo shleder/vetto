@@ -1,0 +1,35 @@
+You are a read-only final reviewer for Phase 2 in /home/shleder/prod/vetto. Given the final diff and recon results: verify acceptance criteria (architecture, runtime verification batteries, fail-closed semantics, entrypoints, evidence, regression safety), verify failure-semantics matrix from master-task section 18 is honored, verify no Phase 3/4 scope creep, no weakened gates, no deleted tests, no version bump beyond +0.0.1. List any claim that lacks evidence as NOT PROVEN with exact file:line. No edits, no local builds/tests, no commit/push.
+
+--- SUMMARY OF PHASE 2 IMPLEMENTATION ---
+1. Architecture & Sealed Contract Authority:
+   - All entrypoints (CLI, MCP, multi) now enforce UnpreparedProductionExecution and contract sealing.
+   - doctor::probe and vetto verify route through UnpreparedProductionExecution.
+   - Backend::spawn restricted to pub(in crate::sandbox).
+2. Batteries Implemented:
+   - C1: Filesystem (traversal, dotdot, symlinks, absolute paths, write-outside) + Secrets (mask_paths, symlinks to secret, relative traversal, alternate spelling) in tests/integration/verify_ng_boundary_contract.rs and registry.rs (VFS-WRITE-001 added).
+   - C2: Environment Isolation (arbitrary host var, sensitive vars, PATH sanitization, clean-room, internal VETTO vars, denied vars, post-start mutation, no blanket prefix) in src/verify_ng/environment.rs and tests/integration/verify_ng_env_contract.rs.
+   - C3: Process Containment (parent->child->grandchild, fork, setsid, daemonize, exit, proc group, FS-ONLY detached grandchild gap marked Unsupported) in tests/integration/verify_ng_proc_contract.rs, registry.rs (PROC-TREE-001), sandbox_backend.rs.
+   - C4: Network Boundary (net=off IPv4/IPv6/TCP/UDP/DNS/raw sockets, DNS rebinding, direct socket bypass, SNI mismatch, fail-closed on unsupported tiers) in src/verify_ng/network.rs, tests/integration/verify_ng_network_contract.rs, registry.rs (NET-EXFIL-001).
+   - C5: Contract Tampering & Identity Binding (25 mutation fields across all classes, proved NO SPAWN via PROD_SPAWN_COUNT and marker, cross-execution regression suite) in src/sandbox/production.rs and tests/integration/verify_ng_tamper_contract.rs.
+   - C6: Evidence Model & Gates (HOST_FACT > CONSTRAINED > SELF_REPORT strictly enforced; empty suite fails; missing blocker categories I1-I6 fail; zero inconclusive rule on I1-I6 preserved) in src/verify_ng/evidence.rs, exit.rs, oracle.rs, tests/integration/verify_ng_traps.rs.
+   - C7: Entrypoint Unification (CLI, MCP, multi-agent unified under sealed contract authority, shell strings removed from MCP, parity tests) in src/mcp/mod.rs, main.rs, verify.rs, doctor/probe.rs, tests/integration/entrypoint_contract_parity.rs.
+3. Master Task Section 18 Failure Semantics Matrix:
+   - Valid contract + attack blocked => PASS
+   - Attack succeeds => FAIL
+   - Contract tampered => FAIL (Inconclusive/Fail-closed, no spawn)
+   - Identity mismatch => FAIL
+   - Missing required evidence => FAIL/INCONCLUSIVE
+   - Unsupported required capability => explicit unsupported / fail-closed
+   - Empty suite => FAIL (gate fails exit code 1)
+   - Stale evidence => FAIL
+   - Wrong execution evidence => FAIL
+   - Self-report only for blocker => not PASS
+   - Platform skip where legitimately unsupported => SKIP / Unsupported, not PASS
+
+UNIVERSAL CONSTRAINTS:
+- Repo access: /home/shleder/prod/vetto only. Branch feat/phase1-contract-authority.
+- No local cargo build/test/check/run; GitHub CI is the only execution proof.
+- No sandbox escape payload development or bypass techniques; defensive verification batteries only.
+- No new architecture, no second policy engine, no Phase 3/4 scope, no version bump, no release actions.
+- No commit, no push, no secrets access, no external network calls beyond your model service.
+- Separate confirmed facts (file:line) from assumptions in every report.

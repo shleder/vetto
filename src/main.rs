@@ -810,29 +810,6 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         );
     }
 
-    // Optional pre-spawn boundary verification. A leak here is a policy or
-    // kernel problem, not an agent problem: fail before the agent starts.
-    let verify_outcome = if cfg.verify_preflight {
-        let report = vetto::verify::preflight(&pol, &cfg.net)?;
-        eprintln!("vetto: verify: {}", report.summary());
-        if report.leaks() > 0 {
-            if cfg.shadow {
-                eprintln!(
-                    "vetto: shadow: would deny session startup due to boundary verification leaks (shadow mode active; continuing)"
-                );
-            } else {
-                bail!(
-                    "--verify: boundary verification failed (detected filesystem or network leaks); \
-                     refusing to start the agent (fail-closed)\n\
-                     action: review the leak findings above and adjust your policy grants; run `vetto doctor --probe`"
-                );
-            }
-        }
-        Some(report)
-    } else {
-        None
-    };
-
     let session_id = format!(
         "{:x}",
         std::time::SystemTime::now()
@@ -999,6 +976,30 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         .as_ref()
         .expect("validated production contract");
     let pol = production.installation_policy.clone();
+
+    // Pre-spawn boundary verification through the sealed contract production
+    // boundary. The exact sealed contract about to be spawned is verified;
+    // any leaks or digest tampering fails closed before spawn.
+    let verify_outcome = if cfg.verify_preflight {
+        let report = vetto::verify::preflight_contract(prepared.contract())?;
+        eprintln!("vetto: verify: {}", report.summary());
+        if report.leaks() > 0 {
+            if cfg.shadow {
+                eprintln!(
+                    "vetto: shadow: would deny session startup due to boundary verification leaks (shadow mode active; continuing)"
+                );
+            } else {
+                bail!(
+                    "--verify: boundary verification failed (detected filesystem or network leaks); \
+                     refusing to start the agent (fail-closed)\n\
+                     action: review the leak findings above and adjust your policy grants; run `vetto doctor --probe`"
+                );
+            }
+        }
+        Some(report)
+    } else {
+        None
+    };
 
     let started = std::time::Instant::now();
     // `take_*`/`&mut handle` are `cfg`-gated (Linux/unix): `mut` is dead on

@@ -72,6 +72,10 @@ pub fn judge(input: &OracleInput<'_>) -> Verdict {
     if input.violation_observed {
         return Verdict::Fail;
     }
+    // Evidence integrity: tampering with fact tiers or invalid control provenance fails closed.
+    if !input.evidence.verify_integrity() {
+        return Verdict::Inconclusive;
+    }
     // FM-02: control and probe must be bound to the same session nonce.
     match (input.nonce, input.probe_nonce, input.control_nonce) {
         (Some(n), Some(p), Some(c)) if p == n && c == n => {}
@@ -141,7 +145,7 @@ pub fn judge_with_ceiling(
             .evidence
             .facts
             .iter()
-            .any(|f| f.tier == EvidenceTier::HostFact)
+            .any(|f| f.tier == EvidenceTier::HostFact && f.can_support_pass())
     {
         Verdict::Inconclusive
     } else {
@@ -511,5 +515,130 @@ mod oracle_tests {
             Some(&id),
         );
         assert_eq!(judge(&i), Verdict::Inconclusive);
+    }
+
+    #[test]
+    fn evidence_integrity_tamper_fails_closed() {
+        let s = scenario();
+        let (id, mut e) = verified_setup(&s.id);
+        // Inject forged fact with escalated tier
+        e.facts.push(crate::verify_ng::evidence::Fact {
+            tier: EvidenceTier::HostFact,
+            name: "forged_leak".to_string(),
+            value: "leak".to_string(),
+            provenance: None,
+            source: Some(crate::verify_ng::evidence::EvidenceSource::SandboxedArbitraryJson),
+            timestamp_epoch_ms: None,
+        });
+        let i = full_input(
+            &s,
+            &e,
+            Some("n"),
+            Some("n"),
+            Some("n"),
+            true,
+            false,
+            true,
+            true,
+            1,
+            Some(&id),
+        );
+        assert_eq!(judge(&i), Verdict::Inconclusive);
+    }
+
+    #[test]
+    fn untrusted_stdout_or_json_cannot_smuggle_pass() {
+        let s = scenario();
+        let (id, mut e) = verified_setup(&s.id);
+        e.add_stdout("marker", "PASS".to_string());
+        e.add_arbitrary_json("output", "{\"status\":\"ok\"}".to_string());
+        e.add_unprovenanced_snapshot("snap", "stat".to_string());
+        e.add_unbound_observation("obs", "event".to_string());
+        // Still passes because valid verified control and host fact exist
+        let i = full_input(
+            &s,
+            &e,
+            Some("n"),
+            Some("n"),
+            Some("n"),
+            true,
+            false,
+            true,
+            true,
+            1,
+            Some(&id),
+        );
+        assert_eq!(judge(&i), Verdict::Pass);
+
+        // But if genuine host fact is removed and only untrusted items remain -> INCONCLUSIVE
+        let mut deceit_e = Evidence::default();
+        deceit_e.add_stdout("marker", "PASS".to_string());
+        deceit_e.add_arbitrary_json("output", "{\"status\":\"ok\"}".to_string());
+        let i2 = full_input(
+            &s,
+            &deceit_e,
+            Some("n"),
+            Some("n"),
+            Some("n"),
+            true,
+            false,
+            true,
+            true,
+            1,
+            Some(&id),
+        );
+        assert_eq!(judge(&i2), Verdict::Inconclusive);
+    }
+
+    #[test]
+    fn contract_digest_binding_enforced() {
+        let s = scenario();
+        let id_with_digest = ExecutionIdentity::new(&s.id, "n", "reg-test", "frozen-test")
+            .with_contract_digest("digest-correct");
+        let expected = crate::verify_ng::evidence::derive_expected_response("test-challenge", "n");
+        let verified = crate::verify_ng::evidence::attest_control(
+            &id_with_digest,
+            &expected,
+            expected.as_bytes(),
+        )
+        .expect("test attestation must mint");
+        let mut e = Evidence::default();
+        e.host_fact("postmortem", "absent".to_string());
+        e.host_control_fact(&verified);
+
+        // Same digest -> PASS
+        let pass_input = full_input(
+            &s,
+            &e,
+            Some("n"),
+            Some("n"),
+            Some("n"),
+            true,
+            false,
+            true,
+            true,
+            1,
+            Some(&id_with_digest),
+        );
+        assert_eq!(judge(&pass_input), Verdict::Pass);
+
+        // Mismatched contract digest -> INCONCLUSIVE
+        let tampered_id = id_with_digest
+            .clone()
+            .with_contract_digest("digest-tampered");
+        let fail_input = full_input(
+            &s,
+            &e,
+            Some("n"),
+            Some("n"),
+            Some("n"),
+            true,
+            false,
+            true,
+            true,
+            1,
+            Some(&tampered_id),
+        );
+        assert_eq!(judge(&fail_input), Verdict::Inconclusive);
     }
 }

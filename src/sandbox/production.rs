@@ -718,6 +718,11 @@ impl PreparedProductionExecution {
         &self.contract
     }
 
+    #[doc(hidden)]
+    pub fn contract_mut_for_test(&mut self) -> &mut SecurityContract {
+        &mut self.contract
+    }
+
     /// Perform exactly one real production spawn. Consumes `self`: no retry
     /// can convert FAIL into PASS, and no second child can be spawned from
     /// this preparation.
@@ -2226,7 +2231,9 @@ mod production_unit_tests {
             std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();
         let marker = tmp.join("child-started");
+        let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         for case in ["digest", "resealed", "projection", "missing"] {
+            let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
             let mut prepared = UnpreparedProductionExecution::new(
                 Backend::detect(NetMode::Off, false).expect("detect mechanics"),
                 functional_test_policy(&tmp),
@@ -2286,8 +2293,19 @@ mod production_unit_tests {
                 }
             }
             assert!(!marker.exists(), "{case}: child must not execute");
+            assert_eq!(
+                PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+                spawn_count_before,
+                "{case}: PROD_SPAWN_COUNT must not increment on tamper"
+            );
         }
+        assert_eq!(
+            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+            initial_spawn_count,
+            "all phase 1 tamper attempts must leave spawn counter untouched"
+        );
         // Positive control: the same command and policy can create the marker.
+        let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         let spawned = UnpreparedProductionExecution::new(
             Backend::detect(NetMode::Off, false).expect("detect mechanics"),
             functional_test_policy(&tmp),
@@ -2309,7 +2327,408 @@ mod production_unit_tests {
         .expect("spawn control");
         spawned.wait_collect();
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+        assert_eq!(
+            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+            spawn_count_before + 1,
+            "control must increment PROD_SPAWN_COUNT by 1"
+        );
         std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase2_contract_tamper_all_field_classes_rejected_no_spawn() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-tamper-full-matrix-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let marker = tmp.join("child-started");
+
+        let cases = [
+            // Filesystem
+            "fs_allow_read",
+            "fs_allow_write",
+            "fs_deny_read",
+            "fs_deny_write",
+            "fs_cow_overlay",
+            "fs_execution_root_ro",
+            // Environment
+            "env_explicit_vars",
+            "env_redacted_patterns",
+            "env_inject_session_nonce",
+            // Network
+            "net_mode",
+            "net_allowed_domains",
+            "net_allowed_ports",
+            "net_allowed_ips",
+            "net_debug_ports",
+            // Limits
+            "limits_max_memory_mb",
+            "limits_max_pids",
+            "limits_max_cpu_seconds",
+            "limits_max_file_size_mb",
+            // Executable restrictions
+            "exec_allowed_executables",
+            "exec_forbidden_executables",
+            "exec_invoked_binary",
+            "exec_invoked_args",
+            // Secret masks
+            "secrets_mask_paths",
+            // Tier / Backend requirements
+            "tier_requirement",
+            "backend_requirement",
+        ];
+
+        let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
+
+        for case in cases {
+            // Test unresealed direct tamper: digest mismatch -> verification failure -> NO SPAWN
+            {
+                let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
+                let mut prepared = UnpreparedProductionExecution::new(
+                    Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+                    functional_test_policy(&tmp),
+                    vec![
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "printf started > child-started".into(),
+                    ],
+                    tmp.clone(),
+                    HashMap::new(),
+                    NetMode::Off,
+                    Some(Duration::from_secs(10)),
+                    StdioMode::Inherit,
+                    PROD_SCENARIO_ID.into(),
+                )
+                .prepare()
+                .expect("prepare execution");
+
+                match case {
+                    "fs_allow_read" => prepared
+                        .contract
+                        .filesystem
+                        .allow_read
+                        .push(PathBuf::from("/etc/extra_read")),
+                    "fs_allow_write" => prepared
+                        .contract
+                        .filesystem
+                        .allow_write
+                        .push(PathBuf::from("/usr/bin/extra_write")),
+                    "fs_deny_read" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_read
+                        .push(PathBuf::from("/tmp/secret_read")),
+                    "fs_deny_write" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_write
+                        .push(PathBuf::from("/tmp/secret_write")),
+                    "fs_cow_overlay" => prepared.contract.filesystem.cow_overlay = true,
+                    "fs_execution_root_ro" => prepared.contract.filesystem.execution_root_ro = true,
+                    "env_explicit_vars" => {
+                        prepared
+                            .contract
+                            .environment
+                            .explicit_vars
+                            .insert("TAMPER".into(), "1".into());
+                    }
+                    "env_redacted_patterns" => prepared
+                        .contract
+                        .environment
+                        .redacted_patterns
+                        .push("FORBIDDEN_*".into()),
+                    "env_inject_session_nonce" => {
+                        prepared.contract.environment.inject_session_nonce = false
+                    }
+                    "net_mode" => {
+                        prepared.contract.network.mode =
+                            crate::policy_ir::contract::NetworkMode::Allowlist
+                    }
+                    "net_allowed_domains" => prepared
+                        .contract
+                        .network
+                        .allowed_domains
+                        .push("tampered.domain".into()),
+                    "net_allowed_ports" => prepared.contract.network.allowed_ports.push(8080),
+                    "net_allowed_ips" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .allow_cidr
+                        .push("10.0.0.0/8".into()),
+                    "net_debug_ports" => {
+                        prepared.contract.production.as_mut().unwrap().debug_ports =
+                            Some(crate::multi::DebugPortConfig::default())
+                    }
+                    "limits_max_memory_mb" => {
+                        prepared.contract.resources.max_memory_bytes ^= 0x4000
+                    }
+                    "limits_max_pids" => prepared.contract.resources.max_pids += 10,
+                    "limits_max_cpu_seconds" => {
+                        prepared.contract.resources.max_wall_time_ms += 10000
+                    }
+                    "limits_max_file_size_mb" => {
+                        prepared.contract.resources.max_file_size_bytes += 1024 * 1024
+                    }
+                    "exec_allowed_executables" => prepared
+                        .contract
+                        .filesystem
+                        .allow_execute
+                        .push(PathBuf::from("/bin/bash")),
+                    "exec_forbidden_executables" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_resolved
+                        .push(crate::policy::DenyEntry {
+                            path: PathBuf::from("/bin/forbidden"),
+                            is_dir: false,
+                        }),
+                    "exec_invoked_binary" => {
+                        prepared.contract.agent_identity.invoked_binary =
+                            PathBuf::from("/bin/tampered")
+                    }
+                    "exec_invoked_args" => prepared
+                        .contract
+                        .agent_identity
+                        .invoked_args
+                        .push("--tampered".into()),
+                    "secrets_mask_paths" => prepared
+                        .contract
+                        .filesystem
+                        .mask_paths
+                        .push(PathBuf::from("/root/.ssh/id_rsa")),
+                    "tier_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().tier = Some(Tier::FsOnly)
+                    }
+                    "backend_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().backend =
+                            "rogue-backend".into()
+                    }
+                    _ => unreachable!(),
+                }
+
+                assert!(
+                    !prepared.contract.verify_digest(),
+                    "{case}: unresealed digest must be invalid"
+                );
+                let spawn_res = prepared.spawn();
+                assert!(
+                    spawn_res.is_err(),
+                    "{case}: spawn must fail on unresealed contract"
+                );
+                assert_eq!(
+                    PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+                    count_before,
+                    "{case}: PROD_SPAWN_COUNT must not increment"
+                );
+                assert!(!marker.exists(), "{case}: child must not execute");
+            }
+
+            // Test resealed tamper: digest matches, but projection / drift / backend mismatch fails spawn
+            {
+                let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
+                let mut prepared = UnpreparedProductionExecution::new(
+                    Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+                    functional_test_policy(&tmp),
+                    vec![
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "printf started > child-started".into(),
+                    ],
+                    tmp.clone(),
+                    HashMap::new(),
+                    NetMode::Off,
+                    Some(Duration::from_secs(10)),
+                    StdioMode::Inherit,
+                    PROD_SCENARIO_ID.into(),
+                )
+                .prepare()
+                .expect("prepare execution");
+
+                match case {
+                    "fs_allow_read" => prepared
+                        .contract
+                        .filesystem
+                        .allow_read
+                        .push(PathBuf::from("/etc/extra_read")),
+                    "fs_allow_write" => prepared
+                        .contract
+                        .filesystem
+                        .allow_write
+                        .push(PathBuf::from("/usr/bin/extra_write")),
+                    "fs_deny_read" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_read
+                        .push(PathBuf::from("/tmp/secret_read")),
+                    "fs_deny_write" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_write
+                        .push(PathBuf::from("/tmp/secret_write")),
+                    "fs_cow_overlay" => prepared.contract.filesystem.cow_overlay = true,
+                    "fs_execution_root_ro" => prepared.contract.filesystem.execution_root_ro = true,
+                    "env_explicit_vars" => {
+                        prepared
+                            .contract
+                            .environment
+                            .explicit_vars
+                            .insert("TAMPER".into(), "1".into());
+                    }
+                    "env_redacted_patterns" => prepared
+                        .contract
+                        .environment
+                        .redacted_patterns
+                        .push("FORBIDDEN_*".into()),
+                    "env_inject_session_nonce" => {
+                        prepared.contract.environment.inject_session_nonce = false
+                    }
+                    "net_mode" => {
+                        prepared.contract.network.mode =
+                            crate::policy_ir::contract::NetworkMode::Allowlist
+                    }
+                    "net_allowed_domains" => prepared
+                        .contract
+                        .network
+                        .allowed_domains
+                        .push("tampered.domain".into()),
+                    "net_allowed_ports" => prepared.contract.network.allowed_ports.push(8080),
+                    "net_allowed_ips" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .allow_cidr
+                        .push("10.0.0.0/8".into()),
+                    "net_debug_ports" => {
+                        prepared.contract.production.as_mut().unwrap().debug_ports =
+                            Some(crate::multi::DebugPortConfig::default())
+                    }
+                    "limits_max_memory_mb" => {
+                        prepared.contract.resources.max_memory_bytes ^= 0x4000
+                    }
+                    "limits_max_pids" => prepared.contract.resources.max_pids += 10,
+                    "limits_max_cpu_seconds" => {
+                        prepared.contract.resources.max_wall_time_ms += 10000
+                    }
+                    "limits_max_file_size_mb" => {
+                        prepared.contract.resources.max_file_size_bytes += 1024 * 1024
+                    }
+                    "exec_allowed_executables" => prepared
+                        .contract
+                        .filesystem
+                        .allow_execute
+                        .push(PathBuf::from("/bin/bash")),
+                    "exec_forbidden_executables" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_resolved
+                        .push(crate::policy::DenyEntry {
+                            path: PathBuf::from("/bin/forbidden"),
+                            is_dir: false,
+                        }),
+                    "exec_invoked_binary" => {
+                        prepared.contract.agent_identity.invoked_binary =
+                            PathBuf::from("/bin/tampered")
+                    }
+                    "exec_invoked_args" => prepared
+                        .contract
+                        .agent_identity
+                        .invoked_args
+                        .push("--tampered".into()),
+                    "secrets_mask_paths" => prepared
+                        .contract
+                        .filesystem
+                        .mask_paths
+                        .push(PathBuf::from("/root/.ssh/id_rsa")),
+                    "tier_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().tier = Some(Tier::FsOnly)
+                    }
+                    "backend_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().backend =
+                            "rogue-backend".into()
+                    }
+                    _ => unreachable!(),
+                }
+
+                prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                assert!(
+                    prepared.contract.verify_digest(),
+                    "{case}: resealed digest must be valid"
+                );
+                let spawn_res = prepared.spawn();
+                assert!(
+                    spawn_res.is_err(),
+                    "{case}: resealed tampered contract must fail spawn"
+                );
+                assert_eq!(
+                    PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+                    count_before,
+                    "{case}: resealed tamper must not increment PROD_SPAWN_COUNT"
+                );
+                assert!(
+                    !marker.exists(),
+                    "{case}: child must not execute on resealed tamper"
+                );
+            }
+        }
+
+        assert_eq!(
+            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+            initial_spawn_count,
+            "all tamper attempts combined must not advance spawn counter"
+        );
+
+        // Positive control: untampered execution succeeds and creates marker
+        let control_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
+        let spawned = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            functional_test_policy(&tmp),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf started > child-started".into(),
+            ],
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare control")
+        .spawn()
+        .expect("spawn control");
+        spawned.wait_collect();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+        assert_eq!(
+            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
+            control_before + 1,
+            "control must increment PROD_SPAWN_COUNT by exactly 1"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[cfg(target_os = "linux")]

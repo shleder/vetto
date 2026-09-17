@@ -684,3 +684,368 @@ fn test_gate_strength_001_machine_distinguishes_strength() {
     let json = report::gate_report_json(&gate, "reg");
     assert_eq!(json["unsupported_pass"][0], "NET-DNS-IPV6-001");
 }
+
+// ===========================================================================
+// MASTER TASK SECTION 12: EVIDENCE MODEL REGRESSION TESTS
+// ===========================================================================
+
+/// Master Task Section 12: Evidence trust hierarchy:
+/// HOST_FACT > CONSTRAINED > SELF_REPORT per verify-ng contract.
+#[test]
+fn trap_evidence_model_trust_hierarchy_host_fact_beats_constrained_and_self_report() {
+    use evidence::EvidenceTier;
+    // Strict priority ordering
+    assert!(EvidenceTier::HostFact > EvidenceTier::Constrained);
+    assert!(EvidenceTier::Constrained > EvidenceTier::SelfReport);
+    assert!(EvidenceTier::HostFact > EvidenceTier::SelfReport);
+
+    assert_eq!(EvidenceTier::HostFact.priority(), 3);
+    assert_eq!(EvidenceTier::Constrained.priority(), 2);
+    assert_eq!(EvidenceTier::SelfReport.priority(), 1);
+
+    // Capability to support PASS
+    assert!(EvidenceTier::HostFact.can_support_pass());
+    assert!(!EvidenceTier::Constrained.can_support_pass());
+    assert!(!EvidenceTier::SelfReport.can_support_pass());
+
+    // Proof capability (PASS or FAIL)
+    assert!(EvidenceTier::HostFact.is_proof());
+    assert!(EvidenceTier::Constrained.is_proof());
+    assert!(!EvidenceTier::SelfReport.is_proof());
+}
+
+/// Master Task Section 12: НЕ доказательство: agent self-report; stdout;
+/// произвольный JSON от sandboxed process; snapshot без provenance;
+/// observation без связи с execution identity.
+#[test]
+fn trap_evidence_model_untrusted_sources_never_count_as_proof() {
+    use evidence::{Evidence, EvidenceSource, EvidenceTier};
+
+    let untrusted_sources = [
+        EvidenceSource::AgentSelfReport,
+        EvidenceSource::ProcessStdout,
+        EvidenceSource::ProcessStderr,
+        EvidenceSource::SandboxedArbitraryJson,
+        EvidenceSource::UnprovenancedSnapshot,
+        EvidenceSource::UnboundObservation,
+    ];
+
+    for source in untrusted_sources {
+        assert!(
+            !source.counts_as_proof(),
+            "{source:?} must not count as proof"
+        );
+        assert!(
+            !source.can_support_pass(),
+            "{source:?} must not support pass"
+        );
+        assert_eq!(source.tier(), EvidenceTier::SelfReport);
+
+        // Attempting to push untrusted source as HostFact is downgraded to SelfReport
+        let mut ev = Evidence::default();
+        ev.push_with_source(
+            EvidenceTier::HostFact,
+            source,
+            "test_fact",
+            "value".to_string(),
+        );
+        let fact = ev.facts.last().expect("fact pushed");
+        assert_eq!(fact.tier, EvidenceTier::SelfReport);
+        assert!(!fact.can_support_pass());
+        assert!(!fact.counts_as_proof());
+        assert!(!ev.has_host_fact());
+
+        // Oracle refuses PASS on suite containing only untrusted facts
+        let s = test_scenario("TRAP-UNTRUSTED-SOURCE", model::Category::FsRead, 1);
+        let input = oracle_input(&s, &ev);
+        assert_eq!(oracle::judge(&input), model::Verdict::Inconclusive);
+    }
+}
+
+/// Master Task Section 12: Evidence integrity: tampering with fact tiers or invalid
+/// control provenance fails closed.
+#[test]
+fn trap_evidence_model_integrity_verification_rejects_fraudulent_host_facts() {
+    use evidence::{Evidence, EvidenceSource, EvidenceTier, Fact};
+
+    let mut ev = Evidence::default();
+    ev.host_fact("fs_intact", "true".to_string());
+    assert!(ev.verify_integrity());
+
+    // Manually forge a fact with HostFact tier but untrusted SandboxedArbitraryJson source
+    ev.facts.push(Fact {
+        tier: EvidenceTier::HostFact,
+        name: "forged_sandbox_json".to_string(),
+        value: "{\"boundary_intact\": true}".to_string(),
+        provenance: None,
+        source: Some(EvidenceSource::SandboxedArbitraryJson),
+        timestamp_epoch_ms: None,
+    });
+    assert!(
+        !ev.verify_integrity(),
+        "escalated source must fail integrity check"
+    );
+
+    // Oracle fails closed (INCONCLUSIVE) on failed integrity
+    let s = test_scenario("TRAP-INTEGRITY", model::Category::FsRead, 1);
+    let input = oracle_input(&s, &ev);
+    assert_eq!(oracle::judge(&input), model::Verdict::Inconclusive);
+}
+
+/// Master Task Section 12: Binding to contract digest, execution identity, and nonce.
+#[test]
+fn trap_evidence_model_provenance_execution_identity_and_contract_digest_binding() {
+    use evidence::{
+        attest_control, derive_expected_response, Evidence, ExecutionIdentity, HOST_CONTROL_CHANNEL,
+    };
+
+    let base_id =
+        ExecutionIdentity::new("SCEN-BINDING", "nonce-valid", "reg-hash-1", "frozen-hash-1")
+            .with_contract_digest("contract-digest-blake3-sealed");
+    assert!(base_id.is_well_formed());
+    assert_eq!(
+        base_id.execution_id(),
+        "SCEN-BINDING:nonce-valid:frozen-hash-1"
+    );
+
+    let expected = derive_expected_response("fresh-challenge-xyz", &base_id.session_nonce);
+    let verified =
+        attest_control(&base_id, &expected, expected.as_bytes()).expect("attest control");
+
+    let mut ev = Evidence::default();
+    ev.host_fact("postmortem", "clean".to_string());
+    ev.host_control_fact(&verified);
+
+    // Matching identity passes
+    assert!(ev.has_verified_control(&base_id));
+
+    // Tampering with contract digest rejects control
+    let tampered_digest = base_id
+        .clone()
+        .with_contract_digest("contract-digest-tampered");
+    assert!(!ev.has_verified_control(&tampered_digest));
+
+    // Tampering with session nonce rejects control
+    let mut tampered_nonce = base_id.clone();
+    tampered_nonce.session_nonce = "nonce-replayed".to_string();
+    assert!(!ev.has_verified_control(&tampered_nonce));
+
+    // Tampering with scenario ID rejects control
+    let mut tampered_scen = base_id.clone();
+    tampered_scen.scenario_id = "OTHER-SCENARIO".to_string();
+    assert!(!ev.has_verified_control(&tampered_scen));
+
+    // Tampering with registry hash rejects control
+    let mut tampered_reg = base_id.clone();
+    tampered_reg.registry_hash = "other-registry".to_string();
+    assert!(!ev.has_verified_control(&tampered_reg));
+
+    // Tampering with frozen spec hash rejects control
+    let mut tampered_frozen = base_id.clone();
+    tampered_frozen.frozen_hash = "other-frozen".to_string();
+    assert!(!ev.has_verified_control(&tampered_frozen));
+
+    // Invalid channel rejects control
+    let mut invalid_channel_ev = ev.clone();
+    for fact in &mut invalid_channel_ev.facts {
+        if let Some(ref mut prov) = fact.provenance {
+            prov.channel = "rogue-channel".to_string();
+        }
+    }
+    assert!(!invalid_channel_ev.has_verified_control(&base_id));
+    assert!(!invalid_channel_ev.verify_integrity());
+}
+
+// ===========================================================================
+// MASTER TASK SECTION 13: EMPTY / INCOMPLETE SUITE REGRESSION TESTS
+// ===========================================================================
+
+/// Master Task Section 13: Empty verification suite cannot PASS.
+#[test]
+fn trap_gate_empty_verification_suite_fails_explicitly() {
+    let report = exit::evaluate_gate(&[], &std::collections::BTreeMap::new(), "reg-1");
+    assert_eq!(report.status, "failed");
+    assert_eq!(exit::gate_exit_code(&report), 1);
+    assert!(
+        report
+            .blocking
+            .iter()
+            .any(|b| b == "suite:empty-verification-suite"),
+        "blocking must record suite:empty-verification-suite"
+    );
+    assert!(report.blocking.iter().any(|b| b.contains("canary-missing")));
+}
+
+/// Master Task Section 13: Missing required blocker category ≠ success.
+/// Each of the 6 blocker categories (I1..I6) must be present and passed.
+#[test]
+fn trap_gate_missing_required_blocker_category_fails() {
+    let pass = |id: &str, cat: model::Category| model::ScenarioResult {
+        id: id.to_string(),
+        category: cat,
+        strength: model::ClaimStrength::Strong,
+        verdict: model::Verdict::Pass,
+        detail: "ok".to_string(),
+    };
+
+    let full_suite = vec![
+        pass("VFS-TRAV-001", model::Category::FsRead),
+        pass("VFS-WRITE-001", model::Category::FsWrite),
+        pass("NET-DNS-IPV6-001", model::Category::Net),
+        pass("PROC-ESC-001", model::Category::Proc),
+        pass("ENV-LEAK-001", model::Category::Secrets),
+        pass("RACE-BINDING-001", model::Category::Spawn),
+    ];
+
+    for missing_category in exit::BLOCKER_CATEGORIES {
+        let mut partial = full_suite.clone();
+        partial.retain(|r| r.category != *missing_category);
+        let report = exit::evaluate_gate(&partial, &std::collections::BTreeMap::new(), "reg");
+        assert_eq!(
+            report.status,
+            "failed",
+            "gate must fail when blocker category {} is missing",
+            missing_category.label()
+        );
+        assert_eq!(exit::gate_exit_code(&report), 1);
+        assert!(
+            report
+                .blocking
+                .iter()
+                .any(|b| b == &format!("{}:missing-blocker-category", missing_category.label())),
+            "blocking must record missing-blocker-category for {}",
+            missing_category.label()
+        );
+    }
+}
+
+/// Master Task Section 13: Zero inconclusive I1-I6 rule:
+/// Any INCONCLUSIVE in any blocker category (I1..I6) strictly blocks release.
+#[test]
+fn trap_gate_zero_inconclusive_in_blockers_i1_to_i6() {
+    let pass = |id: &str, cat: model::Category| model::ScenarioResult {
+        id: id.to_string(),
+        category: cat,
+        strength: model::ClaimStrength::Strong,
+        verdict: model::Verdict::Pass,
+        detail: "ok".to_string(),
+    };
+
+    let full_pass = vec![
+        pass("VFS-TRAV-001", model::Category::FsRead),
+        pass("VFS-WRITE-001", model::Category::FsWrite),
+        pass("NET-DNS-IPV6-001", model::Category::Net),
+        pass("PROC-ESC-001", model::Category::Proc),
+        pass("ENV-LEAK-001", model::Category::Secrets),
+        pass("RACE-BINDING-001", model::Category::Spawn),
+    ];
+
+    for blocker_cat in exit::BLOCKER_CATEGORIES {
+        let mut suite_with_inconclusive = full_pass.clone();
+        suite_with_inconclusive.push(model::ScenarioResult {
+            id: format!("INCONCL-{}", blocker_cat.label()),
+            category: *blocker_cat,
+            strength: model::ClaimStrength::Strong,
+            verdict: model::Verdict::Inconclusive,
+            detail: "inconclusive".to_string(),
+        });
+        let report = exit::evaluate_gate(
+            &suite_with_inconclusive,
+            &std::collections::BTreeMap::new(),
+            "reg",
+        );
+        assert_eq!(
+            report.status,
+            "failed",
+            "inconclusive in blocker {} must fail gate",
+            blocker_cat.label()
+        );
+        assert_eq!(exit::gate_exit_code(&report), 1);
+        assert!(
+            report
+                .blocking
+                .iter()
+                .any(|b| b == &format!("INCONCL-{}", blocker_cat.label())),
+            "blocking must name the inconclusive scenario"
+        );
+    }
+
+    // Inconclusive in Aux category does NOT block release
+    let mut suite_with_aux = full_pass.clone();
+    suite_with_aux.push(model::ScenarioResult {
+        id: "AUX-INCONCL".to_string(),
+        category: model::Category::Aux,
+        strength: model::ClaimStrength::Strong,
+        verdict: model::Verdict::Inconclusive,
+        detail: "aux inconclusive".to_string(),
+    });
+    let report = exit::evaluate_gate(&suite_with_aux, &std::collections::BTreeMap::new(), "reg");
+    assert_eq!(report.status, "pass");
+    assert_eq!(exit::gate_exit_code(&report), 0);
+}
+
+/// Master Task Section 13: NOT_APPLICABLE requires non-empty, non-whitespace evidence.
+#[test]
+fn trap_gate_na_without_or_blank_evidence_fails() {
+    let pass = |id: &str, cat: model::Category| model::ScenarioResult {
+        id: id.to_string(),
+        category: cat,
+        strength: model::ClaimStrength::Strong,
+        verdict: model::Verdict::Pass,
+        detail: "ok".to_string(),
+    };
+
+    let suite = vec![
+        pass("VFS-TRAV-001", model::Category::FsRead),
+        pass("VFS-WRITE-001", model::Category::FsWrite),
+        pass("NET-DNS-IPV6-001", model::Category::Net),
+        pass("PROC-ESC-001", model::Category::Proc),
+        pass("ENV-LEAK-001", model::Category::Secrets),
+        pass("RACE-BINDING-001", model::Category::Spawn),
+        model::ScenarioResult {
+            id: "NA-TEST-001".to_string(),
+            category: model::Category::Aux,
+            strength: model::ClaimStrength::Partial,
+            verdict: model::Verdict::NotApplicable,
+            detail: "n/a".to_string(),
+        },
+    ];
+
+    // Case 1: Missing evidence map entry -> fails
+    let report = exit::evaluate_gate(&suite, &std::collections::BTreeMap::new(), "reg");
+    assert_eq!(report.status, "failed");
+    assert!(report
+        .blocking
+        .iter()
+        .any(|b| b.contains("N/A-without-evidence")));
+
+    // Case 2: Empty evidence list -> fails
+    let mut ev_empty = std::collections::BTreeMap::new();
+    ev_empty.insert("NA-TEST-001".to_string(), vec![]);
+    let report = exit::evaluate_gate(&suite, &ev_empty, "reg");
+    assert_eq!(report.status, "failed");
+    assert!(report
+        .blocking
+        .iter()
+        .any(|b| b.contains("N/A-without-evidence")));
+
+    // Case 3: Whitespace-only evidence item -> fails
+    let mut ev_blank = std::collections::BTreeMap::new();
+    ev_blank.insert("NA-TEST-001".to_string(), vec!["   \t\n  ".to_string()]);
+    let report = exit::evaluate_gate(&suite, &ev_blank, "reg");
+    assert_eq!(report.status, "failed");
+    assert!(report
+        .blocking
+        .iter()
+        .any(|b| b.contains("N/A-without-evidence")));
+
+    // Case 4: Valid evidence item -> passes
+    let mut ev_valid = std::collections::BTreeMap::new();
+    ev_valid.insert(
+        "NA-TEST-001".to_string(),
+        vec!["probe: feature absent on kernel < 5.13".to_string()],
+    );
+    let report = exit::evaluate_gate(&suite, &ev_valid, "reg");
+    assert_eq!(report.status, "pass");
+    assert_eq!(exit::gate_exit_code(&report), 0);
+}

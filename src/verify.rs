@@ -116,19 +116,49 @@ pub fn run_cli(
     policy_path: Option<&Path>,
     net: &NetMode,
 ) -> anyhow::Result<()> {
-    // Same detection context as a supervised session: the tier resolved here
-    // is the tier the battery will verify.
-    let tier = match sandbox::Backend::detect(net.clone(), false) {
-        Ok(b) => b.tier().unwrap_or(policy::Tier::Full),
-        Err(_) => policy::Tier::Full,
+    let backend = match sandbox::Backend::detect(net.clone(), false) {
+        Ok(b) => b,
+        Err(error) => {
+            let rep = unavailable(
+                net,
+                "unknown",
+                format!("backend cannot run the battery: {error:#}"),
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rep.to_json())?);
+            } else {
+                println!("{}", rep.summary());
+                println!("boundary verify: UNAVAILABLE (backend could not run the battery)");
+            }
+            return Ok(());
+        }
     };
+    let tier = backend.tier().unwrap_or(policy::Tier::Full);
     let project = std::env::current_dir().context("getcwd")?;
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("neither $HOME nor %USERPROFILE% is set")?;
     let pol = policy::loader::load(profile, policy_path, &project, &home, tier)?;
-    let report = preflight(&pol, net)?;
+
+    #[cfg(unix)]
+    let report = {
+        let unprepared = sandbox::production::UnpreparedProductionExecution::new(
+            backend,
+            pol,
+            vec!["vetto-verify".to_string()],
+            project,
+            std::collections::HashMap::new(),
+            net.clone(),
+            None,
+            sandbox::StdioMode::Inherit,
+            "verify".to_string(),
+        );
+        let prepared = unprepared.prepare()?;
+        preflight_contract(prepared.contract())?
+    };
+    #[cfg(not(unix))]
+    let report = unavailable(net, "n/a", "verification battery is unix-only".to_string());
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report.to_json())?);
@@ -163,7 +193,57 @@ pub fn preflight(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
         ))
     }
     #[cfg(unix)]
-    battery(pol, net)
+    {
+        let backend = match sandbox::Backend::detect(net.clone(), false) {
+            Ok(backend) => backend,
+            Err(error) => {
+                return Ok(unavailable(
+                    net,
+                    "unknown",
+                    format!("backend cannot run the battery: {error:#}"),
+                ))
+            }
+        };
+        let project = std::env::current_dir().context("getcwd")?;
+        let unprepared = sandbox::production::UnpreparedProductionExecution::new(
+            backend,
+            pol.clone(),
+            vec!["vetto-verify-probe".to_string()],
+            project,
+            std::collections::HashMap::new(),
+            net.clone(),
+            None,
+            sandbox::StdioMode::Inherit,
+            "verify".to_string(),
+        );
+        let prepared = unprepared.prepare()?;
+        preflight_contract(prepared.contract())
+    }
+}
+
+/// Battery against a sealed SecurityContract (Phase 2 authoritative boundary verification).
+/// Consumes the exact sealed contract used by production execution; never rebuilds policy.
+pub fn preflight_contract(
+    contract: &crate::policy_ir::contract::SecurityContract,
+) -> anyhow::Result<VerifyReport> {
+    anyhow::ensure!(
+        contract.verify_digest(),
+        "invalid security contract digest (fail-closed, no agent execution)"
+    );
+    let production = contract.production.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("missing production installation contract in sealed contract")
+    })?;
+    #[cfg(not(unix))]
+    {
+        let _ = production;
+        Ok(unavailable(
+            &production.net,
+            "n/a",
+            "verification battery is unix-only".to_string(),
+        ))
+    }
+    #[cfg(unix)]
+    battery_contract(contract, &production.installation_policy, &production.net)
 }
 
 fn unavailable(net: &NetMode, tier: &str, detail: String) -> VerifyReport {
@@ -206,8 +286,16 @@ fn skipped(name: &'static str, detail: String) -> CheckResult {
 }
 
 #[cfg(unix)]
-fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
-    let project = std::env::current_dir().context("getcwd")?;
+fn battery_contract(
+    contract: &crate::policy_ir::contract::SecurityContract,
+    pol: &Policy,
+    net: &NetMode,
+) -> anyhow::Result<VerifyReport> {
+    anyhow::ensure!(
+        contract.verify_digest(),
+        "invalid security contract digest (fail-closed, no agent execution)"
+    );
+    let project = &contract.filesystem.workspace_root;
     let backend = match sandbox::Backend::detect(net.clone(), false) {
         Ok(backend) => backend,
         Err(error) => {
@@ -227,9 +315,15 @@ fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
         .map(|entry| entry.path.display().to_string())
         .collect();
 
-    // Host-side loopback listener: bound before the spawn and kept bound for
-    // the whole battery, so a connect from inside can only succeed by
-    // escaping the sandbox's network isolation.
+    // Include masked secret paths from the contract
+    for mask_path in &contract.filesystem.mask_paths {
+        let s = mask_path.display().to_string();
+        if !script_args.contains(&s) {
+            script_args.push(s);
+        }
+    }
+
+    // Host-side loopback listener
     let mut listener = None;
     match std::net::TcpListener::bind(("127.0.0.1", 0)) {
         Ok(bound) => match bound.local_addr() {
@@ -248,21 +342,25 @@ fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
         )),
     }
 
-    // Write-outside probe target. Skipped when $HOME is inside a write root:
-    // the probe would then test a permission the policy grants on purpose.
+    // Write-outside probe target: outside workspace root
     let mut write_probe = None;
     if let Some(home) = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
     {
-        if !pol.in_write_scope(&home) {
+        let in_allow = contract
+            .filesystem
+            .allow_write
+            .iter()
+            .any(|w| home.starts_with(w));
+        if !pol.in_write_scope(&home) && !in_allow {
             let path = home.join(format!("vetto-verify-probe-{}", std::process::id()));
             script_args.push(format!("WRITECHECK:{}", path.display()));
             write_probe = Some(path);
         }
     }
 
-    let probe = match run_probe_script(pol, &project, script_args) {
+    let probe = match run_probe_script(pol, project, script_args) {
         Ok(probe) => probe,
         Err(error) => {
             return Ok(unavailable(
@@ -272,9 +370,9 @@ fn battery(pol: &Policy, net: &NetMode) -> anyhow::Result<VerifyReport> {
             ))
         }
     };
-    drop(listener); // close the host listener only after the sandbox exited
+    drop(listener);
     if let Some(path) = &write_probe {
-        let _ = std::fs::remove_file(path); // exists only if the probe wrote it
+        let _ = std::fs::remove_file(path);
     }
 
     parse_probe_output(&probe.stdout, tier, &mut checks);

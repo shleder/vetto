@@ -94,16 +94,23 @@ pub fn run_probe_script(
 
     let (out_r, out_w) = pipe2()?;
     let (err_r, err_w) = pipe2()?;
-    let opts = sandbox::SpawnOptions {
-        stdio: sandbox::StdioMode::Captured {
-            stdout_w: out_w.as_raw_fd(),
-            stderr_w: err_w.as_raw_fd(),
-        },
-        agent_cmd,
-        cwd: project.to_path_buf(),
-        env_extra: HashMap::new(),
+    let stdio = sandbox::StdioMode::Captured {
+        stdout_w: out_w.as_raw_fd(),
+        stderr_w: err_w.as_raw_fd(),
     };
-    let sandbox::Spawned { mut handle, .. } = backend.spawn(pol, opts)?;
+    let unprepared = crate::sandbox::production::UnpreparedProductionExecution::new(
+        backend,
+        pol.clone(),
+        agent_cmd,
+        project.to_path_buf(),
+        HashMap::new(),
+        NetMode::Off,
+        None,
+        stdio,
+        "probe".to_string(),
+    );
+    let prepared = unprepared.prepare()?;
+    let mut spawned = prepared.spawn()?;
     drop(out_w);
     drop(err_w);
 
@@ -115,7 +122,7 @@ pub fn run_probe_script(
     let mut eout = String::new();
     let mut err_file: std::fs::File = err_r.into();
     let _ = err_file.read_to_string(&mut eout);
-    let _exit = handle.wait();
+    let _prod_res = spawned.wait_collect();
 
     Ok(ProbeOutput {
         stdout: output,

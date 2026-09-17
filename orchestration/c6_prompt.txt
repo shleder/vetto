@@ -1,0 +1,28 @@
+Working in /home/shleder/prod/vetto (branch feat/phase1-contract-authority). With recon results from A1/A2/A3 and master-task sections 12 and 13 (verbatim, below), verify and strengthen the existing evidence model without changing semantics unnecessarily: HOST_FACT > CONSTRAINED > SELF_REPORT per verify-ng contract; agent self-report, stdout, arbitrary JSON from sandboxed process, snapshots without provenance, observations without execution identity must never count as proof. Prove provenance, execution identity, contract digest, nonce, evidence integrity and independence. Enforce: empty verification suite cannot PASS; missing required blocker category is not success; preserve existing 'zero inconclusive I1-I6' gate and do not weaken any gate. Add regression tests. Write code + tests; no local builds/tests; no commit/push. Report changed files with rationale and NOT PROVEN items.
+
+--- MASTER TASK SECTION 12 ---
+## 12. EVIDENCE MODEL
+НЕ доказательство: agent self-report; stdout; произвольный JSON от sandboxed process; snapshot без provenance; observation без связи с execution identity. Приоритет HOST_FACT > CONSTRAINED > SELF_REPORT по verify-ng contract. Semantics не менять без необходимости. Проверить provenance; execution identity; contract digest; nonce; timestamp/ordering (если предусмотрено); evidence integrity; independence.
+
+--- MASTER TASK SECTION 13 ---
+## 13. EMPTY / INCOMPLETE SUITE
+Empty verification suite не даёт PASS. Missing required blocker category ≠ успех. Сохранить правило "zero inconclusive I1-I6" как часть gate semantics. Gates не ослаблять.
+
+--- RECON SUMMARY & CONTEXT ---
+- Existing checks:
+  * src/verify_ng/evidence.rs: EvidenceSource, TrustLevel (HostFact, Constrained, SelfReport), HostProvenance, ExecutionIdentity.
+  * src/verify_ng/exit.rs: evaluate_gate enforces CANARY_IDS (VFS-TRAV-001, ENV-LEAK-001, PROC-ESC-001), min_pass_per_category, blocks_release on any inconclusive blocker (I1-I6).
+  * tests/integration/verify_ng_traps.rs has existing traps (trap_gate_vacuum_empty_suite_fails, trap_gate_requires_fs_write_minimum, trap_oracle_deceit_self_report_only_is_not_pass, etc.).
+- Ensure:
+  1. Evidence trust hierarchy is strictly enforced: self-report, unconstrained stdout, arbitrary JSON, or missing provenance NEVER satisfy a blocker category.
+  2. Prove binding to contract digest, execution_id, and nonce in evidence items.
+  3. Gate evaluation refuses to PASS on: empty suite, missing blocker category, inconclusive on any blocker I1-I6, N/A without evidence, or unsupported PASS demotion.
+  4. Regression tests proving these invariants.
+
+UNIVERSAL CONSTRAINTS:
+- Repo access: /home/shleder/prod/vetto only. Branch feat/phase1-contract-authority.
+- No local cargo build/test/check/run; GitHub CI is the only execution proof.
+- No sandbox escape payload development or bypass techniques; defensive verification batteries only.
+- No new architecture, no second policy engine, no Phase 3/4 scope, no version bump, no release actions.
+- No commit, no push, no secrets access, no external network calls beyond your model service.
+- Separate confirmed facts (file:line) from assumptions in every report.

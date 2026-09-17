@@ -11,6 +11,8 @@ mod adv_isolation;
 mod cli_reporting;
 mod ecosystem_tier7;
 mod enable_wrapper;
+#[cfg(unix)]
+mod entrypoint_contract_parity;
 #[cfg(target_os = "linux")]
 mod env_stripping;
 mod git_hooks;
@@ -55,12 +57,22 @@ mod tier3_files_secrets;
 mod tier8_release;
 mod tier9_friction;
 mod verify_ng_backend_arch;
+#[cfg(target_os = "linux")]
+mod verify_ng_boundary_contract;
+#[cfg(target_os = "linux")]
+mod verify_ng_env_contract;
 #[cfg(unix)]
 mod verify_ng_execution;
 #[cfg(unix)]
 mod verify_ng_host_evidence;
 #[cfg(target_os = "linux")]
 mod verify_ng_linux_enforce;
+#[cfg(target_os = "linux")]
+mod verify_ng_network_contract;
+#[cfg(target_os = "linux")]
+mod verify_ng_proc_contract;
+#[cfg(target_os = "linux")]
+mod verify_ng_tamper_contract;
 mod verify_ng_traps;
 mod windows_enforcement;
 mod windows_production;

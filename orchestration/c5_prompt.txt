@@ -1,0 +1,38 @@
+Working in /home/shleder/prod/vetto (branch feat/phase1-contract-authority). With recon results from A1/A2/A3 and master-task sections 3 and 10 (verbatim, below), implement contract tampering battery and cross-execution identity binding regressions: after sealing, mutate each security-relevant field class (filesystem, environment, network, limits, executable restrictions, secret masks, tier/backend requirements) and prove digest/identity mismatch leads to verification failure and NO SPAWN. Check not only verifier exit code but spawn ledger (PROD_SPAWN_COUNT / observable child marker; child must not run). Add the cross-execution regression: contract A + execution A + evidence A; contract B + execution B + evidence B; evidence A must never satisfy verification for B (other execution, stale run, other contract, other nonce, other backend). Write code + tests; no local builds/tests; no commit/push. Report changed files with rationale and NOT PROVEN items.
+
+--- MASTER TASK SECTION 3 ---
+## 3. CONTRACT IDENTITY
+Связь ExecutionIdentity {execution_id, contract_digest, frozen_hash, nonce/provenance} с evidence. Verifier не принимает evidence от другого execution, старого run, другого contract, другого nonce, другого backend. Regression test: contract A/execution A/evidence A; contract B/execution B/evidence B; evidence A никогда не удовлетворяет verification для B.
+
+--- MASTER TASK SECTION 10 ---
+## 10. CONTRACT TAMPERING
+После sealing: contract → digest → execution; попытаться изменить security-relevant field: filesystem; environment; network; limits; executable restrictions; secret masks; tier/backend requirements. Ожидание: tamper → digest/identity mismatch → verification failure → NO SPAWN. При invalid/mismatched contract marker child НЕ запускается. Проверять не только exit code, но spawn ledger / observable child marker.
+
+--- RECON SUMMARY & CONTEXT ---
+- Existing Phase 1 tamper tests in src/sandbox/production.rs:
+  * phase1_contract_tamper_rejected_before_spawn (line 2224)
+  * phase1_invalid_contract_never_prepares_capabilities (line 2108)
+  * test_frozen_identity_001_registry_hash_binds_semantics (tests/integration/verify_ng_traps.rs:541)
+  * TEST-HOST-EVIDENCE-REPLAY-001, TEST-HOST-CONTROL-WRONG-SCENARIO-001, TEST-HOST-CONTROL-WRONG-REGISTRY-001 in tests/integration/verify_ng_host_evidence.rs
+- Required extension for C5:
+  1. Full matrix of contract mutations across ALL security-relevant field classes:
+     - filesystem (allow_read, allow_write, deny_read, deny_write, cow_overlay, execution_root_ro)
+     - environment (explicit_vars, redacted_patterns, inject_session_nonce)
+     - network (mode, allowed_domains, allowed_ports, allowed_ips, debug_ports)
+     - limits (max_memory_mb, max_pids, max_cpu_seconds, max_file_size_mb)
+     - executable restrictions (allowed_executables, forbidden_executables, invoked_binary, invoked_args)
+     - secret masks (mask_paths)
+     - tier/backend requirements (tier, backend)
+  2. Prove NO SPAWN on tamper: assert on spawn ledger (PROD_SPAWN_COUNT atomic counter in production.rs) AND child marker file existence (child MUST NOT run).
+  3. Comprehensive cross-execution regression suite:
+     - Contract A + Execution A + Evidence A vs Contract B + Execution B + Evidence B.
+     - Evidence A submitted to B: must be rejected (Inconclusive/Fail), never satisfy verification for B.
+     - Test cross-execution, stale run, other contract, other nonce, other backend.
+
+UNIVERSAL CONSTRAINTS:
+- Repo access: /home/shleder/prod/vetto only. Branch feat/phase1-contract-authority.
+- No local cargo build/test/check/run; GitHub CI is the only execution proof.
+- No sandbox escape payload development or bypass techniques; defensive verification batteries only.
+- No new architecture, no second policy engine, no Phase 3/4 scope, no version bump, no release actions.
+- No commit, no push, no secrets access, no external network calls beyond your model service.
+- Separate confirmed facts (file:line) from assumptions in every report.

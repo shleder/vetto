@@ -795,11 +795,17 @@ impl LinuxBackend {
     /// STORED report so a later `note_spawned` cannot promote an
     /// uninstalled mechanism to `Enforced`. Trait, states, transitions,
     /// ceiling and oracle are untouched.
-    pub fn restrict_to_seccomp_tier(&mut self, tier: Option<Tier>) {
+    pub fn apply_tier_restriction(&mut self, tier: Option<Tier>) {
         self.tier = tier;
-        if tier == Some(Tier::Seccomp) {
-            self.restrict_seccomp_records();
+        match tier {
+            Some(Tier::Seccomp) => self.restrict_seccomp_records(),
+            Some(Tier::FsOnly) => self.restrict_fsonly_records(),
+            _ => {}
         }
+    }
+
+    pub fn restrict_to_seccomp_tier(&mut self, tier: Option<Tier>) {
+        self.apply_tier_restriction(tier);
     }
 
     fn restrict_seccomp_records(&mut self) {
@@ -812,6 +818,29 @@ impl LinuxBackend {
                 ) {
                     record.state = EnforcementState::Unsupported;
                     record.failure = None;
+                }
+                if record.capability == SecurityCapability::NetworkIsolation
+                    && report.policy.net_mode != "off"
+                {
+                    record.state = EnforcementState::Unsupported;
+                    record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
+                }
+            }
+        }
+    }
+
+    fn restrict_fsonly_records(&mut self) {
+        if let Some(report) = self.report.as_mut() {
+            for record in &mut report.records {
+                if record.capability == SecurityCapability::ProcessTreeContainment {
+                    record.state = EnforcementState::Unsupported;
+                    record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
+                }
+                if record.capability == SecurityCapability::NetworkIsolation
+                    && report.policy.net_mode != "off"
+                {
+                    record.state = EnforcementState::Unsupported;
+                    record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }
             }
         }
@@ -936,6 +965,11 @@ impl SandboxBackend for LinuxBackend {
         let Some(report) = self.report.as_mut() else {
             return;
         };
+        // On Linux FS-ONLY, detached grandchildren cannot be reliably contained without PID namespaces;
+        // ProcessTreeContainment stays Unsupported per verdict contract.
+        if self.tier == Some(Tier::FsOnly) {
+            return;
+        }
         if let Some(record) = report
             .records
             .iter_mut()
@@ -972,7 +1006,7 @@ impl SandboxBackend for LinuxBackend {
     }
 
     fn restrict_tier(&mut self, tier: Option<Tier>) {
-        self.restrict_to_seccomp_tier(tier);
+        self.apply_tier_restriction(tier);
     }
 
     fn enforcement(&self) -> Option<&EnforcementReport> {
@@ -1076,6 +1110,8 @@ impl LinuxBackend {
         self.report = Some(report.clone());
         if self.tier == Some(Tier::Seccomp) {
             self.restrict_seccomp_records();
+        } else if self.tier == Some(Tier::FsOnly) {
+            self.restrict_fsonly_records();
         }
         self.report.clone().unwrap_or(report)
     }

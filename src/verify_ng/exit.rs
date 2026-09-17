@@ -21,6 +21,16 @@ use super::model::{Category, ScenarioResult, Verdict};
 /// A green gate with a failing canary is a contradiction -> gate FAIL.
 pub const CANARY_IDS: &[&str] = &["VFS-TRAV-001", "ENV-LEAK-001", "PROC-ESC-001"];
 
+/// Required blocker categories mapping to the security invariants I1..I6.
+pub const BLOCKER_CATEGORIES: &[Category] = &[
+    Category::Spawn,
+    Category::FsRead,
+    Category::FsWrite,
+    Category::Net,
+    Category::Proc,
+    Category::Secrets,
+];
+
 /// Minimum PASS counts per blocker category for a meaningful gate.
 pub fn min_pass_per_category() -> BTreeMap<Category, usize> {
     BTreeMap::from([
@@ -82,6 +92,11 @@ pub fn evaluate_gate(
     let mut partial_pass = Vec::new();
     let mut unsupported_pass = Vec::new();
 
+    // Master Task Section 13: Empty verification suite cannot PASS.
+    if results.is_empty() {
+        blocking.push("suite:empty-verification-suite".to_string());
+    }
+
     for r in results {
         match r.verdict {
             Verdict::Pass => {
@@ -110,13 +125,21 @@ pub fn evaluate_gate(
         if r.verdict == Verdict::NotApplicable {
             let has_evidence = na_evidence
                 .get(&r.id)
-                .map(|e| !e.is_empty())
+                .map(|e| e.iter().any(|item| !item.trim().is_empty()))
                 .unwrap_or(false);
             if !has_evidence {
                 blocking.push(format!("{}:N/A-without-evidence", r.id));
             }
         }
         seen.insert(r.id.as_str());
+    }
+
+    // Master Task Section 13: Missing required blocker category is not success.
+    for category in BLOCKER_CATEGORIES {
+        let has_category = results.iter().any(|r| r.category == *category);
+        if !has_category {
+            blocking.push(format!("{}:missing-blocker-category", category.label()));
+        }
     }
 
     // Canary rule: every canary that ran must PASS; a canary that did not
@@ -268,5 +291,72 @@ mod exit_tests {
         results[2] = result("NET-DNS-IPV6-001", Category::Net, Verdict::Inconclusive);
         let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
         assert_eq!(report.status, "failed");
+    }
+
+    /// Master Task Section 13: missing any required blocker category (I1..I6) fails the gate.
+    #[test]
+    fn missing_required_blocker_category_fails_gate() {
+        for category in BLOCKER_CATEGORIES {
+            let mut results = full_pass_set();
+            results.retain(|r| r.category != *category);
+            let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
+            assert_eq!(
+                report.status,
+                "failed",
+                "gate must fail when blocker category {} is missing",
+                category.label()
+            );
+            assert!(
+                report
+                    .blocking
+                    .iter()
+                    .any(|b| b.contains(&format!("{}:missing-blocker-category", category.label()))),
+                "blocking must record missing-blocker-category for {}",
+                category.label()
+            );
+        }
+    }
+
+    /// N/A with whitespace-only or empty strings must FAIL as N/A-without-evidence.
+    #[test]
+    fn na_with_blank_evidence_blocks() {
+        let mut results = full_pass_set();
+        results.push(result("WIN-WSL-001", Category::Aux, Verdict::NotApplicable));
+        let mut ev = BTreeMap::new();
+        ev.insert(
+            "WIN-WSL-001".to_string(),
+            vec!["   ".to_string(), "".to_string()],
+        );
+        let report = evaluate_gate(&results, &ev, "reg");
+        assert_eq!(report.status, "failed");
+        assert!(report
+            .blocking
+            .iter()
+            .any(|b| b.contains("N/A-without-evidence")));
+    }
+
+    /// Zero inconclusive in blockers (I1..I6) rule: any inconclusive in I1..I6 fails gate,
+    /// but inconclusive in Category::Aux does not block release.
+    #[test]
+    fn zero_inconclusive_i1_to_i6_rule_enforced() {
+        for category in BLOCKER_CATEGORIES {
+            let mut results = full_pass_set();
+            results.push(result("EXTRA-BLOCKER", *category, Verdict::Inconclusive));
+            let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
+            assert_eq!(
+                report.status,
+                "failed",
+                "inconclusive in {} must fail the gate",
+                category.label()
+            );
+            assert!(report.blocking.iter().any(|b| b == "EXTRA-BLOCKER"));
+        }
+
+        // Inconclusive in Aux does NOT block release
+        let mut results = full_pass_set();
+        results.push(result("AUX-OPTIONAL", Category::Aux, Verdict::Inconclusive));
+        let report = evaluate_gate(&results, &BTreeMap::new(), "reg");
+        assert_eq!(report.status, "pass");
+        assert_eq!(gate_exit_code(&report), 0);
     }
 }
