@@ -677,7 +677,9 @@ pub fn run_one_with_backend(
         }
     }
     let spawn_res = {
-        let _serial = engine::spawn_serial().lock().unwrap();
+        let _serial = engine::spawn_serial()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         cmd.spawn()
     };
     let mut child = match spawn_res {

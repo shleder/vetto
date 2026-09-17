@@ -800,7 +800,9 @@ impl PreparedProductionExecution {
         // call site may spawn an agent child. Serialized against the
         // verify-ng harness spawns (fork-safety).
         let spawned = {
-            let _serial = engine::spawn_serial().lock().unwrap();
+            let _serial = engine::spawn_serial()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             self.fsm.transition(ExecutionState::Spawn)?;
             self.mechanics.spawn(policy, opts)?
         };
@@ -2320,7 +2322,9 @@ mod production_unit_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn phase2_contract_tamper_all_field_classes_rejected_no_spawn() {
-        let _serial = engine::spawn_serial().lock().unwrap();
+        let _serial = engine::spawn_serial()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp =
             std::env::temp_dir().join(format!("vetto-tamper-full-matrix-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -2412,8 +2416,14 @@ mod production_unit_tests {
                         .installation_policy
                         .deny_write
                         .push(PathBuf::from("/tmp/secret_write")),
-                    "fs_cow_overlay" => prepared.contract.filesystem.cow_overlay = true,
-                    "fs_execution_root_ro" => prepared.contract.filesystem.execution_root_ro = true,
+                    "fs_cow_overlay" => {
+                        prepared.contract.filesystem.cow_overlay =
+                            !prepared.contract.filesystem.cow_overlay
+                    }
+                    "fs_execution_root_ro" => {
+                        prepared.contract.filesystem.execution_root_ro =
+                            !prepared.contract.filesystem.execution_root_ro
+                    }
                     "env_explicit_vars" => {
                         prepared
                             .contract
@@ -2427,7 +2437,8 @@ mod production_unit_tests {
                         .redacted_patterns
                         .push("FORBIDDEN_*".into()),
                     "env_inject_session_nonce" => {
-                        prepared.contract.environment.inject_session_nonce = false
+                        prepared.contract.environment.inject_session_nonce =
+                            !prepared.contract.environment.inject_session_nonce
                     }
                     "net_mode" => {
                         prepared.contract.network.mode =
@@ -2492,7 +2503,12 @@ mod production_unit_tests {
                         .mask_paths
                         .push(PathBuf::from("/root/.ssh/id_rsa")),
                     "tier_requirement" => {
-                        prepared.contract.production.as_mut().unwrap().tier = Some(Tier::FsOnly)
+                        let p = prepared.contract.production.as_mut().unwrap();
+                        p.tier = if p.tier == Some(Tier::FsOnly) {
+                            Some(Tier::Full)
+                        } else {
+                            Some(Tier::FsOnly)
+                        };
                     }
                     "backend_requirement" => {
                         prepared.contract.production.as_mut().unwrap().backend =
@@ -2566,8 +2582,14 @@ mod production_unit_tests {
                         .installation_policy
                         .deny_write
                         .push(PathBuf::from("/tmp/secret_write")),
-                    "fs_cow_overlay" => prepared.contract.filesystem.cow_overlay = true,
-                    "fs_execution_root_ro" => prepared.contract.filesystem.execution_root_ro = true,
+                    "fs_cow_overlay" => {
+                        prepared.contract.filesystem.cow_overlay =
+                            !prepared.contract.filesystem.cow_overlay
+                    }
+                    "fs_execution_root_ro" => {
+                        prepared.contract.filesystem.execution_root_ro =
+                            !prepared.contract.filesystem.execution_root_ro
+                    }
                     "env_explicit_vars" => {
                         prepared
                             .contract
@@ -2581,7 +2603,8 @@ mod production_unit_tests {
                         .redacted_patterns
                         .push("FORBIDDEN_*".into()),
                     "env_inject_session_nonce" => {
-                        prepared.contract.environment.inject_session_nonce = false
+                        prepared.contract.environment.inject_session_nonce =
+                            !prepared.contract.environment.inject_session_nonce
                     }
                     "net_mode" => {
                         prepared.contract.network.mode =
@@ -2646,7 +2669,12 @@ mod production_unit_tests {
                         .mask_paths
                         .push(PathBuf::from("/root/.ssh/id_rsa")),
                     "tier_requirement" => {
-                        prepared.contract.production.as_mut().unwrap().tier = Some(Tier::FsOnly)
+                        let p = prepared.contract.production.as_mut().unwrap();
+                        p.tier = if p.tier == Some(Tier::FsOnly) {
+                            Some(Tier::Full)
+                        } else {
+                            Some(Tier::FsOnly)
+                        };
                     }
                     "backend_requirement" => {
                         prepared.contract.production.as_mut().unwrap().backend =
