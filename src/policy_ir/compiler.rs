@@ -49,7 +49,7 @@ impl PolicyCompiler {
     ) -> Result<SecurityContract, CompilerError> {
         use super::contract::ProductionContract;
         use crate::config::NetMode;
-        if input.argv.first().is_none_or(|s| s.is_empty()) || input.nonce.is_empty() {
+        if input.argv.first().map_or(true, |s| s.is_empty()) || input.nonce.is_empty() {
             return Err(CompilerError::MissingMandatoryField(
                 "command or nonce".into(),
             ));
