@@ -40,6 +40,7 @@ jobs:
 
       - name: Contract sealing and signature regressions
         run: |
+          cargo test --all-features --lib crypto::slsa::tests::test_slsa_signed_envelope -- --exact
           cargo test --all-features --lib policy_ir::contract::contract_tests
           cargo test --all-features --lib audit::verdict::tests::test_inv36
           cargo test --all-features --test phase4_enterprise_runtime
@@ -147,6 +148,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --all-features
+      - name: SLSA signature tamper regression
+        run: cargo test --all-features --lib crypto::slsa::tests::test_slsa_signed_envelope -- --exact
       - run: cargo test --all-features --quiet
       # NEEDS-COORDINATOR (windows-agent): verbose Windows platform-suite
       # run so the production-boundary/tree/timeout/capability proofs are

@@ -2078,6 +2078,140 @@ mod production_unit_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn phase1_contract_tamper_rejected_before_spawn() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let marker = tmp.join("child-started");
+        for case in ["digest", "resealed", "projection", "missing"] {
+            let mut prepared = UnpreparedProductionExecution::new(
+                Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+                functional_test_policy(&tmp),
+                vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "printf started > child-started".into(),
+                ],
+                tmp.clone(),
+                HashMap::new(),
+                NetMode::Off,
+                Some(Duration::from_secs(10)),
+                StdioMode::Inherit,
+                PROD_SCENARIO_ID.into(),
+            )
+            .prepare()
+            .expect("prepare production execution");
+            let expected_error = match case {
+                "digest" => {
+                    prepared
+                        .contract
+                        .environment
+                        .explicit_vars
+                        .insert("VETTO_CHANGED".into(), "1".into());
+                    assert!(!prepared.contract.verify_digest());
+                    "invalid production contract digest"
+                }
+                "resealed" => {
+                    prepared.contract.production.as_mut().unwrap().timeout =
+                        Some(Duration::from_secs(9));
+                    prepared.contract.resources.max_wall_time_ms = 9000;
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    assert!(prepared.contract.verify_digest());
+                    "production contract/frozen input drift"
+                }
+                "projection" => {
+                    prepared.contract.filesystem.allow_read.clear();
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    assert!(prepared.contract.verify_digest());
+                    "inconsistent production contract projection"
+                }
+                "missing" => {
+                    prepared.contract.production = None;
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    "missing production installation contract"
+                }
+                _ => unreachable!(),
+            };
+            match prepared.spawn() {
+                Err(error) => assert!(
+                    error.to_string().contains(expected_error),
+                    "{case}: {error:#}"
+                ),
+                Ok(spawned) => {
+                    spawned.wait_collect();
+                    panic!("{case}: altered contract reached production spawn");
+                }
+            }
+            assert!(!marker.exists(), "{case}: child must not execute");
+        }
+        // Positive control: the same command and policy can create the marker.
+        let spawned = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            functional_test_policy(&tmp),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf started > child-started".into(),
+            ],
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare control")
+        .spawn()
+        .expect("spawn control");
+        spawned.wait_collect();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_caller_policy_cannot_change_canonical_backend_input() {
+        let tmp = std::env::temp_dir();
+        let mut policy = functional_test_policy(&tmp);
+        let prepared = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            policy.clone(),
+            vec!["/bin/true".into()],
+            tmp,
+            HashMap::new(),
+            NetMode::Off,
+            None,
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare production execution");
+        let original = prepared.contract().clone();
+        policy.allow_read.clear();
+        policy.allow_write.clear();
+        policy.deny_network = !policy.deny_network;
+        policy.limits.processes = Some(17);
+        policy.secret_proxies.push("VETTO_TEST_SECRET".into());
+        assert_ne!(&policy, prepared.frozen_policy());
+        assert_eq!(prepared.contract(), &original);
+        let (canonical, identity) = freeze_production_contract(
+            &prepared.scenario,
+            prepared.contract(),
+            prepared.tier.map(|t| t.label()).unwrap_or("none"),
+            &prepared.mechanics.describe(),
+        )
+        .unwrap();
+        assert_eq!(canonical, prepared.canonical);
+        assert_eq!(identity.frozen_hash, prepared.identity().frozen_hash);
+        assert!(prepared
+            .enforcement_report()
+            .unwrap()
+            .binds_identity(&identity));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn phase1_production_audit_binds_actual_contract() {
         let tmp =
             std::env::temp_dir().join(format!("vetto-contract-audit-{}", engine::new_nonce()));
