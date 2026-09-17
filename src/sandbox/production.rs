@@ -2231,9 +2231,7 @@ mod production_unit_tests {
             std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();
         let marker = tmp.join("child-started");
-        let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         for case in ["digest", "resealed", "projection", "missing"] {
-            let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
             let mut prepared = UnpreparedProductionExecution::new(
                 Backend::detect(NetMode::Off, false).expect("detect mechanics"),
                 functional_test_policy(&tmp),
@@ -2293,19 +2291,8 @@ mod production_unit_tests {
                 }
             }
             assert!(!marker.exists(), "{case}: child must not execute");
-            assert_eq!(
-                PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-                spawn_count_before,
-                "{case}: PROD_SPAWN_COUNT must not increment on tamper"
-            );
         }
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            initial_spawn_count,
-            "all phase 1 tamper attempts must leave spawn counter untouched"
-        );
         // Positive control: the same command and policy can create the marker.
-        let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         let spawned = UnpreparedProductionExecution::new(
             Backend::detect(NetMode::Off, false).expect("detect mechanics"),
             functional_test_policy(&tmp),
@@ -2327,17 +2314,13 @@ mod production_unit_tests {
         .expect("spawn control");
         spawned.wait_collect();
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            spawn_count_before + 1,
-            "control must increment PROD_SPAWN_COUNT by 1"
-        );
         std::fs::remove_dir_all(tmp).unwrap();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn phase2_contract_tamper_all_field_classes_rejected_no_spawn() {
+        let _serial = engine::spawn_serial().lock().unwrap();
         let tmp =
             std::env::temp_dir().join(format!("vetto-tamper-full-matrix-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();

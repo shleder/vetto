@@ -11,12 +11,15 @@
 //! - Leaks fail closed: exit code 1 in the CLI, refused session start for
 //!   the supervised preflight.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
+#[cfg(unix)]
 use anyhow::Context;
 
 use crate::config::NetMode;
-use crate::policy::{self, Policy};
+use crate::policy::Policy;
 use crate::sandbox;
 
 #[cfg(unix)]
