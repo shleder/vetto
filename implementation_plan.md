@@ -1,6 +1,6 @@
 # SecurityContract authority: Phase 1
 
-Status: approved by the user; implementation in progress.
+Status: completed.
 Baseline CI: run 35226327619, all eight jobs passed on 2026-09-17.
 Baseline: f543f26df87ae397a31ad9ae53cbda17fd29af7e, inspected 2026-09-17.
 Scope: the requested Phase 1 only; no version bump, release, or new pipeline.
@@ -89,6 +89,22 @@ Run only on external runners: `cargo fmt --check`, `cargo check`, `cargo test`,
 policy IR, production, verify-ng, Phase 4 and Linux integration suites.
 Use the existing CI workflow, adding only missing explicit verification steps.
 Do not invoke the release train. Report exact commit/run IDs and failures.
+
+## Verification record
+
+The completed branch intentionally does not create a second authority model.
+It adds an explicit resolved-effective compiler boundary and seals a
+lossless production installation payload inside `SecurityContract`; the
+production lowering, supervisor relays, credential/notification decisions,
+backend mechanics and audit all consume that sealed payload. The legacy
+`Policy` remains the pre-compilation input represented by the contract, not
+an independently retained competing authority.
+
+The architecture and the five `phase1_` regression gates were verified on
+commit `d6d6ce59052c5aa5a1b9591d8b3564d58ecb39e2` by CI run
+`35242759166`; all eight jobs passed. The run covered remote `fmt`, `check`,
+full tests, clippy with warnings denied, platform suites, Linux syscall ABI,
+red-team, and e2e baseline checks.
 
 ## Completion condition
 
