@@ -206,6 +206,7 @@ mod tests {
 
     fn sample_contract(name: &str) -> SecurityContract {
         let unsealed = UnsealedSecurityContract {
+            crypto: Default::default(),
             contract_version: 1,
             contract_id: format!("contract-{}", name),
             session_nonce: "nonce-12345".to_string(),

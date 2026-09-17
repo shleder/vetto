@@ -35,6 +35,15 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Check
+        run: cargo check
+
+      - name: Contract sealing and signature regressions
+        run: |
+          cargo test --all-features --lib policy_ir::contract::contract_tests
+          cargo test --all-features --lib audit::verdict::tests::test_inv36
+          cargo test --all-features --test phase4_enterprise_runtime
+
       - name: Tests + coverage
         # Runs the full suite under llvm-cov so one job produces both test
         # results and an lcov artifact. Enforcement tests self-skip when the

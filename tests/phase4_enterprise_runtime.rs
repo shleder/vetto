@@ -44,6 +44,7 @@ static EVIDENCE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn create_sealed_contract(name: &str) -> SecurityContract {
     let unsealed = UnsealedSecurityContract {
+        crypto: Default::default(),
         contract_version: 1,
         contract_id: format!("contract-{}", name),
         session_nonce: "nonce-12345".to_string(),
@@ -471,6 +472,25 @@ fn test_contract_blake3_sealing_and_digest_verification() {
     let mut tampered = contract.clone();
     tampered.network.mode = NetworkMode::Direct;
     assert!(!tampered.verify_digest());
+}
+
+#[test]
+fn test_crypto_tamper_rejected_at_supervisor_initialization() {
+    let contract = create_sealed_contract("claude")
+        .with_minisign(true, None, Some("trusted-key".to_string()));
+    assert!(SupervisorEngine::new(contract.clone()).is_ok());
+
+    let mut disabled = contract.clone();
+    disabled.crypto.minisign_enabled = false;
+    assert!(SupervisorEngine::new(disabled).is_err());
+
+    let mut replaced_key = contract.clone();
+    replaced_key.crypto.public_key = Some("replacement-key".to_string());
+    assert!(SupervisorEngine::new(replaced_key).is_err());
+
+    let mut changed_cosign = contract;
+    changed_cosign.crypto.cosign_enabled = true;
+    assert!(SupervisorEngine::new(changed_cosign).is_err());
 }
 
 #[test]

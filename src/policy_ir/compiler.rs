@@ -215,6 +215,7 @@ impl PolicyCompiler {
         let default_exec = vec![PathBuf::from("/usr"), PathBuf::from("/bin")];
 
         let unsealed = UnsealedSecurityContract {
+            crypto: Default::default(),
             contract_version: 1,
             contract_id: format!("contract-{}", &session_nonce[..12]),
             session_nonce,

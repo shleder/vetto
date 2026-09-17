@@ -20,12 +20,18 @@ pub struct UnsealedSecurityContract {
     pub resources: ResourceContract,
     pub environment: EnvironmentContract,
     pub attestation: AttestationContract,
+    #[serde(default)]
+    pub crypto: CryptoContract,
 }
 
 impl UnsealedSecurityContract {
     /// Compute deterministic cryptographic digest (BLAKE3) of canonical serialization.
     pub fn compute_digest(&self) -> Result<String, serde_json::Error> {
-        let value = serde_json::to_value(self)?;
+        let mut payload = self.clone();
+        // Signing requirements and key identity are authority; the detached
+        // signature cannot be included in the message it signs.
+        payload.crypto.signature = None;
+        let value = serde_json::to_value(payload)?;
         let json_bytes = serde_json::to_vec(&value)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(&json_bytes);
@@ -45,7 +51,7 @@ impl UnsealedSecurityContract {
             resources: self.resources,
             environment: self.environment,
             attestation: self.attestation,
-            crypto: CryptoContract::default(),
+            crypto: self.crypto,
             contract_digest_blake3: digest,
         })
     }
@@ -84,6 +90,7 @@ impl SecurityContract {
             resources: self.resources.clone(),
             environment: self.environment.clone(),
             attestation: self.attestation.clone(),
+            crypto: self.crypto.clone(),
         }
     }
 
@@ -98,6 +105,10 @@ impl SecurityContract {
     /// Sets the crypto contract configuration.
     pub fn with_crypto(mut self, crypto: CryptoContract) -> Self {
         self.crypto = crypto;
+        self.contract_digest_blake3 = self
+            .unsealed()
+            .compute_digest()
+            .expect("contract contains only JSON-serializable values");
         self
     }
 
@@ -111,6 +122,10 @@ impl SecurityContract {
         self.crypto.minisign_enabled = enabled;
         self.crypto.signature = signature;
         self.crypto.public_key = public_key;
+        self.contract_digest_blake3 = self
+            .unsealed()
+            .compute_digest()
+            .expect("contract contains only JSON-serializable values");
         self
     }
 }
@@ -213,6 +228,7 @@ mod contract_tests {
 
     fn sample_unsealed() -> UnsealedSecurityContract {
         UnsealedSecurityContract {
+            crypto: CryptoContract::default(),
             contract_version: 1,
             contract_id: "test-contract-001".to_string(),
             session_nonce: "nonce-12345".to_string(),
@@ -285,6 +301,28 @@ mod contract_tests {
         let u1 = sample_unsealed();
         let u2 = sample_unsealed();
         assert_eq!(u1.compute_digest().unwrap(), u2.compute_digest().unwrap());
+    }
+
+    #[test]
+    fn signing_requirements_are_sealed_but_signature_is_detached() {
+        let sealed = sample_unsealed()
+            .seal()
+            .unwrap()
+            .with_minisign(true, None, Some("trusted-key".into()));
+        assert!(sealed.verify_digest());
+        let mut detached = sealed.clone();
+        detached.crypto.signature = Some("detached-signature".into());
+        assert!(detached.verify_digest());
+
+        let mut disabled = sealed.clone();
+        disabled.crypto.minisign_enabled = false;
+        assert!(!disabled.verify_digest());
+        let mut changed_key = sealed.clone();
+        changed_key.crypto.public_key = Some("different-key".into());
+        assert!(!changed_key.verify_digest());
+        let mut changed_cosign = sealed;
+        changed_cosign.crypto.cosign_enabled = true;
+        assert!(!changed_cosign.verify_digest());
     }
 
     #[test]
