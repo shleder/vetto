@@ -30,9 +30,8 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Upper bound for one sweep. Cascades deeper than this can escape; the
-/// budget keeps teardown latency bounded even against hostile process trees.
-pub const SWEEP_BUDGET_MS: u64 = 2_000;
+/// Upper bound for one sweep. Synchronized with MAX_EXTINCTION_DEADLINE_MS.
+pub const SWEEP_BUDGET_MS: u64 = crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
 
 /// Pause between `/proc` scans while waiting for the root to terminate or
 /// for reparenting to become visible.
@@ -99,6 +98,12 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
     let mut killed = 0usize;
     loop {
         let candidates = scan_children(me, root_pid);
+        // Always reap any terminated zombie children among reparented children
+        // regardless of session (mine == theirs). Do not let reparented zombies linger.
+        for &pid in &candidates {
+            let mut status = 0i32;
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        }
         let killable: Vec<i32> = candidates
             .into_iter()
             .filter(|pid| {
@@ -145,7 +150,7 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
 }
 
 /// Every live or zombie process whose PPid is `me`, excluding `exclude_pid`.
-fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
+pub fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
     let mut children = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return children;
@@ -172,7 +177,7 @@ fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
 
 /// Session id of `pid` (`None` on any lookup error: the victim vanished or
 /// is unreachable, and must be skipped conservatively).
-fn session_of(pid: libc::pid_t) -> Option<libc::pid_t> {
+pub fn session_of(pid: libc::pid_t) -> Option<libc::pid_t> {
     // SAFETY: scalar getsid on a possibly-vanished pid; errors are normal.
     let sid = unsafe { libc::getsid(pid) };
     if sid < 0 {

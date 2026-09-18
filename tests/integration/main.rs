@@ -18,6 +18,8 @@ mod env_stripping;
 mod git_hooks;
 mod heavy_scenarios;
 #[cfg(target_os = "linux")]
+mod lifecycle_phase3;
+#[cfg(target_os = "linux")]
 mod linux_downgrade;
 #[cfg(target_os = "linux")]
 mod linux_landlock;

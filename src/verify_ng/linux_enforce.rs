@@ -62,8 +62,8 @@ pub const DEFAULT_RLIMIT_NPROC: u64 = 128;
 pub const DEFAULT_RLIMIT_CPU_SECS: u64 = 5;
 pub const DEFAULT_RLIMIT_FSIZE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Budget for one nonce-targeted tree sweep.
-pub const SWEEP_BUDGET_MS: u64 = 2_000;
+/// Budget for one nonce-targeted tree sweep. Synchronized with MAX_EXTINCTION_DEADLINE_MS.
+pub const SWEEP_BUDGET_MS: u64 = crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
 
 /// Apply the enforcement plan in the forked child before `exec`.
 ///
@@ -337,9 +337,14 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
         let (matched, blind) = scan_nonce_pids(needle, root_pid, me, me_uid);
-        if !blind && matched.is_empty() {
-            // Final complete scan already shows zero nonce bearers and no blind spots.
-            outcome.clean = true;
+        if blind {
+            outcome.blind = true;
+        }
+        if matched.is_empty() {
+            if !outcome.blind {
+                // Final complete scan already shows zero nonce bearers and no blind spots.
+                outcome.clean = true;
+            }
             return outcome;
         }
         for pid in &matched {
@@ -444,6 +449,20 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
         };
         if contains_slice(&env, needle) {
             matched.push(pid);
+        } else if (env.is_empty() || !contains_slice(&env, needle))
+            && pid_alive(pid as u32)
+            && !pid_is_zombie(&status)
+            && crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me)
+        {
+            let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let their_sid = crate::sandbox::linux::proctrack::session_of(pid);
+            if match (my_sid, their_sid) {
+                (Some(mine), Some(theirs)) => mine != theirs,
+                _ => false,
+            } {
+                blind = true;
+                matched.push(pid);
+            }
         }
     }
     (matched, blind)

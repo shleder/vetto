@@ -35,7 +35,7 @@ impl CleanupExpectation {
             match tier_label {
                 Some("full") => CleanupExpectation::Strong,
                 _ => CleanupExpectation::BestEffort {
-                    sweep_budget_ms: 2000,
+                    sweep_budget_ms: crate::proctree::MAX_EXTINCTION_DEADLINE_MS,
                 },
             }
         }
@@ -43,14 +43,14 @@ impl CleanupExpectation {
         {
             let _ = tier_label;
             CleanupExpectation::BestEffort {
-                sweep_budget_ms: 2000,
+                sweep_budget_ms: crate::proctree::MAX_EXTINCTION_DEADLINE_MS,
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = tier_label;
             CleanupExpectation::BestEffort {
-                sweep_budget_ms: 2000,
+                sweep_budget_ms: crate::proctree::MAX_EXTINCTION_DEADLINE_MS,
             }
         }
     }
@@ -75,6 +75,8 @@ pub trait WaitKill {
     fn try_wait(&mut self) -> Option<i32>;
     /// Issue termination (SIGKILL / `Child::kill`). Idempotent.
     fn terminate(&mut self);
+    /// Attempt graceful termination (e.g. SIGTERM to process group). Idempotent.
+    fn terminate_graceful(&mut self);
 }
 
 impl WaitKill for crate::sandbox::SandboxHandle {
@@ -84,6 +86,10 @@ impl WaitKill for crate::sandbox::SandboxHandle {
 
     fn terminate(&mut self) {
         crate::sandbox::SandboxHandle::terminate(self);
+    }
+
+    fn terminate_graceful(&mut self) {
+        crate::sandbox::SandboxHandle::terminate_graceful(self);
     }
 }
 
@@ -99,17 +105,41 @@ pub fn kill_on_deadline(
 }
 
 /// Generic deadline loop over any [`WaitKill`] handle. Same contract as
-/// [`kill_on_deadline`]: poll, terminate once on expiry, bounded re-wait.
+/// [`kill_on_deadline`]: poll, escalate gracefully on expiry, then force kill if needed.
 pub fn kill_on_deadline_with<H: WaitKill>(
     handle: &mut H,
     deadline: Instant,
     poll: Duration,
+) -> (KillOutcome, i32) {
+    kill_on_deadline_with_grace(handle, deadline, poll, Duration::from_secs(2))
+}
+
+/// Deadline loop with an explicit graceful escalation window.
+pub fn kill_on_deadline_with_grace<H: WaitKill>(
+    handle: &mut H,
+    deadline: Instant,
+    poll: Duration,
+    grace: Duration,
 ) -> (KillOutcome, i32) {
     loop {
         if let Some(code) = handle.try_wait() {
             return (KillOutcome::Exited, code);
         }
         if Instant::now() >= deadline {
+            // Phase 1: Graceful termination (SIGTERM)
+            handle.terminate_graceful();
+            let grace_end = Instant::now() + grace;
+            loop {
+                if let Some(code) = handle.try_wait() {
+                    return (KillOutcome::KilledOnDeadline, code);
+                }
+                if Instant::now() >= grace_end {
+                    break;
+                }
+                std::thread::sleep(poll);
+            }
+
+            // Phase 2: Forceful termination (SIGKILL)
             handle.terminate();
             let end = Instant::now() + Duration::from_secs(10);
             loop {
@@ -136,6 +166,8 @@ mod killer_tests {
     struct FakeHandle {
         polls: VecDeque<Option<i32>>,
         terminates: usize,
+        graceful_terminates: usize,
+        exit_on_graceful: bool,
     }
 
     impl WaitKill for FakeHandle {
@@ -148,6 +180,13 @@ mod killer_tests {
             // A SIGKILLed child becomes reaped on the next poll.
             self.polls.push_front(Some(-9));
         }
+
+        fn terminate_graceful(&mut self) {
+            self.graceful_terminates += 1;
+            if self.exit_on_graceful {
+                self.polls.push_front(Some(-15));
+            }
+        }
     }
 
     #[test]
@@ -155,6 +194,8 @@ mod killer_tests {
         let mut h = FakeHandle {
             polls: vec![None, None, Some(0)].into(),
             terminates: 0,
+            graceful_terminates: 0,
+            exit_on_graceful: false,
         };
         let (outcome, code) = kill_on_deadline_with(
             &mut h,
@@ -163,17 +204,40 @@ mod killer_tests {
         );
         assert_eq!((outcome, code), (KillOutcome::Exited, 0));
         assert_eq!(h.terminates, 0);
+        assert_eq!(h.graceful_terminates, 0);
     }
 
     #[test]
-    fn deadline_kills_exactly_once_and_reaps() {
+    fn deadline_graceful_exit_reaps_without_sigkill() {
         let mut h = FakeHandle {
             polls: vec![None].into(),
             terminates: 0,
+            graceful_terminates: 0,
+            exit_on_graceful: true,
         };
         let (outcome, code) =
             kill_on_deadline_with(&mut h, Instant::now(), Duration::from_millis(1));
+        assert_eq!((outcome, code), (KillOutcome::KilledOnDeadline, -15));
+        assert_eq!(h.graceful_terminates, 1);
+        assert_eq!(h.terminates, 0);
+    }
+
+    #[test]
+    fn deadline_kills_with_escalation_and_reaps() {
+        let mut h = FakeHandle {
+            polls: vec![None].into(),
+            terminates: 0,
+            graceful_terminates: 0,
+            exit_on_graceful: false,
+        };
+        let (outcome, code) = kill_on_deadline_with_grace(
+            &mut h,
+            Instant::now(),
+            Duration::from_millis(1),
+            Duration::from_millis(5),
+        );
         assert_eq!((outcome, code), (KillOutcome::KilledOnDeadline, -9));
+        assert_eq!(h.graceful_terminates, 1);
         assert_eq!(h.terminates, 1);
     }
 

@@ -976,13 +976,22 @@ impl SpawnedProductionExecution {
     /// a `ProductionResult`.
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
         if self.fsm.current_state() == ExecutionState::Enforce {
-            let _ = self.fsm.transition(ExecutionState::Observe);
+            if let Err(e) = self.fsm.transition(ExecutionState::Observe) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Enforce->Observe failed: {e}"));
+            }
         }
         if self.fsm.current_state() == ExecutionState::Observe {
-            let _ = self.fsm.transition(ExecutionState::Terminate);
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminate) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Observe->Terminate failed: {e}"));
+            }
         }
         if self.fsm.current_state() == ExecutionState::Terminate {
-            let _ = self.fsm.transition(ExecutionState::Cleanup);
+            if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Terminate->Cleanup failed: {e}"));
+            }
         }
 
         let extinction_start = Instant::now();
@@ -1022,19 +1031,38 @@ impl SpawnedProductionExecution {
             ));
         }
         #[cfg(target_os = "linux")]
+        let setsid_orphan_escaped = if matches!(
+            self.handle.strategy,
+            Some(crate::sandbox::handle::KillStrategy::ProcessGroup { sweep: true, .. })
+        ) {
+            let me = unsafe { libc::getpid() } as u32;
+            let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let children = crate::sandbox::linux::proctrack::scan_children(me, self.pid as i32);
+            children.iter().any(|&pid| {
+                match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
+                    (Some(mine), Some(theirs)) => mine != theirs,
+                    _ => false,
+                }
+            })
+        } else {
+            false
+        };
+
+        #[cfg(target_os = "linux")]
         {
             if let Some(sweep) =
                 crate::verify_ng::linux_enforce::sweep_tree_by_nonce(self.nonce.as_str(), self.pid)
             {
-                surviving_processes = if sweep.clean {
+                let clean = sweep.clean && !sweep.blind && sweep.residual.is_empty();
+                surviving_processes = if clean {
                     0
                 } else {
                     sweep.residual.len().max(1)
                 };
-                self.capability.note_tree_clean(sweep.clean);
+                self.capability.note_tree_clean(clean);
                 self.capability.note_diagnostic(format!(
                     "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
-                    sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
+                    clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
                 ));
             } else {
                 surviving_processes = 1;
@@ -1064,7 +1092,18 @@ impl SpawnedProductionExecution {
             elapsed_ms,
         );
 
+        // Record verified surviving descendant count into FSM
+        self.fsm.record_extinction_result(surviving_processes);
+
         let mut final_exit_code = exit_code;
+        #[cfg(target_os = "linux")]
+        if setsid_orphan_escaped && final_exit_code.unwrap_or(0) == 0 {
+            self.capability.note_diagnostic(
+                "setsid escaper swept in fs-only: containment gap forces fail-closed exit 125"
+                    .to_string(),
+            );
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        }
         if let Err(ref breach) = extinction_res {
             self.capability.note_tree_clean(false);
             self.capability.note_diagnostic(format!(
@@ -1074,6 +1113,20 @@ impl SpawnedProductionExecution {
                 breach.reason
             ));
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+            let fsm_err = self.fsm.fail_closed(&breach.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+            }
+        } else {
+            if let Err(e) = self.fsm.transition(ExecutionState::Verify) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verify failed: {e}"));
+            }
         }
 
         // Check Netlink evidence channel integrity (INV-37)
@@ -1114,6 +1167,12 @@ impl SpawnedProductionExecution {
 
         let mut ext_hash_opt: Option<String> = None;
         let mut ledger_write_ok = false;
+        if self.fsm.current_state() == ExecutionState::Verify {
+            if let Err(e) = self.fsm.transition(ExecutionState::Attest) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Attest failed: {e}"));
+            }
+        }
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
             let init_rec = VettoAuditRecord::session_init(
                 &self.nonce,
@@ -1208,6 +1267,13 @@ impl SpawnedProductionExecution {
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         }
 
+        if self.fsm.current_state() == ExecutionState::Attest {
+            if let Err(e) = self.fsm.transition(ExecutionState::Verdict) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verdict failed: {e}"));
+            }
+        }
+
         // Final verdict and FSM state transition
         let final_verdict_obj = FinalVerdict {
             status: if extinction_res.is_err() || !ledger_verified {
@@ -1233,15 +1299,31 @@ impl SpawnedProductionExecution {
             },
         };
 
-        if extinction_res.is_err() || !evidence_intact || !ledger_verified {
-            let _ = self.fsm.fail_closed(&final_verdict_obj.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+        if extinction_res.is_err() {
+            // Extinction breach: FSM is in EmergencyCleanup, DO NOT call transition(Terminal).
+            // Retain EmergencyCleanup state with fail-closed exit code 125.
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        } else if !evidence_intact || !ledger_verified {
+            let fsm_err = self.fsm.fail_closed(&final_verdict_obj.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+            }
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         } else {
-            let _ = self.fsm.transition(ExecutionState::Verify);
-            let _ = self.fsm.transition(ExecutionState::Attest);
-            let _ = self.fsm.transition(ExecutionState::Verdict);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+                final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+            }
         }
 
         let report = self
@@ -1458,11 +1540,7 @@ impl SupervisorEngine {
     /// Prepare step: verifies contract integrity and enters Prepare state.
     pub fn prepare(&mut self) -> Result<(), StateTransitionError> {
         if !self.contract.verify_digest() {
-            let _ = self.fsm.fail_closed("Contract digest verification failed");
-            return Err(StateTransitionError::FailClosed {
-                state: self.fsm.current_state(),
-                error: "Contract digest mismatch".to_string(),
-            });
+            return Err(self.fsm.fail_closed("Contract digest verification failed"));
         }
         self.fsm.transition(ExecutionState::Prepare)
     }
@@ -1488,6 +1566,7 @@ impl SupervisorEngine {
         surviving_resources: usize,
         elapsed_ms: u64,
     ) -> Result<ExtinctionProof, ExtinctionBreach> {
+        self.fsm.record_extinction_result(surviving_processes);
         if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
             return Err(ExtinctionBreach {
                 platform: extinction_tier,
@@ -1506,8 +1585,11 @@ impl SupervisorEngine {
             elapsed_ms,
         ) {
             Ok(proof) => proof,
-            Err(breach) => {
-                let _ = self.fsm.fail_closed(&breach.reason);
+            Err(mut breach) => {
+                let fsm_err = self.fsm.fail_closed(&breach.reason);
+                if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                    breach.reason = format!("{} (FSM transition error: {fsm_err})", breach.reason);
+                }
                 return Err(breach);
             }
         };
@@ -1554,9 +1636,17 @@ impl SupervisorEngine {
             || verdict.status == VerdictStatus::Fail
             || verdict.status == VerdictStatus::Inconclusive
         {
-            let _ = self.fsm.fail_closed(&verdict.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if zombies_survived > 0 {
+                self.fsm.record_extinction_result(zombies_survived);
+            }
+            let fsm_err = self.fsm.fail_closed(&verdict.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                return Err(fsm_err);
+            }
+            self.fsm.transition(ExecutionState::EmergencyCleanup)?;
+            if zombies_survived == 0 && self.fsm.surviving_descendants().unwrap_or(0) == 0 {
+                self.fsm.transition(ExecutionState::Terminal)?;
+            }
         } else {
             self.fsm.transition(ExecutionState::Terminal)?;
         }
@@ -1592,9 +1682,17 @@ impl SupervisorEngine {
             || verdict.status == VerdictStatus::Fail
             || verdict.status == VerdictStatus::Inconclusive
         {
-            let _ = self.fsm.fail_closed(&verdict.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if zombies_survived > 0 {
+                self.fsm.record_extinction_result(zombies_survived);
+            }
+            let fsm_err = self.fsm.fail_closed(&verdict.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                return Err(fsm_err);
+            }
+            self.fsm.transition(ExecutionState::EmergencyCleanup)?;
+            if zombies_survived == 0 && self.fsm.surviving_descendants().unwrap_or(0) == 0 {
+                self.fsm.transition(ExecutionState::Terminal)?;
+            }
         } else {
             self.fsm.transition(ExecutionState::Terminal)?;
         }
