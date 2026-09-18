@@ -107,7 +107,7 @@ fn cli_limits_cannot_loosen_policy_limits() {
 [limits]
 cpu_seconds = 2
 open_files = 32
-processes = 24
+processes = 1024
 file_size_bytes = 1024
 "#;
     write_file(&proj.path().join("policy.toml"), policy);
@@ -116,7 +116,7 @@ file_size_bytes = 1024
         proj.path(),
         &[
             "--limits",
-            "nofile=1024,cpu=100,pids=500,fsize=10485760",
+            "nofile=1024,cpu=100,pids=4096,fsize=10485760",
             "--tui=none",
             "--",
             "sh",
@@ -139,8 +139,8 @@ file_size_bytes = 1024
         "CLI must not loosen cpu_seconds from 2 to 100; stdout: {so}"
     );
     assert!(
-        so.contains("P=24"),
-        "CLI must not loosen processes from 24 to 500; stdout: {so}"
+        so.contains("P=1024"),
+        "CLI must not loosen processes from 1024 to 4096; stdout: {so}"
     );
 
     let written = std::fs::metadata(proj.path().join("too-big"))
@@ -163,7 +163,7 @@ fn cli_limits_tightens_base_policy_limits() {
 [limits]
 cpu_seconds = 100
 open_files = 1024
-processes = 500
+processes = 4096
 file_size_bytes = 10485760
 "#;
     write_file(&proj.path().join("policy.toml"), policy);
@@ -172,7 +172,7 @@ file_size_bytes = 10485760
         proj.path(),
         &[
             "--limits",
-            "nofile=48,cpu=3,procs=40,fsize=512",
+            "nofile=48,cpu=3,procs=1024,fsize=512",
             "--tui=none",
             "--",
             "sh",
@@ -195,8 +195,8 @@ file_size_bytes = 10485760
         "CLI should tighten cpu_seconds to 3; stdout: {so}"
     );
     assert!(
-        so.contains("P=40"),
-        "CLI should tighten processes to 40; stdout: {so}"
+        so.contains("P=1024"),
+        "CLI should tighten processes to 1024; stdout: {so}"
     );
 
     let written = std::fs::metadata(proj.path().join("too-big"))
@@ -302,7 +302,7 @@ fn cli_limits_process_aliases() {
         proj.path(),
         &[
             "--limits",
-            "pids=55",
+            "pids=1024",
             "--tui=none",
             "--",
             "sh",
@@ -312,12 +312,12 @@ fn cli_limits_process_aliases() {
     );
     assert!(
         out.status.success(),
-        "vetto failed with pids=55; stderr: {}",
+        "vetto failed with pids=1024; stderr: {}",
         stderr(&out)
     );
     assert!(
-        stdout(&out).contains("P=55"),
-        "pids=55 must set process limit to 55; stdout: {}",
+        stdout(&out).contains("P=1024"),
+        "pids=1024 must set process limit to 1024; stdout: {}",
         stdout(&out)
     );
 
@@ -326,7 +326,7 @@ fn cli_limits_process_aliases() {
         proj.path(),
         &[
             "--limits",
-            "procs=45",
+            "procs=2048",
             "--tui=none",
             "--",
             "sh",
@@ -336,12 +336,12 @@ fn cli_limits_process_aliases() {
     );
     assert!(
         out.status.success(),
-        "vetto failed with procs=45; stderr: {}",
+        "vetto failed with procs=2048; stderr: {}",
         stderr(&out)
     );
     assert!(
-        stdout(&out).contains("P=45"),
-        "procs=45 must set process limit to 45; stdout: {}",
+        stdout(&out).contains("P=2048"),
+        "procs=2048 must set process limit to 2048; stdout: {}",
         stdout(&out)
     );
 }
