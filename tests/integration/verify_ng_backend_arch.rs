@@ -237,6 +237,7 @@ fn test_backend_identity_001_runner_binds_execution() {
         deadline: Duration::from_secs(15),
         enable_host_control: false,
         contract: None,
+        host_env_override: None,
     };
     let mut log = runner::SpawnLog::new();
     let out = runner::run_one(&req, &mut log);
@@ -326,6 +327,7 @@ fn test_backend_fail_closed_001_no_spawn_on_prepare_failure() {
         deadline: Duration::from_secs(15),
         enable_host_control: false,
         contract: None,
+        host_env_override: None,
     };
     let mut log = runner::SpawnLog::new();
     let mut backend = FailingBackend { report: None };

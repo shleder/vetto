@@ -62,6 +62,7 @@ fn request<'a>(
         // in explicitly via `request_with_control`.
         enable_host_control: false,
         contract: None,
+        host_env_override: None,
     }
 }
 

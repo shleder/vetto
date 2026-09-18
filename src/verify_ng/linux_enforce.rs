@@ -194,8 +194,12 @@ fn apply_child_plan_linux(
             .iter()
             .map(std::path::PathBuf::from)
             .collect();
-        crate::sandbox::linux::landlock::apply_policy(&write_roots, &read_roots, false)
-            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        crate::sandbox::linux::landlock::apply_policy(
+            &write_roots,
+            &read_roots,
+            plan.strip_read_on_write,
+        )
+        .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
     } else {
         // SAFETY: scalar-only prctl; required before any seccomp filter.
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {

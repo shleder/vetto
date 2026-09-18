@@ -250,6 +250,11 @@ pub struct CanonicalPolicy {
     pub argv: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub cwd: PathBuf,
+    pub allow_read: Vec<PathBuf>,
+    pub allow_write: Vec<PathBuf>,
+    pub deny_read: Vec<PathBuf>,
+    pub deny_write: Vec<PathBuf>,
+    pub deny_resolved: Vec<PathBuf>,
     pub policy_bytes: Vec<u8>,
     pub policy_hash: String,
 }
@@ -275,6 +280,11 @@ impl CanonicalPolicy {
             argv: spec.argv.clone(),
             env: spec.env.clone(),
             cwd: spec.cwd.clone(),
+            allow_read: spec.allow_read.iter().map(PathBuf::from).collect(),
+            allow_write: spec.allow_write.iter().map(PathBuf::from).collect(),
+            deny_read: spec.deny_read.iter().map(PathBuf::from).collect(),
+            deny_write: spec.deny_write.iter().map(PathBuf::from).collect(),
+            deny_resolved: spec.deny_resolved.iter().map(PathBuf::from).collect(),
             policy_bytes: spec.policy_bytes.clone(),
             policy_hash,
         }
@@ -461,6 +471,8 @@ pub struct ChildEnforcementPlan {
     pub extra_rw: Vec<std::path::PathBuf>,
     /// System roots confined read-only (interpreter, loader, configs).
     pub system_ro: Vec<std::path::PathBuf>,
+    /// Strip READ_FILE right from write roots (Tier FS-ONLY secret carving).
+    pub strip_read_on_write: bool,
     /// Deny non-`AF_UNIX` sockets (`--net=off` only).
     pub net_deny: bool,
     /// Install the seccomp hardening denylist.
@@ -1075,7 +1087,7 @@ impl LinuxBackend {
         // Child-side plan mirrors the report: disabled mechanisms are
         // omitted, never stubbed. Without Landlock there is no filesystem
         // plan at all (fail-closed per capability, not a fake filter).
-        let system_ro: Vec<std::path::PathBuf> = if landlock_ok {
+        let mut system_ro: Vec<std::path::PathBuf> = if landlock_ok {
             super::linux_enforce::SYSTEM_ROOTS
                 .iter()
                 .map(std::path::PathBuf::from)
@@ -1083,11 +1095,24 @@ impl LinuxBackend {
         } else {
             Vec::new()
         };
+        for r in &policy.allow_read {
+            if !system_ro.contains(r) {
+                system_ro.push(r.clone());
+            }
+        }
+        let mut extra_rw = ctx.extra_rw.clone();
+        for w in &policy.allow_write {
+            if !extra_rw.contains(w) {
+                extra_rw.push(w.clone());
+            }
+        }
+        let strip_read_on_write = !policy.deny_read.is_empty() || !policy.deny_resolved.is_empty();
         self.plan = Some(ChildEnforcementPlan {
             landlock: landlock_ok,
             exec_root: policy.cwd.clone(),
-            extra_rw: ctx.extra_rw.clone(),
+            extra_rw,
             system_ro,
+            strip_read_on_write,
             net_deny: net_off,
             harden_syscalls: seccomp_ok,
             rlimit_as: Some(super::linux_enforce::DEFAULT_RLIMIT_AS_BYTES),

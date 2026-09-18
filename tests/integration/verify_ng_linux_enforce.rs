@@ -106,6 +106,7 @@ fn run_linux(
         deadline,
         enable_host_control: false,
         contract: None,
+        host_env_override: None,
     };
     let mut backend = LinuxBackend::new();
     let mut log = runner::SpawnLog::new();

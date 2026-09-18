@@ -105,6 +105,7 @@ fn run_linux_contract(
         deadline: Duration::from_secs(15),
         enable_host_control,
         contract: Some(contract),
+        host_env_override: None,
     };
     let mut backend = LinuxBackend::new();
     let mut log = runner::SpawnLog::new();
@@ -673,7 +674,7 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
     std::fs::write(&user_file, b"print('hello')\n").expect("write user file");
 
     let mut policy = Policy {
-        allow_read: vec![ws.clone()],
+        allow_read: vec![user_file.clone()],
         allow_write: vec![ws.clone()],
         ..Default::default()
     };

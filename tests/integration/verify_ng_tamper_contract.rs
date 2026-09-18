@@ -146,6 +146,7 @@ fn run_linux_contract(
         deadline: Duration::from_secs(15),
         enable_host_control,
         contract: Some(contract),
+        host_env_override: None,
     };
     let mut backend = LinuxBackend::new();
     let mut log = runner::SpawnLog::new();

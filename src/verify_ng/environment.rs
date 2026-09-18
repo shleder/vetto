@@ -215,10 +215,16 @@ pub fn is_allowed_by_contract(
         if key == "USERPROFILE" && Path::new(val) == h.isolated_home {
             return Ok(());
         }
-        if key == "VETTO_RUN_NONCE" && val == h.session_nonce {
+        if (key == "VETTO_VNG_NONCE" || key == "VETTO_RUN_NONCE") && val == h.session_nonce {
             return Ok(());
         }
-        if key == "VETTO_FIXTURE_ROOT" && Path::new(val) == h.fixture_root {
+        if (key == "VETTO_VNG_HOME" || key == "VETTO_RUN_HOME") && Path::new(val) == h.isolated_home
+        {
+            return Ok(());
+        }
+        if (key == "VETTO_VNG_ROOT" || key == "VETTO_FIXTURE_ROOT")
+            && Path::new(val) == h.fixture_root
+        {
             return Ok(());
         }
         if key == "VETTO_VNG_CONTROL_DOWNLINK" && h.has_control_channel {

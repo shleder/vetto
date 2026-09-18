@@ -100,14 +100,15 @@ fn seal_contract(
     seal_contract_with_env(workspace, policy, argv, &BTreeMap::new(), nonce)
 }
 
-/// Run a scenario under LinuxBackend using a sealed SecurityContract.
-fn run_linux_contract(
+/// Run a scenario under LinuxBackend using a sealed SecurityContract with optional host env override.
+fn run_linux_contract_with_host_env(
     scen: &Scenario,
     contract: &SecurityContract,
     script: &str,
     sentinels: Vec<(String, Vec<u8>)>,
     env_extra: BTreeMap<String, String>,
     enable_host_control: bool,
+    host_env_override: Option<BTreeMap<String, String>>,
 ) -> (runner::ExecutionOutcome, runner::SpawnLog) {
     let production = contract
         .production
@@ -126,11 +127,31 @@ fn run_linux_contract(
         deadline: Duration::from_secs(15),
         enable_host_control,
         contract: Some(contract),
+        host_env_override,
     };
     let mut backend = LinuxBackend::new();
     let mut log = runner::SpawnLog::new();
     let out = runner::run_one_with_backend(&req, &mut log, &mut backend);
     (out, log)
+}
+
+fn run_linux_contract(
+    scen: &Scenario,
+    contract: &SecurityContract,
+    script: &str,
+    sentinels: Vec<(String, Vec<u8>)>,
+    env_extra: BTreeMap<String, String>,
+    enable_host_control: bool,
+) -> (runner::ExecutionOutcome, runner::SpawnLog) {
+    run_linux_contract_with_host_env(
+        scen,
+        contract,
+        script,
+        sentinels,
+        env_extra,
+        enable_host_control,
+        None,
+    )
 }
 
 fn assert_enforced_or_skip(out: &runner::ExecutionOutcome, cap: SecurityCapability) -> bool {
@@ -171,10 +192,11 @@ fn test_env_arbitrary_host_var_not_leaked() {
     let scen = test_scenario("ENV-ARBITRARY-001", Category::Secrets, 1);
     let ws = temp_dir("ws-env-arbitrary");
 
-    // Set an arbitrary host variable in the supervisor process
     let arbitrary_key = "VETTO_TEST_HOST_ARBITRARY_VAR_987";
     let arbitrary_val = "secret_arbitrary_host_payload_42";
-    std::env::set_var(arbitrary_key, arbitrary_val);
+
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
+    host_env.insert(arbitrary_key.to_string(), arbitrary_val.to_string());
 
     let policy = Policy {
         allow_read: vec![ws.clone()],
@@ -187,18 +209,18 @@ fn test_env_arbitrary_host_var_not_leaked() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-arb-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        std::env::remove_var(arbitrary_key);
         return;
     }
 
@@ -223,7 +245,6 @@ fn test_env_arbitrary_host_var_not_leaked() {
     assert_eq!(out.result.verdict, Verdict::Pass);
 
     let _ = std::fs::remove_dir_all(&ws);
-    std::env::remove_var(arbitrary_key);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,15 +256,15 @@ fn test_env_sensitive_looking_variables_not_leaked() {
     let scen = test_scenario("ENV-SENSITIVE-001", Category::Secrets, 1);
     let ws = temp_dir("ws-env-sensitive");
 
-    // Set sensitive variables in host process
     let sensitive_keys = [
         ("AWS_SECRET_ACCESS_KEY", "AKIAIOSFODNN7EXAMPLE"),
         ("GITHUB_TOKEN", "ghp_supersecretgithubtoken1234567890"),
         ("ANTHROPIC_API_KEY", "sk-ant-api03-verysecretkey"),
         ("PRIVATE_KEY_DATA", "my_private_rsa_key_bytes"),
     ];
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
     for (k, v) in sensitive_keys {
-        std::env::set_var(k, v);
+        host_env.insert(k.to_string(), v.to_string());
     }
 
     let policy = Policy {
@@ -257,20 +278,18 @@ fn test_env_sensitive_looking_variables_not_leaked() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-sens-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        for (k, _) in sensitive_keys {
-            std::env::remove_var(k);
-        }
         return;
     }
 
@@ -287,7 +306,6 @@ fn test_env_sensitive_looking_variables_not_leaked() {
             .iter()
             .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "sensitive var '{k}' must not leak");
-        std::env::remove_var(k);
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -304,7 +322,9 @@ fn test_env_path_manipulation_sanitized() {
     // Dirty PATH with '.', empty components '::', and '~' relative entry
     let orig_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
     let dirty_path = format!(".:/tmp/fake_evil_bin::{}:~/.malicious", orig_path);
-    std::env::set_var("PATH", &dirty_path);
+
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
+    host_env.insert("PATH".to_string(), dirty_path);
 
     let policy = Policy {
         allow_read: vec![ws.clone()],
@@ -317,18 +337,18 @@ fn test_env_path_manipulation_sanitized() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-path-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        std::env::set_var("PATH", &orig_path);
         return;
     }
 
@@ -347,7 +367,6 @@ fn test_env_path_manipulation_sanitized() {
     });
     assert!(hygiene_fact, "path hygiene vector must be attested");
 
-    std::env::set_var("PATH", &orig_path);
     let _ = std::fs::remove_dir_all(&ws);
 }
 
@@ -365,8 +384,9 @@ fn test_env_inherited_environment_scrubbed_clean_room() {
         ("VETTO_HOST_PROBE_B", "val_b"),
         ("VETTO_HOST_PROBE_C", "val_c"),
     ];
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
     for (k, v) in host_vars {
-        std::env::set_var(k, v);
+        host_env.insert(k.to_string(), v.to_string());
     }
 
     // Clean-room policy: only PATH is passed through
@@ -381,20 +401,18 @@ fn test_env_inherited_environment_scrubbed_clean_room() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-inherit-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        for (k, _) in host_vars {
-            std::env::remove_var(k);
-        }
         return;
     }
 
@@ -409,7 +427,6 @@ fn test_env_inherited_environment_scrubbed_clean_room() {
             .iter()
             .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "unallowed host variable '{k}' must not leak");
-        std::env::remove_var(k);
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -425,11 +442,12 @@ fn test_env_internal_vetto_variables_not_leaked() {
 
     // Internal diagnostic variables in host environment
     let internal_vars = [
-        ("VETTO_SEATBELT_MODE", "permissive"),
+        ("VETTO_INTERNAL_DIAG_FLAG", "1"),
         ("VETTO_INTERNAL_DEBUG_FLAG", "1"),
     ];
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
     for (k, v) in internal_vars {
-        std::env::set_var(k, v);
+        host_env.insert(k.to_string(), v.to_string());
     }
 
     let policy = Policy {
@@ -443,20 +461,18 @@ fn test_env_internal_vetto_variables_not_leaked() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-internal-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        for (k, _) in internal_vars {
-            std::env::remove_var(k);
-        }
         return;
     }
 
@@ -471,7 +487,6 @@ fn test_env_internal_vetto_variables_not_leaked() {
             .iter()
             .any(|f| f.name == "env-violation" && f.value.contains(k));
         assert!(!leaked, "internal variable '{k}' must not leak");
-        std::env::remove_var(k);
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -486,7 +501,8 @@ fn test_env_explicitly_denied_variables_blocked() {
     let ws = temp_dir("ws-env-denied");
 
     let denied_var = "DENIED_BY_CONTRACT_VAR";
-    std::env::set_var(denied_var, "attempted_leak_val");
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
+    host_env.insert(denied_var.to_string(), "attempted_leak_val".to_string());
 
     let policy = Policy {
         allow_read: vec![ws.clone()],
@@ -499,18 +515,18 @@ fn test_env_explicitly_denied_variables_blocked() {
     };
     let contract = seal_contract(&ws, &policy, &["sh"], "nonce-env-denied-01");
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         BTreeMap::new(),
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
     if !assert_enforced_or_skip(&out, SecurityCapability::FilesystemIsolation) {
         let _ = std::fs::remove_dir_all(&ws);
-        std::env::remove_var(denied_var);
         return;
     }
 
@@ -525,7 +541,6 @@ fn test_env_explicitly_denied_variables_blocked() {
         .any(|f| f.name == "env-violation" && f.value.contains(denied_var));
     assert!(!leaked, "explicitly denied variable must be stripped");
 
-    std::env::remove_var(denied_var);
     let _ = std::fs::remove_dir_all(&ws);
 }
 
@@ -780,7 +795,8 @@ fn test_env_arbitrary_leak_detection_yields_fail() {
 
     let leaked_key = "ROGUE_HOST_LEAKED_VAR";
     let leaked_val = "pwned_payload";
-    std::env::set_var(leaked_key, leaked_val);
+    let mut host_env: BTreeMap<String, String> = std::env::vars().collect();
+    host_env.insert(leaked_key.to_string(), leaked_val.to_string());
 
     let policy = Policy {
         allow_read: vec![ws.clone()],
@@ -797,13 +813,14 @@ fn test_env_arbitrary_leak_detection_yields_fail() {
     let mut env_extra = BTreeMap::new();
     env_extra.insert(leaked_key.to_string(), leaked_val.to_string());
 
-    let (out, log) = run_linux_contract(
+    let (out, log) = run_linux_contract_with_host_env(
         &scen,
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
         env_extra,
         true,
+        Some(host_env),
     );
     assert_eq!(log.len(), 1);
 
@@ -824,7 +841,6 @@ fn test_env_arbitrary_leak_detection_yields_fail() {
     });
     assert!(has_leak_fact, "verifier must record leaked_from_host fact");
 
-    std::env::remove_var(leaked_key);
     let _ = std::fs::remove_dir_all(&ws);
 }
 

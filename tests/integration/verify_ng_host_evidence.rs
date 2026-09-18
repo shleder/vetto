@@ -75,6 +75,7 @@ fn request_with_control<'a>(
         deadline,
         enable_host_control: true,
         contract: None,
+        host_env_override: None,
     }
 }
 

@@ -182,6 +182,10 @@ pub struct ExecutionRequest<'a> {
     /// validates that `contract.verify_digest()` holds (failing closed otherwise),
     /// and uses the exact sealed installation policy rather than rebuilding policy.
     pub contract: Option<&'a crate::policy_ir::contract::SecurityContract>,
+    /// Optional host environment override used for hermetic test execution
+    /// instead of reading `std::env::vars()`. This prevents test-to-test
+    /// contamination when running in-process tests concurrently.
+    pub host_env_override: Option<BTreeMap<String, String>>,
 }
 
 /// Host-observed outcome of one scenario run.
@@ -410,7 +414,10 @@ pub fn run_one_with_backend(
         sentinel_pre.push((abs, hash_bytes(bytes)));
     }
 
-    let host_env_before: BTreeMap<String, String> = std::env::vars().collect();
+    let host_env_before: BTreeMap<String, String> = req
+        .host_env_override
+        .clone()
+        .unwrap_or_else(|| std::env::vars().collect());
 
     // Env: filtered base -> isolated HOME -> harness contract -> extras.
     let mut env: BTreeMap<String, String> = if let Some(contract) = req.contract {
@@ -511,7 +518,7 @@ pub fn run_one_with_backend(
         }
         out
     } else {
-        let base = crate::sandbox::envfilter::filter_env(std::env::vars(), true);
+        let base = crate::sandbox::envfilter::filter_env(host_env_before.clone(), true);
         base.into_iter().collect()
     };
     env.insert("HOME".to_string(), home.display().to_string());
@@ -922,7 +929,10 @@ fn finish_run(
     }
 
     if let Some(contract) = req.contract {
-        let host_env_after: BTreeMap<String, String> = std::env::vars().collect();
+        let host_env_after: BTreeMap<String, String> = req
+            .host_env_override
+            .clone()
+            .unwrap_or_else(|| std::env::vars().collect());
         let observed_pairs: Vec<(String, String)> = if let Some(ref p) = proc_environ {
             evidence.host_fact("proc-environ", format!("pid={pid}:verified-from-procfs"));
             p.clone()
