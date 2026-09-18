@@ -537,6 +537,8 @@ pub struct HostVerification {
     pub cgroup_pids_ok: bool,
     /// Cgroup v2 cpu.max matches expected limit.
     pub cgroup_cpu_ok: bool,
+    /// Network namespace is isolated from the host.
+    pub netns_isolated: bool,
 }
 
 impl HostVerification {
@@ -557,6 +559,7 @@ impl HostVerification {
             cgroup_memory_ok: false,
             cgroup_pids_ok: false,
             cgroup_cpu_ok: false,
+            netns_isolated: false,
         }
     }
 
@@ -1008,6 +1011,12 @@ impl SandboxBackend for LinuxBackend {
         verified(
             SecurityCapability::ProcessIsolation,
             verification.no_new_privs && verification.pgroup_separate,
+        );
+        verified(
+            SecurityCapability::NetworkIsolation,
+            verification.netns_isolated
+                || (verification.seccomp_filter
+                    && self.plan.as_ref().map_or(false, |p| p.net_deny)),
         );
 
         // Allow configured limits to transition into `Verified` when all

@@ -813,6 +813,7 @@ pub fn run_one_with_backend(
         host_env_before,
         proc_environ,
         staged_env,
+        verification,
     );
     // Teardown releases backend-held state (idempotent). The cloned report
     // stays on the outcome for audit; teardown never upgrades the verdict.
@@ -841,6 +842,7 @@ fn finish_run(
     host_env_before: BTreeMap<String, String>,
     proc_environ: Option<Vec<(String, String)>>,
     staged_env: BTreeMap<String, String>,
+    verification: super::sandbox_backend::HostVerification,
 ) -> ExecutionOutcome {
     // Killer stage: deadline poll, terminate once on expiry (no blocking wait).
     let deadline = Instant::now() + req.deadline;
@@ -1034,8 +1036,31 @@ fn finish_run(
         for (name, detail) in net_report.host_facts {
             evidence.host_fact(&name, detail);
         }
+        for (name, detail) in net_report.self_reports {
+            evidence.self_report(&name, detail);
+        }
         if !net_report.clean {
             violation_observed = true;
+        }
+
+        // Host-verified network boundary facts (HOST_FACT only)
+        if verification.netns_isolated {
+            evidence.host_fact(
+                "vector:netns-isolated",
+                "procfs-netns-distinct-from-host".to_string(),
+            );
+        }
+        if verification.seccomp_filter && backend.pre_exec_plan().map_or(false, |p| p.net_deny) {
+            evidence.host_fact(
+                "vector:net-seccomp",
+                "status-seccomp-net-deny".to_string(),
+            );
+        }
+        if contract.network.mode == crate::policy_ir::contract::NetworkMode::Off {
+            evidence.host_fact(
+                "vector:net-contract-sealed",
+                "blake3-contract-net-off".to_string(),
+            );
         }
     }
 

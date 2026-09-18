@@ -348,6 +348,14 @@ fn verify_child_host_linux(
         if pgid == pid as libc::pid_t {
             out.pgroup_separate = true;
         }
+        if let (Ok(child_netns), Ok(host_netns)) = (
+            std::fs::read_link(format!("/proc/{pid}/ns/net")),
+            std::fs::read_link("/proc/self/ns/net"),
+        ) {
+            if child_netns != host_netns {
+                out.netns_isolated = true;
+            }
+        }
         if let Some(limits) = read_proc_file(pid, "limits").as_deref() {
             if let Some(exp) = expected {
                 if let Some(val) = exp.rlimit_as {

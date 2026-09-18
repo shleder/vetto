@@ -44,6 +44,7 @@ use vetto::verify_ng::network::{
     NetworkViolation,
 };
 use vetto::verify_ng::registry::{registry, Scenario, Severity};
+use vetto::verify_ng::evidence::EvidenceTier;
 use vetto::verify_ng::sandbox_backend::{EnforcementState, LinuxBackend, SecurityCapability};
 use vetto::verify_ng::{engine, runner};
 
@@ -1250,6 +1251,104 @@ fn test_verify_network_contract_execution_violation_reporting() {
         .violations
         .iter()
         .any(|v| matches!(v, NetworkViolation::DnsRebindingPermitted { .. })));
+
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
+    let scenarios = registry();
+    let scen = scenarios
+        .iter()
+        .find(|s| s.id == "NET-DNS-IPV6-001")
+        .expect("NET-DNS-IPV6-001 must exist in registry");
+
+    let ws = temp_dir("ws-spoof-markers");
+    let policy = Policy {
+        allow_read: vec![ws.clone()],
+        allow_write: vec![ws.clone()],
+        ..Default::default()
+    };
+    let contract = seal_contract(
+        &ws,
+        &policy,
+        &["sh"],
+        &NetMode::Off,
+        "nonce-spoof-markers-01",
+    );
+
+    // Attacker script prints all successful markers without actually being verified
+    let script = format!(
+        concat!(
+            "echo families-blocked-unix-ok\n",
+            "echo net-blocked-ok\n",
+            "echo net-deny-ok\n",
+            "echo dns-blocked-ok\n",
+            "echo allowlist-family-policy-ok\n",
+            "{control}\n",
+            "exit 0\n"
+        ),
+        control = POSITIVE_CONTROL_SNIPPET
+    );
+
+    // Run under Tier::FsOnly where network namespace / net-deny is unsupported
+    let mut backend = LinuxBackend::new();
+    backend.restrict_tier(Some(Tier::FsOnly));
+    let mut log = runner::SpawnLog::new();
+    let production = contract.production.as_ref().unwrap();
+    let req = runner::ExecutionRequest {
+        scenario: scen,
+        policy: &production.installation_policy,
+        net_mode: &production.net,
+        interpreter: vec!["sh".to_string()],
+        script_args: Vec::new(),
+        script: script.as_bytes().to_vec(),
+        sentinels: Vec::new(),
+        env_extra: BTreeMap::new(),
+        deadline: Duration::from_secs(15),
+        enable_host_control: true,
+        contract: Some(&contract),
+        host_env_override: None,
+    };
+    let out = runner::run_one_with_backend(&req, &mut log, &mut backend);
+
+    // Invariant 1: Attacker-controlled stdout markers MUST NOT lead to PASS
+    assert_ne!(
+        out.result.verdict,
+        Verdict::Pass,
+        "Attacker printing network markers under Tier::FsOnly must NOT achieve PASS"
+    );
+
+    // Invariant 2: Markers in evidence MUST be classified as SELF_REPORT, never HOST_FACT
+    for fact in &out.evidence.facts {
+        if fact.name.starts_with("self-report:") {
+            assert_eq!(
+                fact.tier,
+                EvidenceTier::SelfReport,
+                "Marker fact {} must be SelfReport tier",
+                fact.name
+            );
+            assert_ne!(
+                fact.tier,
+                EvidenceTier::HostFact,
+                "Marker fact {} must NOT be HostFact tier",
+                fact.name
+            );
+        }
+        assert!(
+            !fact.name.starts_with("vector:net-off"),
+            "Stdout markers must NOT produce vector:net-off facts: found {}",
+            fact.name
+        );
+    }
+
+    // Invariant 3: Quorum must not be inflated by attacker stdout
+    assert!(
+        out.result.agreeing_vectors < scen.quorum,
+        "Agreeing vectors ({}) must not satisfy quorum ({}) from stdout markers",
+        out.result.agreeing_vectors,
+        scen.quorum
+    );
 
     let _ = std::fs::remove_dir_all(&ws);
 }

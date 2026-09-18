@@ -151,6 +151,7 @@ pub struct NetworkReport {
     pub clean: bool,
     pub violations: Vec<NetworkViolation>,
     pub host_facts: Vec<(String, String)>,
+    pub self_reports: Vec<(String, String)>,
 }
 
 impl Default for NetworkReport {
@@ -159,6 +160,7 @@ impl Default for NetworkReport {
             clean: true,
             violations: Vec::new(),
             host_facts: Vec::new(),
+            self_reports: Vec::new(),
         }
     }
 }
@@ -279,37 +281,31 @@ pub fn verify_network_contract_execution(
             });
     }
 
-    // 4. Record host facts for verified vectors
+    // 4. Record self-reported markers for diagnostics/observability only.
+    // Invariant: Attacker-controlled stdout/stderr is NEVER a HOST_FACT and CANNOT increase quorum.
     if stdout_str.contains("families-blocked-unix-ok") {
-        report.host_facts.push((
-            "vector:net-off-families".to_string(),
-            "eafnosupport-on-all-non-unix".to_string(),
+        report.self_reports.push((
+            "self-report:net-off-families".to_string(),
+            "families-blocked-unix-ok".to_string(),
         ));
     }
     if stdout_str.contains("net-blocked-ok") || stdout_str.contains("net-deny-ok") {
-        report.host_facts.push((
-            "vector:net-off-tcp".to_string(),
-            "connect-blocked-eafnosupport".to_string(),
+        report.self_reports.push((
+            "self-report:net-off-tcp".to_string(),
+            "net-blocked-ok".to_string(),
         ));
     }
     if stdout_str.contains("allowlist-family-policy-ok") {
-        report.host_facts.push((
-            "vector:allowlist-families".to_string(),
-            "ip-allowed-host-families-blocked".to_string(),
+        report.self_reports.push((
+            "self-report:allowlist-families".to_string(),
+            "allowlist-family-policy-ok".to_string(),
         ));
     }
     if stdout_str.contains("dns-blocked-ok") {
-        report.host_facts.push((
-            "vector:net-off-dns".to_string(),
-            "resolver-unreachable".to_string(),
+        report.self_reports.push((
+            "self-report:net-off-dns".to_string(),
+            "dns-blocked-ok".to_string(),
         ));
-    }
-
-    // 5. Categorical evidence tier binding
-    if category == Category::Net {
-        report
-            .host_facts
-            .push(("net-evidence-tier".to_string(), "HOST_FACT".to_string()));
     }
 
     report
@@ -703,14 +699,19 @@ mod tests {
             .host_facts
             .iter()
             .any(|(k, v)| k == "contract-net-mode" && v == "Off"));
+        // Markers from stdout MUST be recorded as self_reports, NEVER host_facts
         assert!(report
+            .self_reports
+            .iter()
+            .any(|(k, _)| k == "self-report:net-off-families"));
+        assert!(report
+            .self_reports
+            .iter()
+            .any(|(k, _)| k == "self-report:net-off-tcp"));
+        assert!(!report
             .host_facts
             .iter()
-            .any(|(k, _)| k == "vector:net-off-families"));
-        assert!(report
-            .host_facts
-            .iter()
-            .any(|(k, _)| k == "vector:net-off-tcp"));
+            .any(|(k, _)| k.starts_with("vector:")));
     }
 
     #[test]
