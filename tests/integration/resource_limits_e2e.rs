@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use vetto::config::NetMode;
-use vetto::policy::{CgroupConfig, Policy};
+use vetto::policy::Policy;
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
 use vetto::policy_ir::fsm::StateTransitionError;
 use vetto::sandbox::SupervisorEngine;
@@ -22,15 +22,17 @@ use vetto::verify_ng::model::{Category, ClaimStrength, Verdict};
 use vetto::verify_ng::registry::{Scenario, Severity};
 use vetto::verify_ng::sandbox_backend::{
     allows_pass, apply_backend_ceiling, select_backend, BackendKind, CanonicalPolicy,
-    EnforcementState, HostVerification, PlatformMatrix, SecurityCapability,
+    EnforcementState, PlatformMatrix, SecurityCapability,
 };
 
+#[cfg(target_os = "linux")]
+use vetto::policy::CgroupConfig;
 #[cfg(target_os = "linux")]
 use vetto::sandbox::linux::cgroup::setup_cgroup;
 #[cfg(target_os = "linux")]
 use vetto::sandbox::linux::limits;
 #[cfg(target_os = "linux")]
-use vetto::verify_ng::sandbox_backend::{LinuxBackend, SandboxBackend};
+use vetto::verify_ng::sandbox_backend::{HostVerification, LinuxBackend, SandboxBackend};
 
 #[test]
 #[cfg(target_os = "linux")]
@@ -454,7 +456,7 @@ fn test_platform_unsupported_status_differentiation_no_fake_pass() {
         id: "TEST-UNSUPPORTED-RESOURCE-LIMITS".to_string(),
         category: Category::Proc,
         severity: Severity::High,
-        required_caps: vec![SecurityCapability::ResourceLimits],
+        required_caps: Vec::new(),
         strength: BTreeMap::from([(target.label().to_string(), ClaimStrength::Strong)]),
         quorum: 1,
         known_limitation: "unsupported test".to_string(),
@@ -494,6 +496,10 @@ fn test_platform_unsupported_status_differentiation_no_fake_pass() {
     assert!(report
         .unsupported()
         .contains(&SecurityCapability::ResourceLimits));
+    assert!(
+        !report.allows_pass(&[SecurityCapability::ResourceLimits]),
+        "unsupported ResourceLimits capability must not allow pass"
+    );
 
     // Crucial: allows_pass MUST be false, and Verdict::Pass demoted to Inconclusive (NEVER fake PASS)
     assert!(
