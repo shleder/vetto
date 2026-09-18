@@ -172,7 +172,7 @@ impl Default for NetworkReport {
 pub fn verify_network_contract_execution(
     contract: &SecurityContract,
     _scenario_id: &str,
-    category: Category,
+    _category: Category,
     stdout_bytes: &[u8],
     stderr_bytes: &[u8],
 ) -> NetworkReport {

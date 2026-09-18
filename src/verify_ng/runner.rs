@@ -1050,11 +1050,8 @@ fn finish_run(
                 "procfs-netns-distinct-from-host".to_string(),
             );
         }
-        if verification.seccomp_filter && backend.pre_exec_plan().map_or(false, |p| p.net_deny) {
-            evidence.host_fact(
-                "vector:net-seccomp",
-                "status-seccomp-net-deny".to_string(),
-            );
+        if verification.seccomp_filter && backend.pre_exec_plan().is_some_and(|p| p.net_deny) {
+            evidence.host_fact("vector:net-seccomp", "status-seccomp-net-deny".to_string());
         }
         if contract.network.mode == crate::policy_ir::contract::NetworkMode::Off {
             evidence.host_fact(

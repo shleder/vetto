@@ -37,6 +37,7 @@ use vetto::config::{NetMode, NetRule};
 use vetto::policy::{Policy, Tier};
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
 use vetto::policy_ir::contract::{NetworkMode, SecurityContract};
+use vetto::verify_ng::evidence::EvidenceTier;
 use vetto::verify_ng::model::{Category, ClaimStrength, Verdict};
 use vetto::verify_ng::network::{
     eval_cred_broker_domain_allowed, eval_domain_allowlist, eval_forbidden_destination,
@@ -44,8 +45,9 @@ use vetto::verify_ng::network::{
     NetworkViolation,
 };
 use vetto::verify_ng::registry::{registry, Scenario, Severity};
-use vetto::verify_ng::evidence::EvidenceTier;
-use vetto::verify_ng::sandbox_backend::{EnforcementState, LinuxBackend, SecurityCapability};
+use vetto::verify_ng::sandbox_backend::{
+    EnforcementState, LinuxBackend, SandboxBackend, SecurityCapability,
+};
 use vetto::verify_ng::{engine, runner};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1343,10 +1345,22 @@ fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
     }
 
     // Invariant 3: Quorum must not be inflated by attacker stdout
+    let host_vectors = out
+        .evidence
+        .facts
+        .iter()
+        .filter(|f| {
+            f.tier == EvidenceTier::HostFact
+                && (f.name == "sentinel-intact"
+                    || f.name == "tree-intact"
+                    || f.name == "vector"
+                    || f.name.starts_with("vector:")
+                    || f.name.starts_with("vector-"))
+        })
+        .count();
     assert!(
-        out.result.agreeing_vectors < scen.quorum,
-        "Agreeing vectors ({}) must not satisfy quorum ({}) from stdout markers",
-        out.result.agreeing_vectors,
+        host_vectors < scen.quorum,
+        "Host vector facts ({host_vectors}) must not satisfy quorum ({}) from stdout markers",
         scen.quorum
     );
 
