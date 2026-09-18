@@ -375,12 +375,14 @@ pub fn execute_sandboxed_command(
     let stdout = String::from_utf8_lossy(&prod_res.stdout).to_string();
     let mut stderr = String::from_utf8_lossy(&prod_res.stderr).to_string();
     let exit_code = prod_res.exit_code.unwrap_or(-1);
-    if exit_code != 0 && !prod_res.diagnostic.is_empty() {
-        if !stderr.is_empty() && !stderr.ends_with('\n') {
-            stderr.push('\n');
+    if let Some(ref diag) = prod_res.diagnostic {
+        if exit_code != 0 && !diag.is_empty() {
+            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                stderr.push('\n');
+            }
+            stderr.push_str("Diagnostic: ");
+            stderr.push_str(diag);
         }
-        stderr.push_str("Diagnostic: ");
-        stderr.push_str(&prod_res.diagnostic);
     }
     let blocked_count = if stderr.contains("BLOCKED")
         || stderr.contains("denied")

@@ -1042,7 +1042,10 @@ impl SpawnedProductionExecution {
                 let mut status = 0i32;
                 unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
                 if let Ok(st) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-                    if let Some(rest) = st.lines().find_map(|l| l.trim_start().strip_prefix("State:")) {
+                    if let Some(rest) = st
+                        .lines()
+                        .find_map(|l| l.trim_start().strip_prefix("State:"))
+                    {
                         let s = rest.trim_start();
                         if s.starts_with('Z') || s.starts_with('X') {
                             return false;
