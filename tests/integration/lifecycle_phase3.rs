@@ -149,7 +149,10 @@ fn failed_spawn_triggers_mandatory_emergency_cleanup() {
     if have_landlock() {
         let proj = TempProject::new("failed-spawn-cleanup");
         let non_existent = proj.path().join("missing_agent_binary_404");
-        let out = run_vetto_in(proj.path(), &["--tui=none", "--", non_existent.to_str().unwrap()]);
+        let out = run_vetto_in(
+            proj.path(),
+            &["--tui=none", "--", non_existent.to_str().unwrap()],
+        );
         assert!(
             !out.status.success(),
             "spawn of non-existent binary must fail; stdout: {}, stderr: {}",
