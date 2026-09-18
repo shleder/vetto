@@ -49,6 +49,7 @@ mod policy_parity;
 mod policy_tools;
 mod prod_stage3c;
 mod rescue;
+mod resource_limits_e2e;
 mod secret_masking;
 mod shim_interception;
 mod tier3_files_secrets;

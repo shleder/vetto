@@ -95,3 +95,377 @@ fn bad_limits_spec_is_rejected() {
         stderr(&out)
     );
 }
+
+#[test]
+fn cli_limits_cannot_loosen_policy_limits() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("limits-no-loosen");
+    let policy = r#"
+[limits]
+cpu_seconds = 2
+open_files = 32
+processes = 24
+file_size_bytes = 1024
+"#;
+    write_file(&proj.path().join("policy.toml"), policy);
+
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "nofile=1024,cpu=100,pids=500,fsize=10485760",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo N=$(ulimit -n); echo C=$(ulimit -t); echo P=$(ulimit -u); dd if=/dev/zero bs=2048 count=1 of=./too-big 2>/dev/null; true",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed; stderr: {}",
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    assert!(
+        so.contains("N=32"),
+        "CLI must not loosen open_files from 32 to 1024; stdout: {so}"
+    );
+    assert!(
+        so.contains("C=2"),
+        "CLI must not loosen cpu_seconds from 2 to 100; stdout: {so}"
+    );
+    assert!(
+        so.contains("P=24"),
+        "CLI must not loosen processes from 24 to 500; stdout: {so}"
+    );
+
+    let written = std::fs::metadata(proj.path().join("too-big"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    assert!(
+        written <= 1024,
+        "CLI must not loosen file_size_bytes from 1024 to 10MB: {written} bytes written"
+    );
+}
+
+#[test]
+fn cli_limits_tightens_base_policy_limits() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("limits-tighten");
+    let policy = r#"
+[limits]
+cpu_seconds = 100
+open_files = 1024
+processes = 500
+file_size_bytes = 10485760
+"#;
+    write_file(&proj.path().join("policy.toml"), policy);
+
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "nofile=48,cpu=3,procs=40,fsize=512",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo N=$(ulimit -n); echo C=$(ulimit -t); echo P=$(ulimit -u); dd if=/dev/zero bs=2048 count=1 of=./too-big 2>/dev/null; true",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed; stderr: {}",
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    assert!(
+        so.contains("N=48"),
+        "CLI should tighten open_files to 48; stdout: {so}"
+    );
+    assert!(
+        so.contains("C=3"),
+        "CLI should tighten cpu_seconds to 3; stdout: {so}"
+    );
+    assert!(
+        so.contains("P=40"),
+        "CLI should tighten processes to 40; stdout: {so}"
+    );
+
+    let written = std::fs::metadata(proj.path().join("too-big"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    assert!(
+        written <= 512,
+        "CLI should tighten file_size_bytes to 512: {written} bytes written"
+    );
+}
+
+#[test]
+fn cli_limits_memory_aliases() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("limits-mem-alias");
+
+    // Test 'mem' alias with binary units (128 MiB = 131072 KiB)
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "mem=128mib",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo M=$(ulimit -v)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed with mem=128mib; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("M=131072"),
+        "mem=128mib must set address space to 131072 KiB; stdout: {}",
+        stdout(&out)
+    );
+
+    // Test 'as' alias with binary units (64 MiB = 65536 KiB)
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "as=64mib",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo M=$(ulimit -v)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed with as=64mib; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("M=65536"),
+        "as=64mib must set address space to 65536 KiB; stdout: {}",
+        stdout(&out)
+    );
+
+    // Test 'memory' alias with binary units (256 MiB = 262144 KiB)
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "memory=256mib",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo M=$(ulimit -v)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed with memory=256mib; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("M=262144"),
+        "memory=256mib must set address space to 262144 KiB; stdout: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_limits_process_aliases() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("limits-proc-alias");
+
+    // Test 'pids' alias
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "pids=55",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo P=$(ulimit -u)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed with pids=55; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("P=55"),
+        "pids=55 must set process limit to 55; stdout: {}",
+        stdout(&out)
+    );
+
+    // Test 'procs' alias
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "procs=45",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo P=$(ulimit -u)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed with procs=45; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("P=45"),
+        "procs=45 must set process limit to 45; stdout: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_limits_cpu_quota_and_percent_parameters() {
+    let proj = TempProject::new("limits-cpu-params");
+
+    // Valid cpu_percent
+    let out = run_vetto_in(
+        proj.path(),
+        &["--limits", "cpu_percent=50%", "--dry-run", "--", "true"],
+    );
+    assert!(
+        out.status.success(),
+        "valid cpu_percent=50% must be accepted; stderr: {}",
+        stderr(&out)
+    );
+
+    // Valid cpu_max with quota and period
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "cpu_max=50000 100000",
+            "--dry-run",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "valid cpu_max=50000 100000 must be accepted; stderr: {}",
+        stderr(&out)
+    );
+
+    // Invalid cpu_percent rejected
+    let out_bad_pct = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "cpu_percent=invalid%",
+            "--dry-run",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        !out_bad_pct.status.success(),
+        "invalid cpu_percent must be rejected; stdout: {}",
+        stdout(&out_bad_pct)
+    );
+    assert!(
+        stderr(&out_bad_pct).contains("limits"),
+        "rejection must mention limits; stderr: {}",
+        stderr(&out_bad_pct)
+    );
+
+    // Invalid cpu_max rejected
+    let out_bad_max = run_vetto_in(
+        proj.path(),
+        &["--limits", "cpu_max=bogus_quota", "--dry-run", "--", "true"],
+    );
+    assert!(
+        !out_bad_max.status.success(),
+        "invalid cpu_max must be rejected; stdout: {}",
+        stdout(&out_bad_max)
+    );
+    assert!(
+        stderr(&out_bad_max).contains("limits"),
+        "rejection must mention limits; stderr: {}",
+        stderr(&out_bad_max)
+    );
+}
+
+#[test]
+fn cli_limits_strictest_within_same_spec() {
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
+        return;
+    }
+    let proj = TempProject::new("limits-intra-spec");
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--limits",
+            "cpu=10,cpu=2,cpu=5",
+            "--tui=none",
+            "--",
+            "sh",
+            "-c",
+            "echo C=$(ulimit -t)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "vetto failed; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("C=2"),
+        "strictest value within spec must win; stdout: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_limits_cgroup_unavailable_fails_closed_125() {
+    let proj = TempProject::new("limits-cg-unavailable");
+    let out = run_vetto_env_in(
+        proj.path(),
+        &[
+            "--limits",
+            "cpu_max=50000 100000",
+            "--tui=none",
+            "--",
+            "true",
+        ],
+        &[("VETTO_TEST_NO_CGROUP", "1")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(125),
+        "mandated cgroup quota on unavailable cgroup must fail-closed with exit code 125; stderr: {}",
+        stderr(&out)
+    );
+}

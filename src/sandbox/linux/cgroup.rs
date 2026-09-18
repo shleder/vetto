@@ -103,6 +103,9 @@ pub fn parse_cpu_max(input: &str) -> Option<String> {
 
 /// Locate a writable cgroup v2 hierarchy.
 pub fn find_cgroup_root() -> Option<PathBuf> {
+    if std::env::var_os("VETTO_TEST_NO_CGROUP").is_some() {
+        return None;
+    }
     let cgroup2_mount = Path::new("/sys/fs/cgroup");
     if !cgroup2_mount.join("cgroup.controllers").exists() {
         return None;
@@ -368,18 +371,18 @@ mod tests {
 
     #[test]
     fn test_mandated_cgroup_fails_closed_when_unavailable() {
+        std::env::set_var("VETTO_TEST_NO_CGROUP", "1");
         let cfg = CgroupConfig {
             memory_max: Some("2g".into()),
             pids_max: Some("128".into()),
             ..CgroupConfig::default()
         };
         let res = setup_cgroup(Some(&cfg), None);
-        if find_cgroup_root().is_none() {
-            assert!(res.is_err());
-            if let Err(e) = res {
-                assert_eq!(e.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
-            }
-        }
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert_eq!(err.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
+        assert!(err.to_string().contains("fail-closed exit 125"));
+        std::env::remove_var("VETTO_TEST_NO_CGROUP");
     }
 
     #[test]
