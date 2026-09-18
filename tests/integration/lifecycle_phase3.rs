@@ -47,8 +47,12 @@ fn fsm_rejects_transition_to_terminal_when_surviving_processes_positive() {
 
     // When surviving processes are 0, transition to Terminal succeeds
     let mut clean_fsm = ExecutionStateMachine::new();
-    clean_fsm.transition(ExecutionState::PolicyCompiled).unwrap();
-    clean_fsm.transition(ExecutionState::ContractSealed).unwrap();
+    clean_fsm
+        .transition(ExecutionState::PolicyCompiled)
+        .unwrap();
+    clean_fsm
+        .transition(ExecutionState::ContractSealed)
+        .unwrap();
     clean_fsm.transition(ExecutionState::Prepare).unwrap();
     clean_fsm.transition(ExecutionState::Spawn).unwrap();
     clean_fsm.transition(ExecutionState::Enforce).unwrap();
@@ -145,14 +149,7 @@ fn failed_spawn_triggers_mandatory_emergency_cleanup() {
     if have_landlock() {
         let proj = TempProject::new("failed-spawn-cleanup");
         let non_existent = proj.path().join("missing_agent_binary_404");
-        let out = run_vetto_in(
-            proj.path(),
-            &[
-                "--tui=none",
-                "--",
-                non_existent.to_str().unwrap(),
-            ],
-        );
+        let out = run_vetto_in(proj.path(), &["--tui=none", "--", non_existent.to_str().unwrap()]);
         assert!(
             !out.status.success(),
             "spawn of non-existent binary must fail; stdout: {}, stderr: {}",
@@ -174,12 +171,8 @@ fn verifier_failure_overrides_agent_exit_code_zero_to_125() {
     assert_eq!(raw_agent_exit, 0);
 
     // Verifier detects extinction breach (surviving processes > 0)
-    let verifier_result = ExtinctionVerifier::verify(
-        PlatformExtinctionTier::LinuxTier1Proven,
-        1,
-        0,
-        50,
-    );
+    let verifier_result =
+        ExtinctionVerifier::verify(PlatformExtinctionTier::LinuxTier1Proven, 1, 0, 50);
     assert!(verifier_result.is_err());
     let breach = verifier_result.unwrap_err();
 

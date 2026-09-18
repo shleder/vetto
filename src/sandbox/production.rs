@@ -970,17 +970,20 @@ impl SpawnedProductionExecution {
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
         if self.fsm.current_state() == ExecutionState::Enforce {
             if let Err(e) = self.fsm.transition(ExecutionState::Observe) {
-                self.capability.note_diagnostic(format!("FSM transition Enforce->Observe failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition Enforce->Observe failed: {e}"));
             }
         }
         if self.fsm.current_state() == ExecutionState::Observe {
             if let Err(e) = self.fsm.transition(ExecutionState::Terminate) {
-                self.capability.note_diagnostic(format!("FSM transition Observe->Terminate failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition Observe->Terminate failed: {e}"));
             }
         }
         if self.fsm.current_state() == ExecutionState::Terminate {
             if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
-                self.capability.note_diagnostic(format!("FSM transition Terminate->Cleanup failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition Terminate->Cleanup failed: {e}"));
             }
         }
 
@@ -1079,14 +1082,17 @@ impl SpawnedProductionExecution {
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
             let fsm_err = self.fsm.fail_closed(&breach.reason);
             if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
-                self.capability.note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
             }
             if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
-                self.capability.note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
             }
         } else {
             if let Err(e) = self.fsm.transition(ExecutionState::Verify) {
-                self.capability.note_diagnostic(format!("FSM transition to Verify failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verify failed: {e}"));
             }
         }
 
@@ -1130,7 +1136,8 @@ impl SpawnedProductionExecution {
         let mut ledger_write_ok = false;
         if self.fsm.current_state() == ExecutionState::Verify {
             if let Err(e) = self.fsm.transition(ExecutionState::Attest) {
-                self.capability.note_diagnostic(format!("FSM transition to Attest failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Attest failed: {e}"));
             }
         }
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
@@ -1229,7 +1236,8 @@ impl SpawnedProductionExecution {
 
         if self.fsm.current_state() == ExecutionState::Attest {
             if let Err(e) = self.fsm.transition(ExecutionState::Verdict) {
-                self.capability.note_diagnostic(format!("FSM transition to Verdict failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verdict failed: {e}"));
             }
         }
 
@@ -1265,18 +1273,22 @@ impl SpawnedProductionExecution {
         } else if !evidence_intact || !ledger_verified {
             let fsm_err = self.fsm.fail_closed(&final_verdict_obj.reason);
             if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
-                self.capability.note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
             }
             if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
-                self.capability.note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
             }
             if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
-                self.capability.note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
             }
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         } else {
             if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
-                self.capability.note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
                 final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
             }
         }

@@ -215,10 +215,7 @@ fn zombie_reaping_under_parallel_fork_storm() {
         done
         sleep 0.2
     "#;
-    let out = run_vetto_in(
-        proj.path(),
-        &["--tui=none", "--", "sh", "-c", script],
-    );
+    let out = run_vetto_in(proj.path(), &["--tui=none", "--", "sh", "-c", script]);
     assert!(
         out.status.success(),
         "fork storm execution failed; stdout: {}, stderr: {}",
@@ -305,7 +302,10 @@ fn scan_zombie_pids() -> Vec<String> {
         if !is_my_uid {
             continue;
         }
-        if status.lines().any(|l| l.starts_with("State:") && l.contains('Z')) {
+        if status
+            .lines()
+            .any(|l| l.starts_with("State:") && l.contains('Z'))
+        {
             zombies.push(format!("{}: {}", name, entry.path().display()));
         }
     }

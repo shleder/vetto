@@ -97,9 +97,7 @@ fn timeout_kills_tree_and_exits_124() {
     }
     let proj = TempProject::new("timeout-tree");
     let marker = format!("tree-leaf-{}", std::process::id());
-    let script = format!(
-        "sh -c 'sleep 30 # {marker}' & sh -c 'sleep 30 # {marker}' & sleep 30"
-    );
+    let script = format!("sh -c 'sleep 30 # {marker}' & sh -c 'sleep 30 # {marker}' & sleep 30");
     let out = run_vetto_in(
         proj.path(),
         &["--timeout", "1s", "--tui=none", "--", "sh", "-c", &script],
@@ -148,8 +146,7 @@ fn timeout_with_residual_forces_exit_125() {
     // map_session_exit_code must ensure 125 strictly dominates timeout 124
     let mapped = map_session_exit_code(breach.exit_code, true, false);
     assert_eq!(
-        mapped,
-        EXIT_FAIL_CLOSED,
+        mapped, EXIT_FAIL_CLOSED,
         "residual extinction breach (125) must dominate timeout (124)"
     );
     assert_ne!(mapped, EXIT_TIMEOUT);
