@@ -396,10 +396,15 @@ mod tests {
         assert_eq!(cpu.as_deref(), Some("50000 100000"));
 
         // CLI apply strictly merges strictest-wins over base policy
-        let mut policy = Policy::default();
-        policy.cpu_max = Some("80%".into());
-        policy.limits.processes = Some(100);
-        policy.limits.address_space_bytes = Some(2 * 1024 * 1024 * 1024);
+        let mut policy = Policy {
+            cpu_max: Some("80%".into()),
+            limits: ResourceLimits {
+                processes: Some(100),
+                address_space_bytes: Some(2 * 1024 * 1024 * 1024),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         apply_cli(&mut policy, "cpu_max=50%,pids=50,mem=1gib").expect("apply cli strictest");
         assert_eq!(policy.cpu_max.as_deref(), Some("50%"));

@@ -573,8 +573,10 @@ mod compiler_tests {
         assert_eq!(contract.resources.max_pids, 0);
 
         // 2. CPU percentage parsed from policy.cpu_max
-        let mut policy_cpu = Policy::default();
-        policy_cpu.cpu_max = Some("50%".into());
+        let policy_cpu = Policy {
+            cpu_max: Some("50%".into()),
+            ..Default::default()
+        };
         let input = EffectivePolicyInput {
             policy: &policy_cpu,
             argv: &["/bin/true".into()],
@@ -592,15 +594,20 @@ mod compiler_tests {
         assert_eq!(contract.resources.max_cpu_percent, 50);
 
         // 3. Minimum between address_space_bytes and cgroup.memory_max
-        let mut policy_mem = Policy::default();
-        policy_mem.limits.address_space_bytes = Some(2 * 1024 * 1024 * 1024); // 2GB
-        policy_mem.cgroup = Some(CgroupConfig {
-            memory_max: Some("1G".into()), // 1GB
-            pids_max: Some("64".into()),
-            swap_max: None,
-            cpu_max: Some("40%".into()),
-        });
-        policy_mem.limits.processes = Some(128);
+        let policy_mem = Policy {
+            limits: crate::policy::types::ResourceLimits {
+                address_space_bytes: Some(2 * 1024 * 1024 * 1024), // 2GB
+                processes: Some(128),
+                ..Default::default()
+            },
+            cgroup: Some(CgroupConfig {
+                memory_max: Some("1G".into()), // 1GB
+                pids_max: Some("64".into()),
+                swap_max: None,
+                cpu_max: Some("40%".into()),
+            }),
+            ..Default::default()
+        };
 
         let input = EffectivePolicyInput {
             policy: &policy_mem,
