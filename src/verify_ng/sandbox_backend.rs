@@ -2275,7 +2275,7 @@ mod backend_arch_tests {
         let mut policy_obj = crate::policy::Policy::default();
         policy_obj.limits.address_space_bytes = Some(104857600); // only memory configured
 
-        let frozen = super::frozen::freeze_spec(
+        let frozen = crate::verify_ng::frozen::freeze_spec(
             "TEST-RLIMIT-PARTIAL",
             "reg-test",
             &policy_obj,
@@ -2318,7 +2318,7 @@ mod backend_arch_tests {
         policy_obj.limits.address_space_bytes = Some(104857600);
         policy_obj.limits.processes = Some(64); // both memory and pids configured
 
-        let frozen = super::frozen::freeze_spec(
+        let frozen = crate::verify_ng::frozen::freeze_spec(
             "TEST-RLIMIT-INCOMPLETE",
             "reg-test",
             &policy_obj,
@@ -2366,7 +2366,7 @@ mod backend_arch_tests {
             cpu_max: None,
         });
 
-        let frozen = super::frozen::freeze_spec(
+        let frozen = crate::verify_ng::frozen::freeze_spec(
             "TEST-CGROUP-PROMOTION",
             "reg-test",
             &policy_obj,

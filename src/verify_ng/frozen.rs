@@ -529,18 +529,32 @@ mod frozen_tests {
     #[test]
     fn anti_tamper_rejects_modified_resources() {
         let policy = crate::policy::Policy::default();
-        let compiler = crate::policy_ir::compiler::PolicyCompiler::new();
-        let contract = compiler
-            .compile_effective(&policy)
+        let temp_dir = std::path::PathBuf::from("/tmp");
+        let argv = vec!["sh".to_string()];
+        let env = std::collections::BTreeMap::new();
+        let input = crate::policy_ir::compiler::EffectivePolicyInput {
+            policy: &policy,
+            argv: &argv,
+            cwd: &temp_dir,
+            env: &env,
+            net: &crate::config::NetMode::Off,
+            nonce: "test-nonce",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(input)
             .expect("compile must succeed");
         assert!(verify_contract_anti_tamper(&contract).is_ok());
 
         let mut tampered = contract.clone();
-        tampered.resources.max_pids = Some(99999);
+        tampered.resources.max_pids = 99999;
         assert!(verify_contract_anti_tamper(&tampered).is_err());
 
         let mut tampered_mem = contract.clone();
-        tampered_mem.resources.max_memory_bytes = Some(1024);
+        tampered_mem.resources.max_memory_bytes = 1024;
         assert!(verify_contract_anti_tamper(&tampered_mem).is_err());
     }
 

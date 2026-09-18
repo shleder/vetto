@@ -451,16 +451,16 @@ pub fn verify_windows_anti_tamper(
         return false;
     }
     let res = &contract.resources;
-    if let Some(max_mem) = res.max_memory_bytes {
+    if res.max_memory_bytes > 0 {
         if let Some(actual_mem) = query.max_memory_bytes {
-            if actual_mem > max_mem {
+            if actual_mem > res.max_memory_bytes {
                 return false;
             }
         }
     }
-    if let Some(max_pids) = res.max_pids {
+    if res.max_pids > 0 {
         if let Some(actual_pids) = query.max_processes {
-            if actual_pids as u64 > max_pids {
+            if actual_pids > res.max_pids {
                 return false;
             }
         }
@@ -792,9 +792,23 @@ mod windows_enforce_tests {
         let mut policy = crate::policy::Policy::default();
         policy.limits.address_space_bytes = Some(104857600);
         policy.limits.processes = Some(64);
-        let compiler = crate::policy_ir::compiler::PolicyCompiler::new();
-        let contract = compiler
-            .compile_effective(&policy)
+        let temp_dir = std::path::PathBuf::from("/tmp");
+        let argv = vec!["cmd.exe".to_string()];
+        let env = std::collections::BTreeMap::new();
+        let input = crate::policy_ir::compiler::EffectivePolicyInput {
+            policy: &policy,
+            argv: &argv,
+            cwd: &temp_dir,
+            env: &env,
+            net: &crate::config::NetMode::Off,
+            nonce: "win-test-nonce",
+            timeout: None,
+            tier: None,
+            backend: "windows".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(input)
             .expect("compile must succeed");
 
         let query = JobLimitsQuery {
@@ -806,7 +820,7 @@ mod windows_enforce_tests {
 
         // Tampered contract (digest mismatch)
         let mut tampered = contract.clone();
-        tampered.resources.max_pids = Some(99999);
+        tampered.resources.max_pids = 99999;
         assert!(!verify_windows_anti_tamper(&tampered, &query));
 
         // Excess limits in query
