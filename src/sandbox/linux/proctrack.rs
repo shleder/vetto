@@ -30,9 +30,8 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Upper bound for one sweep. Cascades deeper than this can escape; the
-/// budget keeps teardown latency bounded even against hostile process trees.
-pub const SWEEP_BUDGET_MS: u64 = 2_000;
+/// Upper bound for one sweep. Synchronized with MAX_EXTINCTION_DEADLINE_MS.
+pub const SWEEP_BUDGET_MS: u64 = crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
 
 /// Pause between `/proc` scans while waiting for the root to terminate or
 /// for reparenting to become visible.

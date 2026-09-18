@@ -62,8 +62,8 @@ pub const DEFAULT_RLIMIT_NPROC: u64 = 128;
 pub const DEFAULT_RLIMIT_CPU_SECS: u64 = 5;
 pub const DEFAULT_RLIMIT_FSIZE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Budget for one nonce-targeted tree sweep.
-pub const SWEEP_BUDGET_MS: u64 = 2_000;
+/// Budget for one nonce-targeted tree sweep. Synchronized with MAX_EXTINCTION_DEADLINE_MS.
+pub const SWEEP_BUDGET_MS: u64 = crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
 
 /// Apply the enforcement plan in the forked child before `exec`.
 ///
@@ -333,6 +333,9 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
     let deadline = Instant::now() + Duration::from_millis(SWEEP_BUDGET_MS);
     loop {
         let (matched, blind) = scan_nonce_pids(needle, root_pid, me, me_uid);
+        if blind {
+            outcome.blind = true;
+        }
         if !blind && matched.is_empty() {
             // Final complete scan already shows zero nonce bearers and no blind spots.
             outcome.clean = true;

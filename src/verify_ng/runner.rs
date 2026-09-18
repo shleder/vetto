@@ -257,6 +257,20 @@ impl WaitKill for DirectChild {
         }
         let _ = self.child.kill();
     }
+
+    fn terminate_graceful(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            // SAFETY: SIGTERM to the sandbox process group we spawned.
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -676,7 +690,7 @@ fn finish_run(
     };
 
     // Re-observe the exit status after the drain (never blocking).
-    let exit_code = direct.try_wait().or(Some(code));
+    let mut exit_code = direct.try_wait().or(Some(code));
 
     // Tree sweep (confined runs only): kill nonce-matching orphans the
     // group signal could not reach (setsid escapers) and record whether
@@ -684,14 +698,23 @@ fn finish_run(
     // behavior exactly (no sweep). `None` off Linux: no claim either way.
     // The diagnostic joins the detail string so a dirty tree is debuggable
     // from the report alone.
+    let mut sweep_dirty = false;
     if direct.pgid.is_some() {
         if let Some(outcome) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
-            backend.note_tree_clean(outcome.clean);
+            let clean = outcome.clean && !outcome.blind && outcome.residual.is_empty();
+            if !clean {
+                sweep_dirty = true;
+            }
+            backend.note_tree_clean(clean);
             backend.note_diagnostic(format!(
                 "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
                 outcome.clean, outcome.killed, outcome.residual, outcome.subreaper, outcome.blind
             ));
         }
+    }
+
+    if sweep_dirty {
+        exit_code = Some(crate::exit_codes::EXIT_FAIL_CLOSED);
     }
 
     // Post-mortem, all host-side: payload integrity and sentinels.

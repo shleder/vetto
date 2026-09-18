@@ -59,6 +59,7 @@ pub enum StateTransitionError {
 pub struct ExecutionStateMachine {
     current_state: ExecutionState,
     history: Vec<(ExecutionState, std::time::Instant)>,
+    surviving_descendants: Option<usize>,
 }
 
 impl Default for ExecutionStateMachine {
@@ -72,7 +73,16 @@ impl ExecutionStateMachine {
         Self {
             current_state: ExecutionState::Intent,
             history: vec![(ExecutionState::Intent, std::time::Instant::now())],
+            surviving_descendants: None,
         }
+    }
+
+    pub fn surviving_descendants(&self) -> Option<usize> {
+        self.surviving_descendants
+    }
+
+    pub fn record_extinction_result(&mut self, surviving: usize) {
+        self.surviving_descendants = Some(surviving);
     }
 
     pub fn current_state(&self) -> ExecutionState {
@@ -100,6 +110,14 @@ impl ExecutionStateMachine {
     }
 
     pub fn transition(&mut self, next: ExecutionState) -> Result<(), StateTransitionError> {
+        if next == ExecutionState::Terminal && self.surviving_descendants.unwrap_or(0) > 0 {
+            return Err(StateTransitionError::InvalidTransition {
+                from: self.current_state,
+                to: next,
+                reason: "terminal state forbidden: live descendant processes detected",
+            });
+        }
+
         let valid = match (self.current_state, next) {
             // Forward happy-path pipeline (Table 10.2)
             (ExecutionState::Intent, ExecutionState::PolicyCompiled) => true,
@@ -156,7 +174,9 @@ impl ExecutionStateMachine {
     pub fn fail_closed(&mut self, error: impl Into<String>) -> StateTransitionError {
         let err_str = error.into();
         let prev_state = self.current_state;
-        let _ = self.transition(ExecutionState::FailClosed);
+        if let Err(e) = self.transition(ExecutionState::FailClosed) {
+            return e;
+        }
         StateTransitionError::FailClosed {
             state: prev_state,
             error: err_str,
@@ -227,5 +247,78 @@ mod fsm_tests {
         assert!(fsm.transition(ExecutionState::Terminal).is_ok());
         assert!(fsm.is_terminal());
         assert!(fsm.is_fail_closed());
+    }
+
+    #[test]
+    fn reject_terminal_with_surviving_descendants() {
+        let mut fsm = ExecutionStateMachine::new();
+        fsm.transition(ExecutionState::PolicyCompiled).unwrap();
+        fsm.transition(ExecutionState::ContractSealed).unwrap();
+        fsm.transition(ExecutionState::Prepare).unwrap();
+        fsm.transition(ExecutionState::Spawn).unwrap();
+        fsm.transition(ExecutionState::Enforce).unwrap();
+        fsm.transition(ExecutionState::Observe).unwrap();
+        fsm.transition(ExecutionState::Terminate).unwrap();
+        fsm.transition(ExecutionState::Cleanup).unwrap();
+
+        // 2 residual processes detected
+        fsm.record_extinction_result(2);
+
+        let err = fsm.fail_closed("residual processes found");
+        assert!(matches!(err, StateTransitionError::FailClosed { .. }));
+        assert_eq!(fsm.current_state(), ExecutionState::FailClosed);
+
+        fsm.transition(ExecutionState::EmergencyCleanup).unwrap();
+
+        // Invariant guard: Terminal MUST fail
+        let err = fsm.transition(ExecutionState::Terminal).unwrap_err();
+        assert!(matches!(
+            err,
+            StateTransitionError::InvalidTransition {
+                from: ExecutionState::EmergencyCleanup,
+                to: ExecutionState::Terminal,
+                ..
+            }
+        ));
+        assert_eq!(fsm.current_state(), ExecutionState::EmergencyCleanup);
+        assert!(!fsm.is_terminal());
+
+        // When cleared to 0 survivors, Terminal transition succeeds
+        fsm.record_extinction_result(0);
+        assert!(fsm.transition(ExecutionState::Terminal).is_ok());
+        assert!(fsm.is_terminal());
+    }
+
+    #[test]
+    fn fail_closed_from_terminal_returns_invalid_transition() {
+        let mut fsm = ExecutionStateMachine::new();
+        let sequence = [
+            ExecutionState::PolicyCompiled,
+            ExecutionState::ContractSealed,
+            ExecutionState::Prepare,
+            ExecutionState::Spawn,
+            ExecutionState::Enforce,
+            ExecutionState::Observe,
+            ExecutionState::Terminate,
+            ExecutionState::Cleanup,
+            ExecutionState::Verify,
+            ExecutionState::Attest,
+            ExecutionState::Verdict,
+            ExecutionState::Terminal,
+        ];
+        for s in sequence {
+            fsm.transition(s).unwrap();
+        }
+        assert!(fsm.is_terminal());
+
+        let err = fsm.fail_closed("late error after terminal");
+        assert!(matches!(
+            err,
+            StateTransitionError::InvalidTransition {
+                from: ExecutionState::Terminal,
+                to: ExecutionState::FailClosed,
+                ..
+            }
+        ));
     }
 }

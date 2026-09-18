@@ -185,6 +185,25 @@ impl SandboxHandle {
         }
     }
 
+    /// Attempt graceful termination (SIGTERM) before escalating to SIGKILL.
+    /// Safe to call multiple times; does not consume kill strategy.
+    pub fn terminate_graceful(&mut self) {
+        #[cfg(unix)]
+        {
+            if let Some(KillStrategy::ProcessGroup { pid, pgid, .. }) = self.strategy.as_ref() {
+                // SAFETY: group + direct-child SIGTERM on the sandbox we spawned.
+                unsafe {
+                    libc::kill(-*pgid, libc::SIGTERM);
+                    libc::kill(*pid, libc::SIGTERM);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+        }
+    }
+
     /// Kill everything inside the sandbox. Safe to call multiple times.
     pub fn terminate(&mut self) {
         #[cfg(target_os = "linux")]
