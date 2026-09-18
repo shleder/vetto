@@ -1015,8 +1015,7 @@ impl SandboxBackend for LinuxBackend {
         verified(
             SecurityCapability::NetworkIsolation,
             verification.netns_isolated
-                || (verification.seccomp_filter
-                    && self.plan.as_ref().is_some_and(|p| p.net_deny)),
+                || (verification.seccomp_filter && self.plan.as_ref().is_some_and(|p| p.net_deny)),
         );
 
         // Allow configured limits to transition into `Verified` when all
