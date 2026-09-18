@@ -1299,6 +1299,24 @@ fn spawn_full(
     drop(map_r);
     drop(ack_w);
 
+    let cgroup_handle =
+        match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
+            Ok(Some(cg)) => {
+                if let Err(e) = cg.add_process(pid as u32) {
+                    let code = kill_and_reap(pid);
+                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
+                        "failed to attach process to cgroup (exit {code}): {e}"
+                    ))));
+                }
+                Some(cg)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                let _code = kill_and_reap(pid);
+                return Err(anyhow::Error::new(e));
+            }
+        };
+
     // 2. Setup result: 'R' ready / 'E:<reason>' failure / EOF died.
     match read_byte(err_r.as_raw_fd(), SETUP_TIMEOUT_MS) {
         ByteRead::Byte(b'R') => {}
@@ -1327,24 +1345,6 @@ fn spawn_full(
         },
         None => None,
     };
-
-    let cgroup_handle =
-        match cgroup::setup_cgroup(policy.cgroup.as_ref(), policy.cpu_max.as_deref()) {
-            Ok(Some(cg)) => {
-                if let Err(e) = cg.add_process(pid as u32) {
-                    let code = kill_and_reap(pid);
-                    return Err(anyhow::Error::new(VettoError::Sandbox(format!(
-                        "failed to attach process to cgroup (exit {code}): {e}"
-                    ))));
-                }
-                Some(cg)
-            }
-            Ok(None) => None,
-            Err(e) => {
-                let _code = kill_and_reap(pid);
-                return Err(anyhow::Error::new(e));
-            }
-        };
 
     let pidfd = open_pidfd(pid as u32);
 

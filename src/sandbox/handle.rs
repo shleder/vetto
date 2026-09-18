@@ -202,9 +202,6 @@ impl SandboxHandle {
                     );
                 }
             }
-            if let Some(cg) = self._cgroup.as_ref() {
-                cg.cleanup();
-            }
         }
         if let Some(strategy) = self.strategy.take() {
             match strategy {
@@ -240,6 +237,12 @@ impl SandboxHandle {
                     drop(job);
                     drop(process);
                 }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(cg) = self._cgroup.as_ref() {
+                cg.cleanup();
             }
         }
     }

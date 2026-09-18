@@ -36,16 +36,17 @@ impl CgroupHandle {
 
     /// Clean up the cgroup directory.
     pub fn cleanup(&self) {
-        if self.cleaned.swap(true, Ordering::SeqCst) {
-            return;
+        // Kill remaining procs once if cgroup.kill is available (Linux 5.14+)
+        if !self.cleaned.swap(true, Ordering::SeqCst) {
+            let kill_file = self.path.join("cgroup.kill");
+            if kill_file.exists() {
+                let _ = fs::write(&kill_file, "1");
+            }
         }
-        // Kill remaining procs if cgroup.kill is available (Linux 5.14+)
-        let kill_file = self.path.join("cgroup.kill");
-        if kill_file.exists() {
-            let _ = fs::write(&kill_file, "1");
+        // Attempt removing the directory on every cleanup invocation until success
+        if self.path.exists() {
+            let _ = fs::remove_dir(&self.path);
         }
-        // Attempt removing the directory
-        let _ = fs::remove_dir(&self.path);
     }
 }
 
@@ -200,6 +201,29 @@ pub fn setup_cgroup(
 
     let is_required = quotas_mandated || has_quotas;
 
+    // Validate quota specifications early: fail-closed if invalid
+    if let Some(mem) = &effective_cgroup.memory_max {
+        if parse_memory_bytes(mem).is_none() && is_required {
+            return Err(VettoError::Sandbox(format!(
+                "invalid memory_max spec '{mem}' (fail-closed exit 125)"
+            )));
+        }
+    }
+    if let Some(swap) = &effective_cgroup.swap_max {
+        if parse_memory_bytes(swap).is_none() && is_required {
+            return Err(VettoError::Sandbox(format!(
+                "invalid swap_max spec '{swap}' (fail-closed exit 125)"
+            )));
+        }
+    }
+    if let Some(cpu) = &effective_cgroup.cpu_max {
+        if parse_cpu_max(cpu).is_none() && is_required {
+            return Err(VettoError::Sandbox(format!(
+                "invalid cpu_max spec '{cpu}' (fail-closed exit 125)"
+            )));
+        }
+    }
+
     let Some(root) = find_cgroup_root() else {
         if is_required {
             return Err(VettoError::Sandbox(
@@ -243,26 +267,38 @@ pub fn setup_cgroup(
 
     // Write limits
     if let Some(mem) = &effective_cgroup.memory_max {
-        if let Some(bytes) = parse_memory_bytes(mem) {
-            if let Err(e) = fs::write(cgroup_dir.join("memory.max"), &bytes) {
-                if is_required {
-                    let _ = fs::remove_dir(&cgroup_dir);
-                    return Err(VettoError::Sandbox(format!(
-                        "failed to write memory.max ({bytes}): {e} (fail-closed exit 125)"
-                    )));
-                }
+        let bytes = parse_memory_bytes(mem).ok_or_else(|| {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+            }
+            VettoError::Sandbox(format!(
+                "invalid memory_max spec '{mem}' (fail-closed exit 125)"
+            ))
+        })?;
+        if let Err(e) = fs::write(cgroup_dir.join("memory.max"), &bytes) {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+                return Err(VettoError::Sandbox(format!(
+                    "failed to write memory.max ({bytes}): {e} (fail-closed exit 125)"
+                )));
             }
         }
     }
     if let Some(swap) = &effective_cgroup.swap_max {
-        if let Some(bytes) = parse_memory_bytes(swap) {
-            if let Err(e) = fs::write(cgroup_dir.join("memory.swap.max"), &bytes) {
-                if is_required {
-                    let _ = fs::remove_dir(&cgroup_dir);
-                    return Err(VettoError::Sandbox(format!(
-                        "failed to write memory.swap.max ({bytes}): {e} (fail-closed exit 125)"
-                    )));
-                }
+        let bytes = parse_memory_bytes(swap).ok_or_else(|| {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+            }
+            VettoError::Sandbox(format!(
+                "invalid swap_max spec '{swap}' (fail-closed exit 125)"
+            ))
+        })?;
+        if let Err(e) = fs::write(cgroup_dir.join("memory.swap.max"), &bytes) {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+                return Err(VettoError::Sandbox(format!(
+                    "failed to write memory.swap.max ({bytes}): {e} (fail-closed exit 125)"
+                )));
             }
         }
     }
@@ -277,14 +313,20 @@ pub fn setup_cgroup(
         }
     }
     if let Some(cpu) = &effective_cgroup.cpu_max {
-        if let Some(val) = parse_cpu_max(cpu) {
-            if let Err(e) = fs::write(cgroup_dir.join("cpu.max"), &val) {
-                if is_required {
-                    let _ = fs::remove_dir(&cgroup_dir);
-                    return Err(VettoError::Sandbox(format!(
-                        "failed to write cpu.max ({val}): {e} (fail-closed exit 125)"
-                    )));
-                }
+        let val = parse_cpu_max(cpu).ok_or_else(|| {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+            }
+            VettoError::Sandbox(format!(
+                "invalid cpu_max spec '{cpu}' (fail-closed exit 125)"
+            ))
+        })?;
+        if let Err(e) = fs::write(cgroup_dir.join("cpu.max"), &val) {
+            if is_required {
+                let _ = fs::remove_dir(&cgroup_dir);
+                return Err(VettoError::Sandbox(format!(
+                    "failed to write cpu.max ({val}): {e} (fail-closed exit 125)"
+                )));
             }
         }
     }
@@ -338,5 +380,49 @@ mod tests {
                 assert_eq!(e.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
             }
         }
+    }
+
+    #[test]
+    fn test_invalid_quota_fails_closed() {
+        let cfg_mem = CgroupConfig {
+            memory_max: Some("invalid_bytes_spec".into()),
+            ..CgroupConfig::default()
+        };
+        let res_mem = setup_cgroup(Some(&cfg_mem), None);
+        assert!(res_mem.is_err());
+        let err_mem = res_mem.err().unwrap();
+        assert_eq!(err_mem.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
+        assert!(err_mem.to_string().contains("fail-closed exit 125"));
+
+        let cfg_cpu = CgroupConfig {
+            cpu_max: Some("invalid_cpu_percent".into()),
+            ..CgroupConfig::default()
+        };
+        let res_cpu = setup_cgroup(Some(&cfg_cpu), None);
+        assert!(res_cpu.is_err());
+        let err_cpu = res_cpu.err().unwrap();
+        assert_eq!(err_cpu.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
+        assert!(err_cpu.to_string().contains("fail-closed exit 125"));
+    }
+
+    #[test]
+    fn test_cgroup_handle_idempotent_cleanup() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-cgroup-test-{}", std::process::id()));
+        let _ = fs::create_dir(&temp_dir);
+        assert!(temp_dir.exists());
+
+        let handle = CgroupHandle {
+            path: temp_dir.clone(),
+            cleaned: Arc::new(AtomicBool::new(false)),
+        };
+
+        // First cleanup removes directory
+        handle.cleanup();
+        assert!(!temp_dir.exists());
+
+        // Second cleanup is an idempotent no-op without errors
+        handle.cleanup();
+        assert!(!temp_dir.exists());
     }
 }
