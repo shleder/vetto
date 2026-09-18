@@ -371,18 +371,35 @@ mod tests {
 
     #[test]
     fn test_mandated_cgroup_fails_closed_when_unavailable() {
-        std::env::set_var("VETTO_TEST_NO_CGROUP", "1");
-        let cfg = CgroupConfig {
-            memory_max: Some("2g".into()),
-            pids_max: Some("128".into()),
-            ..CgroupConfig::default()
-        };
-        let res = setup_cgroup(Some(&cfg), None);
-        assert!(res.is_err());
-        let err = res.err().unwrap();
-        assert_eq!(err.exit_code(), crate::exit_codes::EXIT_FAIL_CLOSED);
-        assert!(err.to_string().contains("fail-closed exit 125"));
-        std::env::remove_var("VETTO_TEST_NO_CGROUP");
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0, "fork failed");
+            if pid == 0 {
+                std::env::set_var("VETTO_TEST_NO_CGROUP", "1");
+                let cfg = CgroupConfig {
+                    memory_max: Some("2g".into()),
+                    pids_max: Some("128".into()),
+                    ..CgroupConfig::default()
+                };
+                let res = setup_cgroup(Some(&cfg), None);
+                let ok = match res {
+                    Err(e)
+                        if e.exit_code() == crate::exit_codes::EXIT_FAIL_CLOSED
+                            && e.to_string().contains("fail-closed exit 125") =>
+                    {
+                        0
+                    }
+                    _ => 1,
+                };
+                libc::_exit(ok);
+            }
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            assert!(
+                libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+                "mandated cgroup test failed in child"
+            );
+        }
     }
 
     #[test]

@@ -77,7 +77,20 @@ fn test_e2e_resource_limits_traversal_cpu() {
     assert!(contract.verify_digest(), "sealed contract must verify");
 
     // 4. Lowered: Linux lowering sets unraisable setrlimit hard ceilings
-    assert!(limits::apply_before_exec(&policy.limits).is_ok());
+    unsafe {
+        let pid = libc::fork();
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let res = limits::apply_before_exec(&policy.limits);
+            libc::_exit(if res.is_ok() { 0 } else { 1 });
+        }
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child lowering failed"
+        );
+    }
 
     // 5. Enforced: LinuxBackend prepares the enforcement plan
     let frozen = freeze_spec(
@@ -157,7 +170,20 @@ fn test_e2e_resource_limits_traversal_memory() {
     assert!(contract.verify_digest());
 
     // 4. Lowered: Linux setrlimit address space lowering
-    assert!(limits::apply_before_exec(&policy.limits).is_ok());
+    unsafe {
+        let pid = libc::fork();
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let res = limits::apply_before_exec(&policy.limits);
+            libc::_exit(if res.is_ok() { 0 } else { 1 });
+        }
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child lowering failed"
+        );
+    }
 
     // 5. Enforced: LinuxBackend prepares
     let frozen = freeze_spec(
@@ -230,7 +256,20 @@ fn test_e2e_resource_limits_traversal_pids() {
     assert!(contract.verify_digest());
 
     // 4. Lowered: Linux setrlimit nproc lowering
-    assert!(limits::apply_before_exec(&policy.limits).is_ok());
+    unsafe {
+        let pid = libc::fork();
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let res = limits::apply_before_exec(&policy.limits);
+            libc::_exit(if res.is_ok() { 0 } else { 1 });
+        }
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child lowering failed"
+        );
+    }
 
     // 5. Enforced: LinuxBackend prepares
     let frozen = freeze_spec(
@@ -270,29 +309,35 @@ fn test_e2e_resource_limits_traversal_pids() {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_mandated_cgroup_unavailable_fails_closed_125() {
-    std::env::set_var("VETTO_TEST_NO_CGROUP", "1");
-    let cfg = CgroupConfig {
-        memory_max: Some("512M".into()),
-        pids_max: Some("128".into()),
-        cpu_max: Some("50%".into()),
-        ..CgroupConfig::default()
-    };
-    let res = setup_cgroup(Some(&cfg), None);
-    assert!(
-        res.is_err(),
-        "mandated cgroup without cgroup root must return Err"
-    );
-    let err = res.err().unwrap();
-    assert_eq!(
-        err.exit_code(),
-        125,
-        "mandated cgroup unavailable must map to exit code 125"
-    );
-    assert!(
-        err.to_string().contains("fail-closed exit 125"),
-        "error message must cite fail-closed exit 125; got: {err}"
-    );
-    std::env::remove_var("VETTO_TEST_NO_CGROUP");
+    unsafe {
+        let pid = libc::fork();
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            std::env::set_var("VETTO_TEST_NO_CGROUP", "1");
+            let cfg = CgroupConfig {
+                memory_max: Some("512M".into()),
+                pids_max: Some("128".into()),
+                cpu_max: Some("50%".into()),
+                ..CgroupConfig::default()
+            };
+            let res = setup_cgroup(Some(&cfg), None);
+            let ok = match res {
+                Err(e)
+                    if e.exit_code() == 125 && e.to_string().contains("fail-closed exit 125") =>
+                {
+                    0
+                }
+                _ => 1,
+            };
+            libc::_exit(ok);
+        }
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "mandated cgroup without cgroup root must return exit code 125 with fail-closed error"
+        );
+    }
 }
 
 #[test]
