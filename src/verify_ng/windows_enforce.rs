@@ -310,6 +310,161 @@ unsafe fn job_limit_flags(job: RawHandle) -> Dword {
     ])
 }
 
+/// Query results for Windows Job Object resource limits.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct JobLimitsQuery {
+    pub limit_flags: u32,
+    pub max_memory_bytes: Option<u64>,
+    pub max_processes: Option<u32>,
+}
+
+/// Read resource ceiling values (memory and processes) from a live Job Object.
+///
+/// # Safety
+///
+/// `job` must be a live Job Object handle owned by the caller.
+#[cfg(target_os = "windows")]
+pub unsafe fn query_job_limits(job: RawHandle) -> Option<JobLimitsQuery> {
+    if job.is_null() {
+        return None;
+    }
+    let mut buffer = [0u8; 256];
+    let ok = unsafe {
+        QueryInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as Dword,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let flags = Dword::from_ne_bytes([
+        buffer[LIMIT_FLAGS_OFFSET],
+        buffer[LIMIT_FLAGS_OFFSET + 1],
+        buffer[LIMIT_FLAGS_OFFSET + 2],
+        buffer[LIMIT_FLAGS_OFFSET + 3],
+    ]);
+
+    #[cfg(target_pointer_width = "64")]
+    let (pids_offset, mem_offset) = (40usize, 120usize);
+    #[cfg(target_pointer_width = "32")]
+    let (pids_offset, mem_offset) = (28usize, 96usize);
+
+    let max_pids = if flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 && buffer.len() >= pids_offset + 4 {
+        Some(u32::from_ne_bytes([
+            buffer[pids_offset],
+            buffer[pids_offset + 1],
+            buffer[pids_offset + 2],
+            buffer[pids_offset + 3],
+        ]))
+    } else {
+        None
+    };
+
+    let max_memory = if flags & JOB_OBJECT_LIMIT_JOB_MEMORY != 0
+        && buffer.len() >= mem_offset + std::mem::size_of::<usize>()
+    {
+        #[cfg(target_pointer_width = "64")]
+        {
+            Some(u64::from_ne_bytes([
+                buffer[mem_offset],
+                buffer[mem_offset + 1],
+                buffer[mem_offset + 2],
+                buffer[mem_offset + 3],
+                buffer[mem_offset + 4],
+                buffer[mem_offset + 5],
+                buffer[mem_offset + 6],
+                buffer[mem_offset + 7],
+            ]))
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            Some(u32::from_ne_bytes([
+                buffer[mem_offset],
+                buffer[mem_offset + 1],
+                buffer[mem_offset + 2],
+                buffer[mem_offset + 3],
+            ]) as u64)
+        }
+    } else {
+        None
+    };
+
+    Some(JobLimitsQuery {
+        limit_flags: flags,
+        max_memory_bytes: max_memory,
+        max_processes: max_pids,
+    })
+}
+
+/// Validate that Windows limit evidence is strictly backed by HostFact,
+/// rejecting any child-reported SelfReport.
+pub fn validate_windows_limit_evidence(
+    evidence: &super::evidence::Evidence,
+    fact_name: &str,
+) -> Result<bool, &'static str> {
+    let has_self = evidence.facts.iter().any(|f| {
+        f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport
+    });
+    if has_self {
+        return Err("child self-reporting rejected: limit claims cannot be proven by child output");
+    }
+    let has_host = evidence.facts.iter().any(|f| {
+        f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact
+    });
+    Ok(has_host)
+}
+
+/// Verify Windows Job Object limits query against expected limits.
+pub fn verify_job_limits_against_expected(
+    query: &JobLimitsQuery,
+    expected_memory: Option<u64>,
+    expected_pids: Option<u32>,
+) -> bool {
+    if let Some(exp_mem) = expected_memory {
+        if query.max_memory_bytes != Some(exp_mem) {
+            return false;
+        }
+    }
+    if let Some(exp_pids) = expected_pids {
+        if query.max_processes != Some(exp_pids) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Anti-tamper verification on Windows: validates sealed contract digest
+/// and verifies host-level Job Object limits against frozen resource contract.
+/// Any post-seal modification or digest mismatch fails verification.
+pub fn verify_windows_anti_tamper(
+    contract: &crate::policy_ir::contract::SecurityContract,
+    query: &JobLimitsQuery,
+) -> bool {
+    if !contract.verify_digest() {
+        return false;
+    }
+    let res = &contract.resources;
+    if let Some(max_mem) = res.max_memory_bytes {
+        if let Some(actual_mem) = query.max_memory_bytes {
+            if actual_mem > max_mem {
+                return false;
+            }
+        }
+    }
+    if let Some(max_pids) = res.max_pids {
+        if let Some(actual_pids) = query.max_processes {
+            if actual_pids as u64 > max_pids {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// True only when the child's token integrity RID is low or below, read
 /// from the retained process handle. Any failure (no query rights, dead
 /// child) yields false: unobserved, never assumed.
@@ -579,5 +734,68 @@ mod windows_enforce_tests {
         let second = states_for_facts(&full_facts(true));
         assert_eq!(first.0, second.0);
         assert_eq!(first.2, second.2);
+    }
+
+    #[test]
+    fn test_win_validate_limit_evidence_rejects_self_report() {
+        let mut evidence = crate::verify_ng::evidence::Evidence::default();
+        evidence.self_report("win_job_memory", "104857600".to_string());
+        assert!(validate_windows_limit_evidence(&evidence, "win_job_memory").is_err());
+
+        let mut valid_evidence = crate::verify_ng::evidence::Evidence::default();
+        valid_evidence.host_fact("win_job_memory", "104857600".to_string());
+        assert_eq!(
+            validate_windows_limit_evidence(&valid_evidence, "win_job_memory"),
+            Ok(true)
+        );
+        assert_eq!(
+            validate_windows_limit_evidence(&valid_evidence, "missing"),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn test_win_verify_job_limits_against_expected() {
+        let query = JobLimitsQuery {
+            limit_flags: 0x0000_0208, // ACTIVE_PROCESS | JOB_MEMORY
+            max_memory_bytes: Some(104857600),
+            max_processes: Some(64),
+        };
+        assert!(verify_job_limits_against_expected(&query, Some(104857600), Some(64)));
+        assert!(!verify_job_limits_against_expected(&query, Some(209715200), Some(64)));
+        assert!(!verify_job_limits_against_expected(&query, Some(104857600), Some(128)));
+        assert!(verify_job_limits_against_expected(&query, None, Some(64)));
+        assert!(verify_job_limits_against_expected(&query, Some(104857600), None));
+    }
+
+    #[test]
+    fn test_win_verify_windows_anti_tamper() {
+        let mut policy = crate::policy::Policy::default();
+        policy.limits.address_space_bytes = Some(104857600);
+        policy.limits.processes = Some(64);
+        let compiler = crate::policy_ir::compiler::PolicyCompiler::new();
+        let contract = compiler
+            .compile_effective(&policy)
+            .expect("compile must succeed");
+
+        let query = JobLimitsQuery {
+            limit_flags: 0x0000_0208,
+            max_memory_bytes: Some(104857600),
+            max_processes: Some(64),
+        };
+        assert!(verify_windows_anti_tamper(&contract, &query));
+
+        // Tampered contract (digest mismatch)
+        let mut tampered = contract.clone();
+        tampered.resources.max_pids = Some(99999);
+        assert!(!verify_windows_anti_tamper(&tampered, &query));
+
+        // Excess limits in query
+        let excess_query = JobLimitsQuery {
+            limit_flags: 0x0000_0208,
+            max_memory_bytes: Some(209715200), // Exceeds contract limit
+            max_processes: Some(64),
+        };
+        assert!(!verify_windows_anti_tamper(&contract, &excess_query));
     }
 }

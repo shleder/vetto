@@ -55,6 +55,11 @@ impl FrozenSpec {
         hasher.update(self.canonical_bytes());
         hex_encode(&hasher.finalize())
     }
+
+    /// Extract resource limits encoded in this frozen spec's policy bytes.
+    pub fn resource_limits(&self) -> PolicyResourceLimits {
+        parse_policy_bytes_limits(&self.policy_bytes)
+    }
 }
 
 /// Build the canonical spec from a resolved policy plus the effective
@@ -281,6 +286,142 @@ pub fn hex_encode(data: &[u8]) -> String {
     s
 }
 
+/// Resource limits parsed from canonical policy bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PolicyResourceLimits {
+    pub cpu_seconds: Option<u64>,
+    pub address_space_bytes: Option<u64>,
+    pub processes: Option<u64>,
+    pub open_files: Option<u64>,
+    pub file_size_bytes: Option<u64>,
+    pub cgroup_memory_max: Option<String>,
+    pub cgroup_pids_max: Option<String>,
+    pub cgroup_cpu_max: Option<String>,
+    pub cgroup_swap_max: Option<String>,
+}
+
+impl PolicyResourceLimits {
+    pub fn has_any_limit(&self) -> bool {
+        self.cpu_seconds.is_some()
+            || self.address_space_bytes.is_some()
+            || self.processes.is_some()
+            || self.open_files.is_some()
+            || self.file_size_bytes.is_some()
+            || self.cgroup_memory_max.is_some()
+            || self.cgroup_pids_max.is_some()
+            || self.cgroup_cpu_max.is_some()
+            || self.cgroup_swap_max.is_some()
+    }
+}
+
+/// Parse resource limits from deterministic canonical policy bytes.
+pub fn parse_policy_bytes_limits(policy_bytes: &[u8]) -> PolicyResourceLimits {
+    let Ok(s) = std::str::from_utf8(policy_bytes) else {
+        return PolicyResourceLimits::default();
+    };
+    let mut limits = PolicyResourceLimits::default();
+
+    for part in s.split(';') {
+        if let Some(rest) = part.strip_prefix("limits=") {
+            for field in rest.split('|') {
+                if let Some((k, v)) = field.split_once('=') {
+                    if v != "-" {
+                        let parsed = v.parse::<u64>().ok();
+                        match k {
+                            "cpu" => limits.cpu_seconds = parsed,
+                            "as" => limits.address_space_bytes = parsed,
+                            "procs" => limits.processes = parsed,
+                            "files" => limits.open_files = parsed,
+                            "fsize" => limits.file_size_bytes = parsed,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        } else if let Some(rest) = part.strip_prefix("harden=") {
+            for field in rest.split('|') {
+                if let Some((k, v)) = field.split_once('=') {
+                    if k == "cpu_max" && v != "-" {
+                        limits.cgroup_cpu_max = Some(v.to_string());
+                    } else if k == "cgroup" && v != "-" {
+                        let parse_cg = |tag: &str, next_tag: Option<&str>| -> Option<String> {
+                            let idx = v.find(tag)?;
+                            let after = &v[idx + tag.len()..];
+                            let val = if let Some(nxt) = next_tag {
+                                after.split(nxt).next().unwrap_or(after)
+                            } else {
+                                after
+                            };
+                            if val == "-" || val.is_empty() {
+                                None
+                            } else {
+                                Some(val.to_string())
+                            }
+                        };
+                        if let Some(m) = parse_cg("mem=", Some("pids=")) {
+                            limits.cgroup_memory_max = Some(m);
+                        }
+                        if let Some(p) = parse_cg("pids=", Some("swap=")) {
+                            limits.cgroup_pids_max = Some(p);
+                        }
+                        if let Some(sw) = parse_cg("swap=", Some("cpu=")) {
+                            limits.cgroup_swap_max = Some(sw);
+                        }
+                        if let Some(c) = parse_cg("cpu=", None) {
+                            if limits.cgroup_cpu_max.is_none() {
+                                limits.cgroup_cpu_max = Some(c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    limits
+}
+
+/// Verify that a security contract has not been tampered with post-seal.
+/// Any post-seal modification of resource fields or digest mismatch fails verification.
+pub fn verify_contract_anti_tamper(
+    contract: &crate::policy_ir::contract::SecurityContract,
+) -> Result<(), &'static str> {
+    if !contract.verify_digest() {
+        return Err("contract BLAKE3 digest mismatch: unsealed or tampered contract");
+    }
+    Ok(())
+}
+
+/// Verify that the current policy matches the frozen specification's canonical bytes.
+/// Any drift indicates post-freeze tamper.
+pub fn verify_policy_anti_tamper(
+    frozen: &FrozenSpec,
+    current_policy: &crate::policy::Policy,
+) -> Result<(), &'static str> {
+    let current_bytes = canonical_policy_bytes(current_policy);
+    if frozen.policy_bytes != current_bytes {
+        return Err("canonical policy bytes mismatch: post-freeze policy mutation detected");
+    }
+    Ok(())
+}
+
+/// Validate that limit evidence is derived exclusively from host facts (`HostFact`),
+/// and explicitly reject any child self-reporting (`SelfReport`).
+pub fn verify_limits_host_evidence(
+    evidence: &super::evidence::Evidence,
+    fact_name: &str,
+) -> Result<bool, &'static str> {
+    let has_self_report = evidence.facts.iter().any(|f| {
+        f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport
+    });
+    if has_self_report {
+        return Err("child self-reporting rejected: limit claims cannot be proven by child output");
+    }
+    let has_host_fact = evidence.facts.iter().any(|f| {
+        f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact
+    });
+    Ok(has_host_fact)
+}
+
 #[cfg(test)]
 mod frozen_tests {
     use super::*;
@@ -353,5 +494,92 @@ mod frozen_tests {
             ..Default::default()
         };
         assert_ne!(canonical_policy_bytes(&a), canonical_policy_bytes(&c));
+    }
+
+    #[test]
+    fn parse_policy_bytes_limits_extracts_all_fields() {
+        let mut policy = crate::policy::Policy::default();
+        policy.limits.address_space_bytes = Some(512 * 1024 * 1024);
+        policy.limits.processes = Some(256);
+        policy.limits.cpu_seconds = Some(10);
+        policy.limits.file_size_bytes = Some(128 * 1024 * 1024);
+        policy.cgroup = Some(crate::policy::CgroupConfig {
+            memory_max: Some("512M".to_string()),
+            pids_max: Some("256".to_string()),
+            swap_max: Some("0".to_string()),
+            cpu_max: Some("50000 100000".to_string()),
+        });
+
+        let bytes = canonical_policy_bytes(&policy);
+        let parsed = parse_policy_bytes_limits(&bytes);
+
+        assert_eq!(parsed.address_space_bytes, Some(512 * 1024 * 1024));
+        assert_eq!(parsed.processes, Some(256));
+        assert_eq!(parsed.cpu_seconds, Some(10));
+        assert_eq!(parsed.file_size_bytes, Some(128 * 1024 * 1024));
+        assert_eq!(parsed.cgroup_memory_max.as_deref(), Some("512M"));
+        assert_eq!(parsed.cgroup_pids_max.as_deref(), Some("256"));
+        assert_eq!(parsed.cgroup_swap_max.as_deref(), Some("0"));
+        assert_eq!(parsed.cgroup_cpu_max.as_deref(), Some("50000 100000"));
+        assert!(parsed.has_any_limit());
+    }
+
+    #[test]
+    fn anti_tamper_rejects_modified_resources() {
+        let policy = crate::policy::Policy::default();
+        let compiler = crate::policy_ir::compiler::PolicyCompiler::new();
+        let contract = compiler
+            .compile_effective(&policy)
+            .expect("compile must succeed");
+        assert!(verify_contract_anti_tamper(&contract).is_ok());
+
+        let mut tampered = contract.clone();
+        tampered.resources.max_pids = Some(99999);
+        assert!(verify_contract_anti_tamper(&tampered).is_err());
+
+        let mut tampered_mem = contract.clone();
+        tampered_mem.resources.max_memory_bytes = Some(1024);
+        assert!(verify_contract_anti_tamper(&tampered_mem).is_err());
+    }
+
+    #[test]
+    fn anti_tamper_rejects_modified_policy() {
+        let mut policy = crate::policy::Policy::default();
+        policy.limits.address_space_bytes = Some(100);
+        let spec = freeze_spec(
+            "s",
+            "r",
+            &policy,
+            "full",
+            &crate::config::NetMode::Off,
+            "b",
+            &["a".to_string()],
+            &BTreeMap::new(),
+            std::path::Path::new("/tmp"),
+            "n",
+        );
+        assert!(verify_policy_anti_tamper(&spec, &policy).is_ok());
+
+        let mut mutated_policy = policy.clone();
+        mutated_policy.limits.address_space_bytes = Some(200);
+        assert!(verify_policy_anti_tamper(&spec, &mutated_policy).is_err());
+    }
+
+    #[test]
+    fn limits_evidence_rejects_self_report_and_accepts_host_fact() {
+        let mut evidence = crate::verify_ng::evidence::Evidence::default();
+        evidence.self_report("rlimit_as", "268435456".to_string());
+        assert!(verify_limits_host_evidence(&evidence, "rlimit_as").is_err());
+
+        let mut valid_evidence = crate::verify_ng::evidence::Evidence::default();
+        valid_evidence.host_fact("rlimit_as", "268435456".to_string());
+        assert_eq!(
+            verify_limits_host_evidence(&valid_evidence, "rlimit_as"),
+            Ok(true)
+        );
+        assert_eq!(
+            verify_limits_host_evidence(&valid_evidence, "missing"),
+            Ok(false)
+        );
     }
 }

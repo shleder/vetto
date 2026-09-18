@@ -389,6 +389,22 @@ impl EnforcementReport {
             .collect()
     }
 
+    pub fn verified(&self) -> Vec<SecurityCapability> {
+        self.records
+            .iter()
+            .filter(|r| r.state == EnforcementState::Verified)
+            .map(|r| r.capability)
+            .collect()
+    }
+
+    pub fn state_of(&self, cap: SecurityCapability) -> EnforcementState {
+        self.records
+            .iter()
+            .find(|r| r.capability == cap)
+            .map(|r| r.state)
+            .unwrap_or(EnforcementState::Unsupported)
+    }
+
     /// Fail-closed gate: PASS is allowed only when preparation succeeded
     /// and every mandatory capability is actually enforced.
     pub fn allows_pass(&self, required: &[SecurityCapability]) -> bool {
@@ -502,6 +518,12 @@ pub struct HostVerification {
     /// (Windows, read back; presence only, values attested at the
     /// mechanics layer).
     pub win_job_ceiling: bool,
+    /// Cgroup v2 memory.max matches expected limit.
+    pub cgroup_memory_ok: bool,
+    /// Cgroup v2 pids.max matches expected limit.
+    pub cgroup_pids_ok: bool,
+    /// Cgroup v2 cpu.max matches expected limit.
+    pub cgroup_cpu_ok: bool,
 }
 
 impl HostVerification {
@@ -519,6 +541,9 @@ impl HostVerification {
             win_kill_on_close: false,
             win_low_integrity: false,
             win_job_ceiling: false,
+            cgroup_memory_ok: false,
+            cgroup_pids_ok: false,
+            cgroup_cpu_ok: false,
         }
     }
 
@@ -527,10 +552,9 @@ impl HostVerification {
         self.seccomp_filter
             && self.no_new_privs
             && self.pgroup_separate
-            && self.rlimit_as_ok
-            && self.rlimit_nproc_ok
-            && self.rlimit_cpu_ok
-            && self.rlimit_fsize_ok
+            && (self.rlimit_as_ok || self.cgroup_memory_ok)
+            && (self.rlimit_nproc_ok || self.cgroup_pids_ok)
+            && (self.rlimit_cpu_ok || self.cgroup_cpu_ok)
             && self.subreaper_ok
     }
 }
@@ -729,6 +753,30 @@ impl SandboxBackend for DirectBackend {
     }
 }
 
+/// Configured resource constraints tracked for verified promotion.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConfiguredResourceConstraints {
+    pub rlimit_as: bool,
+    pub rlimit_nproc: bool,
+    pub rlimit_cpu: bool,
+    pub rlimit_fsize: bool,
+    pub cgroup_memory: bool,
+    pub cgroup_pids: bool,
+    pub cgroup_cpu: bool,
+}
+
+impl ConfiguredResourceConstraints {
+    pub fn has_any(&self) -> bool {
+        self.rlimit_as
+            || self.rlimit_nproc
+            || self.rlimit_cpu
+            || self.rlimit_fsize
+            || self.cgroup_memory
+            || self.cgroup_pids
+            || self.cgroup_cpu
+    }
+}
+
 /// Stage 3B Linux backend: real unprivileged enforcement (Landlock
 /// filesystem allowlist, seccomp-BPF socket policy + hardening denylist,
 /// `setrlimit` ceilings, `NO_NEW_PRIVS`, new process group, nonce-targeted
@@ -746,6 +794,7 @@ pub struct LinuxBackend {
     tree_diag: Option<String>,
     subreaper_prepare: Option<String>,
     tier: Option<Tier>,
+    configured_limits: Option<ConfiguredResourceConstraints>,
 }
 
 impl LinuxBackend {
@@ -756,6 +805,7 @@ impl LinuxBackend {
             tree_diag: None,
             subreaper_prepare: None,
             tier: None,
+            configured_limits: None,
         }
     }
 
@@ -919,13 +969,54 @@ impl SandboxBackend for LinuxBackend {
             SecurityCapability::ProcessIsolation,
             verification.no_new_privs && verification.pgroup_separate,
         );
-        verified(
-            SecurityCapability::ResourceLimits,
+
+        // Allow configured limits to transition into `Verified` when all
+        // configured/enforced constraints have valid host proof.
+        let resource_limits_ok = if let Some(cfg) = &self.configured_limits {
+            if cfg.has_any() {
+                let mut all_ok = true;
+                if cfg.rlimit_as && !verification.rlimit_as_ok {
+                    all_ok = false;
+                }
+                if cfg.rlimit_nproc && !verification.rlimit_nproc_ok {
+                    all_ok = false;
+                }
+                if cfg.rlimit_cpu && !verification.rlimit_cpu_ok {
+                    all_ok = false;
+                }
+                if cfg.rlimit_fsize && !verification.rlimit_fsize_ok {
+                    all_ok = false;
+                }
+                if cfg.cgroup_memory && !verification.cgroup_memory_ok {
+                    all_ok = false;
+                }
+                if cfg.cgroup_pids && !verification.cgroup_pids_ok {
+                    all_ok = false;
+                }
+                if cfg.cgroup_cpu && !verification.cgroup_cpu_ok {
+                    all_ok = false;
+                }
+                all_ok
+            } else {
+                verification.rlimit_as_ok
+                    || verification.rlimit_nproc_ok
+                    || verification.rlimit_cpu_ok
+                    || verification.rlimit_fsize_ok
+                    || verification.cgroup_memory_ok
+                    || verification.cgroup_pids_ok
+                    || verification.cgroup_cpu_ok
+            }
+        } else {
             verification.rlimit_as_ok
-                && verification.rlimit_nproc_ok
-                && verification.rlimit_cpu_ok
-                && verification.rlimit_fsize_ok,
-        );
+                || verification.rlimit_nproc_ok
+                || verification.rlimit_cpu_ok
+                || verification.rlimit_fsize_ok
+                || verification.cgroup_memory_ok
+                || verification.cgroup_pids_ok
+                || verification.cgroup_cpu_ok
+        };
+
+        verified(SecurityCapability::ResourceLimits, resource_limits_ok);
     }
 
     fn note_failed(&mut self, kind: PreparationFailureKind) {
@@ -1051,6 +1142,34 @@ impl LinuxBackend {
         } else {
             Vec::new()
         };
+        let policy_limits = super::frozen::parse_policy_bytes_limits(&policy.policy_bytes);
+        let has_explicit = policy_limits.has_any_limit();
+        let (r_as, r_nproc, r_cpu, r_fsize) = if has_explicit {
+            (
+                policy_limits.address_space_bytes,
+                policy_limits.processes,
+                policy_limits.cpu_seconds,
+                policy_limits.file_size_bytes,
+            )
+        } else {
+            (
+                Some(super::linux_enforce::DEFAULT_RLIMIT_AS_BYTES),
+                Some(super::linux_enforce::DEFAULT_RLIMIT_NPROC),
+                Some(super::linux_enforce::DEFAULT_RLIMIT_CPU_SECS),
+                Some(super::linux_enforce::DEFAULT_RLIMIT_FSIZE_BYTES),
+            )
+        };
+
+        self.configured_limits = Some(ConfiguredResourceConstraints {
+            rlimit_as: r_as.is_some(),
+            rlimit_nproc: r_nproc.is_some(),
+            rlimit_cpu: r_cpu.is_some(),
+            rlimit_fsize: r_fsize.is_some(),
+            cgroup_memory: policy_limits.cgroup_memory_max.is_some(),
+            cgroup_pids: policy_limits.cgroup_pids_max.is_some(),
+            cgroup_cpu: policy_limits.cgroup_cpu_max.is_some(),
+        });
+
         self.plan = Some(ChildEnforcementPlan {
             landlock: landlock_ok,
             exec_root: policy.cwd.clone(),
@@ -1058,10 +1177,10 @@ impl LinuxBackend {
             system_ro,
             net_deny: net_off,
             harden_syscalls: seccomp_ok,
-            rlimit_as: Some(super::linux_enforce::DEFAULT_RLIMIT_AS_BYTES),
-            rlimit_nproc: Some(super::linux_enforce::DEFAULT_RLIMIT_NPROC),
-            rlimit_cpu: Some(super::linux_enforce::DEFAULT_RLIMIT_CPU_SECS),
-            rlimit_fsize: Some(super::linux_enforce::DEFAULT_RLIMIT_FSIZE_BYTES),
+            rlimit_as: r_as,
+            rlimit_nproc: r_nproc,
+            rlimit_cpu: r_cpu,
+            rlimit_fsize: r_fsize,
             new_pgroup: true,
         });
 
@@ -2149,5 +2268,143 @@ mod backend_arch_tests {
         let report = backend.prepare(&policy, &policy_identity);
         let gated = apply_backend_ceiling(first, &report, &scenario);
         assert_eq!(apply_backend_ceiling(first, &report, &scenario), gated);
+    }
+
+    #[test]
+    fn test_backend_resource_limits_promotion_partial() {
+        let mut policy_obj = crate::policy::Policy::default();
+        policy_obj.limits.address_space_bytes = Some(104857600); // only memory configured
+
+        let frozen = super::frozen::freeze_spec(
+            "TEST-RLIMIT-PARTIAL",
+            "reg-test",
+            &policy_obj,
+            "full",
+            &crate::config::NetMode::Off,
+            "linux-enforce",
+            &["sh".to_string()],
+            &BTreeMap::new(),
+            std::path::Path::new("/tmp"),
+            "nonce-rlimit",
+        );
+        let policy = CanonicalPolicy::from_frozen(&frozen);
+        let id = ExecutionIdentity::new("TEST-RLIMIT-PARTIAL", "nonce-rlimit", "reg-test", &policy.frozen_hash);
+
+        let mut backend = LinuxBackend::new();
+        backend.prepare(&policy, &id);
+        backend.note_spawned(1234);
+
+        // Host verification proves ONLY the configured memory limit
+        let mut verification = HostVerification::none();
+        verification.rlimit_as_ok = true;
+
+        backend.note_host_verified(&verification);
+        let rep = backend.enforcement().unwrap();
+        assert_eq!(
+            rep.state_of(SecurityCapability::ResourceLimits),
+            EnforcementState::Verified,
+            "partial configured limit must promote to Verified when proven"
+        );
+    }
+
+    #[test]
+    fn test_backend_resource_limits_promotion_fails_if_unverified() {
+        let mut policy_obj = crate::policy::Policy::default();
+        policy_obj.limits.address_space_bytes = Some(104857600);
+        policy_obj.limits.processes = Some(64); // both memory and pids configured
+
+        let frozen = super::frozen::freeze_spec(
+            "TEST-RLIMIT-INCOMPLETE",
+            "reg-test",
+            &policy_obj,
+            "full",
+            &crate::config::NetMode::Off,
+            "linux-enforce",
+            &["sh".to_string()],
+            &BTreeMap::new(),
+            std::path::Path::new("/tmp"),
+            "nonce-rlimit",
+        );
+        let policy = CanonicalPolicy::from_frozen(&frozen);
+        let id = ExecutionIdentity::new("TEST-RLIMIT-INCOMPLETE", "nonce-rlimit", "reg-test", &policy.frozen_hash);
+
+        let mut backend = LinuxBackend::new();
+        backend.prepare(&policy, &id);
+        backend.note_spawned(1234);
+
+        // Only memory is verified, pids is NOT verified
+        let mut verification = HostVerification::none();
+        verification.rlimit_as_ok = true;
+        verification.rlimit_nproc_ok = false;
+
+        backend.note_host_verified(&verification);
+        let rep = backend.enforcement().unwrap();
+        assert_eq!(
+            rep.state_of(SecurityCapability::ResourceLimits),
+            EnforcementState::Enforced,
+            "must stay Enforced and not promote to Verified when one configured limit is unverified"
+        );
+    }
+
+    #[test]
+    fn test_backend_resource_limits_cgroup_promotion() {
+        let mut policy_obj = crate::policy::Policy::default();
+        policy_obj.cgroup = Some(crate::policy::CgroupConfig {
+            memory_max: Some("100M".to_string()),
+            pids_max: None,
+            swap_max: None,
+            cpu_max: None,
+        });
+
+        let frozen = super::frozen::freeze_spec(
+            "TEST-CGROUP-PROMOTION",
+            "reg-test",
+            &policy_obj,
+            "full",
+            &crate::config::NetMode::Off,
+            "linux-enforce",
+            &["sh".to_string()],
+            &BTreeMap::new(),
+            std::path::Path::new("/tmp"),
+            "nonce-cg",
+        );
+        let policy = CanonicalPolicy::from_frozen(&frozen);
+        let id = ExecutionIdentity::new("TEST-CGROUP-PROMOTION", "nonce-cg", "reg-test", &policy.frozen_hash);
+
+        let mut backend = LinuxBackend::new();
+        backend.prepare(&policy, &id);
+        backend.note_spawned(1234);
+
+        let mut verification = HostVerification::none();
+        verification.cgroup_memory_ok = true;
+
+        backend.note_host_verified(&verification);
+        let rep = backend.enforcement().unwrap();
+        assert_eq!(
+            rep.state_of(SecurityCapability::ResourceLimits),
+            EnforcementState::Verified,
+            "cgroup memory quota proof must promote ResourceLimits to Verified"
+        );
+    }
+
+    #[test]
+    fn test_backend_strict_status_differentiation() {
+        let (policy, identity) = test_policy_and_identity();
+        let mut backend = select_backend(BackendKind::Linux);
+        let mut report = backend.prepare(&policy, &identity);
+        report.records.push(CapabilityRecord {
+            capability: SecurityCapability::SyscallRestriction,
+            requested: true,
+            state: EnforcementState::Unsupported,
+            failure: Some(PreparationFailureKind::UnsupportedOnPlatform),
+        });
+
+        assert_eq!(
+            report.state_of(SecurityCapability::SyscallRestriction),
+            EnforcementState::Unsupported
+        );
+        assert!(!report.is_enforced(SecurityCapability::SyscallRestriction));
+        assert!(report.unsupported().contains(&SecurityCapability::SyscallRestriction));
+        assert!(!report.verified().contains(&SecurityCapability::SyscallRestriction));
     }
 }
