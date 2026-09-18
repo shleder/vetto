@@ -2358,13 +2358,15 @@ mod backend_arch_tests {
 
     #[test]
     fn test_backend_resource_limits_cgroup_promotion() {
-        let mut policy_obj = crate::policy::Policy::default();
-        policy_obj.cgroup = Some(crate::policy::CgroupConfig {
-            memory_max: Some("100M".to_string()),
-            pids_max: None,
-            swap_max: None,
-            cpu_max: None,
-        });
+        let policy_obj = crate::policy::Policy {
+            cgroup: Some(crate::policy::CgroupConfig {
+                memory_max: Some("100M".to_string()),
+                pids_max: None,
+                swap_max: None,
+                cpu_max: None,
+            }),
+            ..Default::default()
+        };
 
         let frozen = crate::verify_ng::frozen::freeze_spec(
             "TEST-CGROUP-PROMOTION",
