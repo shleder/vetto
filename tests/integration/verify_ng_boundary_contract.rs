@@ -696,10 +696,11 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
     let script = format!(
         "masked=\"{}\"\n\
          user=\"{}\"\n\
+         discard=\"$VETTO_VNG_ROOT/discard.txt\"\n\
          # Reading masked file must FAIL\n\
-         if cat \"$masked\" >/dev/null 2>&1; then exit 10; fi\n\
+         if cat \"$masked\" > \"$discard\" 2>&1; then exit 10; fi\n\
          # Reading unmasked workspace file must SUCCEED\n\
-         if ! cat \"$user\" >/dev/null 2>&1; then exit 11; fi\n\
+         if ! cat \"$user\" > \"$discard\" 2>&1; then exit 11; fi\n\
          exit 0\n",
         masked_file.display(),
         user_file.display()
@@ -715,7 +716,9 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
     assert_eq!(
         out.exit_code,
         Some(0),
-        "contract semantics: masked file denied, unmasked workspace file allowed"
+        "contract semantics: masked file denied, unmasked workspace file allowed (stdout: {}, stderr: {})",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
 
     let _ = std::fs::remove_dir_all(&ws);

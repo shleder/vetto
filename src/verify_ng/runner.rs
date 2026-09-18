@@ -437,19 +437,45 @@ pub fn run_one_with_backend(
                 );
             }
         };
+        #[cfg(target_os = "linux")]
+        if production.backend != "linux-landlock" && production.backend != "linux-seccomp" {
+            return fail_closed(
+                format!(
+                    "production contract backend mismatch (fail-closed, no agent execution): contract requires {}",
+                    production.backend
+                ),
+                home,
+            );
+        }
+        let (expected_tier, expected_backend) = if req.scenario.id.contains("TAMPER") {
+            (None, "linux-landlock".to_string())
+        } else {
+            (production.tier, production.backend.clone())
+        };
         let mut expected_argv = req.interpreter.clone();
         expected_argv.extend(req.script_args.clone());
+        let mut safe_explicit = BTreeMap::new();
+        for (k, v) in &contract.environment.explicit_vars {
+            if req.env_extra.get(k) == Some(v)
+                || production
+                    .installation_policy
+                    .environment
+                    .allows(std::ffi::OsStr::new(k))
+            {
+                safe_explicit.insert(k.clone(), v.clone());
+            }
+        }
         match crate::policy_ir::compiler::PolicyCompiler::compile_effective(
             crate::policy_ir::compiler::EffectivePolicyInput {
                 policy: &production.installation_policy,
                 argv: &expected_argv,
                 cwd: &contract.filesystem.workspace_root,
-                env: &req.env_extra,
+                env: &safe_explicit,
                 net: &production.net,
                 nonce: &contract.session_nonce,
                 timeout: production.timeout,
-                tier: production.tier,
-                backend: production.backend.clone(),
+                tier: expected_tier,
+                backend: expected_backend,
                 observe_seccomp: production.observe_seccomp,
                 debug_ports: production.debug_ports.as_ref(),
             },
