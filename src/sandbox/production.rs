@@ -1024,6 +1024,24 @@ impl SpawnedProductionExecution {
             ));
         }
         #[cfg(target_os = "linux")]
+        let setsid_orphan_escaped = if matches!(
+            self.handle.strategy,
+            Some(crate::sandbox::KillStrategy::ProcessGroup { sweep: true, .. })
+        ) {
+            let me = unsafe { libc::getpid() } as u32;
+            let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let children = crate::sandbox::linux::proctrack::scan_children(me, self.pid as i32);
+            children.iter().any(|&pid| {
+                match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
+                    (Some(mine), Some(theirs)) => mine != theirs,
+                    _ => false,
+                }
+            })
+        } else {
+            false
+        };
+
+        #[cfg(target_os = "linux")]
         {
             if let Some(sweep) =
                 crate::verify_ng::linux_enforce::sweep_tree_by_nonce(self.nonce.as_str(), self.pid)
@@ -1071,6 +1089,14 @@ impl SpawnedProductionExecution {
         self.fsm.record_extinction_result(surviving_processes);
 
         let mut final_exit_code = exit_code;
+        #[cfg(target_os = "linux")]
+        if setsid_orphan_escaped && final_exit_code.unwrap_or(0) == 0 {
+            self.capability.note_diagnostic(
+                "setsid escaper swept in fs-only: containment gap forces fail-closed exit 125"
+                    .to_string(),
+            );
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        }
         if let Err(ref breach) = extinction_res {
             self.capability.note_tree_clean(false);
             self.capability.note_diagnostic(format!(

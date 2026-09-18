@@ -165,7 +165,7 @@ fn fs_only_blind_sweep_fails_closed() {
             "--",
             "sh",
             "-c",
-            "setsid env -i sleep 30 >/dev/null 2>&1 & echo go",
+            "setsid env -i sleep 9998 >/dev/null 2>&1 & echo go",
         ],
         &[("VETTO_FORCE_TIER", "fs-only")],
     );
@@ -181,7 +181,7 @@ fn fs_only_blind_sweep_fails_closed() {
     // Bounded cleanup verification for host safety
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
-        let leaks = scan_cmdlines("sleep 30");
+        let leaks = scan_cmdlines("sleep 9998");
         if leaks.is_empty() {
             break;
         }

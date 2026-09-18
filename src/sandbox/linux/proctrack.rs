@@ -150,7 +150,7 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
 }
 
 /// Every live or zombie process whose PPid is `me`, excluding `exclude_pid`.
-fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
+pub fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
     let mut children = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return children;
