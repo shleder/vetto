@@ -273,6 +273,7 @@ pub fn parse_command_tokens(command_str: &str) -> Vec<String> {
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 fn pipe2() -> Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
     let mut fds = [0 as libc::c_int; 2];
     // SAFETY: valid out-array for the libc pipe call.
@@ -356,71 +357,31 @@ pub fn execute_sandboxed_command(
 
     let parsed_timeout = timeout
         .map(crate::config::parse_session_timeout)
-        .transpose()?;
+        .transpose()?
+        .unwrap_or(std::time::Duration::from_secs(30));
 
-    #[cfg(unix)]
-    use std::os::fd::AsRawFd;
-
-    #[cfg(unix)]
-    let (stdout_r, stdout_w) = pipe2()?;
-    #[cfg(unix)]
-    let (stderr_r, stderr_w) = pipe2()?;
-    #[cfg(unix)]
-    let stdio = crate::sandbox::StdioMode::Captured {
-        stdout_w: stdout_w.as_raw_fd(),
-        stderr_w: stderr_w.as_raw_fd(),
-    };
-    #[cfg(not(unix))]
-    let stdio = crate::sandbox::StdioMode::Inherit;
-
-    let unprepared = crate::sandbox::production::UnpreparedProductionExecution::new(
-        backend,
-        pol,
+    let mut spawn_log = crate::sandbox::production::ProdSpawnLog::new();
+    let prod_res = crate::sandbox::production::execute_simple(
+        &pol,
         argv,
         project,
         std::collections::HashMap::new(),
         net_mode,
+        Some(tier),
         parsed_timeout,
-        stdio,
-        "mcp".to_string(),
-    );
+        &mut spawn_log,
+    )?;
 
-    let prepared = unprepared.prepare()?;
-    let spawned = prepared.spawn()?;
-
-    #[cfg(unix)]
-    drop(stdout_w);
-    #[cfg(unix)]
-    drop(stderr_w);
-
-    #[cfg(unix)]
-    let (stdout_reader, stderr_reader) = (
-        crate::sandbox::production::AsyncPipeReader::spawn(
-            stdout_r,
-            crate::sandbox::production::PROD_MAX_STDIO,
-            crate::sandbox::production::PROD_DRAIN_BUDGET,
-        ),
-        crate::sandbox::production::AsyncPipeReader::spawn(
-            stderr_r,
-            crate::sandbox::production::PROD_MAX_STDIO,
-            crate::sandbox::production::PROD_DRAIN_BUDGET,
-        ),
-    );
-
-    let prod_res = spawned.wait_collect();
-
-    #[cfg(unix)]
-    let (stdout, stderr) = (
-        String::from_utf8_lossy(&stdout_reader.join()).to_string(),
-        String::from_utf8_lossy(&stderr_reader.join()).to_string(),
-    );
-    #[cfg(not(unix))]
-    let (stdout, stderr) = (
-        String::from_utf8_lossy(&prod_res.stdout).to_string(),
-        String::from_utf8_lossy(&prod_res.stderr).to_string(),
-    );
-
+    let stdout = String::from_utf8_lossy(&prod_res.stdout).to_string();
+    let mut stderr = String::from_utf8_lossy(&prod_res.stderr).to_string();
     let exit_code = prod_res.exit_code.unwrap_or(-1);
+    if exit_code != 0 && !prod_res.diagnostic.is_empty() {
+        if !stderr.is_empty() && !stderr.ends_with('\n') {
+            stderr.push('\n');
+        }
+        stderr.push_str("Diagnostic: ");
+        stderr.push_str(&prod_res.diagnostic);
+    }
     let blocked_count = if stderr.contains("BLOCKED")
         || stderr.contains("denied")
         || exit_code == 124

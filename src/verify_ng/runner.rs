@@ -1055,7 +1055,7 @@ fn finish_run(
         }
         if contract.network.mode == crate::policy_ir::contract::NetworkMode::Off {
             evidence.host_fact(
-                "vector:net-contract-sealed",
+                "contract-sealed-net-off",
                 "blake3-contract-net-off".to_string(),
             );
         }
