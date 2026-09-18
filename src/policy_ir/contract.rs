@@ -320,6 +320,109 @@ mod contract_tests {
     }
 
     #[test]
+    fn anti_tamper_resource_fields_invalidate_digest() {
+        let unsealed = sample_unsealed();
+        let sealed = unsealed.seal().expect("seal contract");
+        assert!(sealed.verify_digest());
+
+        // Mutating any resource field post-seal MUST break the BLAKE3 digest
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_cpu_percent += 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_cpu_percent not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_memory_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_memory_bytes not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_pids += 1;
+            assert!(!tampered.verify_digest(), "tampered max_pids not detected");
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_wall_time_ms += 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_wall_time_ms not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_stdout_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_stdout_bytes not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_file_size_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_file_size_bytes not detected"
+            );
+        }
+    }
+
+    #[test]
+    fn anti_tamper_production_installation_policy_resources() {
+        let mut unsealed = sample_unsealed();
+        unsealed.production = Some(ProductionContract {
+            installation_policy: crate::policy::Policy::default(),
+            net: crate::config::NetMode::Off,
+            timeout: None,
+            tier: None,
+            backend: "test-backend".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        });
+        let sealed = unsealed.seal().expect("seal contract with production");
+        assert!(sealed.verify_digest());
+
+        // Tamper with installation_policy limits
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.limits.processes = Some(999);
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.limits not detected"
+        );
+
+        // Tamper with installation_policy cgroup
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.cgroup = Some(crate::policy::types::CgroupConfig {
+                memory_max: Some("1G".into()),
+                ..Default::default()
+            });
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cgroup not detected"
+        );
+
+        // Tamper with installation_policy cpu_max
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.cpu_max = Some("25%".into());
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cpu_max not detected"
+        );
+    }
+
+    #[test]
     fn deterministic_digest() {
         let u1 = sample_unsealed();
         let u2 = sample_unsealed();

@@ -112,19 +112,96 @@ pub(crate) fn is_child_subreaper() -> bool {
 
 /// Host-side verification of a live confined child, read from `/proc`
 /// without trusting any child output. Best-effort with a bounded wait:
+/// Expected resource limits for dynamic verification.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExpectedLimits {
+    pub rlimit_as: Option<u64>,
+    pub rlimit_nproc: Option<u64>,
+    pub rlimit_cpu: Option<u64>,
+    pub rlimit_fsize: Option<u64>,
+    pub cgroup_memory_max: Option<String>,
+    pub cgroup_pids_max: Option<String>,
+    pub cgroup_cpu_max: Option<String>,
+    pub cgroup_swap_max: Option<String>,
+}
+
+impl ExpectedLimits {
+    pub fn harness_defaults() -> Self {
+        Self {
+            rlimit_as: Some(DEFAULT_RLIMIT_AS_BYTES),
+            rlimit_nproc: Some(DEFAULT_RLIMIT_NPROC),
+            rlimit_cpu: Some(DEFAULT_RLIMIT_CPU_SECS),
+            rlimit_fsize: Some(DEFAULT_RLIMIT_FSIZE_BYTES),
+            cgroup_memory_max: None,
+            cgroup_pids_max: None,
+            cgroup_cpu_max: None,
+            cgroup_swap_max: None,
+        }
+    }
+
+    pub fn from_policy(policy: &crate::policy::Policy) -> Self {
+        let (cg_mem, cg_pids, cg_cpu, cg_swap) = match &policy.cgroup {
+            Some(cg) => (
+                cg.memory_max.clone(),
+                cg.pids_max.clone(),
+                cg.cpu_max.clone(),
+                cg.swap_max.clone(),
+            ),
+            None => (None, None, None, None),
+        };
+        let cg_cpu = cg_cpu.or_else(|| policy.cpu_max.clone());
+        Self {
+            rlimit_as: policy.limits.address_space_bytes,
+            rlimit_nproc: policy.limits.processes,
+            rlimit_cpu: policy.limits.cpu_seconds,
+            rlimit_fsize: policy.limits.file_size_bytes,
+            cgroup_memory_max: cg_mem,
+            cgroup_pids_max: cg_pids,
+            cgroup_cpu_max: cg_cpu,
+            cgroup_swap_max: cg_swap,
+        }
+    }
+}
+
+/// Host-side verification of a live confined child, read from `/proc`
+/// without trusting any child output. Best-effort with a bounded wait:
 /// short-lived children may exit before every field is observed, in which
 /// case the corresponding flags stay false (caps remain `Enforced`, never
 /// promoted to `Verified`).
 pub fn verify_child_host(pid: u32) -> super::sandbox_backend::HostVerification {
     #[cfg(target_os = "linux")]
     {
-        verify_child_host_linux(pid)
+        verify_child_host_linux(pid, None)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = pid;
         super::sandbox_backend::HostVerification::none()
     }
+}
+
+/// Dynamic host-side verification of a live confined child against expected limits.
+pub fn verify_child_host_with_limits(
+    pid: u32,
+    expected: &ExpectedLimits,
+) -> super::sandbox_backend::HostVerification {
+    #[cfg(target_os = "linux")]
+    {
+        verify_child_host_linux(pid, Some(expected))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (pid, expected);
+        super::sandbox_backend::HostVerification::none()
+    }
+}
+
+/// Policy-driven host-side verification of a live confined child.
+pub fn verify_child_host_policy(
+    pid: u32,
+    policy: &crate::policy::Policy,
+) -> super::sandbox_backend::HostVerification {
+    verify_child_host_with_limits(pid, &ExpectedLimits::from_policy(policy))
 }
 
 /// Outcome of one nonce-targeted tree sweep, with diagnostics for the
@@ -245,10 +322,13 @@ fn set_rlimit_if_some(
     Ok(())
 }
 
-/// Read `/proc/<pid>/status` + `/proc/<pid>/limits` + own pgid/sub-reaper
+/// Read `/proc/<pid>/status` + `/proc/<pid>/limits` + cgroup v2 controllers + own pgid/sub-reaper
 /// state with a bounded wait while the child is alive.
 #[cfg(target_os = "linux")]
-fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification {
+fn verify_child_host_linux(
+    pid: u32,
+    expected: Option<&ExpectedLimits>,
+) -> super::sandbox_backend::HostVerification {
     use super::sandbox_backend::HostVerification;
     use std::time::{Duration, Instant};
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -269,19 +349,112 @@ fn verify_child_host_linux(pid: u32) -> super::sandbox_backend::HostVerification
             out.pgroup_separate = true;
         }
         if let Some(limits) = read_proc_file(pid, "limits").as_deref() {
-            if limits_field_is(limits, "Max address space", DEFAULT_RLIMIT_AS_BYTES) {
-                out.rlimit_as_ok = true;
-            }
-            if limits_field_is(limits, "Max processes", DEFAULT_RLIMIT_NPROC) {
-                out.rlimit_nproc_ok = true;
-            }
-            if limits_field_is(limits, "Max cpu time", DEFAULT_RLIMIT_CPU_SECS) {
-                out.rlimit_cpu_ok = true;
-            }
-            if limits_field_is(limits, "Max file size", DEFAULT_RLIMIT_FSIZE_BYTES) {
-                out.rlimit_fsize_ok = true;
+            if let Some(exp) = expected {
+                if let Some(val) = exp.rlimit_as {
+                    out.rlimit_as_ok = limits_field_is(limits, "Max address space", val);
+                } else if limits_field_is(limits, "Max address space", DEFAULT_RLIMIT_AS_BYTES) {
+                    out.rlimit_as_ok = true;
+                }
+                if let Some(val) = exp.rlimit_nproc {
+                    out.rlimit_nproc_ok = limits_field_is(limits, "Max processes", val);
+                } else if limits_field_is(limits, "Max processes", DEFAULT_RLIMIT_NPROC) {
+                    out.rlimit_nproc_ok = true;
+                }
+                if let Some(val) = exp.rlimit_cpu {
+                    out.rlimit_cpu_ok = limits_field_is(limits, "Max cpu time", val);
+                } else if limits_field_is(limits, "Max cpu time", DEFAULT_RLIMIT_CPU_SECS) {
+                    out.rlimit_cpu_ok = true;
+                }
+                if let Some(val) = exp.rlimit_fsize {
+                    out.rlimit_fsize_ok = limits_field_is(limits, "Max file size", val);
+                } else if limits_field_is(limits, "Max file size", DEFAULT_RLIMIT_FSIZE_BYTES) {
+                    out.rlimit_fsize_ok = true;
+                }
+            } else {
+                if limits_field_is(limits, "Max address space", DEFAULT_RLIMIT_AS_BYTES) {
+                    out.rlimit_as_ok = true;
+                } else if let Some((soft, hard)) =
+                    parse_proc_limits_value(limits, "Max address space")
+                {
+                    if soft == hard && soft > 0 {
+                        out.rlimit_as_ok = true;
+                    }
+                }
+                if limits_field_is(limits, "Max processes", DEFAULT_RLIMIT_NPROC) {
+                    out.rlimit_nproc_ok = true;
+                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max processes")
+                {
+                    if soft == hard && soft > 0 {
+                        out.rlimit_nproc_ok = true;
+                    }
+                }
+                if limits_field_is(limits, "Max cpu time", DEFAULT_RLIMIT_CPU_SECS) {
+                    out.rlimit_cpu_ok = true;
+                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max cpu time") {
+                    if soft == hard && soft > 0 {
+                        out.rlimit_cpu_ok = true;
+                    }
+                }
+                if limits_field_is(limits, "Max file size", DEFAULT_RLIMIT_FSIZE_BYTES) {
+                    out.rlimit_fsize_ok = true;
+                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max file size")
+                {
+                    if soft == hard && soft > 0 {
+                        out.rlimit_fsize_ok = true;
+                    }
+                }
             }
         }
+
+        // Host inspection of cgroup v2 controller files (`memory.max`, `pids.max`, `cpu.max`):
+        if let Some(cg) = inspect_child_cgroup(pid) {
+            if let Some(exp) = expected {
+                if let Some(want_mem) = &exp.cgroup_memory_max {
+                    if let Some(actual) = &cg.memory_max {
+                        out.cgroup_memory_ok = cgroup_memory_matches(actual, want_mem);
+                    }
+                } else if let Some(actual) = &cg.memory_max {
+                    if actual != "max" && !actual.is_empty() {
+                        out.cgroup_memory_ok = true;
+                    }
+                }
+                if let Some(want_pids) = &exp.cgroup_pids_max {
+                    if let Some(actual) = &cg.pids_max {
+                        out.cgroup_pids_ok = cgroup_pids_matches(actual, want_pids);
+                    }
+                } else if let Some(actual) = &cg.pids_max {
+                    if actual != "max" && !actual.is_empty() {
+                        out.cgroup_pids_ok = true;
+                    }
+                }
+                if let Some(want_cpu) = &exp.cgroup_cpu_max {
+                    if let Some(actual) = &cg.cpu_max {
+                        out.cgroup_cpu_ok = cgroup_cpu_matches(actual, want_cpu);
+                    }
+                } else if let Some(actual) = &cg.cpu_max {
+                    if actual != "max 100000" && !actual.starts_with("max") && !actual.is_empty() {
+                        out.cgroup_cpu_ok = true;
+                    }
+                }
+            } else {
+                if let Some(actual) = &cg.memory_max {
+                    if actual != "max" && !actual.is_empty() {
+                        out.cgroup_memory_ok = true;
+                    }
+                }
+                if let Some(actual) = &cg.pids_max {
+                    if actual != "max" && !actual.is_empty() {
+                        out.cgroup_pids_ok = true;
+                    }
+                }
+                if let Some(actual) = &cg.cpu_max {
+                    if actual != "max 100000" && !actual.starts_with("max") && !actual.is_empty() {
+                        out.cgroup_cpu_ok = true;
+                    }
+                }
+            }
+        }
+
         // SAFETY: scalar prctl query on our own process (see `is_child_subreaper`).
         out.subreaper_ok = is_child_subreaper();
         // A zombie's observable flags are frozen: only we can reap it, and
@@ -554,6 +727,158 @@ pub fn limits_field_is(limits_body: &str, row: &str, expected: u64) -> bool {
     false
 }
 
+/// Parse soft and hard limits from a `/proc/<pid>/limits` row.
+/// Returns `None` if either column is `unlimited` or cannot be parsed.
+pub fn parse_proc_limits_value(limits_body: &str, row: &str) -> Option<(u64, u64)> {
+    for line in limits_body.lines() {
+        if let Some(idx) = line.find(row) {
+            let after = line[idx + row.len()..].trim_start();
+            let mut cols = after.split_whitespace();
+            let soft_str = cols.next()?;
+            let hard_str = cols.next()?;
+            if soft_str.eq_ignore_ascii_case("unlimited")
+                || hard_str.eq_ignore_ascii_case("unlimited")
+            {
+                return None;
+            }
+            let soft = soft_str.parse::<u64>().ok()?;
+            let hard = hard_str.parse::<u64>().ok()?;
+            return Some((soft, hard));
+        }
+    }
+    None
+}
+
+/// Resolve the cgroup v2 directory for a given process PID.
+pub fn child_cgroup_dir(pid: u32) -> Option<std::path::PathBuf> {
+    let content = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    for line in content.lines() {
+        if let Some(path_part) = line.strip_prefix("0::") {
+            let rel = path_part.trim().trim_start_matches('/');
+            let cgroup_dir = std::path::Path::new("/sys/fs/cgroup").join(rel);
+            if cgroup_dir.exists() && cgroup_dir.join("cgroup.procs").exists() {
+                return Some(cgroup_dir);
+            }
+        }
+    }
+    None
+}
+
+/// Host-inspected cgroup v2 controller values for a child process.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CgroupHostInspection {
+    pub cgroup_dir: std::path::PathBuf,
+    pub pid_in_procs: bool,
+    pub memory_max: Option<String>,
+    pub pids_max: Option<String>,
+    pub cpu_max: Option<String>,
+    pub swap_max: Option<String>,
+}
+
+/// Inspect cgroup v2 controller files (`memory.max`, `pids.max`, `cpu.max`)
+/// and `cgroup.procs` for the child process.
+pub fn inspect_child_cgroup(pid: u32) -> Option<CgroupHostInspection> {
+    let dir = child_cgroup_dir(pid)?;
+    let mut inspection = CgroupHostInspection {
+        cgroup_dir: dir.clone(),
+        pid_in_procs: false,
+        memory_max: None,
+        pids_max: None,
+        cpu_max: None,
+        swap_max: None,
+    };
+    if let Ok(procs) = std::fs::read_to_string(dir.join("cgroup.procs")) {
+        let pid_s = pid.to_string();
+        inspection.pid_in_procs = procs.lines().any(|l| l.trim() == pid_s);
+    }
+    if let Ok(val) = std::fs::read_to_string(dir.join("memory.max")) {
+        inspection.memory_max = Some(val.trim().to_string());
+    }
+    if let Ok(val) = std::fs::read_to_string(dir.join("pids.max")) {
+        inspection.pids_max = Some(val.trim().to_string());
+    }
+    if let Ok(val) = std::fs::read_to_string(dir.join("cpu.max")) {
+        inspection.cpu_max = Some(val.trim().to_string());
+    }
+    if let Ok(val) = std::fs::read_to_string(dir.join("memory.swap.max")) {
+        inspection.swap_max = Some(val.trim().to_string());
+    }
+    Some(inspection)
+}
+
+fn parse_memory_bytes(input: &str) -> Option<String> {
+    let s = input.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("max") {
+        return Some("max".to_string());
+    }
+    let (num_part, unit_part) = match s.find(|c: char| !c.is_ascii_digit() && c != '.') {
+        Some(idx) => (&s[..idx], s[idx..].trim().to_uppercase()),
+        None => (s, String::new()),
+    };
+    let num: f64 = num_part.parse().ok()?;
+    let multiplier: f64 = match unit_part.as_str() {
+        "" | "B" => 1.0,
+        "K" | "KB" | "KIB" => 1024.0,
+        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
+        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    let bytes = (num * multiplier) as u64;
+    Some(bytes.to_string())
+}
+
+fn parse_cpu_max(input: &str) -> Option<String> {
+    let s = input.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("max") {
+        return Some("max 100000".to_string());
+    }
+    if s.ends_with('%') {
+        let pct_str = s.trim_end_matches('%').trim();
+        let pct: f64 = pct_str.parse().ok()?;
+        let period = 100_000u64;
+        let quota = ((pct / 100.0) * period as f64) as u64;
+        return Some(format!("{quota} {period}"));
+    }
+    if s.contains(' ') {
+        return Some(s.to_string());
+    }
+    if let Ok(quota) = s.parse::<u64>() {
+        return Some(format!("{quota} 100000"));
+    }
+    None
+}
+
+pub fn cgroup_memory_matches(actual_bytes_str: &str, expected: &str) -> bool {
+    let actual = actual_bytes_str.trim();
+    if actual == expected.trim() {
+        return true;
+    }
+    if let Some(parsed) = parse_memory_bytes(expected) {
+        if parsed == actual {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn cgroup_cpu_matches(actual_cpu_str: &str, expected: &str) -> bool {
+    let actual = actual_cpu_str.trim();
+    if actual == expected.trim() {
+        return true;
+    }
+    if let Some(parsed) = parse_cpu_max(expected) {
+        if parsed == actual {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn cgroup_pids_matches(actual_pids_str: &str, expected: &str) -> bool {
+    actual_pids_str.trim() == expected.trim()
+}
+
 /// Byte-substring search (haystack may be NUL-separated, e.g. `environ`).
 pub fn contains_slice(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || needle.len() > haystack.len() {
@@ -643,5 +968,56 @@ mod linux_enforce_tests {
         let a = is_child_subreaper();
         let b = is_child_subreaper();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parse_proc_limits_value_parses_finite_and_rejects_unlimited() {
+        let body = "Limit                     Soft Limit           Hard Limit           Units\n\
+            Max cpu time              5                    5                    seconds\n\
+            Max file size             unlimited            unlimited            bytes\n\
+            Max processes             128                  128                  processes\n";
+        assert_eq!(parse_proc_limits_value(body, "Max cpu time"), Some((5, 5)));
+        assert_eq!(parse_proc_limits_value(body, "Max file size"), None);
+        assert_eq!(
+            parse_proc_limits_value(body, "Max processes"),
+            Some((128, 128))
+        );
+        assert_eq!(parse_proc_limits_value(body, "Max memory"), None);
+    }
+
+    #[test]
+    fn cgroup_matching_handles_units_and_percentages() {
+        assert!(cgroup_memory_matches("268435456", "256M"));
+        assert!(cgroup_memory_matches("104857600", "100MB"));
+        assert!(cgroup_memory_matches("1000", "1000"));
+        assert!(!cgroup_memory_matches("268435456", "512M"));
+
+        assert!(cgroup_cpu_matches("50000 100000", "50%"));
+        assert!(cgroup_cpu_matches("100000 100000", "100%"));
+        assert!(cgroup_cpu_matches("50000 100000", "50000 100000"));
+        assert!(!cgroup_cpu_matches("50000 100000", "100%"));
+
+        assert!(cgroup_pids_matches("128", "128"));
+        assert!(!cgroup_pids_matches("128", "256"));
+    }
+
+    #[test]
+    fn expected_limits_from_policy_maps_fields() {
+        let mut policy = crate::policy::Policy::default();
+        policy.limits.address_space_bytes = Some(268435456);
+        policy.limits.processes = Some(128);
+        policy.cgroup = Some(crate::policy::CgroupConfig {
+            memory_max: Some("256M".to_string()),
+            pids_max: Some("128".to_string()),
+            swap_max: None,
+            cpu_max: Some("50%".to_string()),
+        });
+
+        let expected = ExpectedLimits::from_policy(&policy);
+        assert_eq!(expected.rlimit_as, Some(268435456));
+        assert_eq!(expected.rlimit_nproc, Some(128));
+        assert_eq!(expected.cgroup_memory_max.as_deref(), Some("256M"));
+        assert_eq!(expected.cgroup_pids_max.as_deref(), Some("128"));
+        assert_eq!(expected.cgroup_cpu_max.as_deref(), Some("50%"));
     }
 }

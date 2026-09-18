@@ -69,9 +69,9 @@ impl PolicyCompiler {
             ),
             NetMode::Ask => (NetworkMode::Ask, vec![], vec![]),
         };
-        let max_pids = u32::try_from(policy.limits.processes.unwrap_or(0)).map_err(|_| {
-            CompilerError::UnsupportedCapability("process limit exceeds contract v1 range".into())
-        })?;
+        let max_pids = resolve_max_pids(policy)?;
+        let max_memory_bytes = resolve_max_memory_bytes(policy);
+        let max_cpu_percent = resolve_cpu_percent(policy);
         let max_wall_time_ms =
             u64::try_from(input.timeout.map_or(0, |t| t.as_millis())).map_err(|_| {
                 CompilerError::UnsupportedCapability("timeout exceeds contract range".into())
@@ -119,8 +119,8 @@ impl PolicyCompiler {
             },
             resources: ResourceContract {
                 max_pids,
-                max_memory_bytes: policy.limits.address_space_bytes.unwrap_or(0),
-                max_cpu_percent: 0,
+                max_memory_bytes,
+                max_cpu_percent,
                 max_wall_time_ms,
                 max_stdout_bytes: crate::sandbox::production::PROD_MAX_STDIO as u64,
                 max_file_size_bytes: policy.limits.file_size_bytes.unwrap_or(0),
@@ -379,6 +379,71 @@ impl PolicyCompiler {
     }
 }
 
+fn resolve_cpu_percent(policy: &crate::policy::Policy) -> u32 {
+    let pol_cpu = policy.cpu_max.as_deref().and_then(cpu_str_to_percent);
+    let cg_cpu = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.cpu_max.as_deref())
+        .and_then(cpu_str_to_percent);
+
+    match (pol_cpu, cg_cpu) {
+        (Some(p1), Some(p2)) => p1.min(p2),
+        (Some(p), None) | (None, Some(p)) => p,
+        (None, None) => 100, // unconstrained default
+    }
+}
+
+fn cpu_str_to_percent(s: &str) -> Option<u32> {
+    let ratio = crate::policy::types::parse_cpu_ratio(s)?;
+    let pct = (ratio * 100.0).round() as u32;
+    Some(pct.max(1))
+}
+
+fn resolve_max_memory_bytes(policy: &crate::policy::Policy) -> u64 {
+    let as_bytes = policy.limits.address_space_bytes.filter(|&b| b > 0);
+    let cg_bytes = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.memory_max.as_deref())
+        .and_then(crate::policy::types::parse_bytes_value)
+        .filter(|&b| b > 0);
+
+    match (as_bytes, cg_bytes) {
+        (Some(a), Some(c)) => a.min(c),
+        (Some(a), None) => a,
+        (None, Some(c)) => c,
+        (None, None) => 0,
+    }
+}
+
+fn resolve_max_pids(policy: &crate::policy::Policy) -> Result<u32, CompilerError> {
+    let proc_limit = policy.limits.processes.filter(|&p| p > 0);
+    let cg_limit = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.pids_max.as_deref())
+        .and_then(|s| {
+            if s.trim().eq_ignore_ascii_case("max") {
+                None
+            } else {
+                s.trim().parse::<u64>().ok()
+            }
+        })
+        .filter(|&p| p > 0);
+
+    let effective_pids = match (proc_limit, cg_limit) {
+        (Some(p1), Some(p2)) => p1.min(p2),
+        (Some(p), None) => p,
+        (None, Some(p)) => p,
+        (None, None) => 0,
+    };
+
+    u32::try_from(effective_pids).map_err(|_| {
+        CompilerError::UnsupportedCapability("process limit exceeds contract v1 range".into())
+    })
+}
+
 fn get_home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
@@ -478,5 +543,91 @@ mod compiler_tests {
         assert!(contract.verify_digest());
 
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn compile_effective_resource_projections() {
+        use crate::policy::types::{CgroupConfig, Policy};
+        use crate::policy_ir::compiler::EffectivePolicyInput;
+        use std::collections::BTreeMap;
+
+        // 1. Unconstrained defaults to 100% CPU, 0 memory, 0 pids
+        let policy = Policy::default();
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let input = EffectivePolicyInput {
+            policy: &policy,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-1",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        assert_eq!(contract.resources.max_cpu_percent, 100);
+        assert_eq!(contract.resources.max_memory_bytes, 0);
+        assert_eq!(contract.resources.max_pids, 0);
+
+        // 2. CPU percentage parsed from policy.cpu_max
+        let policy_cpu = Policy {
+            cpu_max: Some("50%".into()),
+            ..Default::default()
+        };
+        let input = EffectivePolicyInput {
+            policy: &policy_cpu,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-2",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        assert_eq!(contract.resources.max_cpu_percent, 50);
+
+        // 3. Minimum between address_space_bytes and cgroup.memory_max
+        let policy_mem = Policy {
+            limits: crate::policy::types::ResourceLimits {
+                address_space_bytes: Some(2 * 1024 * 1024 * 1024), // 2GB
+                processes: Some(128),
+                ..Default::default()
+            },
+            cgroup: Some(CgroupConfig {
+                memory_max: Some("1G".into()), // 1GB
+                pids_max: Some("64".into()),
+                swap_max: None,
+                cpu_max: Some("40%".into()),
+            }),
+            ..Default::default()
+        };
+
+        let input = EffectivePolicyInput {
+            policy: &policy_mem,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-3",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        // Effective memory is min(2GB, 1GB) = 1GB
+        assert_eq!(contract.resources.max_memory_bytes, 1024 * 1024 * 1024);
+        // Effective pids is min(128, 64) = 64
+        assert_eq!(contract.resources.max_pids, 64);
+        // Effective cpu is min(default 100, 40) = 40
+        assert_eq!(contract.resources.max_cpu_percent, 40);
     }
 }

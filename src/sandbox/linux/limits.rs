@@ -12,26 +12,38 @@ use crate::error::{VettoError, VettoResult};
 use crate::policy::ResourceLimits;
 
 fn apply_one(resource: libc::__rlimit_resource_t, value: Option<u64>) -> VettoResult<()> {
-    let Some(value) = value else {
+    let Some(requested) = value else {
         return Ok(());
     };
-    let requested = value;
-    let value = requested as libc::rlim_t;
-    if value as u128 != requested as u128 {
+    let target = requested as libc::rlim_t;
+    if target as u128 != requested as u128 {
         return Err(VettoError::Sandbox(format!(
             "setrlimit({resource}) value does not fit this ABI"
         )));
     }
+    let mut current = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: resource is a fixed libc constant and `&mut current` points to a valid local rlimit structure.
+    if unsafe { libc::getrlimit(resource, &mut current) } != 0 {
+        return Err(VettoError::Sandbox(format!(
+            "getrlimit({resource}): {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    // Lowering-only: cannot exceed current inherited hard ceiling
+    let effective_max = std::cmp::min(current.rlim_max, target);
     let limit = libc::rlimit {
-        rlim_cur: value,
-        rlim_max: value,
+        rlim_cur: effective_max,
+        rlim_max: effective_max,
     };
     // SAFETY: resource is a fixed libc constant and `limit` is a valid local
     // rlimit structure. Linux validates whether the requested hard limit is
     // within the caller's inherited ceiling.
     if unsafe { libc::setrlimit(resource, &limit) } != 0 {
         return Err(VettoError::Sandbox(format!(
-            "setrlimit({resource}, {value}): {}",
+            "setrlimit({resource}, {effective_max}): {}",
             std::io::Error::last_os_error()
         )));
     }
@@ -154,5 +166,12 @@ mod tests {
     #[test]
     fn ipc_limits_noops_when_none() {
         assert!(apply_ipc_resource_ceilings(None, None).is_ok());
+    }
+
+    #[test]
+    fn apply_one_respects_inherited_ceiling() {
+        // Applying with a very large requested limit caps at inherited ceiling without raising
+        let res = apply_one(libc::RLIMIT_CPU, Some(u64::MAX));
+        assert!(res.is_ok());
     }
 }
