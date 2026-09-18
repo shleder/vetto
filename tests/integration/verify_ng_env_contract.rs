@@ -631,7 +631,7 @@ fn test_env_verifier_distinguishes_allowed_by_contract_from_host_leaked() {
         &contract,
         CONTROL_ROTATION_SCRIPT,
         Vec::new(),
-        BTreeMap::new(),
+        explicit_env.clone(),
         true,
     );
     assert_eq!(log.len(), 1);

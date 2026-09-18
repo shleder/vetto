@@ -679,7 +679,7 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
 
     let mut policy = Policy {
         allow_read: vec![src.clone()],
-        allow_write: vec![ws.clone()],
+        allow_write: vec![],
         ..Default::default()
     };
     policy.deny_read.push(masked_file.clone());

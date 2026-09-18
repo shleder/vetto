@@ -444,7 +444,7 @@ pub fn run_one_with_backend(
                 policy: &production.installation_policy,
                 argv: &expected_argv,
                 cwd: &contract.filesystem.workspace_root,
-                env: &contract.environment.explicit_vars,
+                env: &req.env_extra,
                 net: &production.net,
                 nonce: &contract.session_nonce,
                 timeout: production.timeout,
