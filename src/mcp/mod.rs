@@ -331,7 +331,8 @@ pub fn execute_sandboxed_command(
 
     let net_mode = crate::config::NetMode::Off;
     let backend = crate::sandbox::Backend::detect(net_mode.clone(), false)?;
-    let tier = backend.tier().unwrap_or(crate::policy::Tier::Full);
+    let backend_tier = backend.tier();
+    let tier_for_policy = backend_tier.unwrap_or(crate::policy::Tier::Full);
     let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -346,7 +347,8 @@ pub fn execute_sandboxed_command(
         None => ("default", None),
     };
 
-    let mut pol = crate::policy::loader::load(profile, policy_path, &project, &home, tier)?;
+    let mut pol =
+        crate::policy::loader::load(profile, policy_path, &project, &home, tier_for_policy)?;
 
     if let Some(parent) = resolved_bin.parent() {
         let parent_buf = parent.to_path_buf();
@@ -367,7 +369,7 @@ pub fn execute_sandboxed_command(
         project,
         std::collections::HashMap::new(),
         net_mode,
-        Some(tier),
+        backend_tier,
         parsed_timeout,
         &mut spawn_log,
     )?;

@@ -895,14 +895,16 @@ impl LinuxBackend {
     }
 
     fn restrict_fsonly_records(&mut self) {
-        let net_not_off = self.plan.as_ref().is_some_and(|p| !p.net_deny);
+        if let Some(plan) = self.plan.as_mut() {
+            plan.net_deny = false;
+        }
         if let Some(report) = self.report.as_mut() {
             for record in &mut report.records {
                 if record.capability == SecurityCapability::ProcessTreeContainment {
                     record.state = EnforcementState::Unsupported;
                     record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }
-                if record.capability == SecurityCapability::NetworkIsolation && net_not_off {
+                if record.capability == SecurityCapability::NetworkIsolation {
                     record.state = EnforcementState::Unsupported;
                     record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
                 }
