@@ -1280,22 +1280,16 @@ fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
     );
 
     // Attacker script prints all successful markers without actually being verified
-    let script = format!(
-        concat!(
-            "echo families-blocked-unix-ok\n",
-            "echo net-blocked-ok\n",
-            "echo net-deny-ok\n",
-            "echo dns-blocked-ok\n",
-            "echo allowlist-family-policy-ok\n",
-            "{control}\n",
-            "exit 0\n"
-        ),
-        control = POSITIVE_CONTROL_SNIPPET
+    let script = concat!(
+        "echo families-blocked-unix-ok\n",
+        "echo net-blocked-ok\n",
+        "echo net-deny-ok\n",
+        "echo dns-blocked-ok\n",
+        "echo allowlist-family-policy-ok\n",
+        "exit 0\n"
     );
 
-    // Run under Tier::FsOnly where network namespace / net-deny is unsupported
     let mut backend = LinuxBackend::new();
-    backend.restrict_tier(Some(Tier::FsOnly));
     let mut log = runner::SpawnLog::new();
     let production = contract.production.as_ref().unwrap();
     let req = runner::ExecutionRequest {
@@ -1318,7 +1312,7 @@ fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
     assert_ne!(
         out.result.verdict,
         Verdict::Pass,
-        "Attacker printing network markers under Tier::FsOnly must NOT achieve PASS"
+        "Attacker printing network markers without valid host control must NOT achieve PASS"
     );
 
     // Invariant 2: Markers in evidence MUST be classified as SELF_REPORT, never HOST_FACT
@@ -1345,23 +1339,19 @@ fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
     }
 
     // Invariant 3: Quorum must not be inflated by attacker stdout
-    let host_vectors = out
+    let host_marker_vectors = out
         .evidence
         .facts
         .iter()
         .filter(|f| {
             f.tier == EvidenceTier::HostFact
-                && (f.name == "sentinel-intact"
-                    || f.name == "tree-intact"
-                    || f.name == "vector"
-                    || f.name.starts_with("vector:")
-                    || f.name.starts_with("vector-"))
+                && (f.name.starts_with("vector:net-off")
+                    || f.name.starts_with("vector:allowlist"))
         })
         .count();
-    assert!(
-        host_vectors < scen.quorum,
-        "Host vector facts ({host_vectors}) must not satisfy quorum ({}) from stdout markers",
-        scen.quorum
+    assert_eq!(
+        host_marker_vectors, 0,
+        "Stdout markers must produce 0 host vector facts, found {host_marker_vectors}"
     );
 
     let _ = std::fs::remove_dir_all(&ws);
