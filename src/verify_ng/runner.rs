@@ -518,7 +518,7 @@ pub fn run_one_with_backend(
         }
         out
     } else {
-        let base = crate::sandbox::envfilter::filter_env(host_env_before.clone(), true);
+        let base = crate::sandbox::envfilter::filter_env(host_env_before.clone().into_iter(), true);
         base.into_iter().collect()
     };
     env.insert("HOME".to_string(), home.display().to_string());
