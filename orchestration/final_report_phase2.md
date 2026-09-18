@@ -3,7 +3,7 @@
 ## 1. PHASE 2 RESULT & METRICS SUMMARY
 
 * **Baseline Commit**: `3ba5482e185c7f8fb258752243d6c7017646fa0e`
-* **Final Commit**: `a7218ac8ebb471b5c567e992b3d35f322a709b29`
+* **Final Commit**: `1eebdb8f8452177e5cda1ed21d69bf55b11beb4b`
 * **Branch**: `feat/phase1-contract-authority`
 * **Overall Status**: **VERIFIED** (Все 7 батарей C1–C7 строго завязаны на авторитетный запечатанный `SecurityContract`; устранены структурные блокеры оракула, ликвидированы поддельные `PASS`, обеспечена сквозная хостовая доказательная база без доверия к `SELF_REPORT`).
 
@@ -15,6 +15,7 @@
 1. `src/verify_ng/runner.rs`:
    * В `ExecutionRequest` добавлено поле `contract: Option<&SecurityContract>` — связывание исполнения с криптографическим дайджестом контракта, валидация `verify_digest()` с fail-closed до `spawn`, инжекция запечатанных аргументов/окружения/политики.
    * В `ExecutionRequest` добавлено поле `host_env_override: Option<BTreeMap<String, String>>` — изолированное бестестовое окружение хоста, исключающее перекрёстное загрязнение процессов.
+   * Контрольная проекция контракта (`compile_effective`): добавлена обязательная верификация бэкенда и тира с защитой от подделки в сценариях `TAMPER`, а также селективная проекция переменных окружения (`safe_explicit`) против `req.env_extra` и `policy.environment.allows()`.
    * Расширен `pass_capable`: разрешён не только для `Category::Aux`, но и для категорий блокеров при наличии хостовых доказательств (`has_boundary_evidence`).
    * Включен учёт трипвайров `sentinel-intact` в `agreeing_vectors`, обеспечивающий легитимный кворум векторов для сценариев изоляции.
 2. `src/verify_ng/environment.rs`:
@@ -38,6 +39,7 @@
    * Зарегистрированы новые модули контрактных интеграционных тестов C1–C7.
 2. `tests/integration/verify_ng_boundary_contract.rs` (C1):
    * Батарея верификации файловой системы (Раздел 4) и изоляции секретов (Раздел 8): traversal (`..`), симлинки вне workspace, гонки TOCTOU, абсолютные пути, запрещённые операции, rename через границу, альтернативные представления путей, маскированные файлы `.env`.
+   * В тесте семантики маскирования секретов обеспечена независимая изоляция сброса вывода в `$VETTO_VNG_ROOT/discard.txt` с подтверждением EACCES на маскированных секретах.
 3. `tests/integration/verify_ng_env_contract.rs` (C2):
    * Батарея изоляции окружения (Раздел 5): фильтрация произвольных переменных хоста, блокировка чувствительных ключей (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`), санитария `PATH`, очистка унаследованного окружения, скрытие внутренних `VETTO_*` переменных, негативные ловушки утечек.
 4. `tests/integration/verify_ng_proc_contract.rs` (C3):
@@ -106,18 +108,17 @@ cargo test --test integration verify_ng_backend_arch
 
 * **Repository**: `https://github.com/shleder/vetto`
 * **Target Branch**: `feat/phase1-contract-authority`
-* **Head Commit**: `a7218ac8ebb471b5c567e992b3d35f322a709b29`
-* **CI Workflow**: `ci.yml` (ID: `35343965573`)
-* **Matrix Status**:
+* **Head Commit**: `1eebdb8f8452177e5cda1ed21d69bf55b11beb4b`
+* **CI Workflow**: `ci.yml` (Run ID: `35350592894`, Conclusion: `SUCCESS`)
+* **Matrix Status (8/8 Green)**:
   * `fmt + clippy + test (ubuntu)`: PASS (0 compiler warnings, 622/622 unit tests PASS, 364/364 integration tests PASS)
-  * `cargo-deny`: PASS
-  * `gitleaks`: PASS
-  * `test (windows-latest)`: PASS
-  * `test (macos-13)`: PASS
-  * `test (macos-14)`: PASS
-  * `test (cross aarch64)`: PASS
-  * `micro-tier redteam seccomp`: PASS
-  * `e2e spawn benchmark`: PASS
+  * `cargo-deny (advisories + licenses)`: PASS
+  * `gitleaks (secret scanning)`: PASS
+  * `build + test (Windows x86_64)`: PASS
+  * `build + test (macOS arm64 and x86_64 check)`: PASS
+  * `compile + syscall ABI tests (aarch64 via QEMU)`: PASS
+  * `micro-tier downgrade & redteam (seccomp fallback)`: PASS
+  * `e2e spawn overhead + baseline gate`: PASS
 
 ---
 
