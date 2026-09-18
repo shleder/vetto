@@ -2271,6 +2271,7 @@ mod backend_arch_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_backend_resource_limits_promotion_partial() {
         let mut policy_obj = crate::policy::Policy::default();
         policy_obj.limits.address_space_bytes = Some(104857600); // only memory configured
@@ -2313,6 +2314,7 @@ mod backend_arch_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_backend_resource_limits_promotion_fails_if_unverified() {
         let mut policy_obj = crate::policy::Policy::default();
         policy_obj.limits.address_space_bytes = Some(104857600);
@@ -2357,6 +2359,7 @@ mod backend_arch_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_backend_resource_limits_cgroup_promotion() {
         let policy_obj = crate::policy::Policy {
             cgroup: Some(crate::policy::CgroupConfig {
