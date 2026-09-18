@@ -443,12 +443,24 @@ pub fn run_one_with_backend(
             .to_string_lossy()
             .to_string()];
         contract_argv.extend(contract.agent_identity.invoked_args.clone());
+        let safe_env: BTreeMap<String, String> = contract
+            .environment
+            .explicit_vars
+            .iter()
+            .filter(|(k, _)| {
+                production
+                    .installation_policy
+                    .environment
+                    .allows(std::ffi::OsStr::new(k))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         match crate::policy_ir::compiler::PolicyCompiler::compile_effective(
             crate::policy_ir::compiler::EffectivePolicyInput {
                 policy: &production.installation_policy,
                 argv: &contract_argv,
                 cwd: &contract.filesystem.workspace_root,
-                env: &contract.environment.explicit_vars,
+                env: &safe_env,
                 net: &production.net,
                 nonce: &contract.session_nonce,
                 timeout: production.timeout,
@@ -596,17 +608,24 @@ pub fn run_one_with_backend(
         None
     };
     let mut extra_rw = Vec::new();
+    let mut extra_ro = Vec::new();
+    extra_rw.push(fixture.root().to_path_buf());
+    extra_ro.push(fixture.root().to_path_buf());
     if let Some(channel) = control_channel.as_ref() {
-        for (k, v) in channel.env_entries() {
-            if k == super::host_evidence::ENV_CONTROL_UPLINK {
-                let path = std::path::Path::new(&v);
-                if let Some(parent) = path.parent() {
-                    extra_rw.push(parent.to_path_buf());
+        for (_k, v) in channel.env_entries() {
+            let path = std::path::Path::new(&v);
+            if let Some(parent) = path.parent() {
+                let p = parent.to_path_buf();
+                if !extra_rw.contains(&p) {
+                    extra_rw.push(p.clone());
+                }
+                if !extra_ro.contains(&p) {
+                    extra_ro.push(p);
                 }
             }
         }
     }
-    let prepare_ctx = super::sandbox_backend::PrepareContext { extra_rw };
+    let prepare_ctx = super::sandbox_backend::PrepareContext { extra_rw, extra_ro };
     if let Some(tier) = contract_tier {
         backend.restrict_tier(Some(tier));
     }

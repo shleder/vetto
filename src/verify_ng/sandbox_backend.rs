@@ -452,6 +452,7 @@ pub struct EnforcementFact {
 #[derive(Debug, Clone, Default)]
 pub struct PrepareContext {
     pub extra_rw: Vec<std::path::PathBuf>,
+    pub extra_ro: Vec<std::path::PathBuf>,
 }
 
 /// Child-side enforcement plan built by `prepare` (parent-side, where
@@ -1096,6 +1097,11 @@ impl LinuxBackend {
             Vec::new()
         };
         for r in &policy.allow_read {
+            if !system_ro.contains(r) {
+                system_ro.push(r.clone());
+            }
+        }
+        for r in &ctx.extra_ro {
             if !system_ro.contains(r) {
                 system_ro.push(r.clone());
             }
