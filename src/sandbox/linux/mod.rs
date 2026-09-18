@@ -157,6 +157,7 @@ pub fn pick_tier(probe: &Probe) -> Result<Tier> {
     );
 }
 
+#[derive(Clone)]
 pub struct LinuxSandbox {
     pub probe: Probe,
     pub tier: Tier,

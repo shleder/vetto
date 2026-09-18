@@ -423,6 +423,7 @@ pub fn describe() -> String {
 
 /// Windows backend state.  It is intentionally small; all handles are
 /// transferred into the returned `SandboxHandle` after the child is resumed.
+#[derive(Clone)]
 pub struct WindowsSandbox {
     pub capabilities: WindowsCapabilities,
     pub net: NetMode,

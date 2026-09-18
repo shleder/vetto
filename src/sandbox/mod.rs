@@ -92,6 +92,7 @@ pub struct Spawned {
 }
 
 /// Selected enforcement backend for this session.
+#[derive(Clone)]
 pub enum Backend {
     #[cfg(target_os = "linux")]
     Linux(Box<linux::LinuxSandbox>),

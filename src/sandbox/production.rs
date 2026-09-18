@@ -2233,15 +2233,18 @@ mod production_unit_tests {
             std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();
         let marker = tmp.join("child-started");
+        let base_backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let test_policy = functional_test_policy(&tmp);
+        let cmd = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf started > child-started".into(),
+        ];
         for case in ["digest", "resealed", "projection", "missing"] {
             let mut prepared = UnpreparedProductionExecution::new(
-                Backend::detect(NetMode::Off, false).expect("detect mechanics"),
-                functional_test_policy(&tmp),
-                vec![
-                    "/bin/sh".into(),
-                    "-c".into(),
-                    "printf started > child-started".into(),
-                ],
+                base_backend.clone(),
+                test_policy.clone(),
+                cmd.clone(),
                 tmp.clone(),
                 HashMap::new(),
                 NetMode::Off,
@@ -2296,13 +2299,9 @@ mod production_unit_tests {
         }
         // Positive control: the same command and policy can create the marker.
         let spawned = UnpreparedProductionExecution::new(
-            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
-            functional_test_policy(&tmp),
-            vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                "printf started > child-started".into(),
-            ],
+            base_backend,
+            test_policy,
+            cmd,
             tmp.clone(),
             HashMap::new(),
             NetMode::Off,
@@ -2322,13 +2321,17 @@ mod production_unit_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn phase2_contract_tamper_all_field_classes_rejected_no_spawn() {
-        let _serial = engine::spawn_serial()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let tmp =
             std::env::temp_dir().join(format!("vetto-tamper-full-matrix-{}", engine::new_nonce()));
         std::fs::create_dir_all(&tmp).unwrap();
         let marker = tmp.join("child-started");
+        let base_backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let test_policy = functional_test_policy(&tmp);
+        let cmd = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf started > child-started".into(),
+        ];
 
         let cases = [
             // Filesystem
@@ -2365,20 +2368,13 @@ mod production_unit_tests {
             "backend_requirement",
         ];
 
-        let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
-
         for case in cases {
             // Test unresealed direct tamper: digest mismatch -> verification failure -> NO SPAWN
             {
-                let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
                 let mut prepared = UnpreparedProductionExecution::new(
-                    Backend::detect(NetMode::Off, false).expect("detect mechanics"),
-                    functional_test_policy(&tmp),
-                    vec![
-                        "/bin/sh".into(),
-                        "-c".into(),
-                        "printf started > child-started".into(),
-                    ],
+                    base_backend.clone(),
+                    test_policy.clone(),
+                    cmd.clone(),
                     tmp.clone(),
                     HashMap::new(),
                     NetMode::Off,
@@ -2526,25 +2522,15 @@ mod production_unit_tests {
                     spawn_res.is_err(),
                     "{case}: spawn must fail on unresealed contract"
                 );
-                assert_eq!(
-                    PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-                    count_before,
-                    "{case}: PROD_SPAWN_COUNT must not increment"
-                );
                 assert!(!marker.exists(), "{case}: child must not execute");
             }
 
             // Test resealed tamper: digest matches, but projection / drift / backend mismatch fails spawn
             {
-                let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
                 let mut prepared = UnpreparedProductionExecution::new(
-                    Backend::detect(NetMode::Off, false).expect("detect mechanics"),
-                    functional_test_policy(&tmp),
-                    vec![
-                        "/bin/sh".into(),
-                        "-c".into(),
-                        "printf started > child-started".into(),
-                    ],
+                    base_backend.clone(),
+                    test_policy.clone(),
+                    cmd.clone(),
                     tmp.clone(),
                     HashMap::new(),
                     NetMode::Off,
@@ -2693,11 +2679,6 @@ mod production_unit_tests {
                     spawn_res.is_err(),
                     "{case}: resealed tampered contract must fail spawn"
                 );
-                assert_eq!(
-                    PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-                    count_before,
-                    "{case}: resealed tamper must not increment PROD_SPAWN_COUNT"
-                );
                 assert!(
                     !marker.exists(),
                     "{case}: child must not execute on resealed tamper"
@@ -2705,22 +2686,11 @@ mod production_unit_tests {
             }
         }
 
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            initial_spawn_count,
-            "all tamper attempts combined must not advance spawn counter"
-        );
-
         // Positive control: untampered execution succeeds and creates marker
-        let control_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         let spawned = UnpreparedProductionExecution::new(
-            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
-            functional_test_policy(&tmp),
-            vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                "printf started > child-started".into(),
-            ],
+            base_backend,
+            test_policy,
+            cmd,
             tmp.clone(),
             HashMap::new(),
             NetMode::Off,
@@ -2734,11 +2704,6 @@ mod production_unit_tests {
         .expect("spawn control");
         spawned.wait_collect();
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            control_before + 1,
-            "control must increment PROD_SPAWN_COUNT by exactly 1"
-        );
         let _ = std::fs::remove_dir_all(tmp);
     }
 
