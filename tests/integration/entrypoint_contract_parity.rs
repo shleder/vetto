@@ -193,6 +193,7 @@ fn test_mcp_entrypoint_executes_through_production_boundary() {
         "mcp execute_sandboxed_command must succeed: {:?}",
         res.err()
     );
+    let out = res.unwrap();
     assert_eq!(
         out.exit_code, 0,
         "echo exit code must be 0: stdout='{}', stderr='{}'",
