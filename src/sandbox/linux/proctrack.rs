@@ -98,6 +98,12 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
     let mut killed = 0usize;
     loop {
         let candidates = scan_children(me, root_pid);
+        // Always reap any terminated zombie children among reparented children
+        // regardless of session (mine == theirs). Do not let reparented zombies linger.
+        for &pid in &candidates {
+            let mut status = 0i32;
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        }
         let killable: Vec<i32> = candidates
             .into_iter()
             .filter(|pid| {
@@ -171,7 +177,7 @@ fn scan_children(me: u32, exclude_pid: i32) -> Vec<i32> {
 
 /// Session id of `pid` (`None` on any lookup error: the victim vanished or
 /// is unreachable, and must be skipped conservatively).
-fn session_of(pid: libc::pid_t) -> Option<libc::pid_t> {
+pub fn session_of(pid: libc::pid_t) -> Option<libc::pid_t> {
     // SAFETY: scalar getsid on a possibly-vanished pid; errors are normal.
     let sid = unsafe { libc::getsid(pid) };
     if sid < 0 {

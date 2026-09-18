@@ -190,12 +190,17 @@ impl SandboxHandle {
     pub fn terminate_graceful(&mut self) {
         #[cfg(unix)]
         {
-            if let Some(KillStrategy::ProcessGroup { pid, pgid, .. }) = self.strategy.as_ref() {
-                // SAFETY: group + direct-child SIGTERM on the sandbox we spawned.
-                unsafe {
+            match self.strategy.as_ref() {
+                #[cfg(target_os = "linux")]
+                Some(KillStrategy::PidNsPipe(_)) => unsafe {
+                    libc::kill(self.root_pid as i32, libc::SIGTERM);
+                },
+                #[cfg(unix)]
+                Some(KillStrategy::ProcessGroup { pid, pgid, .. }) => unsafe {
                     libc::kill(-*pgid, libc::SIGTERM);
                     libc::kill(*pid, libc::SIGTERM);
-                }
+                },
+                _ => {}
             }
         }
         #[cfg(not(unix))]

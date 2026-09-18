@@ -98,8 +98,8 @@ fn no_orphans_fs_only_tier_graceful() {
 /// guarantees that the background escaper is exterminated from the host.
 #[test]
 fn no_fs_only_orphan_setsid_grandchild() {
-    if detected_tier().as_deref() != Some("full") {
-        eprintln!("SKIP: needs FULL available to force the fs-only tier");
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
         return;
     }
     let proj = TempProject::new("orphan-setsid");
@@ -153,8 +153,8 @@ fn no_fs_only_orphan_setsid_grandchild() {
 /// (cannot prove extinction). Vetto must terminate fail-closed with exit code 125.
 #[test]
 fn fs_only_blind_sweep_fails_closed() {
-    if detected_tier().as_deref() != Some("full") {
-        eprintln!("SKIP: needs FULL available to force the fs-only tier");
+    if !have_landlock() {
+        eprintln!("SKIP: no tier");
         return;
     }
     let proj = TempProject::new("blind-sweep");

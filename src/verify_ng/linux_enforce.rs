@@ -336,9 +336,12 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
         if blind {
             outcome.blind = true;
         }
-        if !blind && matched.is_empty() {
-            // Final complete scan already shows zero nonce bearers and no blind spots.
-            outcome.clean = true;
+        if matched.is_empty() {
+            if !outcome.blind && outcome.killed == 0 {
+                // Final complete scan already shows zero nonce bearers and no blind spots,
+                // and no escaped orphans had to be killed during the sweep.
+                outcome.clean = true;
+            }
             return outcome;
         }
         for pid in &matched {
@@ -437,12 +440,27 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
                 }
                 if crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me) {
                     blind = true;
+                    matched.push(pid);
                 }
                 continue;
             }
         };
         if contains_slice(&env, needle) {
             matched.push(pid);
+        } else if (env.is_empty() || !contains_slice(&env, needle))
+            && pid_alive(pid as u32)
+            && !pid_is_zombie(&status)
+            && crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me)
+        {
+            let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let their_sid = crate::sandbox::linux::proctrack::session_of(pid);
+            if match (my_sid, their_sid) {
+                (Some(mine), Some(theirs)) => mine != theirs,
+                _ => false,
+            } {
+                blind = true;
+                matched.push(pid);
+            }
         }
     }
     (matched, blind)
