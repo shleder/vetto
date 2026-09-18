@@ -1345,8 +1345,7 @@ fn test_attacker_network_stdout_markers_cannot_spoof_host_fact_or_pass() {
         .iter()
         .filter(|f| {
             f.tier == EvidenceTier::HostFact
-                && (f.name.starts_with("vector:net-off")
-                    || f.name.starts_with("vector:allowlist"))
+                && (f.name.starts_with("vector:net-off") || f.name.starts_with("vector:allowlist"))
         })
         .count();
     assert_eq!(
