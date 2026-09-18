@@ -1026,7 +1026,7 @@ impl SpawnedProductionExecution {
         #[cfg(target_os = "linux")]
         let setsid_orphan_escaped = if matches!(
             self.handle.strategy,
-            Some(crate::sandbox::KillStrategy::ProcessGroup { sweep: true, .. })
+            Some(crate::sandbox::handle::KillStrategy::ProcessGroup { sweep: true, .. })
         ) {
             let me = unsafe { libc::getpid() } as u32;
             let my_sid = crate::sandbox::linux::proctrack::session_of(0);
