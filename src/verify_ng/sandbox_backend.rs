@@ -2409,12 +2409,21 @@ mod backend_arch_tests {
         let (policy, identity) = test_policy_and_identity();
         let mut backend = select_backend(BackendKind::Linux);
         let mut report = backend.prepare(&policy, &identity);
-        report.records.push(CapabilityRecord {
-            capability: SecurityCapability::SyscallRestriction,
-            requested: true,
-            state: EnforcementState::Unsupported,
-            failure: Some(PreparationFailureKind::UnsupportedOnPlatform),
-        });
+        if let Some(record) = report
+            .records
+            .iter_mut()
+            .find(|r| r.capability == SecurityCapability::SyscallRestriction)
+        {
+            record.state = EnforcementState::Unsupported;
+            record.failure = Some(PreparationFailureKind::UnsupportedOnPlatform);
+        } else {
+            report.records.push(CapabilityRecord {
+                capability: SecurityCapability::SyscallRestriction,
+                requested: true,
+                state: EnforcementState::Unsupported,
+                failure: Some(PreparationFailureKind::UnsupportedOnPlatform),
+            });
+        }
 
         assert_eq!(
             report.state_of(SecurityCapability::SyscallRestriction),
