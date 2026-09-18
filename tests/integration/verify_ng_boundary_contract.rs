@@ -665,16 +665,20 @@ fn test_secret_copied_prior_to_execution_contract_semantics() {
     let scen = test_scenario("BND-SECRET-PRECOPY-001", Category::Secrets, 1);
     let ws = temp_dir("ws-precopy");
 
+    // Clean project subdirectory for unmasked user code
+    let src = ws.join("src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+
     // Case A: File inside workspace declared in mask_paths/deny_resolved (.env)
     let masked_file = ws.join(".env");
     std::fs::write(&masked_file, b"API_KEY=secret-token\n").expect("write masked file");
 
-    // Case B: Ordinary user file inside workspace NOT declared in mask_paths
-    let user_file = ws.join("user_code.py");
+    // Case B: Ordinary user file inside clean subdirectory
+    let user_file = src.join("user_code.py");
     std::fs::write(&user_file, b"print('hello')\n").expect("write user file");
 
     let mut policy = Policy {
-        allow_read: vec![user_file.clone()],
+        allow_read: vec![src.clone()],
         allow_write: vec![ws.clone()],
         ..Default::default()
     };

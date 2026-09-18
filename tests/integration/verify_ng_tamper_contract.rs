@@ -75,7 +75,14 @@ fn aux_scenario(id: &str) -> Scenario {
         category: Category::Aux,
         severity: Severity::High,
         required_caps: vec!["spawn".to_string()],
-        strength: BTreeMap::from([(target.label().to_string(), ClaimStrength::Strong)]),
+        strength: BTreeMap::from([
+            (target.label().to_string(), ClaimStrength::Strong),
+            ("linux-full".to_string(), ClaimStrength::Strong),
+            ("linux-fsonly".to_string(), ClaimStrength::Strong),
+            ("linux-seccomp".to_string(), ClaimStrength::Strong),
+            ("macos".to_string(), ClaimStrength::Strong),
+            ("windows".to_string(), ClaimStrength::Strong),
+        ]),
         quorum: 1,
         known_limitation: "host-control cross-session identity regression".to_string(),
         residual_risk: String::new(),
@@ -95,6 +102,7 @@ fn functional_policy(tmp: &Path) -> Policy {
             policy.allow_write.push(cand);
         }
     }
+    policy.environment.pass_through.push("PATH".to_string());
     policy
 }
 

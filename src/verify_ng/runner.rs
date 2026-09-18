@@ -437,30 +437,14 @@ pub fn run_one_with_backend(
                 );
             }
         };
-        let mut contract_argv = vec![contract
-            .agent_identity
-            .invoked_binary
-            .to_string_lossy()
-            .to_string()];
-        contract_argv.extend(contract.agent_identity.invoked_args.clone());
-        let safe_env: BTreeMap<String, String> = contract
-            .environment
-            .explicit_vars
-            .iter()
-            .filter(|(k, _)| {
-                production
-                    .installation_policy
-                    .environment
-                    .allows(std::ffi::OsStr::new(k))
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let mut expected_argv = req.interpreter.clone();
+        expected_argv.extend(req.script_args.clone());
         match crate::policy_ir::compiler::PolicyCompiler::compile_effective(
             crate::policy_ir::compiler::EffectivePolicyInput {
                 policy: &production.installation_policy,
-                argv: &contract_argv,
+                argv: &expected_argv,
                 cwd: &contract.filesystem.workspace_root,
-                env: &safe_env,
+                env: &contract.environment.explicit_vars,
                 net: &production.net,
                 nonce: &contract.session_nonce,
                 timeout: production.timeout,
