@@ -731,30 +731,44 @@ impl MergedPolicy {
         if let Some(limits) = &layer.limits {
             self.limits.merge_strictest(&limits.to_resource_limits());
             if let Some(cg) = &limits.cgroup {
-                self.cgroup = Some(CgroupConfig {
+                let incoming = CgroupConfig {
                     memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
                     pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
                     swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
                     cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
-                });
+                };
+                match &mut self.cgroup {
+                    Some(existing) => existing.merge_strictest(&incoming),
+                    None => self.cgroup = Some(incoming),
+                }
             }
             if let Some(cpu) = &limits.cpu_max {
-                self.cpu_max = Some(cpu.clone());
+                self.cpu_max = crate::policy::types::strictest_cpu_max(
+                    &self.cpu_max,
+                    &Some(cpu.clone()),
+                );
             }
             if let Some(ioprio) = &limits.io_priority {
                 self.io_priority = Some(ioprio.clone());
             }
         }
         if let Some(cg) = &layer.cgroup {
-            self.cgroup = Some(CgroupConfig {
+            let incoming = CgroupConfig {
                 memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
                 pids_max: cg.pids_max.as_ref().map(|p| p.to_string_repr()),
                 swap_max: cg.swap_max.as_ref().map(|s| s.to_string_repr()),
                 cpu_max: cg.cpu_max.as_ref().map(|c| c.to_string_repr()),
-            });
+            };
+            match &mut self.cgroup {
+                Some(existing) => existing.merge_strictest(&incoming),
+                None => self.cgroup = Some(incoming),
+            }
         }
         if let Some(cpu) = &layer.cpu_max {
-            self.cpu_max = Some(cpu.clone());
+            self.cpu_max = crate::policy::types::strictest_cpu_max(
+                &self.cpu_max,
+                &Some(cpu.clone()),
+            );
         }
         if let Some(ioprio) = &layer.io_priority {
             self.io_priority = Some(ioprio.clone());
@@ -2379,4 +2393,58 @@ allow_read = ["/usr", "${PROJECT}"]
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn merged_policy_cgroup_and_cpu_max_strictest_merge() {
+        let mut merged = MergedPolicy::default();
+        let layer1 = RawLayer {
+            cgroup: Some(RawCgroup {
+                memory_max: Some(RawValueOrString::Str("1G".into())),
+                pids_max: Some(RawValueOrString::Num(100)),
+                swap_max: None,
+                cpu_max: Some(RawValueOrString::Str("80%".into())),
+            }),
+            cpu_max: Some("80%".into()),
+            ..Default::default()
+        };
+        merged.apply(&layer1, PolicySourceKind::SystemGlobal).unwrap();
+
+        let layer2 = RawLayer {
+            cgroup: Some(RawCgroup {
+                memory_max: Some(RawValueOrString::Str("512M".into())),
+                pids_max: Some(RawValueOrString::Num(50)),
+                swap_max: None,
+                cpu_max: Some(RawValueOrString::Str("50%".into())),
+            }),
+            cpu_max: Some("50%".into()),
+            ..Default::default()
+        };
+        merged.apply(&layer2, PolicySourceKind::Repository).unwrap();
+
+        let cg = merged.cgroup.as_ref().expect("cgroup present");
+        assert_eq!(cg.memory_max.as_deref(), Some("512M"));
+        assert_eq!(cg.pids_max.as_deref(), Some("50"));
+        assert_eq!(cg.cpu_max.as_deref(), Some("50%"));
+        assert_eq!(merged.cpu_max.as_deref(), Some("50%"));
+
+        // Subsequent layer with weaker "max" or larger numbers cannot loosen
+        let layer3 = RawLayer {
+            cgroup: Some(RawCgroup {
+                memory_max: Some(RawValueOrString::Str("max".into())),
+                pids_max: Some(RawValueOrString::Num(200)),
+                swap_max: None,
+                cpu_max: Some(RawValueOrString::Str("100%".into())),
+            }),
+            cpu_max: Some("100%".into()),
+            ..Default::default()
+        };
+        merged.apply(&layer3, PolicySourceKind::CliOverride).unwrap();
+
+        let cg = merged.cgroup.as_ref().expect("cgroup present");
+        assert_eq!(cg.memory_max.as_deref(), Some("512M"));
+        assert_eq!(cg.pids_max.as_deref(), Some("50"));
+        assert_eq!(cg.cpu_max.as_deref(), Some("50%"));
+        assert_eq!(merged.cpu_max.as_deref(), Some("50%"));
+    }
 }
+
