@@ -90,38 +90,6 @@ impl LimitKey {
     }
 }
 
-/// Parsed limits from a `--limits` spec string.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParsedLimits {
-    pub limits: ResourceLimits,
-    pub cpu_max: Option<String>,
-}
-
-impl std::ops::Deref for ParsedLimits {
-    type Target = ResourceLimits;
-    fn deref(&self) -> &Self::Target {
-        &self.limits
-    }
-}
-
-impl std::ops::DerefMut for ParsedLimits {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.limits
-    }
-}
-
-impl AsRef<ResourceLimits> for ParsedLimits {
-    fn as_ref(&self) -> &ResourceLimits {
-        &self.limits
-    }
-}
-
-impl From<ParsedLimits> for ResourceLimits {
-    fn from(p: ParsedLimits) -> Self {
-        p.limits
-    }
-}
-
 fn strictest(current: Option<u64>, value: u64) -> Option<u64> {
     Some(match current {
         Some(existing) => existing.min(value),
@@ -132,10 +100,11 @@ fn strictest(current: Option<u64>, value: u64) -> Option<u64> {
 /// Apply a `--limits` spec (e.g. `"cpu=300,as=4g,pids=50,cpu_max=50%"`) to an already-loaded
 /// policy. Every parsed field merges strictest-wins into `policy.limits` and `policy.cpu_max`.
 pub fn apply_cli(policy: &mut Policy, spec: &str) -> Result<()> {
-    let parsed = parse_spec(spec)?;
-    policy.limits.merge_strictest(&parsed.limits);
-    if let Some(cpu) = &parsed.cpu_max {
-        policy.cpu_max = crate::policy::types::strictest_cpu_max(&policy.cpu_max, &Some(cpu.clone()));
+    let (limits, cpu_max) = parse_spec_with_cpu(spec)?;
+    policy.limits.merge_strictest(&limits);
+    if let Some(cpu) = &cpu_max {
+        policy.cpu_max =
+            crate::policy::types::strictest_cpu_max(&policy.cpu_max, &Some(cpu.clone()));
         if let Some(cg) = &mut policy.cgroup {
             cg.cpu_max = crate::policy::types::strictest_cpu_max(&cg.cpu_max, &Some(cpu.clone()));
         }
@@ -145,12 +114,19 @@ pub fn apply_cli(policy: &mut Policy, spec: &str) -> Result<()> {
 
 /// Parse a full spec into standalone ceilings (all unparsed fields stay
 /// `None`), ready for `ResourceLimits::merge_strictest`.
-pub fn parse_spec(spec: &str) -> Result<ParsedLimits> {
+pub fn parse_spec(spec: &str) -> Result<ResourceLimits> {
+    let (limits, _) = parse_spec_with_cpu(spec)?;
+    Ok(limits)
+}
+
+/// Parse a full spec into standalone ceilings and optional cpu_max quota.
+pub fn parse_spec_with_cpu(spec: &str) -> Result<(ResourceLimits, Option<String>)> {
     if spec.trim().is_empty() {
         bail!("--limits requires at least one key=value pair (valid keys: {VALID_KEYS})");
     }
 
-    let mut parsed_limits = ParsedLimits::default();
+    let mut limits = ResourceLimits::default();
+    let mut cpu_max: Option<String> = None;
     for (index, raw) in spec.split(',').enumerate() {
         let pair = raw.trim();
         if pair.is_empty() {
@@ -174,16 +150,13 @@ pub fn parse_spec(spec: &str) -> Result<ParsedLimits> {
         })?;
         if key == LimitKey::CpuMax {
             let cpu_val = parse_cpu_value(value, pair)?;
-            parsed_limits.cpu_max = crate::policy::types::strictest_cpu_max(
-                &parsed_limits.cpu_max,
-                &Some(cpu_val),
-            );
+            cpu_max = crate::policy::types::strictest_cpu_max(&cpu_max, &Some(cpu_val));
         } else {
             let parsed = parse_value(&key, value, pair)?;
-            key.apply(&mut parsed_limits.limits, parsed);
+            key.apply(&mut limits, parsed);
         }
     }
-    Ok(parsed_limits)
+    Ok((limits, cpu_max))
 }
 
 fn parse_cpu_value(value: &str, pair: &str) -> Result<String> {
@@ -196,7 +169,9 @@ fn parse_cpu_value(value: &str, pair: &str) -> Result<String> {
     }
     if let Some(pct_str) = s.strip_suffix('%') {
         let num: f64 = pct_str.trim().parse().map_err(|_| {
-            anyhow::anyhow!("invalid --limits value '{value}' in pair '{pair}': invalid CPU percentage")
+            anyhow::anyhow!(
+                "invalid --limits value '{value}' in pair '{pair}': invalid CPU percentage"
+            )
         })?;
         if num <= 0.0 {
             bail!("invalid --limits value '{value}' in pair '{pair}': CPU percentage must be > 0");
@@ -207,7 +182,9 @@ fn parse_cpu_value(value: &str, pair: &str) -> Result<String> {
         let mut parts = s.split_whitespace();
         let q_str = parts.next().unwrap();
         let p_str = parts.next().ok_or_else(|| {
-            anyhow::anyhow!("invalid --limits value '{value}' in pair '{pair}': expected 'quota period'")
+            anyhow::anyhow!(
+                "invalid --limits value '{value}' in pair '{pair}': expected 'quota period'"
+            )
         })?;
         if parts.next().is_some() {
             bail!("invalid --limits value '{value}' in pair '{pair}': too many parts");
@@ -236,7 +213,6 @@ fn parse_cpu_value(value: &str, pair: &str) -> Result<String> {
     }
     bail!("invalid --limits value '{value}' in pair '{pair}': expected a percentage (e.g. 50%), quota/period, or 'max'")
 }
-
 
 fn parse_value(key: &LimitKey, value: &str, pair: &str) -> Result<u64> {
     if key.is_bytes() {
@@ -407,17 +383,17 @@ mod tests {
 
     #[test]
     fn cpu_max_and_cpu_percent_parsing_and_merging() {
-        let limits = parse_spec("cpu_max=50%").expect("cpu_max %");
-        assert_eq!(limits.cpu_max.as_deref(), Some("50%"));
+        let (_, cpu) = parse_spec_with_cpu("cpu_max=50%").expect("cpu_max %");
+        assert_eq!(cpu.as_deref(), Some("50%"));
 
-        let limits = parse_spec("cpu_percent=75").expect("cpu_percent plain");
-        assert_eq!(limits.cpu_max.as_deref(), Some("75%"));
+        let (_, cpu) = parse_spec_with_cpu("cpu_percent=75").expect("cpu_percent plain");
+        assert_eq!(cpu.as_deref(), Some("75%"));
 
-        let limits = parse_spec("cpu_max=max").expect("cpu_max max");
-        assert_eq!(limits.cpu_max.as_deref(), Some("max"));
+        let (_, cpu) = parse_spec_with_cpu("cpu_max=max").expect("cpu_max max");
+        assert_eq!(cpu.as_deref(), Some("max"));
 
-        let limits = parse_spec("cpu_max=50000 100000").expect("cpu_max quota period");
-        assert_eq!(limits.cpu_max.as_deref(), Some("50000 100000"));
+        let (_, cpu) = parse_spec_with_cpu("cpu_max=50000 100000").expect("cpu_max quota period");
+        assert_eq!(cpu.as_deref(), Some("50000 100000"));
 
         // CLI apply strictly merges strictest-wins over base policy
         let mut policy = Policy::default();
@@ -437,4 +413,3 @@ mod tests {
         assert_eq!(policy.limits.address_space_bytes, Some(1024 * 1024 * 1024));
     }
 }
-

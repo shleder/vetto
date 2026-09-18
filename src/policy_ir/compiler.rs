@@ -559,7 +559,7 @@ mod compiler_tests {
             argv: &["/bin/true".into()],
             cwd: &temp_dir,
             env: &BTreeMap::new(),
-            net: &crate::policy_ir::sync::NetMode::Off,
+            net: &crate::config::NetMode::Off,
             nonce: "test-effective-res-1",
             timeout: None,
             tier: None,
@@ -580,7 +580,7 @@ mod compiler_tests {
             argv: &["/bin/true".into()],
             cwd: &temp_dir,
             env: &BTreeMap::new(),
-            net: &crate::policy_ir::sync::NetMode::Off,
+            net: &crate::config::NetMode::Off,
             nonce: "test-effective-res-2",
             timeout: None,
             tier: None,
@@ -607,7 +607,7 @@ mod compiler_tests {
             argv: &["/bin/true".into()],
             cwd: &temp_dir,
             env: &BTreeMap::new(),
-            net: &crate::policy_ir::sync::NetMode::Off,
+            net: &crate::config::NetMode::Off,
             nonce: "test-effective-res-3",
             timeout: None,
             tier: None,
@@ -624,4 +624,3 @@ mod compiler_tests {
         assert_eq!(contract.resources.max_cpu_percent, 40);
     }
 }
-

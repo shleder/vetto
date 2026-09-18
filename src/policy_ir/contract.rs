@@ -329,12 +329,18 @@ mod contract_tests {
         {
             let mut tampered = sealed.clone();
             tampered.resources.max_cpu_percent += 1;
-            assert!(!tampered.verify_digest(), "tampered max_cpu_percent not detected");
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_cpu_percent not detected"
+            );
         }
         {
             let mut tampered = sealed.clone();
             tampered.resources.max_memory_bytes ^= 1;
-            assert!(!tampered.verify_digest(), "tampered max_memory_bytes not detected");
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_memory_bytes not detected"
+            );
         }
         {
             let mut tampered = sealed.clone();
@@ -344,17 +350,26 @@ mod contract_tests {
         {
             let mut tampered = sealed.clone();
             tampered.resources.max_wall_time_ms += 1;
-            assert!(!tampered.verify_digest(), "tampered max_wall_time_ms not detected");
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_wall_time_ms not detected"
+            );
         }
         {
             let mut tampered = sealed.clone();
             tampered.resources.max_stdout_bytes ^= 1;
-            assert!(!tampered.verify_digest(), "tampered max_stdout_bytes not detected");
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_stdout_bytes not detected"
+            );
         }
         {
             let mut tampered = sealed.clone();
             tampered.resources.max_file_size_bytes ^= 1;
-            assert!(!tampered.verify_digest(), "tampered max_file_size_bytes not detected");
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_file_size_bytes not detected"
+            );
         }
     }
 
@@ -363,7 +378,7 @@ mod contract_tests {
         let mut unsealed = sample_unsealed();
         unsealed.production = Some(ProductionContract {
             installation_policy: crate::policy::Policy::default(),
-            net: crate::policy_ir::sync::NetMode::Off,
+            net: crate::config::NetMode::Off,
             timeout: None,
             tier: None,
             backend: "test-backend".into(),
@@ -378,7 +393,10 @@ mod contract_tests {
         if let Some(prod) = &mut tampered.production {
             prod.installation_policy.limits.processes = Some(999);
         }
-        assert!(!tampered.verify_digest(), "tampered installation_policy.limits not detected");
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.limits not detected"
+        );
 
         // Tamper with installation_policy cgroup
         let mut tampered = sealed.clone();
@@ -388,14 +406,20 @@ mod contract_tests {
                 ..Default::default()
             });
         }
-        assert!(!tampered.verify_digest(), "tampered installation_policy.cgroup not detected");
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cgroup not detected"
+        );
 
         // Tamper with installation_policy cpu_max
         let mut tampered = sealed.clone();
         if let Some(prod) = &mut tampered.production {
             prod.installation_policy.cpu_max = Some("25%".into());
         }
-        assert!(!tampered.verify_digest(), "tampered installation_policy.cpu_max not detected");
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cpu_max not detected"
+        );
     }
 
     #[test]

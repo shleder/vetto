@@ -150,7 +150,9 @@ pub fn strictest_memory_str(left: &Option<String>, right: &Option<String>) -> Op
                 (Some(_), None) => Some(l.clone()),
                 (None, Some(_)) => Some(r.clone()),
                 (None, None) => {
-                    if l_trimmed.eq_ignore_ascii_case("max") || r_trimmed.eq_ignore_ascii_case("max") {
+                    if l_trimmed.eq_ignore_ascii_case("max")
+                        || r_trimmed.eq_ignore_ascii_case("max")
+                    {
                         Some("max".to_string())
                     } else {
                         Some(l.clone())
@@ -191,7 +193,9 @@ pub fn strictest_pids_str(left: &Option<String>, right: &Option<String>) -> Opti
                 (Some(_), None) => Some(l.clone()),
                 (None, Some(_)) => Some(r.clone()),
                 (None, None) => {
-                    if l_trimmed.eq_ignore_ascii_case("max") || r_trimmed.eq_ignore_ascii_case("max") {
+                    if l_trimmed.eq_ignore_ascii_case("max")
+                        || r_trimmed.eq_ignore_ascii_case("max")
+                    {
                         Some("max".to_string())
                     } else {
                         Some(l.clone())
@@ -237,7 +241,6 @@ pub fn strictest_cpu_max(left: &Option<String>, right: &Option<String>) -> Optio
         (None, None) => None,
     }
 }
-
 
 /// Optional seccomp user-notify supervisor configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -764,4 +767,3 @@ mod cgroup_tests {
         assert_eq!(cfg_max.cpu_max.as_deref(), Some("50000 100000"));
     }
 }
-

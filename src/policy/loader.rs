@@ -743,10 +743,8 @@ impl MergedPolicy {
                 }
             }
             if let Some(cpu) = &limits.cpu_max {
-                self.cpu_max = crate::policy::types::strictest_cpu_max(
-                    &self.cpu_max,
-                    &Some(cpu.clone()),
-                );
+                self.cpu_max =
+                    crate::policy::types::strictest_cpu_max(&self.cpu_max, &Some(cpu.clone()));
             }
             if let Some(ioprio) = &limits.io_priority {
                 self.io_priority = Some(ioprio.clone());
@@ -765,10 +763,8 @@ impl MergedPolicy {
             }
         }
         if let Some(cpu) = &layer.cpu_max {
-            self.cpu_max = crate::policy::types::strictest_cpu_max(
-                &self.cpu_max,
-                &Some(cpu.clone()),
-            );
+            self.cpu_max =
+                crate::policy::types::strictest_cpu_max(&self.cpu_max, &Some(cpu.clone()));
         }
         if let Some(ioprio) = &layer.io_priority {
             self.io_priority = Some(ioprio.clone());
@@ -2407,7 +2403,9 @@ allow_read = ["/usr", "${PROJECT}"]
             cpu_max: Some("80%".into()),
             ..Default::default()
         };
-        merged.apply(&layer1, PolicySourceKind::SystemGlobal).unwrap();
+        merged
+            .apply(&layer1, PolicySourceKind::SystemGlobal)
+            .unwrap();
 
         let layer2 = RawLayer {
             cgroup: Some(RawCgroup {
@@ -2438,7 +2436,9 @@ allow_read = ["/usr", "${PROJECT}"]
             cpu_max: Some("100%".into()),
             ..Default::default()
         };
-        merged.apply(&layer3, PolicySourceKind::CliOverride).unwrap();
+        merged
+            .apply(&layer3, PolicySourceKind::CliOverride)
+            .unwrap();
 
         let cg = merged.cgroup.as_ref().expect("cgroup present");
         assert_eq!(cg.memory_max.as_deref(), Some("512M"));
@@ -2447,4 +2447,3 @@ allow_read = ["/usr", "${PROJECT}"]
         assert_eq!(merged.cpu_max.as_deref(), Some("50%"));
     }
 }
-
