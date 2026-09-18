@@ -369,14 +369,17 @@ fn verify_child_host_linux(
             } else {
                 if limits_field_is(limits, "Max address space", DEFAULT_RLIMIT_AS_BYTES) {
                     out.rlimit_as_ok = true;
-                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max address space") {
+                } else if let Some((soft, hard)) =
+                    parse_proc_limits_value(limits, "Max address space")
+                {
                     if soft == hard && soft > 0 {
                         out.rlimit_as_ok = true;
                     }
                 }
                 if limits_field_is(limits, "Max processes", DEFAULT_RLIMIT_NPROC) {
                     out.rlimit_nproc_ok = true;
-                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max processes") {
+                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max processes")
+                {
                     if soft == hard && soft > 0 {
                         out.rlimit_nproc_ok = true;
                     }
@@ -390,7 +393,8 @@ fn verify_child_host_linux(
                 }
                 if limits_field_is(limits, "Max file size", DEFAULT_RLIMIT_FSIZE_BYTES) {
                     out.rlimit_fsize_ok = true;
-                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max file size") {
+                } else if let Some((soft, hard)) = parse_proc_limits_value(limits, "Max file size")
+                {
                     if soft == hard && soft > 0 {
                         out.rlimit_fsize_ok = true;
                     }
@@ -709,7 +713,9 @@ pub fn parse_proc_limits_value(limits_body: &str, row: &str) -> Option<(u64, u64
             let mut cols = after.split_whitespace();
             let soft_str = cols.next()?;
             let hard_str = cols.next()?;
-            if soft_str.eq_ignore_ascii_case("unlimited") || hard_str.eq_ignore_ascii_case("unlimited") {
+            if soft_str.eq_ignore_ascii_case("unlimited")
+                || hard_str.eq_ignore_ascii_case("unlimited")
+            {
                 return None;
             }
             let soft = soft_str.parse::<u64>().ok()?;

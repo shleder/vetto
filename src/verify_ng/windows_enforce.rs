@@ -353,16 +353,17 @@ pub unsafe fn query_job_limits(job: RawHandle) -> Option<JobLimitsQuery> {
     #[cfg(target_pointer_width = "32")]
     let (pids_offset, mem_offset) = (28usize, 96usize);
 
-    let max_pids = if flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 && buffer.len() >= pids_offset + 4 {
-        Some(u32::from_ne_bytes([
-            buffer[pids_offset],
-            buffer[pids_offset + 1],
-            buffer[pids_offset + 2],
-            buffer[pids_offset + 3],
-        ]))
-    } else {
-        None
-    };
+    let max_pids =
+        if flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0 && buffer.len() >= pids_offset + 4 {
+            Some(u32::from_ne_bytes([
+                buffer[pids_offset],
+                buffer[pids_offset + 1],
+                buffer[pids_offset + 2],
+                buffer[pids_offset + 3],
+            ]))
+        } else {
+            None
+        };
 
     let max_memory = if flags & JOB_OBJECT_LIMIT_JOB_MEMORY != 0
         && buffer.len() >= mem_offset + std::mem::size_of::<usize>()
@@ -406,15 +407,17 @@ pub fn validate_windows_limit_evidence(
     evidence: &super::evidence::Evidence,
     fact_name: &str,
 ) -> Result<bool, &'static str> {
-    let has_self = evidence.facts.iter().any(|f| {
-        f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport
-    });
+    let has_self = evidence
+        .facts
+        .iter()
+        .any(|f| f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport);
     if has_self {
         return Err("child self-reporting rejected: limit claims cannot be proven by child output");
     }
-    let has_host = evidence.facts.iter().any(|f| {
-        f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact
-    });
+    let has_host = evidence
+        .facts
+        .iter()
+        .any(|f| f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact);
     Ok(has_host)
 }
 
@@ -761,11 +764,27 @@ mod windows_enforce_tests {
             max_memory_bytes: Some(104857600),
             max_processes: Some(64),
         };
-        assert!(verify_job_limits_against_expected(&query, Some(104857600), Some(64)));
-        assert!(!verify_job_limits_against_expected(&query, Some(209715200), Some(64)));
-        assert!(!verify_job_limits_against_expected(&query, Some(104857600), Some(128)));
+        assert!(verify_job_limits_against_expected(
+            &query,
+            Some(104857600),
+            Some(64)
+        ));
+        assert!(!verify_job_limits_against_expected(
+            &query,
+            Some(209715200),
+            Some(64)
+        ));
+        assert!(!verify_job_limits_against_expected(
+            &query,
+            Some(104857600),
+            Some(128)
+        ));
         assert!(verify_job_limits_against_expected(&query, None, Some(64)));
-        assert!(verify_job_limits_against_expected(&query, Some(104857600), None));
+        assert!(verify_job_limits_against_expected(
+            &query,
+            Some(104857600),
+            None
+        ));
     }
 
     #[test]

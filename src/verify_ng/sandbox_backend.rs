@@ -2288,7 +2288,12 @@ mod backend_arch_tests {
             "nonce-rlimit",
         );
         let policy = CanonicalPolicy::from_frozen(&frozen);
-        let id = ExecutionIdentity::new("TEST-RLIMIT-PARTIAL", "nonce-rlimit", "reg-test", &policy.frozen_hash);
+        let id = ExecutionIdentity::new(
+            "TEST-RLIMIT-PARTIAL",
+            "nonce-rlimit",
+            "reg-test",
+            &policy.frozen_hash,
+        );
 
         let mut backend = LinuxBackend::new();
         backend.prepare(&policy, &id);
@@ -2326,7 +2331,12 @@ mod backend_arch_tests {
             "nonce-rlimit",
         );
         let policy = CanonicalPolicy::from_frozen(&frozen);
-        let id = ExecutionIdentity::new("TEST-RLIMIT-INCOMPLETE", "nonce-rlimit", "reg-test", &policy.frozen_hash);
+        let id = ExecutionIdentity::new(
+            "TEST-RLIMIT-INCOMPLETE",
+            "nonce-rlimit",
+            "reg-test",
+            &policy.frozen_hash,
+        );
 
         let mut backend = LinuxBackend::new();
         backend.prepare(&policy, &id);
@@ -2369,7 +2379,12 @@ mod backend_arch_tests {
             "nonce-cg",
         );
         let policy = CanonicalPolicy::from_frozen(&frozen);
-        let id = ExecutionIdentity::new("TEST-CGROUP-PROMOTION", "nonce-cg", "reg-test", &policy.frozen_hash);
+        let id = ExecutionIdentity::new(
+            "TEST-CGROUP-PROMOTION",
+            "nonce-cg",
+            "reg-test",
+            &policy.frozen_hash,
+        );
 
         let mut backend = LinuxBackend::new();
         backend.prepare(&policy, &id);
@@ -2404,7 +2419,11 @@ mod backend_arch_tests {
             EnforcementState::Unsupported
         );
         assert!(!report.is_enforced(SecurityCapability::SyscallRestriction));
-        assert!(report.unsupported().contains(&SecurityCapability::SyscallRestriction));
-        assert!(!report.verified().contains(&SecurityCapability::SyscallRestriction));
+        assert!(report
+            .unsupported()
+            .contains(&SecurityCapability::SyscallRestriction));
+        assert!(!report
+            .verified()
+            .contains(&SecurityCapability::SyscallRestriction));
     }
 }

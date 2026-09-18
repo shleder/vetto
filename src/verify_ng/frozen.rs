@@ -410,15 +410,17 @@ pub fn verify_limits_host_evidence(
     evidence: &super::evidence::Evidence,
     fact_name: &str,
 ) -> Result<bool, &'static str> {
-    let has_self_report = evidence.facts.iter().any(|f| {
-        f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport
-    });
+    let has_self_report = evidence
+        .facts
+        .iter()
+        .any(|f| f.name == fact_name && f.tier == super::evidence::EvidenceTier::SelfReport);
     if has_self_report {
         return Err("child self-reporting rejected: limit claims cannot be proven by child output");
     }
-    let has_host_fact = evidence.facts.iter().any(|f| {
-        f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact
-    });
+    let has_host_fact = evidence
+        .facts
+        .iter()
+        .any(|f| f.name == fact_name && f.tier == super::evidence::EvidenceTier::HostFact);
     Ok(has_host_fact)
 }
 
