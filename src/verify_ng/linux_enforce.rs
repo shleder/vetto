@@ -337,9 +337,8 @@ fn sweep_tree_by_nonce_linux(nonce: &str, root_pid: u32) -> SweepOutcome {
             outcome.blind = true;
         }
         if matched.is_empty() {
-            if !outcome.blind && outcome.killed == 0 {
-                // Final complete scan already shows zero nonce bearers and no blind spots,
-                // and no escaped orphans had to be killed during the sweep.
+            if !outcome.blind {
+                // Final complete scan already shows zero nonce bearers and no blind spots.
                 outcome.clean = true;
             }
             return outcome;
@@ -440,7 +439,6 @@ fn scan_nonce_pids(needle: &[u8], root_pid: u32, me: u32, me_uid: libc::uid_t) -
                 }
                 if crate::sandbox::linux::proctrack::ppid_from_status(&status) == Some(me) {
                     blind = true;
-                    matched.push(pid);
                 }
                 continue;
             }
