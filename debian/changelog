@@ -1,3 +1,11 @@
+vetto (0.3.0-1) unstable; urgency=medium
+
+  * Canonical Security Contract Authority (Phase 1-5), proctree extinction,
+    cgroups v2 resource limits, policy UX modernization, and 3-tier platform
+    parity.
+
+ -- vetto contributors <noreply@github.com>  Sat, 19 Sep 2026 00:00:00 +0300
+
 vetto (0.2.25-1) unstable; urgency=medium
 
   * Enterprise Runtime Hardening (Phase 4): process tree extinction deadline

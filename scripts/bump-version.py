@@ -36,14 +36,14 @@ def compute_next_version(current):
     major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
     return f"{major}.{minor}.{patch + 1}"
 
-def update_file(filepath, pattern, replacement):
+def update_file(filepath, pattern, replacement, count=1):
     if not os.path.exists(filepath):
         print(f"Skipping {filepath} (file not found)")
         return False
     with open(filepath, "r") as f:
         content = f.read()
-    new_content, count = re.subn(pattern, replacement, content, count=1, flags=re.MULTILINE)
-    if count == 0:
+    new_content, replaced = re.subn(pattern, replacement, content, count=count, flags=re.MULTILINE)
+    if replaced == 0:
         print(f"Warning: pattern '{pattern}' not found in {filepath}")
         return False
     with open(filepath, "w") as f:
@@ -113,7 +113,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "scripts", "install.sh"), r'DEFAULT_FALLBACK_VERSION="[^"]+"', f'DEFAULT_FALLBACK_VERSION="{target}"')
     update_file(NUSPEC, r'<version>[^<]+</version>', f'<version>{target}</version>')
     update_file(HOMEBREW_RB, r'version\s+"[^"]+"', f'version "{target}"')
-    update_file(HOMEBREW_RB, rf'/v{re.escape(current)}/', f'/v{target}/')
+    update_file(HOMEBREW_RB, rf'/v{re.escape(current)}/', f'/v{target}/', count=0)
     update_file(SPEC, r'^Version:\s*.*', f'Version: {target}')
     update_file(os.path.join(REPO_ROOT, "assets", "demo.svg"), rf'\[installed v{re.escape(current)}\]', f'[installed v{target}]')
     update_file(os.path.join(REPO_ROOT, "vscode", "package.json"), r'"version":\s*"[^"]+"', f'"version": "{target}"')
@@ -121,7 +121,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "flake.nix"), r'version\s*=\s*"[^"]+"', f'version = "{target}"')
     update_file(os.path.join(REPO_ROOT, "scripts", "gen-sbom.sh"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"')
     
-    desc = "Enterprise Runtime Hardening (Phase 4): proctree extinction (INV-20), tamper-proof Merkle DAG audit logging (INV-34/35), netlink overflow fail-closed (INV-37), exit 125 precedence"
+    desc = "Canonical Security Contract Authority, Host-Fact Boundary Verification, Deterministic Lifecycle & Extinction, Resource Limits & Cgroups v2, Policy UX Modernization, 3-Tier Platform Parity"
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 

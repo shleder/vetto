@@ -5,7 +5,7 @@
 **Lightweight, zero-leak security sandbox and isolation boundary for AI agents and developer workflows.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions)
-[![Version](https://img.shields.io/badge/version-0.2.25-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.2.25)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license)
 [![Platform support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#core-architecture--backends)
 [![Security Model](https://img.shields.io/badge/security-fail--closed-success?style=flat-square)](#zero-leak-design)
@@ -128,7 +128,7 @@ brew install vetto
 To run vetto inside CI containers or Docker devcontainers, ensure unprivileged user namespaces are enabled:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.2.25 vetto doctor
+docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.3.0 vetto doctor
 ```
 
 *Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases).*

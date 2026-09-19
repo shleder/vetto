@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.0] - 2026-09-19
+### Added
+- **Canonical Security Contract Authority (Phase 1)**: `SecurityContract` and execution FSM are now the authoritative security boundary across CLI, MCP, and multi-agent execution.
+- **Host-Fact Boundary Verification (Phase 2)**: Comprehensive verification battery for filesystem, network, environment, secrets, and contract tampering with zero tolerance for attacker self-report spoofing.
+- **Deterministic Lifecycle & Extinction (Phase 3)**: Two-phase signal escalation (`SIGTERM` -> 2s -> `SIGKILL`), subreaper zombie reaping, and `ExtinctionVerifier` (<500ms, 0 survivors).
+- **Resource Limits & Cgroups v2 (Phase 4)**: Sealed resource ceilings (`memory.max`, `pids.max`, `cpu.max`), lowering-only `setrlimit` calls, and strictest-wins CLI merging.
+- **Policy UX Modernization (Phase 5)**: `vetto policy explain` with BLAKE3 contract digest and resource breakdown; `vetto policy lint` with 7 preflight diagnostic rules.
+- **3-Tier Platform Parity (#26, #62, #63)**: Formalized scope honesty in `vetto doctor`, documented macOS `dyld` cache boundaries, and Windows deny-path overlap analysis.
+
 ## [0.2.25] - 2026-09-16
 
 ### Enterprise Runtime Hardening (Phase 4)
