@@ -128,7 +128,11 @@ fn test_codex_policy_allows_auth_json_reading() {
         .output()
         .expect("exec vetto dry-run");
 
-    assert!(out.status.success(), "vetto dry-run must succeed: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "vetto dry-run must succeed: {}",
+        stderr(&out)
+    );
     let text = stdout(&out);
     assert!(
         text.contains("profile 'codex'"),
