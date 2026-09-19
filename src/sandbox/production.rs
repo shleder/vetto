@@ -1037,28 +1037,39 @@ impl SpawnedProductionExecution {
         ) {
             let me = unsafe { libc::getpid() } as u32;
             let my_sid = crate::sandbox::linux::proctrack::session_of(0);
-            let children = crate::sandbox::linux::proctrack::scan_children(me, self.pid as i32);
-            children.iter().any(|&pid| {
-                let mut status = 0i32;
-                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-                if let Ok(st) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-                    if let Some(rest) = st
-                        .lines()
-                        .find_map(|l| l.trim_start().strip_prefix("State:"))
-                    {
-                        let s = rest.trim_start();
-                        if s.starts_with('Z') || s.starts_with('X') {
-                            return false;
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let mut escaped = false;
+            loop {
+                let children = crate::sandbox::linux::proctrack::scan_children(me, self.pid as i32);
+                let found = children.iter().any(|&pid| {
+                    if let Ok(st) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+                        if let Some(rest) = st
+                            .lines()
+                            .find_map(|l| l.trim_start().strip_prefix("State:"))
+                        {
+                            let s = rest.trim_start();
+                            if s.starts_with('Z') || s.starts_with('X') {
+                                return false;
+                            }
                         }
+                    } else {
+                        return false;
                     }
-                } else {
-                    return false;
+                    match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
+                        (Some(mine), Some(theirs)) => mine != theirs,
+                        _ => false,
+                    }
+                });
+                if found {
+                    escaped = true;
+                    break;
                 }
-                match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
-                    (Some(mine), Some(theirs)) => mine != theirs,
-                    _ => false,
+                if Instant::now() >= deadline {
+                    break;
                 }
-            })
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            escaped
         } else {
             false
         };

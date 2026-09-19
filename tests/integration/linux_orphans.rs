@@ -110,7 +110,7 @@ fn no_fs_only_orphan_setsid_grandchild() {
             "--",
             "sh",
             "-c",
-            "setsid sleep 9999 >/dev/null 2>&1 & echo go",
+            "setsid sleep 9999 >/dev/null 2>&1 & sleep 0.05; echo go",
         ],
         &[("VETTO_FORCE_TIER", "fs-only")],
     );
@@ -165,7 +165,7 @@ fn fs_only_blind_sweep_fails_closed() {
             "--",
             "sh",
             "-c",
-            "setsid env -i sleep 9998 >/dev/null 2>&1 & echo go",
+            "setsid env -i sleep 9998 >/dev/null 2>&1 & sleep 0.05; echo go",
         ],
         &[("VETTO_FORCE_TIER", "fs-only")],
     );
