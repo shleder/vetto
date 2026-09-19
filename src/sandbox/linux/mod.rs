@@ -67,6 +67,7 @@ pub struct Probe {
     pub seccomp_filter_available: bool,
     pub seccomp_notify_available: bool,
     pub audit_feed_readable: bool,
+    pub cgroup_controllers: Vec<String>,
 }
 
 /// Collect platform capabilities. Forks probe children — single-threaded
@@ -82,6 +83,7 @@ pub fn probe() -> Probe {
         seccomp_filter_available: seccomp_netblock::probe_available(),
         seccomp_notify_available: observe_seccomp::probe_available(),
         audit_feed_readable: audit_reader::open_audit_feed().is_ok(),
+        cgroup_controllers: cgroup::available_controllers(),
     }
 }
 

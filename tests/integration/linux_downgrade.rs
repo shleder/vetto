@@ -15,6 +15,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
         seccomp_filter_available: true,
         seccomp_notify_available: true,
         audit_feed_readable: true,
+        cgroup_controllers: vec!["cpu".into(), "memory".into(), "pids".into()],
     };
     assert_eq!(pick_tier(&probe_full).unwrap(), Tier::Full);
 
@@ -27,6 +28,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
         seccomp_filter_available: true,
         seccomp_notify_available: true,
         audit_feed_readable: true,
+        cgroup_controllers: vec!["cpu".into(), "memory".into(), "pids".into()],
     };
     assert_eq!(pick_tier(&probe_fs_only).unwrap(), Tier::FsOnly);
 
@@ -39,6 +41,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
         seccomp_filter_available: true,
         seccomp_notify_available: false,
         audit_feed_readable: false,
+        cgroup_controllers: vec![],
     };
     assert_eq!(pick_tier(&probe_seccomp).unwrap(), Tier::Seccomp);
 
@@ -51,6 +54,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
         seccomp_filter_available: false,
         seccomp_notify_available: false,
         audit_feed_readable: false,
+        cgroup_controllers: vec![],
     };
     assert!(pick_tier(&probe_none).is_err());
 }

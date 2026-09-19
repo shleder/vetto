@@ -50,6 +50,8 @@ pub mod minifilter;
 pub mod restricted_token;
 pub mod windows_sandbox;
 
+pub use crate::doctor::probe::{analyze_deny_overlap, DenyOverlapReport};
+
 type Handle = *mut c_void;
 type Hmodule = *mut c_void;
 type Dword = u32;
@@ -1193,22 +1195,18 @@ fn build_sandbox_spec(policy: &Policy, net: &NetMode) -> Result<Vec<u8>> {
     // and claim that it is enforced.  A deny path that sits inside a granted
     // root cannot be subtracted from the spec, so that genuinely dangerous
     // configuration must fail closed with an actionable reason.
-    let granted_roots: Vec<&Path> = policy
-        .allow_write
-        .iter()
-        .chain(policy.allow_read.iter())
-        .map(|root| root.as_path())
-        .collect();
-    for denied in &policy.deny_resolved {
-        if let Some(root) = granted_roots
-            .iter()
-            .copied()
-            .find(|root| path_inside_root(&denied.path, root))
-        {
+    let overlaps = analyze_deny_overlap(policy);
+    for overlap in overlaps {
+        if overlap.inside_grant {
+            let root_display = overlap
+                .conflicting_root
+                .as_ref()
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             bail!(
                 "secret path {} sits inside granted root {}; Windows SandboxSpec cannot subtract a subpath — narrow the grant or drop the secret from display_only_deny",
-                denied.path.display(),
-                root.display()
+                overlap.denied_path.display(),
+                root_display
             );
         }
     }

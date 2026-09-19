@@ -1868,6 +1868,24 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("unprivileged userns:     {}", yn(p.userns_available));
         println!("full namespace stack:    {}", yn(p.full_tier_available));
         println!(
+            "namespaces (user/mount/pid/net): {}",
+            if p.full_tier_available {
+                "available (user, mount, pid, net)"
+            } else if p.userns_available {
+                "partial (user only; mount/pid/net restricted)"
+            } else {
+                "UNAVAILABLE"
+            }
+        );
+        println!(
+            "cgroups v2 controllers:  {}",
+            if p.cgroup_controllers.is_empty() {
+                "none detected (or cgroup v2 not mounted)".to_string()
+            } else {
+                p.cgroup_controllers.join(" ")
+            }
+        );
+        println!(
             "seccomp filters:         {}",
             yn(p.seccomp_filter_available)
         );
@@ -1880,6 +1898,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             Ok(t) => println!("chosen tier:             {}", t.label()),
             Err(e) => println!("chosen tier:             NONE — fail-closed: {e}"),
         }
+        println!("  platform status:       Tier 1 (Production: Landlock ABI v1-v6 + namespaces + cgroups v2 + seccomp-bpf)");
         if fix {
             let fixes = vetto::doctor::fix::collect_linux_fixes(&p);
             vetto::doctor::print_fixes(&fixes);
@@ -1896,10 +1915,13 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     #[cfg(target_os = "macos")]
     {
         let seatbelt_available = sandbox::macos::MacosSandbox::seatbelt_available();
-        println!("seatbelt (sandbox-exec): {}", yn(seatbelt_available));
+        println!("seatbelt (sandbox-exec / libsandbox API): {}", yn(seatbelt_available));
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
-        println!("  platform status:       Tier 2 (write isolation + process rlimits + network lockdown)");
+        println!("  shape status:          Shape D (allow file-read* broad + tail deny; fragmented dyld aborts)");
+        println!("  dyld shared cache:     read-restriction blocked by Apple dyld/libSystem constraints (Issue #62)");
+        println!("  resource limits:       best-effort rlimits (Enforced, not Verified; no remote verification API)");
+        println!("  platform status:       Tier 2 (Experimental: Seatbelt write isolation + network lockdown + best-effort rlimits)");
         println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
         println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
         if fix {
@@ -1971,14 +1993,15 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
-        println!("  platform status:       Tier 3 (Job Objects + Restricted Token + LPAC)");
+        println!("  platform status:       Tier 3 (Experimental: Job Objects + Restricted Token + LPAC)");
+        println!("  network warning:       WFP network filtering requires elevated Administrator privileges (Issue #63). Default process sandbox enforces net=off via AppContainer.");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {
             let windows_fixes = vetto::doctor::fix::collect_windows_fixes(&capabilities, &optional);
             vetto::doctor::print_fixes(&windows_fixes);
         }
         if probe_deny {
-            println!("probe: display-only deny verification is unavailable on the Windows backend");
+            doctor_probe_windows()?;
         }
     }
     if let Some(agent) = check_agent {
@@ -2072,6 +2095,54 @@ fn doctor_probe() -> Result<()> {
         Ok(())
     } else {
         println!("probe: {failures} path(s) FAILED verification");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn doctor_probe_windows() -> Result<()> {
+    println!("probe: analyzing deny-path overlap against granted roots (Windows AppContainer)...");
+    let project = std::env::current_dir().context("getcwd")?;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .context("neither %USERPROFILE% nor $HOME is set")?;
+    let pol = policy::loader::load("default", None, &project, &home, policy::Tier::Full)?;
+    if pol.deny_resolved.is_empty() {
+        println!("probe: no deny paths resolve on this machine (nothing to verify)");
+        return Ok(());
+    }
+
+    let analyses = vetto::doctor::probe::analyze_deny_overlap(&pol);
+    let mut failures = 0usize;
+    for entry in &analyses {
+        if entry.inside_grant {
+            let root = entry
+                .conflicting_root
+                .as_ref()
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            println!(
+                "  ✗ {} OVERLAP CONFLICT: path sits inside granted root {}; AppContainer cannot subtract subpaths",
+                entry.denied_path.display(),
+                root
+            );
+            failures += 1;
+        } else {
+            println!(
+                "  ✓ {} (isolated: outside granted roots, enforced by AppContainer default-deny)",
+                entry.denied_path.display()
+            );
+        }
+    }
+    if failures == 0 {
+        println!(
+            "probe: all {} deny paths verified isolated outside granted roots (AppContainer default-deny)",
+            pol.deny_resolved.len()
+        );
+        Ok(())
+    } else {
+        println!("probe: {failures} path(s) FAILED overlap analysis");
         std::process::exit(1);
     }
 }

@@ -58,14 +58,14 @@ jobs:
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Report total coverage percentage and enforce the floor
-        # Baseline measured 2026-08-30: 39.7% (13,514/34,032 lines). The
-        # floor sits below it to absorb runner variance; raise it
-        # deliberately, never lower it silently.
+        # Baseline measured 2026-09-19: 41.6% (37,160/89,223 lines). The
+        # floor is pinned at 39.0% (within the 38-40% quality gate) to prevent
+        # silent test suite degradation while absorbing runner variance.
         run: |
           python3 - <<'PY'
           import sys
 
-          FLOOR = 38.0
+          FLOOR = 39.0
           hits = misses = 0
           with open("lcov.info", encoding="utf-8") as fh:
               for line in fh:
