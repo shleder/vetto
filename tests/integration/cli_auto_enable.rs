@@ -104,3 +104,75 @@ fn test_direct_agent_invocation_auto_enables_shim() {
         stdout(&out2)
     );
 }
+
+#[test]
+fn test_codex_policy_allows_auth_json_reading() {
+    let project = TempProject::new("codex-auth");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    let codex_dir = home_dir.join(".codex");
+    std::fs::create_dir_all(&codex_dir).expect("create .codex dir");
+
+    let auth_json = codex_dir.join("auth.json");
+    write_file(
+        &auth_json,
+        "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"mock-token-xyz\"}}\n",
+    );
+
+    let out = Command::new(vetto_bin())
+        .args(["--dry-run", "--agent", "codex", "--", "/bin/true"])
+        .current_dir(proj_dir)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto dry-run");
+
+    assert!(
+        out.status.success(),
+        "vetto dry-run must succeed: {}",
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("profile 'codex'"),
+        "must resolve codex profile: {}",
+        text
+    );
+    assert!(
+        !text.contains("auth.json"),
+        "auth.json must NOT be in deny paths: {}",
+        text
+    );
+
+    #[cfg(unix)]
+    if have_landlock() {
+        let read_out = Command::new(vetto_bin())
+            .args([
+                "--tui=none",
+                "--net=off",
+                "--agent",
+                "codex",
+                "--",
+                "cat",
+                auth_json.to_str().unwrap(),
+            ])
+            .current_dir(proj_dir)
+            .env("HOME", &home_dir)
+            .env("USERPROFILE", &home_dir)
+            .output()
+            .expect("exec cat auth.json under vetto");
+
+        assert!(
+            read_out.status.success(),
+            "cat auth.json must succeed under vetto sandbox: stdout: {} stderr: {}",
+            stdout(&read_out),
+            stderr(&read_out)
+        );
+        assert!(
+            stdout(&read_out).contains("mock-token-xyz"),
+            "auth.json contents must be readable inside vetto sandbox: {}",
+            stdout(&read_out)
+        );
+    }
+}

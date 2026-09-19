@@ -15,7 +15,6 @@ pass_through = [
 
 [display_only_deny]
 paths = [
-    "$AGENT/auth.json",
     "$AGENT/app_server.sock",
     "$AGENT/*.sock",
 ]

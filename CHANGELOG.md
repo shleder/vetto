@@ -3,6 +3,10 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.2] - 2026-09-19
+### Fixed
+- **fix(policy): allow codex to read ~/.codex/auth.json for native ChatGPT OAuth authentication**: Unmasked `~/.codex/auth.json` by removing `$AGENT/auth.json` from `[display_only_deny]` in `profiles/agents/codex.toml`, allowing Codex CLI inside Vetto to read native session OAuth tokens without triggering Landlock permission denials or HTTP 401 Unauthorized errors.
+
 ## [0.3.1] - 2026-09-19
 ### Fixed
 - **PTY Setsid Orphan Nonce Isolation**: Isolated `setsid_orphan_escaped` detection by session nonce in `src/sandbox/production.rs`, verifying `/proc/<pid>/environ` contains `VETTO_RUN_NONCE=<nonce>` to eliminate flakiness and false-positive Exit 125 verdicts from concurrent processes in `test_prod_pty_stage3b_001`.
