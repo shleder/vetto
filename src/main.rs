@@ -480,9 +480,45 @@ fn run() -> Result<()> {
             }
         }
         Some(cli::Command::External(ext_args)) => {
-            if let Some(prof_name) = ext_args.first() {
+            if let Some(first) = ext_args.first() {
+                if let Some(canon) =
+                    vetto::policy::defaults::canonical_agent_name(first).filter(|&c| c != "custom")
+                {
+                    let shims_dir =
+                        vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)?;
+                    let shim_path = shims_dir.join(canon);
+                    let is_wrapped =
+                        shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
+                    if !is_wrapped {
+                        vetto::cli::enable::enable_agent(
+                            canon,
+                            false,
+                            vetto::cli::hook::HookScope::Global,
+                        )?;
+                    }
+
+                    let mut cfg = RunConfig::from_cli(&args)?;
+                    let mut full_cmd = ext_args.clone();
+                    let real_bin = vetto::shim::find_real_binary(first)
+                        .or_else(|_| vetto::shim::find_real_binary(canon));
+                    if let Ok(bin) = real_bin {
+                        full_cmd[0] = bin.display().to_string();
+                    }
+                    cfg.agent = full_cmd;
+                    if cfg.agent_preset.is_none() {
+                        cfg.agent_preset = Some(canon.to_string());
+                    }
+                    if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
+                        let domains = policy::presets::agent_network_allowlist(canon);
+                        if !domains.is_empty() {
+                            cfg.net = NetMode::Allowlist(domains);
+                        }
+                    }
+                    return supervise(cfg);
+                }
+
                 let storage = profile::ProfileStorage::new()?;
-                let prof = storage.load(prof_name)?;
+                let prof = storage.load(first)?;
                 let mut cfg = RunConfig::from_cli(&args)?;
                 cfg.agent = prof.agent;
                 cfg.net = vetto::config::parse_net_mode(&prof.net)?;

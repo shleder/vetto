@@ -64,6 +64,7 @@ use crate::verify_ng::sandbox_backend::{
 pub const PROD_SCENARIO_ID: &str = "PROD";
 /// Nonce env label: run label for the nonce-targeted sweep, not a secret.
 pub const PROD_NONCE_ENV: &str = "VETTO_PROD_NONCE";
+pub const RUN_NONCE_ENV: &str = "VETTO_RUN_NONCE";
 /// Registry binding for production runs (not a scenario-registry hash).
 pub const PROD_REGISTRY: &str = "production";
 /// Stdio drain budget after termination (200ms deadline per Phase 1 spec).
@@ -581,6 +582,7 @@ impl UnpreparedProductionExecution {
         let nonce = engine::new_nonce();
         let mut env_extra = self.env_extra;
         env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
+        env_extra.insert(RUN_NONCE_ENV.to_string(), nonce.clone());
         let env = build_production_env(&self.policy, &env_extra);
 
         let mut fsm = ExecutionStateMachine::new();
@@ -1038,6 +1040,8 @@ impl SpawnedProductionExecution {
         {
             let me = unsafe { libc::getpid() } as u32;
             let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let needle_run = format!("VETTO_RUN_NONCE={}", self.nonce);
+            let needle_prod = format!("VETTO_PROD_NONCE={}", self.nonce);
             let deadline = Instant::now() + Duration::from_millis(250);
             let mut escaped = false;
             loop {
@@ -1056,9 +1060,23 @@ impl SpawnedProductionExecution {
                     } else {
                         return false;
                     }
-                    match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
+                    if match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
                         (Some(mine), Some(theirs)) => mine != theirs,
                         _ => false,
+                    } {
+                        if let Ok(env) = std::fs::read(format!("/proc/{pid}/environ")) {
+                            crate::verify_ng::linux_enforce::contains_slice(
+                                &env,
+                                needle_run.as_bytes(),
+                            ) || crate::verify_ng::linux_enforce::contains_slice(
+                                &env,
+                                needle_prod.as_bytes(),
+                            )
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
                 });
                 if found {
