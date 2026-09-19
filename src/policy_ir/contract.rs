@@ -11,6 +11,8 @@ use std::path::PathBuf;
 /// Unsealed contract payload used for deterministic canonical hashing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UnsealedSecurityContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production: Option<ProductionContract>,
     pub contract_version: u32,
     pub contract_id: String,
     pub session_nonce: String,
@@ -20,12 +22,18 @@ pub struct UnsealedSecurityContract {
     pub resources: ResourceContract,
     pub environment: EnvironmentContract,
     pub attestation: AttestationContract,
+    #[serde(default)]
+    pub crypto: CryptoContract,
 }
 
 impl UnsealedSecurityContract {
     /// Compute deterministic cryptographic digest (BLAKE3) of canonical serialization.
     pub fn compute_digest(&self) -> Result<String, serde_json::Error> {
-        let value = serde_json::to_value(self)?;
+        let mut payload = self.clone();
+        // Signing requirements and key identity are authority; the detached
+        // signature cannot be included in the message it signs.
+        payload.crypto.signature = None;
+        let value = serde_json::to_value(payload)?;
         let json_bytes = serde_json::to_vec(&value)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(&json_bytes);
@@ -36,6 +44,7 @@ impl UnsealedSecurityContract {
     pub fn seal(self) -> Result<SecurityContract, serde_json::Error> {
         let digest = self.compute_digest()?;
         Ok(SecurityContract {
+            production: self.production,
             contract_version: self.contract_version,
             contract_id: self.contract_id,
             session_nonce: self.session_nonce,
@@ -45,7 +54,7 @@ impl UnsealedSecurityContract {
             resources: self.resources,
             environment: self.environment,
             attestation: self.attestation,
-            crypto: CryptoContract::default(),
+            crypto: self.crypto,
             contract_digest_blake3: digest,
         })
     }
@@ -54,6 +63,8 @@ impl UnsealedSecurityContract {
 /// Authoritative Sealed Security Contract.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecurityContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production: Option<ProductionContract>,
     pub contract_version: u32,
     pub contract_id: String,
     pub session_nonce: String,
@@ -75,6 +86,7 @@ impl SecurityContract {
     /// Extract unsealed payload.
     pub fn unsealed(&self) -> UnsealedSecurityContract {
         UnsealedSecurityContract {
+            production: self.production.clone(),
             contract_version: self.contract_version,
             contract_id: self.contract_id.clone(),
             session_nonce: self.session_nonce.clone(),
@@ -84,6 +96,7 @@ impl SecurityContract {
             resources: self.resources.clone(),
             environment: self.environment.clone(),
             attestation: self.attestation.clone(),
+            crypto: self.crypto.clone(),
         }
     }
 
@@ -98,6 +111,10 @@ impl SecurityContract {
     /// Sets the crypto contract configuration.
     pub fn with_crypto(mut self, crypto: CryptoContract) -> Self {
         self.crypto = crypto;
+        self.contract_digest_blake3 = self
+            .unsealed()
+            .compute_digest()
+            .expect("contract contains only JSON-serializable values");
         self
     }
 
@@ -111,8 +128,26 @@ impl SecurityContract {
         self.crypto.minisign_enabled = enabled;
         self.crypto.signature = signature;
         self.crypto.public_key = public_key;
+        self.contract_digest_blake3 = self
+            .unsealed()
+            .compute_digest()
+            .expect("contract contains only JSON-serializable values");
         self
     }
+}
+
+/// Lossless installation values for the existing OS mechanics. This is part
+/// of the sealed payload, never an independently retained caller policy.
+/// Optional limits and ordered rules keep their existing interpretation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductionContract {
+    pub installation_policy: crate::policy::Policy,
+    pub net: crate::config::NetMode,
+    pub timeout: Option<std::time::Duration>,
+    pub tier: Option<crate::policy::Tier>,
+    pub backend: String,
+    pub observe_seccomp: bool,
+    pub debug_ports: Option<crate::multi::DebugPortConfig>,
 }
 
 /// Cryptographic signing configuration and state for the security contract (Phase 4 / INV-36).
@@ -169,6 +204,8 @@ pub struct FilesystemContract {
 pub enum NetworkMode {
     Off,
     Allowlist,
+    Strict,
+    Ask,
     Direct,
 }
 
@@ -213,6 +250,8 @@ mod contract_tests {
 
     fn sample_unsealed() -> UnsealedSecurityContract {
         UnsealedSecurityContract {
+            production: None,
+            crypto: CryptoContract::default(),
             contract_version: 1,
             contract_id: "test-contract-001".to_string(),
             session_nonce: "nonce-12345".to_string(),
@@ -281,10 +320,136 @@ mod contract_tests {
     }
 
     #[test]
+    fn anti_tamper_resource_fields_invalidate_digest() {
+        let unsealed = sample_unsealed();
+        let sealed = unsealed.seal().expect("seal contract");
+        assert!(sealed.verify_digest());
+
+        // Mutating any resource field post-seal MUST break the BLAKE3 digest
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_cpu_percent += 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_cpu_percent not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_memory_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_memory_bytes not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_pids += 1;
+            assert!(!tampered.verify_digest(), "tampered max_pids not detected");
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_wall_time_ms += 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_wall_time_ms not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_stdout_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_stdout_bytes not detected"
+            );
+        }
+        {
+            let mut tampered = sealed.clone();
+            tampered.resources.max_file_size_bytes ^= 1;
+            assert!(
+                !tampered.verify_digest(),
+                "tampered max_file_size_bytes not detected"
+            );
+        }
+    }
+
+    #[test]
+    fn anti_tamper_production_installation_policy_resources() {
+        let mut unsealed = sample_unsealed();
+        unsealed.production = Some(ProductionContract {
+            installation_policy: crate::policy::Policy::default(),
+            net: crate::config::NetMode::Off,
+            timeout: None,
+            tier: None,
+            backend: "test-backend".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        });
+        let sealed = unsealed.seal().expect("seal contract with production");
+        assert!(sealed.verify_digest());
+
+        // Tamper with installation_policy limits
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.limits.processes = Some(999);
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.limits not detected"
+        );
+
+        // Tamper with installation_policy cgroup
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.cgroup = Some(crate::policy::types::CgroupConfig {
+                memory_max: Some("1G".into()),
+                ..Default::default()
+            });
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cgroup not detected"
+        );
+
+        // Tamper with installation_policy cpu_max
+        let mut tampered = sealed.clone();
+        if let Some(prod) = &mut tampered.production {
+            prod.installation_policy.cpu_max = Some("25%".into());
+        }
+        assert!(
+            !tampered.verify_digest(),
+            "tampered installation_policy.cpu_max not detected"
+        );
+    }
+
+    #[test]
     fn deterministic_digest() {
         let u1 = sample_unsealed();
         let u2 = sample_unsealed();
         assert_eq!(u1.compute_digest().unwrap(), u2.compute_digest().unwrap());
+    }
+
+    #[test]
+    fn signing_requirements_are_sealed_but_signature_is_detached() {
+        let sealed =
+            sample_unsealed()
+                .seal()
+                .unwrap()
+                .with_minisign(true, None, Some("trusted-key".into()));
+        assert!(sealed.verify_digest());
+        let mut detached = sealed.clone();
+        detached.crypto.signature = Some("detached-signature".into());
+        assert!(detached.verify_digest());
+
+        let mut disabled = sealed.clone();
+        disabled.crypto.minisign_enabled = false;
+        assert!(!disabled.verify_digest());
+        let mut changed_key = sealed.clone();
+        changed_key.crypto.public_key = Some("different-key".into());
+        assert!(!changed_key.verify_digest());
+        let mut changed_cosign = sealed;
+        changed_cosign.crypto.cosign_enabled = true;
+        assert!(!changed_cosign.verify_digest());
     }
 
     #[test]

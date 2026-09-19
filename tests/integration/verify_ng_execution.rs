@@ -61,6 +61,8 @@ fn request<'a>(
         // PASS is unreachable here (INCONCLUSIVE/FAIL). Stage 2 tests opt
         // in explicitly via `request_with_control`.
         enable_host_control: false,
+        contract: None,
+        host_env_override: None,
     }
 }
 

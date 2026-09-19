@@ -1,0 +1,27 @@
+Working in /home/shleder/prod/vetto (branch feat/phase1-contract-authority). With recon results from A1/A2/A3 and master-task section 7 (verbatim, below), implement network battery against existing relay/broker/security contract semantics; no separate network security model. net=off: TCP, UDP, IPv4, IPv6, DNS, relevant alternate socket families. allowlist/strict where backend supports: allowed succeeds, denied fails, DNS rebinding, direct socket bypass, alternate address family, hostname-to-IP mismatch, relay bypass attempts. Unsupported capability on any platform: fail closed / explicit unsupported, never verifier-assumed success. Independent runtime evidence only. Write code + tests; no local builds/tests; no commit/push. Report changed files with rationale and NOT PROVEN items.
+
+--- MASTER TASK SECTION 7 ---
+## 7. NETWORK BOUNDARY
+net=off: TCP; UDP; IPv4; IPv6; DNS; raw/alternate socket families (если relevant). allowlist/strict (если backend поддерживает): allowed succeeds; denied fails; DNS rebinding; direct socket bypass; alternate address family; hostname → resolved IP mismatch; relay bypass. Не создавать отдельный network security model — существующий relay/broker/security contract. Неподдерживаемая платформой capability → fail closed / explicit unsupported, не "verifier assumes it worked".
+
+--- RECON SUMMARY & CONTEXT ---
+- Existing checks:
+  * NET-DNS-IPV6-001 (src/verify_ng/registry.rs:211, Net blocker)
+  * net-loopback in src/verify.rs:361
+  * raw_socket_packet (src/redteam.rs:249)
+  * test_linux_net_deny_001, test_linux_net_escape_001, test_linux_net_allow_001 in tests/integration/verify_ng_linux_enforce.rs
+  * adv_broker_domain_allowlist_fail_closed in tests/integration/adv_isolation.rs
+  * Note NET-EXFIL-001 exists in tests/verify_ng/scenarios/NET-EXFIL-001.toml
+- Linux network isolation:
+  * net=off installs seccomp UnixOnly filter (blocks AF_INET, AF_INET6, AF_PACKET, etc.) and unshares network namespace (CLONE_NEWNET) in Tier::Full.
+  * In Tier::FsOnly or platforms where network namespace is unsupported, ensure fail-closed / explicit unsupported, not fake PASS.
+- Consume the SAME sealed SecurityContract (contract.network settings: NetworkMode, allowed_domains, allowed_ports).
+- Independent runtime evidence only (HOST_FACT / kernel denial / socket connect failure errno).
+
+UNIVERSAL CONSTRAINTS:
+- Repo access: /home/shleder/prod/vetto only. Branch feat/phase1-contract-authority.
+- No local cargo build/test/check/run; GitHub CI is the only execution proof.
+- No sandbox escape payload development or bypass techniques; defensive verification batteries only.
+- No new architecture, no second policy engine, no Phase 3/4 scope, no version bump, no release actions.
+- No commit, no push, no secrets access, no external network calls beyond your model service.
+- Separate confirmed facts (file:line) from assumptions in every report.

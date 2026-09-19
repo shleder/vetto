@@ -6,7 +6,7 @@ pub mod wrap;
 pub use wrap::run_wrap;
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::Command;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,12 @@ fn handle_tools_list() -> Result<Value> {
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "Shell command line or program to execute inside the sandbox"
+                            "description": "Program to execute inside the sandbox (or command line string)"
+                        },
+                        "args": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional list of command line arguments passed directly without a shell"
                         },
                         "policy": {
                             "type": "string",
@@ -179,7 +184,7 @@ fn handle_tools_list() -> Result<Value> {
     }))
 }
 
-fn handle_tools_call(params: Option<&Value>) -> Result<Value> {
+pub fn handle_tools_call(params: Option<&Value>) -> Result<Value> {
     let params = params.ok_or_else(|| anyhow::anyhow!("missing params for tools/call"))?;
     let name = params
         .get("name")
@@ -196,10 +201,16 @@ fn handle_tools_call(params: Option<&Value>) -> Result<Value> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing 'command' argument for run_sandboxed"))?;
 
+    let extra_args = args.get("args").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect::<Vec<String>>()
+    });
     let policy_opt = args.get("policy").and_then(|v| v.as_str());
     let timeout_opt = args.get("timeout").and_then(|v| v.as_str());
 
-    let exec_res = execute_sandboxed_command(command_str, policy_opt, timeout_opt)?;
+    let exec_res =
+        execute_sandboxed_command(command_str, extra_args.as_deref(), policy_opt, timeout_opt)?;
 
     let is_error = exec_res.exit_code != 0;
     let output_json = serde_json::to_string_pretty(&exec_res)?;
@@ -223,46 +234,163 @@ pub struct SandboxedOutput {
     pub blocked_count: u64,
 }
 
-fn execute_sandboxed_command(
+/// Parses a command line string into separate arguments without invoking a shell.
+pub fn parse_command_tokens(command_str: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = command_str.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            '\\' if !in_single => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    tokens.push(current);
+                    current = String::new();
+                }
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+fn pipe2() -> Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: valid out-array for the libc pipe call.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        bail!("pipe: {}", std::io::Error::last_os_error());
+    }
+    for fd in fds {
+        // SAFETY: fd came from the successful pipe call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            bail!("fcntl(F_GETFD): {error}");
+        }
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            bail!("fcntl(F_SETFD): {error}");
+        }
+    }
+    use std::os::fd::FromRawFd;
+    // SAFETY: fresh descriptors from successful pipe and CLOEXEC setup.
+    Ok((
+        unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[0]) },
+        unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[1]) },
+    ))
+}
+
+pub fn execute_sandboxed_command(
     command_str: &str,
+    extra_args: Option<&[String]>,
     policy: Option<&str>,
     timeout: Option<&str>,
 ) -> Result<SandboxedOutput> {
-    let current_exe = std::env::current_exe().unwrap_or_else(|_| "vetto".into());
+    let mut argv = if let Some(extra) = extra_args {
+        let mut list = vec![command_str.to_string()];
+        list.extend(extra.iter().cloned());
+        list
+    } else {
+        parse_command_tokens(command_str)
+    };
 
-    let mut cmd = Command::new(current_exe);
-    cmd.arg("--ci");
-    cmd.arg("--tui=none");
+    if argv.is_empty() {
+        bail!("no command specified to run_sandboxed");
+    }
 
-    if let Some(p) = policy {
-        if p.ends_with(".toml") || p.contains('/') || p.contains('\\') {
-            cmd.arg("--policy").arg(p);
-        } else {
-            cmd.arg("--profile").arg(p);
+    let resolved_bin = wrap::resolve_in_path(&argv[0])?;
+    argv[0] = resolved_bin.to_string_lossy().to_string();
+
+    let net_mode = crate::config::NetMode::Off;
+    let backend = crate::sandbox::Backend::detect(net_mode.clone(), false)?;
+    let backend_tier = backend.tier();
+    let tier_for_policy = backend_tier.unwrap_or(crate::policy::Tier::Full);
+    let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project.clone());
+
+    let (profile, policy_path) = match policy {
+        Some(p) if p.ends_with(".toml") || p.contains('/') || p.contains('\\') => {
+            ("default", Some(Path::new(p)))
+        }
+        Some(p) => (p, None),
+        None => ("default", None),
+    };
+
+    let mut pol =
+        crate::policy::loader::load(profile, policy_path, &project, &home, tier_for_policy)?;
+
+    if let Some(parent) = resolved_bin.parent() {
+        let parent_buf = parent.to_path_buf();
+        if !pol.in_read_scope(&resolved_bin) && !pol.allow_read.contains(&parent_buf) {
+            pol.allow_read.push(parent_buf);
         }
     }
 
-    if let Some(t) = timeout {
-        cmd.arg("--timeout").arg(t);
-    }
+    let parsed_timeout = timeout
+        .map(crate::config::parse_session_timeout)
+        .transpose()?
+        .unwrap_or(std::time::Duration::from_secs(30));
 
-    cmd.arg("--");
-    #[cfg(unix)]
+    let mut spawn_log = crate::sandbox::production::ProdSpawnLog::new();
+    let prod_res = crate::sandbox::production::execute_simple(
+        &pol,
+        argv,
+        project,
+        std::collections::HashMap::new(),
+        net_mode,
+        backend_tier,
+        parsed_timeout,
+        &mut spawn_log,
+    )?;
+
+    let stdout = String::from_utf8_lossy(&prod_res.stdout).to_string();
+    let mut stderr = String::from_utf8_lossy(&prod_res.stderr).to_string();
+    let exit_code = prod_res.exit_code.unwrap_or(-1);
+    if let Some(ref diag) = prod_res.diagnostic {
+        if exit_code != 0 && !diag.is_empty() {
+            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                stderr.push('\n');
+            }
+            stderr.push_str("Diagnostic: ");
+            stderr.push_str(diag);
+        }
+    }
+    let blocked_count = if stderr.contains("BLOCKED")
+        || stderr.contains("denied")
+        || exit_code == 124
+        || exit_code == 125
     {
-        cmd.arg("sh").arg("-c").arg(command_str);
-    }
-    #[cfg(windows)]
-    {
-        cmd.arg("cmd.exe").arg("/C").arg(command_str);
-    }
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-1);
-
-    // Blocked count: best effort extraction from stderr or exit code
-    let blocked_count = if stderr.contains("BLOCKED") || stderr.contains("denied") {
         1
     } else {
         0
@@ -341,5 +469,25 @@ mod tests {
         });
         let resp = handle_message_str(&req.to_string()).expect("response expected");
         assert!(resp["error"].is_object());
+    }
+
+    #[test]
+    fn test_parse_command_tokens() {
+        assert_eq!(
+            parse_command_tokens("echo hello world"),
+            vec!["echo", "hello", "world"]
+        );
+        assert_eq!(
+            parse_command_tokens("echo 'hello world'"),
+            vec!["echo", "hello world"]
+        );
+        assert_eq!(
+            parse_command_tokens("echo \"double quoted\""),
+            vec!["echo", "double quoted"]
+        );
+        assert_eq!(
+            parse_command_tokens("  spaced   arguments   "),
+            vec!["spaced", "arguments"]
+        );
     }
 }

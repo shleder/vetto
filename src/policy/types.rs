@@ -62,6 +62,186 @@ pub struct CgroupConfig {
     pub cpu_max: Option<String>,
 }
 
+impl CgroupConfig {
+    /// Merge another cgroup configuration strictest-wins into `self`.
+    /// Concrete ceilings win over "max" and None; smaller numbers win over larger ones.
+    pub fn merge_strictest(&mut self, other: &Self) {
+        self.memory_max = strictest_memory_str(&self.memory_max, &other.memory_max);
+        self.pids_max = strictest_pids_str(&self.pids_max, &other.pids_max);
+        self.swap_max = strictest_memory_str(&self.swap_max, &other.swap_max);
+        self.cpu_max = strictest_cpu_max(&self.cpu_max, &other.cpu_max);
+    }
+}
+
+/// Parse human-readable or raw byte amount into bytes.
+/// Returns None if string is empty, "max", or unparseable.
+pub fn parse_bytes_value(input: &str) -> Option<u64> {
+    let s = input.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("max") {
+        return None;
+    }
+    let (num_part, unit_part) = match s.find(|c: char| !c.is_ascii_digit() && c != '.') {
+        Some(idx) => (&s[..idx], s[idx..].trim().to_uppercase()),
+        None => (s, String::new()),
+    };
+    let num: f64 = num_part.parse().ok()?;
+    let multiplier: f64 = match unit_part.as_str() {
+        "" | "B" => 1.0,
+        "K" | "KB" | "KIB" => 1024.0,
+        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
+        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some((num * multiplier) as u64)
+}
+
+/// Parse CPU limit string into an effective core ratio (e.g. 0.5 for 50%, 1.0 for 100%, 2.0 for 200%).
+/// Returns None if "max", empty, or unparseable.
+pub fn parse_cpu_ratio(input: &str) -> Option<f64> {
+    let s = input.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("max") || s.starts_with("max ") {
+        return None;
+    }
+    if let Some(pct_str) = s.strip_suffix('%') {
+        let pct: f64 = pct_str.trim().parse().ok()?;
+        return Some(pct / 100.0);
+    }
+    if s.contains(' ') {
+        let mut parts = s.split_whitespace();
+        let quota_s = parts.next()?;
+        let period_s = parts.next()?;
+        if quota_s.eq_ignore_ascii_case("max") {
+            return None;
+        }
+        let quota: f64 = quota_s.parse().ok()?;
+        let period: f64 = period_s.parse().ok()?;
+        if period > 0.0 {
+            return Some(quota / period);
+        }
+        return None;
+    }
+    if let Ok(num) = s.parse::<f64>() {
+        if num > 1000.0 {
+            return Some(num / 100_000.0);
+        } else {
+            return Some(num / 100.0);
+        }
+    }
+    None
+}
+
+/// Strictest merge for memory / swap string options.
+pub fn strictest_memory_str(left: &Option<String>, right: &Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(l), Some(r)) => {
+            let l_trimmed = l.trim();
+            let r_trimmed = r.trim();
+            let l_bytes = parse_bytes_value(l_trimmed);
+            let r_bytes = parse_bytes_value(r_trimmed);
+            match (l_bytes, r_bytes) {
+                (Some(lb), Some(rb)) => {
+                    if lb <= rb {
+                        Some(l.clone())
+                    } else {
+                        Some(r.clone())
+                    }
+                }
+                (Some(_), None) => Some(l.clone()),
+                (None, Some(_)) => Some(r.clone()),
+                (None, None) => {
+                    if l_trimmed.eq_ignore_ascii_case("max")
+                        || r_trimmed.eq_ignore_ascii_case("max")
+                    {
+                        Some("max".to_string())
+                    } else {
+                        Some(l.clone())
+                    }
+                }
+            }
+        }
+        (Some(l), None) => Some(l.clone()),
+        (None, Some(r)) => Some(r.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Strictest merge for pids string options.
+pub fn strictest_pids_str(left: &Option<String>, right: &Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(l), Some(r)) => {
+            let l_trimmed = l.trim();
+            let r_trimmed = r.trim();
+            let l_pids = if l_trimmed.eq_ignore_ascii_case("max") {
+                None
+            } else {
+                l_trimmed.parse::<u64>().ok()
+            };
+            let r_pids = if r_trimmed.eq_ignore_ascii_case("max") {
+                None
+            } else {
+                r_trimmed.parse::<u64>().ok()
+            };
+            match (l_pids, r_pids) {
+                (Some(lp), Some(rp)) => {
+                    if lp <= rp {
+                        Some(l.clone())
+                    } else {
+                        Some(r.clone())
+                    }
+                }
+                (Some(_), None) => Some(l.clone()),
+                (None, Some(_)) => Some(r.clone()),
+                (None, None) => {
+                    if l_trimmed.eq_ignore_ascii_case("max")
+                        || r_trimmed.eq_ignore_ascii_case("max")
+                    {
+                        Some("max".to_string())
+                    } else {
+                        Some(l.clone())
+                    }
+                }
+            }
+        }
+        (Some(l), None) => Some(l.clone()),
+        (None, Some(r)) => Some(r.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Strictest merge for cpu_max string options.
+pub fn strictest_cpu_max(left: &Option<String>, right: &Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(l), Some(r)) => {
+            let l_trimmed = l.trim();
+            let r_trimmed = r.trim();
+            let l_ratio = parse_cpu_ratio(l_trimmed);
+            let r_ratio = parse_cpu_ratio(r_trimmed);
+            match (l_ratio, r_ratio) {
+                (Some(lr), Some(rr)) => {
+                    if lr <= rr {
+                        Some(l.clone())
+                    } else {
+                        Some(r.clone())
+                    }
+                }
+                (Some(_), None) => Some(l.clone()),
+                (None, Some(_)) => Some(r.clone()),
+                (None, None) => {
+                    if l_trimmed.starts_with("max") || r_trimmed.starts_with("max") {
+                        Some("max 100000".to_string())
+                    } else {
+                        Some(l.clone())
+                    }
+                }
+            }
+        }
+        (Some(l), None) => Some(l.clone()),
+        (None, Some(r)) => Some(r.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Optional seccomp user-notify supervisor configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeccompNotifyConfig {
@@ -125,7 +305,7 @@ impl PolicySourceKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DenyEntry {
     pub path: PathBuf,
     pub is_dir: bool,
@@ -242,7 +422,7 @@ pub struct SubtractiveRules {
     pub deny_network: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
     pub name: String,
     /// Metadata from the effective policy layers.
@@ -466,5 +646,124 @@ mod environment_tests {
         ] {
             assert!(!policy.allows(OsStr::new(secret)), "leaked {secret}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cgroup_tests {
+    use super::*;
+
+    #[test]
+    fn test_cgroup_merge_memory_strictest() {
+        let mut cfg = CgroupConfig {
+            memory_max: Some("1G".into()),
+            pids_max: None,
+            swap_max: None,
+            cpu_max: None,
+        };
+        let other = CgroupConfig {
+            memory_max: Some("512M".into()),
+            pids_max: None,
+            swap_max: None,
+            cpu_max: None,
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.memory_max.as_deref(), Some("512M"));
+
+        // Concrete wins over "max"
+        let mut cfg = CgroupConfig {
+            memory_max: Some("max".into()),
+            ..Default::default()
+        };
+        let other = CgroupConfig {
+            memory_max: Some("256M".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.memory_max.as_deref(), Some("256M"));
+
+        // Weaker "max" cannot loosen concrete limit
+        let mut cfg = CgroupConfig {
+            memory_max: Some("256M".into()),
+            ..Default::default()
+        };
+        let other = CgroupConfig {
+            memory_max: Some("max".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.memory_max.as_deref(), Some("256M"));
+
+        // None loses to concrete
+        let mut cfg = CgroupConfig::default();
+        let other = CgroupConfig {
+            memory_max: Some("512M".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.memory_max.as_deref(), Some("512M"));
+    }
+
+    #[test]
+    fn test_cgroup_merge_pids_strictest() {
+        let mut cfg = CgroupConfig {
+            pids_max: Some("100".into()),
+            ..Default::default()
+        };
+        let other = CgroupConfig {
+            pids_max: Some("50".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.pids_max.as_deref(), Some("50"));
+
+        // Concrete number wins over "max"
+        let other_max = CgroupConfig {
+            pids_max: Some("max".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other_max);
+        assert_eq!(cfg.pids_max.as_deref(), Some("50"));
+
+        let mut cfg_max = CgroupConfig {
+            pids_max: Some("max".into()),
+            ..Default::default()
+        };
+        cfg_max.merge_strictest(&cfg);
+        assert_eq!(cfg_max.pids_max.as_deref(), Some("50"));
+    }
+
+    #[test]
+    fn test_cgroup_merge_cpu_max_strictest() {
+        let mut cfg = CgroupConfig {
+            cpu_max: Some("100%".into()),
+            ..Default::default()
+        };
+        let other = CgroupConfig {
+            cpu_max: Some("50%".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.cpu_max.as_deref(), Some("50%"));
+
+        // 50000 100000 (50%) vs 80% -> 50% wins
+        let mut cfg = CgroupConfig {
+            cpu_max: Some("80%".into()),
+            ..Default::default()
+        };
+        let other = CgroupConfig {
+            cpu_max: Some("50000 100000".into()),
+            ..Default::default()
+        };
+        cfg.merge_strictest(&other);
+        assert_eq!(cfg.cpu_max.as_deref(), Some("50000 100000"));
+
+        // "max" loses to concrete percentage
+        let mut cfg_max = CgroupConfig {
+            cpu_max: Some("max 100000".into()),
+            ..Default::default()
+        };
+        cfg_max.merge_strictest(&cfg);
+        assert_eq!(cfg_max.cpu_max.as_deref(), Some("50000 100000"));
     }
 }

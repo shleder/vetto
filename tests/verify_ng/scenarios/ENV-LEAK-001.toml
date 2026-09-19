@@ -10,9 +10,11 @@ linux-full = "STRONG"
 macos = "STRONG"
 windows = "STRONG"
 
-known_limitation = "Proves scrub of the canary key set; unknown exfil channels (covert timing, allowed-relay payloads) are out of scope."
+known_limitation = "Proves environment isolation and credential scrub under sealed SecurityContract: scrubbing of arbitrary host vars, sensitive credentials, PATH hygiene, internal Vetto vars, explicitly denied variables, and post-start mutation immutability; unknown exfil channels (covert timing, allowed-relay payloads) are out of scope."
 residual_risk = ""
 
 [evidence.host_facts]
 canary_env = "canary secret present in the harness env must be absent from the child env report (nonce-bound)"
 canary_fd = "no secret bytes may appear in captured output (redaction verified separately by EVIDENCE-REDACT-001)"
+env_isolated = "runtime environment conforms strictly to sealed SecurityContract without leaked host variables"
+vector_scrub = "scrubbing of arbitrary host and sensitive variables verified via host-captured /proc/<pid>/environ"

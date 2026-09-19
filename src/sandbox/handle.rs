@@ -185,6 +185,30 @@ impl SandboxHandle {
         }
     }
 
+    /// Attempt graceful termination (SIGTERM) before escalating to SIGKILL.
+    /// Safe to call multiple times; does not consume kill strategy.
+    pub fn terminate_graceful(&mut self) {
+        #[cfg(unix)]
+        {
+            match self.strategy.as_ref() {
+                #[cfg(target_os = "linux")]
+                Some(KillStrategy::PidNsPipe(_)) => unsafe {
+                    libc::kill(self.root_pid as i32, libc::SIGTERM);
+                },
+                #[cfg(unix)]
+                Some(KillStrategy::ProcessGroup { pid, pgid, .. }) => unsafe {
+                    libc::kill(-*pgid, libc::SIGTERM);
+                    libc::kill(*pid, libc::SIGTERM);
+                },
+                _ => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+        }
+    }
+
     /// Kill everything inside the sandbox. Safe to call multiple times.
     pub fn terminate(&mut self) {
         #[cfg(target_os = "linux")]
@@ -201,9 +225,6 @@ impl SandboxHandle {
                         0u32,
                     );
                 }
-            }
-            if let Some(cg) = self._cgroup.as_ref() {
-                cg.cleanup();
             }
         }
         if let Some(strategy) = self.strategy.take() {
@@ -240,6 +261,12 @@ impl SandboxHandle {
                     drop(job);
                     drop(process);
                 }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(cg) = self._cgroup.as_ref() {
+                cg.cleanup();
             }
         }
     }

@@ -14,7 +14,7 @@ use crate::cli::Cli;
 use crate::error::VettoError;
 use crate::policy::presets::{agent_network_allowlist, Preset};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub enum NetMode {
     /// Default. Enforced on every tier (netns on FULL, seccomp-BPF on FS-ONLY).
     Off,
@@ -27,7 +27,7 @@ pub enum NetMode {
     Ask,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct NetRule {
     pub domain: String,
     pub port: u16,

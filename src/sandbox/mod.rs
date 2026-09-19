@@ -92,6 +92,7 @@ pub struct Spawned {
 }
 
 /// Selected enforcement backend for this session.
+#[derive(Clone)]
 pub enum Backend {
     #[cfg(target_os = "linux")]
     Linux(Box<linux::LinuxSandbox>),
@@ -209,6 +210,17 @@ impl Backend {
         }
     }
 
+    pub fn observes_seccomp(&self) -> bool {
+        match self {
+            #[cfg(target_os = "linux")]
+            Backend::Linux(s) => s.observe_seccomp,
+            #[cfg(target_os = "macos")]
+            Backend::Macos(_) => false,
+            #[cfg(target_os = "windows")]
+            Backend::Windows(_) => false,
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             #[cfg(target_os = "linux")]
@@ -233,7 +245,13 @@ impl Backend {
     ///
     /// IRON RULE: must be called before any thread/tokio runtime exists —
     /// every fork inside is only safe from a single-threaded process.
-    pub fn spawn(self, policy: &Policy, opts: SpawnOptions) -> anyhow::Result<Spawned> {
+    /// Restricted to `crate::sandbox`: external callers must use
+    /// `UnpreparedProductionExecution` to ensure sealed contract authority.
+    pub(in crate::sandbox) fn spawn(
+        self,
+        policy: &Policy,
+        opts: SpawnOptions,
+    ) -> anyhow::Result<Spawned> {
         match self {
             #[cfg(target_os = "linux")]
             Backend::Linux(s) => s.spawn(policy, opts),

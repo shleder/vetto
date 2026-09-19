@@ -420,11 +420,11 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
     // single real spawn. No MCP-specific direct spawn exists.
     let unprepared = sandbox::production::UnpreparedProductionExecution::new(
         backend,
-        policy.clone(),
+        policy,
         full_cmd,
         project,
         HashMap::new(),
-        net_mode.clone(),
+        net_mode,
         None,
         StdioMode::Inherit,
         "mcp".to_string(),
@@ -437,7 +437,12 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
     #[cfg(target_os = "linux")]
     if let Some(fd) = spawned.take_broker_ctrl_fd() {
         use std::os::unix::io::IntoRawFd;
-        let broker_policy = match &net_mode {
+        let production = spawned
+            .contract()
+            .production
+            .as_ref()
+            .expect("production contract validated before spawn");
+        let broker_policy = match &production.net {
             NetMode::Allowlist(d) => {
                 crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(d.clone())
             }
@@ -448,8 +453,8 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
             NetMode::Off => crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
         };
         let mut broker_config = crate::sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
-        broker_config.allow_cidr = policy.allow_cidr.clone();
-        broker_config.quotas = policy.net_quota.clone();
+        broker_config.allow_cidr = production.installation_policy.allow_cidr.clone();
+        broker_config.quotas = production.installation_policy.net_quota.clone();
         let bus = crate::events::EventBus::new();
         crate::sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus);
     }

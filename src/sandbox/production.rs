@@ -356,6 +356,101 @@ pub fn freeze_production(
     (spec, canonical, identity)
 }
 
+/// Project a verified production contract into the existing capability API.
+/// The envelope retains the detached digest without hashing it into itself.
+fn freeze_production_contract(
+    scenario: &str,
+    contract: &SecurityContract,
+    tier: &str,
+    backend: &str,
+) -> anyhow::Result<(CanonicalPolicy, ExecutionIdentity)> {
+    anyhow::ensure!(
+        contract.verify_digest(),
+        "invalid production contract digest"
+    );
+    let production = contract
+        .production
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing production installation contract"))?;
+    anyhow::ensure!(
+        production.backend == backend
+            && production.tier.map(|t| t.label()).unwrap_or("none") == tier,
+        "production contract/backend mismatch"
+    );
+    let mut argv = vec![contract
+        .agent_identity
+        .invoked_binary
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF8 production executable"))?
+        .to_string()];
+    argv.extend(contract.agent_identity.invoked_args.clone());
+    // v1 summary fields cannot compete with the lossless installation values.
+    // Reject contradictory projections even if a caller re-seals the payload.
+    let expected = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+        crate::policy_ir::compiler::EffectivePolicyInput {
+            policy: &production.installation_policy,
+            argv: &argv,
+            cwd: &contract.filesystem.workspace_root,
+            env: &contract.environment.explicit_vars,
+            net: &production.net,
+            nonce: &contract.session_nonce,
+            timeout: production.timeout,
+            tier: production.tier,
+            backend: production.backend.clone(),
+            observe_seccomp: production.observe_seccomp,
+            debug_ports: production.debug_ports.as_ref(),
+        },
+    )?;
+    anyhow::ensure!(
+        expected == *contract,
+        "inconsistent production contract projection"
+    );
+    let mut spec = frozen::freeze_spec(
+        scenario,
+        PROD_REGISTRY,
+        &production.installation_policy,
+        tier,
+        &production.net,
+        backend,
+        &argv,
+        &contract.environment.explicit_vars,
+        &contract.filesystem.workspace_root,
+        &contract.session_nonce,
+    );
+    spec.policy_bytes = serde_json::to_vec(&serde_json::json!({
+        "contract": contract,
+        "digest": contract.contract_digest_blake3,
+    }))?;
+    let canonical = CanonicalPolicy::from_frozen(&spec);
+    let identity = ExecutionIdentity::new(
+        scenario,
+        &contract.session_nonce,
+        PROD_REGISTRY,
+        &spec.hash(),
+    );
+    Ok((canonical, identity))
+}
+
+fn prepare_production_contract(
+    scenario: &str,
+    contract: &SecurityContract,
+    tier: &str,
+    backend: &str,
+    capability: &mut dyn SandboxBackend,
+) -> anyhow::Result<(CanonicalPolicy, ExecutionIdentity)> {
+    let (canonical, identity) = freeze_production_contract(scenario, contract, tier, backend)?;
+    capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
+    let prepared_ok = capability
+        .enforcement()
+        .map(|r| r.preparation_ok && r.binds_identity(&identity))
+        .unwrap_or(false);
+    anyhow::ensure!(
+        prepared_ok,
+        "production backend preparation failed (fail-closed, no agent execution)"
+    );
+    Ok((canonical, identity))
+}
+
 /// Unprepared production execution: OWNED frozen inputs, NO spawn method.
 ///
 /// Construction snapshots everything the child will install
@@ -374,6 +469,7 @@ pub struct UnpreparedProductionExecution {
     timeout: Option<Duration>,
     stdio: StdioMode,
     scenario: String,
+    debug_ports: Option<crate::multi::DebugPortConfig>,
 }
 
 impl UnpreparedProductionExecution {
@@ -406,7 +502,14 @@ impl UnpreparedProductionExecution {
             timeout,
             stdio,
             scenario,
+            debug_ports: None,
         }
+    }
+
+    /// Resolve multi-session relay settings before contract compilation.
+    pub fn with_debug_ports(mut self, config: crate::multi::DebugPortConfig) -> Self {
+        self.debug_ports = Some(config);
+        self
     }
 
     /// Detected execution tier for this production run.
@@ -480,30 +583,40 @@ impl UnpreparedProductionExecution {
         env_extra.insert(PROD_NONCE_ENV.to_string(), nonce.clone());
         let env = build_production_env(&self.policy, &env_extra);
 
-        let (_spec, canonical, identity) = freeze_production(
-            &self.scenario,
-            &self.policy,
-            &tier_label,
-            &self.net,
-            &self.mechanics.describe(),
-            &self.argv,
-            &env,
-            &self.cwd,
-            &nonce,
+        let mut fsm = ExecutionStateMachine::new();
+        let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+            crate::policy_ir::compiler::EffectivePolicyInput {
+                policy: &self.policy,
+                argv: &self.argv,
+                cwd: &self.cwd,
+                env: &env,
+                net: &self.net,
+                nonce: &nonce,
+                timeout: self.timeout,
+                tier,
+                backend: self.mechanics.describe(),
+                observe_seccomp: self.mechanics.observes_seccomp(),
+                debug_ports: self.debug_ports.as_ref(),
+            },
+        )?;
+        fsm.transition(ExecutionState::PolicyCompiled)?;
+        anyhow::ensure!(
+            contract.verify_digest(),
+            "invalid compiled production contract"
         );
-        capability.prepare_with_context(&canonical, &identity, &PrepareContext::default());
-        let prepared_ok = capability
-            .enforcement()
-            .map(|r| r.preparation_ok && r.binds_identity(&identity))
-            .unwrap_or(false);
-        if !prepared_ok {
-            anyhow::bail!(
-                "production backend preparation failed (fail-closed, no agent execution)"
-            );
-        }
+        fsm.transition(ExecutionState::ContractSealed)?;
+        let (canonical, identity) = prepare_production_contract(
+            &self.scenario,
+            &contract,
+            &tier_label,
+            &self.mechanics.describe(),
+            capability,
+        )?;
+        fsm.transition(ExecutionState::Prepare)?;
         Ok(PreparedProductionExecution {
             mechanics: self.mechanics,
-            policy: self.policy,
+            contract,
+            canonical,
             argv: self.argv,
             cwd: self.cwd,
             env,
@@ -514,6 +627,7 @@ impl UnpreparedProductionExecution {
             scenario: self.scenario,
             nonce,
             identity,
+            fsm,
             // Overwritten by the caller with the prepared backend object.
             capability: crate::verify_ng::sandbox_backend::select_backend(BackendKind::Direct),
         })
@@ -528,7 +642,8 @@ impl UnpreparedProductionExecution {
 /// No setters, no re-freeze, no policy mutation.
 pub struct PreparedProductionExecution {
     mechanics: Backend,
-    policy: Policy,
+    contract: SecurityContract,
+    canonical: CanonicalPolicy,
     argv: Vec<String>,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
@@ -539,6 +654,7 @@ pub struct PreparedProductionExecution {
     scenario: String,
     nonce: String,
     identity: ExecutionIdentity,
+    fsm: ExecutionStateMachine,
     capability: Box<dyn SandboxBackend>,
 }
 
@@ -590,7 +706,21 @@ impl PreparedProductionExecution {
     /// (`Policy` has no `PartialEq`); the frozen hash binding in the
     /// `EnforcementReport` is the authoritative identity check.
     pub fn frozen_policy(&self) -> &Policy {
-        &self.policy
+        &self
+            .contract
+            .production
+            .as_ref()
+            .expect("validated production contract")
+            .installation_policy
+    }
+
+    pub fn contract(&self) -> &SecurityContract {
+        &self.contract
+    }
+
+    #[doc(hidden)]
+    pub fn contract_mut_for_test(&mut self) -> &mut SecurityContract {
+        &mut self.contract
     }
 
     /// Perform exactly one real production spawn. Consumes `self`: no retry
@@ -604,6 +734,35 @@ impl PreparedProductionExecution {
     /// Fail-closed: any preparation/freeze mismatch bails with the spawn
     /// ledger untouched and no fallback execution.
     pub fn spawn(mut self) -> anyhow::Result<SpawnedProductionExecution> {
+        anyhow::ensure!(
+            self.fsm.current_state() == ExecutionState::Prepare,
+            "production lifecycle is not prepared (fail-closed, no agent execution)"
+        );
+        let tier_label = self.tier.map(|t| t.label()).unwrap_or("none");
+        let (canonical, identity) = freeze_production_contract(
+            &self.scenario,
+            &self.contract,
+            tier_label,
+            &self.mechanics.describe(),
+        )?;
+        let production = self
+            .contract
+            .production
+            .as_ref()
+            .expect("validated contract");
+        anyhow::ensure!(
+            canonical == self.canonical
+                && identity.frozen_hash == self.identity.frozen_hash
+                && canonical.argv == self.argv
+                && canonical.cwd == self.cwd
+                && canonical.env == self.env
+                && production.net == self.net
+                && production.timeout == self.timeout
+                && production.tier == self.tier
+                && production.observe_seccomp == self.mechanics.observes_seccomp(),
+            "production contract/frozen input drift (fail-closed, no agent execution)"
+        );
+        let policy = &production.installation_policy;
         // Tripwire: the mechanics object must agree with the frozen net.
         // Both originate from the detection-mode value moved in at
         // construction; any divergence fails closed with no spawn.
@@ -641,9 +800,13 @@ impl PreparedProductionExecution {
         // call site may spawn an agent child. Serialized against the
         // verify-ng harness spawns (fork-safety).
         let spawned = {
-            let _serial = engine::spawn_serial().lock().unwrap();
-            self.mechanics.spawn(&self.policy, opts)?
+            let _serial = engine::spawn_serial()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            self.fsm.transition(ExecutionState::Spawn)?;
+            self.mechanics.spawn(policy, opts)?
         };
+        self.fsm.transition(ExecutionState::Enforce)?;
         PROD_SPAWN_COUNT.fetch_add(1, Ordering::SeqCst);
         let pid = spawned.handle.root_pid;
         self.capability.note_spawned(pid);
@@ -673,7 +836,7 @@ impl PreparedProductionExecution {
             use crate::verify_ng::linux_enforce as le;
             let mut verification = le::verify_child_host(pid);
             if let Ok(limits_body) = std::fs::read_to_string(format!("/proc/{pid}/limits")) {
-                let lim = &self.policy.limits;
+                let lim = &policy.limits;
                 let expect = |row: &str, v: Option<u64>| match v {
                     Some(x) => le::limits_field_is(&limits_body, row, x),
                     // No ceiling configured: nothing installed, nothing to
@@ -697,15 +860,10 @@ impl PreparedProductionExecution {
             self.capability.note_host_verified(&verification);
         }
 
-        let mut fsm = ExecutionStateMachine::new();
-        let _ = fsm.transition(ExecutionState::PolicyCompiled);
-        let _ = fsm.transition(ExecutionState::ContractSealed);
-        let _ = fsm.transition(ExecutionState::Prepare);
-        let _ = fsm.transition(ExecutionState::Spawn);
-        let _ = fsm.transition(ExecutionState::Enforce);
-        let _ = fsm.transition(ExecutionState::Observe);
+        self.fsm.transition(ExecutionState::Observe)?;
 
         Ok(SpawnedProductionExecution {
+            contract: self.contract,
             handle: spawned.handle,
             #[cfg(unix)]
             broker_ctrl_fd: spawned.broker_ctrl_fd,
@@ -720,7 +878,7 @@ impl PreparedProductionExecution {
             scenario: self.scenario.clone(),
             timeout: self.timeout,
             capability: self.capability,
-            fsm,
+            fsm: self.fsm,
         })
     }
 }
@@ -732,6 +890,7 @@ impl PreparedProductionExecution {
 /// or [`finish`](Self::finish), both of which run the nonce-targeted tree
 /// sweep and the backend teardown.
 pub struct SpawnedProductionExecution {
+    contract: SecurityContract,
     pub handle: SandboxHandle,
     /// Broker end of the relay control socketpair (allowlist modes).
     #[cfg(unix)]
@@ -753,6 +912,10 @@ pub struct SpawnedProductionExecution {
 }
 
 impl SpawnedProductionExecution {
+    pub fn contract(&self) -> &SecurityContract {
+        &self.contract
+    }
+
     /// FSM lifecycle state machine for this execution.
     pub fn fsm(&self) -> &ExecutionStateMachine {
         &self.fsm
@@ -813,13 +976,22 @@ impl SpawnedProductionExecution {
     /// a `ProductionResult`.
     pub fn finish(mut self, exit_code: Option<i32>, timed_out: bool) -> ProductionResult {
         if self.fsm.current_state() == ExecutionState::Enforce {
-            let _ = self.fsm.transition(ExecutionState::Observe);
+            if let Err(e) = self.fsm.transition(ExecutionState::Observe) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Enforce->Observe failed: {e}"));
+            }
         }
         if self.fsm.current_state() == ExecutionState::Observe {
-            let _ = self.fsm.transition(ExecutionState::Terminate);
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminate) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Observe->Terminate failed: {e}"));
+            }
         }
         if self.fsm.current_state() == ExecutionState::Terminate {
-            let _ = self.fsm.transition(ExecutionState::Cleanup);
+            if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition Terminate->Cleanup failed: {e}"));
+            }
         }
 
         let extinction_start = Instant::now();
@@ -859,19 +1031,53 @@ impl SpawnedProductionExecution {
             ));
         }
         #[cfg(target_os = "linux")]
+        let setsid_orphan_escaped = if matches!(
+            self.handle.strategy,
+            Some(crate::sandbox::handle::KillStrategy::ProcessGroup { sweep: true, .. })
+        ) {
+            let me = unsafe { libc::getpid() } as u32;
+            let my_sid = crate::sandbox::linux::proctrack::session_of(0);
+            let children = crate::sandbox::linux::proctrack::scan_children(me, self.pid as i32);
+            children.iter().any(|&pid| {
+                let mut status = 0i32;
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+                if let Ok(st) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+                    if let Some(rest) = st
+                        .lines()
+                        .find_map(|l| l.trim_start().strip_prefix("State:"))
+                    {
+                        let s = rest.trim_start();
+                        if s.starts_with('Z') || s.starts_with('X') {
+                            return false;
+                        }
+                    }
+                } else {
+                    return false;
+                }
+                match (my_sid, crate::sandbox::linux::proctrack::session_of(pid)) {
+                    (Some(mine), Some(theirs)) => mine != theirs,
+                    _ => false,
+                }
+            })
+        } else {
+            false
+        };
+
+        #[cfg(target_os = "linux")]
         {
             if let Some(sweep) =
                 crate::verify_ng::linux_enforce::sweep_tree_by_nonce(self.nonce.as_str(), self.pid)
             {
-                surviving_processes = if sweep.clean {
+                let clean = sweep.clean && !sweep.blind && sweep.residual.is_empty();
+                surviving_processes = if clean {
                     0
                 } else {
                     sweep.residual.len().max(1)
                 };
-                self.capability.note_tree_clean(sweep.clean);
+                self.capability.note_tree_clean(clean);
                 self.capability.note_diagnostic(format!(
                     "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
-                    sweep.clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
+                    clean, sweep.killed, sweep.residual, sweep.subreaper, sweep.blind
                 ));
             } else {
                 surviving_processes = 1;
@@ -901,7 +1107,18 @@ impl SpawnedProductionExecution {
             elapsed_ms,
         );
 
+        // Record verified surviving descendant count into FSM
+        self.fsm.record_extinction_result(surviving_processes);
+
         let mut final_exit_code = exit_code;
+        #[cfg(target_os = "linux")]
+        if setsid_orphan_escaped && final_exit_code.unwrap_or(0) == 0 {
+            self.capability.note_diagnostic(
+                "setsid escaper swept in fs-only: containment gap forces fail-closed exit 125"
+                    .to_string(),
+            );
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        }
         if let Err(ref breach) = extinction_res {
             self.capability.note_tree_clean(false);
             self.capability.note_diagnostic(format!(
@@ -911,6 +1128,20 @@ impl SpawnedProductionExecution {
                 breach.reason
             ));
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+            let fsm_err = self.fsm.fail_closed(&breach.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+            }
+        } else {
+            if let Err(e) = self.fsm.transition(ExecutionState::Verify) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verify failed: {e}"));
+            }
         }
 
         // Check Netlink evidence channel integrity (INV-37)
@@ -951,10 +1182,16 @@ impl SpawnedProductionExecution {
 
         let mut ext_hash_opt: Option<String> = None;
         let mut ledger_write_ok = false;
+        if self.fsm.current_state() == ExecutionState::Verify {
+            if let Err(e) = self.fsm.transition(ExecutionState::Attest) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Attest failed: {e}"));
+            }
+        }
         if let Ok(mut ledger) = AuditLedger::new(&ledger_path) {
             let init_rec = VettoAuditRecord::session_init(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 platform_str,
                 std::env::consts::OS,
                 &self.scenario,
@@ -964,7 +1201,7 @@ impl SpawnedProductionExecution {
 
             let ext_rec = VettoAuditRecord::tree_extinction(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 extinction_platform.label(),
                 surviving_processes as u32,
                 9,
@@ -1008,7 +1245,7 @@ impl SpawnedProductionExecution {
             let root_dag_digest = ext_hash_opt.clone().unwrap_or_else(|| "0".repeat(64));
             let verdict_rec = VettoAuditRecord::session_verdict(
                 &self.nonce,
-                &self.identity.frozen_hash,
+                &self.contract.contract_digest_blake3,
                 &verdict_obj,
                 &root_dag_digest,
             );
@@ -1045,6 +1282,13 @@ impl SpawnedProductionExecution {
             final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         }
 
+        if self.fsm.current_state() == ExecutionState::Attest {
+            if let Err(e) = self.fsm.transition(ExecutionState::Verdict) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Verdict failed: {e}"));
+            }
+        }
+
         // Final verdict and FSM state transition
         let final_verdict_obj = FinalVerdict {
             status: if extinction_res.is_err() || !ledger_verified {
@@ -1070,15 +1314,31 @@ impl SpawnedProductionExecution {
             },
         };
 
-        if extinction_res.is_err() || !evidence_intact || !ledger_verified {
-            let _ = self.fsm.fail_closed(&final_verdict_obj.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+        if extinction_res.is_err() {
+            // Extinction breach: FSM is in EmergencyCleanup, DO NOT call transition(Terminal).
+            // Retain EmergencyCleanup state with fail-closed exit code 125.
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+        } else if !evidence_intact || !ledger_verified {
+            let fsm_err = self.fsm.fail_closed(&final_verdict_obj.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to FailClosed failed: {fsm_err}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::EmergencyCleanup) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to EmergencyCleanup failed: {e}"));
+            }
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+            }
+            final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
         } else {
-            let _ = self.fsm.transition(ExecutionState::Verify);
-            let _ = self.fsm.transition(ExecutionState::Attest);
-            let _ = self.fsm.transition(ExecutionState::Verdict);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if let Err(e) = self.fsm.transition(ExecutionState::Terminal) {
+                self.capability
+                    .note_diagnostic(format!("FSM transition to Terminal failed: {e}"));
+                final_exit_code = Some(FAIL_CLOSED_EXTINCTION_EXIT_CODE);
+            }
         }
 
         let report = self
@@ -1295,11 +1555,7 @@ impl SupervisorEngine {
     /// Prepare step: verifies contract integrity and enters Prepare state.
     pub fn prepare(&mut self) -> Result<(), StateTransitionError> {
         if !self.contract.verify_digest() {
-            let _ = self.fsm.fail_closed("Contract digest verification failed");
-            return Err(StateTransitionError::FailClosed {
-                state: self.fsm.current_state(),
-                error: "Contract digest mismatch".to_string(),
-            });
+            return Err(self.fsm.fail_closed("Contract digest verification failed"));
         }
         self.fsm.transition(ExecutionState::Prepare)
     }
@@ -1325,6 +1581,7 @@ impl SupervisorEngine {
         surviving_resources: usize,
         elapsed_ms: u64,
     ) -> Result<ExtinctionProof, ExtinctionBreach> {
+        self.fsm.record_extinction_result(surviving_processes);
         if let Err(e) = self.fsm.transition(ExecutionState::Cleanup) {
             return Err(ExtinctionBreach {
                 platform: extinction_tier,
@@ -1343,8 +1600,11 @@ impl SupervisorEngine {
             elapsed_ms,
         ) {
             Ok(proof) => proof,
-            Err(breach) => {
-                let _ = self.fsm.fail_closed(&breach.reason);
+            Err(mut breach) => {
+                let fsm_err = self.fsm.fail_closed(&breach.reason);
+                if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                    breach.reason = format!("{} (FSM transition error: {fsm_err})", breach.reason);
+                }
                 return Err(breach);
             }
         };
@@ -1391,9 +1651,17 @@ impl SupervisorEngine {
             || verdict.status == VerdictStatus::Fail
             || verdict.status == VerdictStatus::Inconclusive
         {
-            let _ = self.fsm.fail_closed(&verdict.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if zombies_survived > 0 {
+                self.fsm.record_extinction_result(zombies_survived);
+            }
+            let fsm_err = self.fsm.fail_closed(&verdict.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                return Err(fsm_err);
+            }
+            self.fsm.transition(ExecutionState::EmergencyCleanup)?;
+            if zombies_survived == 0 && self.fsm.surviving_descendants().unwrap_or(0) == 0 {
+                self.fsm.transition(ExecutionState::Terminal)?;
+            }
         } else {
             self.fsm.transition(ExecutionState::Terminal)?;
         }
@@ -1429,9 +1697,17 @@ impl SupervisorEngine {
             || verdict.status == VerdictStatus::Fail
             || verdict.status == VerdictStatus::Inconclusive
         {
-            let _ = self.fsm.fail_closed(&verdict.reason);
-            let _ = self.fsm.transition(ExecutionState::EmergencyCleanup);
-            let _ = self.fsm.transition(ExecutionState::Terminal);
+            if zombies_survived > 0 {
+                self.fsm.record_extinction_result(zombies_survived);
+            }
+            let fsm_err = self.fsm.fail_closed(&verdict.reason);
+            if matches!(fsm_err, StateTransitionError::InvalidTransition { .. }) {
+                return Err(fsm_err);
+            }
+            self.fsm.transition(ExecutionState::EmergencyCleanup)?;
+            if zombies_survived == 0 && self.fsm.surviving_descendants().unwrap_or(0) == 0 {
+                self.fsm.transition(ExecutionState::Terminal)?;
+            }
         } else {
             self.fsm.transition(ExecutionState::Terminal)?;
         }
@@ -1858,6 +2134,809 @@ mod production_unit_tests {
         assert_eq!(can.cwd, cwd);
         assert_eq!(can.cwd, spec.cwd);
         assert_eq!(id.frozen_hash, spec.hash());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_production_preparation_receives_sealed_contract() {
+        struct InspectContract;
+        impl SandboxBackend for InspectContract {
+            fn kind(&self) -> BackendKind {
+                BackendKind::Linux
+            }
+            fn name(&self) -> &'static str {
+                "contract input inspector (never spawns)"
+            }
+            fn supports(&self, _cap: SecurityCapability) -> bool {
+                false
+            }
+            fn prepare(
+                &mut self,
+                input: &CanonicalPolicy,
+                identity: &ExecutionIdentity,
+            ) -> EnforcementReport {
+                let envelope: serde_json::Value = serde_json::from_slice(&input.policy_bytes)
+                    .expect("production preparation must receive a serialized sealed contract");
+                let mut contract: SecurityContract =
+                    serde_json::from_value(envelope["contract"].clone()).expect("contract payload");
+                contract.contract_digest_blake3 = envelope["digest"]
+                    .as_str()
+                    .expect("separate contract digest")
+                    .to_string();
+                assert!(contract.verify_digest());
+                assert_ne!(contract.contract_digest_blake3, identity.frozen_hash);
+                assert_eq!(contract.session_nonce, identity.session_nonce);
+                assert_eq!(contract.filesystem.allow_read, vec![PathBuf::from("/usr")]);
+                assert_eq!(contract.resources.max_memory_bytes, 384 * 1024 * 1024);
+                assert_eq!(
+                    contract
+                        .environment
+                        .explicit_vars
+                        .get("VETTO_PHASE1_OVERRIDE"),
+                    Some(&"effective-value".to_string())
+                );
+                assert_eq!(contract.environment.explicit_vars, input.env);
+                assert_eq!(
+                    contract.agent_identity.invoked_binary,
+                    PathBuf::from("/bin/true")
+                );
+                EnforcementReport::build(
+                    BackendKind::Linux,
+                    input,
+                    identity,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    false,
+                )
+            }
+            fn enforcement(&self) -> Option<&EnforcementReport> {
+                None
+            }
+            fn teardown(&mut self) {}
+        }
+        let backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let policy = Policy {
+            allow_read: vec![PathBuf::from("/usr")],
+            limits: crate::policy::ResourceLimits {
+                address_space_bytes: Some(384 * 1024 * 1024),
+                ..Default::default()
+            },
+            ..Policy::default()
+        };
+        let execution = UnpreparedProductionExecution::new(
+            backend,
+            policy,
+            vec!["/bin/true".to_string()],
+            std::env::temp_dir(),
+            HashMap::from([(
+                "VETTO_PHASE1_OVERRIDE".to_string(),
+                "effective-value".to_string(),
+            )]),
+            NetMode::Off,
+            None,
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.to_string(),
+        );
+        // The inspector deliberately refuses preparation; it never yields a spawnable object.
+        assert!(execution
+            .prepare_with_backend(Box::new(InspectContract))
+            .is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_invalid_contract_never_prepares_capabilities() {
+        struct CountPreparation(usize);
+        impl SandboxBackend for CountPreparation {
+            fn kind(&self) -> BackendKind {
+                BackendKind::Linux
+            }
+            fn name(&self) -> &'static str {
+                "preparation counter (never spawns)"
+            }
+            fn supports(&self, _cap: SecurityCapability) -> bool {
+                false
+            }
+            fn prepare(
+                &mut self,
+                input: &CanonicalPolicy,
+                identity: &ExecutionIdentity,
+            ) -> EnforcementReport {
+                self.0 += 1;
+                EnforcementReport::build(
+                    BackendKind::Linux,
+                    input,
+                    identity,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    false,
+                )
+            }
+            fn enforcement(&self) -> Option<&EnforcementReport> {
+                None
+            }
+            fn teardown(&mut self) {}
+        }
+        let policy = test_policy();
+        let original = crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+            crate::policy_ir::compiler::EffectivePolicyInput {
+                policy: &policy,
+                argv: &["/bin/true".into()],
+                cwd: std::path::Path::new("/tmp"),
+                env: &BTreeMap::new(),
+                net: &NetMode::Off,
+                nonce: "preparation-guard-test",
+                timeout: None,
+                tier: Some(Tier::Full),
+                backend: "test-mechanics".into(),
+                observe_seccomp: false,
+                debug_ports: None,
+            },
+        )
+        .unwrap();
+        let mut capability = CountPreparation(0);
+        for case in ["digest", "projection", "missing", "backend", "debug-ports"] {
+            let mut contract = original.clone();
+            let expected_error = match case {
+                "digest" => {
+                    contract
+                        .environment
+                        .explicit_vars
+                        .insert("CHANGED".into(), "1".into());
+                    "invalid production contract digest"
+                }
+                "projection" => {
+                    contract.resources.max_memory_bytes ^= 1;
+                    contract = contract.unsealed().seal().unwrap();
+                    "inconsistent production contract projection"
+                }
+                "missing" => {
+                    contract.production = None;
+                    contract = contract.unsealed().seal().unwrap();
+                    "missing production installation contract"
+                }
+                "backend" => {
+                    contract.production.as_mut().unwrap().backend = "other-mechanics".into();
+                    contract = contract.unsealed().seal().unwrap();
+                    "production contract/backend mismatch"
+                }
+                "debug-ports" => {
+                    contract.production.as_mut().unwrap().debug_ports =
+                        Some(crate::multi::DebugPortConfig::default());
+                    "invalid production contract digest"
+                }
+                _ => unreachable!(),
+            };
+            let error = prepare_production_contract(
+                PROD_SCENARIO_ID,
+                &contract,
+                Tier::Full.label(),
+                "test-mechanics",
+                &mut capability,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(expected_error),
+                "{case}: {error:#}"
+            );
+            assert_eq!(
+                capability.0, 0,
+                "{case}: invalid contract reached capability preparation"
+            );
+        }
+        // The valid control must reach the same backend, which deliberately refuses preparation.
+        let error = prepare_production_contract(
+            PROD_SCENARIO_ID,
+            &original,
+            Tier::Full.label(),
+            "test-mechanics",
+            &mut capability,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("production backend preparation failed"));
+        assert_eq!(capability.0, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_contract_tamper_rejected_before_spawn() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-contract-tamper-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let marker = tmp.join("child-started");
+        let base_backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let test_policy = functional_test_policy(&tmp);
+        let cmd = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf started > child-started".into(),
+        ];
+        for case in ["digest", "resealed", "projection", "missing"] {
+            let mut prepared = UnpreparedProductionExecution::new(
+                base_backend.clone(),
+                test_policy.clone(),
+                cmd.clone(),
+                tmp.clone(),
+                HashMap::new(),
+                NetMode::Off,
+                Some(Duration::from_secs(10)),
+                StdioMode::Inherit,
+                PROD_SCENARIO_ID.into(),
+            )
+            .prepare()
+            .expect("prepare production execution");
+            let expected_error = match case {
+                "digest" => {
+                    prepared
+                        .contract
+                        .environment
+                        .explicit_vars
+                        .insert("VETTO_CHANGED".into(), "1".into());
+                    assert!(!prepared.contract.verify_digest());
+                    "invalid production contract digest"
+                }
+                "resealed" => {
+                    prepared.contract.production.as_mut().unwrap().timeout =
+                        Some(Duration::from_secs(9));
+                    prepared.contract.resources.max_wall_time_ms = 9000;
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    assert!(prepared.contract.verify_digest());
+                    "production contract/frozen input drift"
+                }
+                "projection" => {
+                    prepared.contract.filesystem.allow_read.clear();
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    assert!(prepared.contract.verify_digest());
+                    "inconsistent production contract projection"
+                }
+                "missing" => {
+                    prepared.contract.production = None;
+                    prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                    "missing production installation contract"
+                }
+                _ => unreachable!(),
+            };
+            match prepared.spawn() {
+                Err(error) => assert!(
+                    error.to_string().contains(expected_error),
+                    "{case}: {error:#}"
+                ),
+                Ok(spawned) => {
+                    spawned.wait_collect();
+                    panic!("{case}: altered contract reached production spawn");
+                }
+            }
+            assert!(!marker.exists(), "{case}: child must not execute");
+        }
+        // Positive control: the same command and policy can create the marker.
+        let spawned = UnpreparedProductionExecution::new(
+            base_backend,
+            test_policy,
+            cmd,
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare control")
+        .spawn()
+        .expect("spawn control");
+        spawned.wait_collect();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase2_contract_tamper_all_field_classes_rejected_no_spawn() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-tamper-full-matrix-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let marker = tmp.join("child-started");
+        let base_backend = Backend::detect(NetMode::Off, false).expect("detect mechanics");
+        let test_policy = functional_test_policy(&tmp);
+        let cmd = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf started > child-started".into(),
+        ];
+
+        let cases = [
+            // Filesystem
+            "fs_allow_read",
+            "fs_allow_write",
+            "fs_deny_read",
+            "fs_deny_write",
+            "fs_cow_overlay",
+            "fs_execution_root_ro",
+            // Environment
+            "env_explicit_vars",
+            "env_redacted_patterns",
+            "env_inject_session_nonce",
+            // Network
+            "net_mode",
+            "net_allowed_domains",
+            "net_allowed_ports",
+            "net_allowed_ips",
+            "net_debug_ports",
+            // Limits
+            "limits_max_memory_mb",
+            "limits_max_pids",
+            "limits_max_cpu_seconds",
+            "limits_max_file_size_mb",
+            // Executable restrictions
+            "exec_allowed_executables",
+            "exec_forbidden_executables",
+            "exec_invoked_binary",
+            "exec_invoked_args",
+            // Secret masks
+            "secrets_mask_paths",
+            // Tier / Backend requirements
+            "tier_requirement",
+            "backend_requirement",
+        ];
+
+        for case in cases {
+            // Test unresealed direct tamper: digest mismatch -> verification failure -> NO SPAWN
+            {
+                let mut prepared = UnpreparedProductionExecution::new(
+                    base_backend.clone(),
+                    test_policy.clone(),
+                    cmd.clone(),
+                    tmp.clone(),
+                    HashMap::new(),
+                    NetMode::Off,
+                    Some(Duration::from_secs(10)),
+                    StdioMode::Inherit,
+                    PROD_SCENARIO_ID.into(),
+                )
+                .prepare()
+                .expect("prepare execution");
+
+                match case {
+                    "fs_allow_read" => prepared
+                        .contract
+                        .filesystem
+                        .allow_read
+                        .push(PathBuf::from("/etc/extra_read")),
+                    "fs_allow_write" => prepared
+                        .contract
+                        .filesystem
+                        .allow_write
+                        .push(PathBuf::from("/usr/bin/extra_write")),
+                    "fs_deny_read" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_read
+                        .push(PathBuf::from("/tmp/secret_read")),
+                    "fs_deny_write" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_write
+                        .push(PathBuf::from("/tmp/secret_write")),
+                    "fs_cow_overlay" => {
+                        prepared.contract.filesystem.cow_overlay =
+                            !prepared.contract.filesystem.cow_overlay
+                    }
+                    "fs_execution_root_ro" => {
+                        prepared.contract.filesystem.execution_root_ro =
+                            !prepared.contract.filesystem.execution_root_ro
+                    }
+                    "env_explicit_vars" => {
+                        prepared
+                            .contract
+                            .environment
+                            .explicit_vars
+                            .insert("TAMPER".into(), "1".into());
+                    }
+                    "env_redacted_patterns" => prepared
+                        .contract
+                        .environment
+                        .redacted_patterns
+                        .push("FORBIDDEN_*".into()),
+                    "env_inject_session_nonce" => {
+                        prepared.contract.environment.inject_session_nonce =
+                            !prepared.contract.environment.inject_session_nonce
+                    }
+                    "net_mode" => {
+                        prepared.contract.network.mode =
+                            crate::policy_ir::contract::NetworkMode::Allowlist
+                    }
+                    "net_allowed_domains" => prepared
+                        .contract
+                        .network
+                        .allowed_domains
+                        .push("tampered.domain".into()),
+                    "net_allowed_ports" => prepared.contract.network.allowed_ports.push(8080),
+                    "net_allowed_ips" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .allow_cidr
+                        .push("10.0.0.0/8".into()),
+                    "net_debug_ports" => {
+                        prepared.contract.production.as_mut().unwrap().debug_ports =
+                            Some(crate::multi::DebugPortConfig::default())
+                    }
+                    "limits_max_memory_mb" => {
+                        prepared.contract.resources.max_memory_bytes ^= 0x4000
+                    }
+                    "limits_max_pids" => prepared.contract.resources.max_pids += 10,
+                    "limits_max_cpu_seconds" => {
+                        prepared.contract.resources.max_wall_time_ms += 10000
+                    }
+                    "limits_max_file_size_mb" => {
+                        prepared.contract.resources.max_file_size_bytes += 1024 * 1024
+                    }
+                    "exec_allowed_executables" => prepared
+                        .contract
+                        .filesystem
+                        .allow_execute
+                        .push(PathBuf::from("/bin/bash")),
+                    "exec_forbidden_executables" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_resolved
+                        .push(crate::policy::DenyEntry {
+                            path: PathBuf::from("/bin/forbidden"),
+                            is_dir: false,
+                        }),
+                    "exec_invoked_binary" => {
+                        prepared.contract.agent_identity.invoked_binary =
+                            PathBuf::from("/bin/tampered")
+                    }
+                    "exec_invoked_args" => prepared
+                        .contract
+                        .agent_identity
+                        .invoked_args
+                        .push("--tampered".into()),
+                    "secrets_mask_paths" => prepared
+                        .contract
+                        .filesystem
+                        .mask_paths
+                        .push(PathBuf::from("/root/.ssh/id_rsa")),
+                    "tier_requirement" => {
+                        let p = prepared.contract.production.as_mut().unwrap();
+                        p.tier = if p.tier == Some(Tier::FsOnly) {
+                            Some(Tier::Full)
+                        } else {
+                            Some(Tier::FsOnly)
+                        };
+                    }
+                    "backend_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().backend =
+                            "rogue-backend".into()
+                    }
+                    _ => unreachable!(),
+                }
+
+                assert!(
+                    !prepared.contract.verify_digest(),
+                    "{case}: unresealed digest must be invalid"
+                );
+                let spawn_res = prepared.spawn();
+                assert!(
+                    spawn_res.is_err(),
+                    "{case}: spawn must fail on unresealed contract"
+                );
+                assert!(!marker.exists(), "{case}: child must not execute");
+            }
+
+            // Test resealed tamper: digest matches, but projection / drift / backend mismatch fails spawn
+            {
+                let mut prepared = UnpreparedProductionExecution::new(
+                    base_backend.clone(),
+                    test_policy.clone(),
+                    cmd.clone(),
+                    tmp.clone(),
+                    HashMap::new(),
+                    NetMode::Off,
+                    Some(Duration::from_secs(10)),
+                    StdioMode::Inherit,
+                    PROD_SCENARIO_ID.into(),
+                )
+                .prepare()
+                .expect("prepare execution");
+
+                match case {
+                    "fs_allow_read" => prepared
+                        .contract
+                        .filesystem
+                        .allow_read
+                        .push(PathBuf::from("/etc/extra_read")),
+                    "fs_allow_write" => prepared
+                        .contract
+                        .filesystem
+                        .allow_write
+                        .push(PathBuf::from("/usr/bin/extra_write")),
+                    "fs_deny_read" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_read
+                        .push(PathBuf::from("/tmp/secret_read")),
+                    "fs_deny_write" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_write
+                        .push(PathBuf::from("/tmp/secret_write")),
+                    "fs_cow_overlay" => {
+                        prepared.contract.filesystem.cow_overlay =
+                            !prepared.contract.filesystem.cow_overlay
+                    }
+                    "fs_execution_root_ro" => {
+                        prepared.contract.filesystem.execution_root_ro =
+                            !prepared.contract.filesystem.execution_root_ro
+                    }
+                    "env_explicit_vars" => {
+                        prepared
+                            .contract
+                            .environment
+                            .explicit_vars
+                            .insert("TAMPER".into(), "1".into());
+                    }
+                    "env_redacted_patterns" => prepared
+                        .contract
+                        .environment
+                        .redacted_patterns
+                        .push("FORBIDDEN_*".into()),
+                    "env_inject_session_nonce" => {
+                        prepared.contract.environment.inject_session_nonce =
+                            !prepared.contract.environment.inject_session_nonce
+                    }
+                    "net_mode" => {
+                        prepared.contract.network.mode =
+                            crate::policy_ir::contract::NetworkMode::Allowlist
+                    }
+                    "net_allowed_domains" => prepared
+                        .contract
+                        .network
+                        .allowed_domains
+                        .push("tampered.domain".into()),
+                    "net_allowed_ports" => prepared.contract.network.allowed_ports.push(8080),
+                    "net_allowed_ips" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .allow_cidr
+                        .push("10.0.0.0/8".into()),
+                    "net_debug_ports" => {
+                        prepared.contract.production.as_mut().unwrap().debug_ports =
+                            Some(crate::multi::DebugPortConfig::default())
+                    }
+                    "limits_max_memory_mb" => {
+                        prepared.contract.resources.max_memory_bytes ^= 0x4000
+                    }
+                    "limits_max_pids" => prepared.contract.resources.max_pids += 10,
+                    "limits_max_cpu_seconds" => {
+                        prepared.contract.resources.max_wall_time_ms += 10000
+                    }
+                    "limits_max_file_size_mb" => {
+                        prepared.contract.resources.max_file_size_bytes += 1024 * 1024
+                    }
+                    "exec_allowed_executables" => prepared
+                        .contract
+                        .filesystem
+                        .allow_execute
+                        .push(PathBuf::from("/bin/bash")),
+                    "exec_forbidden_executables" => prepared
+                        .contract
+                        .production
+                        .as_mut()
+                        .unwrap()
+                        .installation_policy
+                        .deny_resolved
+                        .push(crate::policy::DenyEntry {
+                            path: PathBuf::from("/bin/forbidden"),
+                            is_dir: false,
+                        }),
+                    "exec_invoked_binary" => {
+                        prepared.contract.agent_identity.invoked_binary =
+                            PathBuf::from("/bin/tampered")
+                    }
+                    "exec_invoked_args" => prepared
+                        .contract
+                        .agent_identity
+                        .invoked_args
+                        .push("--tampered".into()),
+                    "secrets_mask_paths" => prepared
+                        .contract
+                        .filesystem
+                        .mask_paths
+                        .push(PathBuf::from("/root/.ssh/id_rsa")),
+                    "tier_requirement" => {
+                        let p = prepared.contract.production.as_mut().unwrap();
+                        p.tier = if p.tier == Some(Tier::FsOnly) {
+                            Some(Tier::Full)
+                        } else {
+                            Some(Tier::FsOnly)
+                        };
+                    }
+                    "backend_requirement" => {
+                        prepared.contract.production.as_mut().unwrap().backend =
+                            "rogue-backend".into()
+                    }
+                    _ => unreachable!(),
+                }
+
+                prepared.contract = prepared.contract.unsealed().seal().unwrap();
+                assert!(
+                    prepared.contract.verify_digest(),
+                    "{case}: resealed digest must be valid"
+                );
+                let spawn_res = prepared.spawn();
+                assert!(
+                    spawn_res.is_err(),
+                    "{case}: resealed tampered contract must fail spawn"
+                );
+                assert!(
+                    !marker.exists(),
+                    "{case}: child must not execute on resealed tamper"
+                );
+            }
+        }
+
+        // Positive control: untampered execution succeeds and creates marker
+        let spawned = UnpreparedProductionExecution::new(
+            base_backend,
+            test_policy,
+            cmd,
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare control")
+        .spawn()
+        .expect("spawn control");
+        spawned.wait_collect();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_caller_policy_cannot_change_canonical_backend_input() {
+        let tmp = std::env::temp_dir();
+        let mut policy = functional_test_policy(&tmp);
+        let mut debug_ports = crate::multi::DebugPortConfig {
+            allowed_ports: vec![9229, 5678],
+            isolate_node_inspect: false,
+            ..Default::default()
+        };
+        let prepared = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            policy.clone(),
+            vec!["/bin/true".into()],
+            tmp,
+            HashMap::new(),
+            NetMode::Off,
+            None,
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .with_debug_ports(debug_ports.clone())
+        .prepare()
+        .expect("prepare production execution");
+        let original = prepared.contract().clone();
+        assert_eq!(
+            original.production.as_ref().unwrap().debug_ports.as_ref(),
+            Some(&debug_ports)
+        );
+        debug_ports.allowed_ports.clear();
+        debug_ports.isolate_node_inspect = true;
+        assert_ne!(
+            prepared
+                .contract()
+                .production
+                .as_ref()
+                .unwrap()
+                .debug_ports
+                .as_ref(),
+            Some(&debug_ports)
+        );
+        policy.allow_read.clear();
+        policy.allow_write.clear();
+        policy.deny_network = !policy.deny_network;
+        policy.limits.processes = Some(17);
+        policy.secret_proxies.push("VETTO_TEST_SECRET".into());
+        assert_ne!(&policy, prepared.frozen_policy());
+        assert_eq!(prepared.contract(), &original);
+        let (canonical, identity) = freeze_production_contract(
+            &prepared.scenario,
+            prepared.contract(),
+            prepared.tier.map(|t| t.label()).unwrap_or("none"),
+            &prepared.mechanics.describe(),
+        )
+        .unwrap();
+        assert_eq!(canonical, prepared.canonical);
+        assert_eq!(identity.frozen_hash, prepared.identity().frozen_hash);
+        assert!(prepared
+            .enforcement_report()
+            .unwrap()
+            .binds_identity(&identity));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn phase1_production_audit_binds_actual_contract() {
+        let tmp =
+            std::env::temp_dir().join(format!("vetto-contract-audit-{}", engine::new_nonce()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prepared = UnpreparedProductionExecution::new(
+            Backend::detect(NetMode::Off, false).expect("detect mechanics"),
+            functional_test_policy(&tmp),
+            vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            tmp.clone(),
+            HashMap::new(),
+            NetMode::Off,
+            Some(Duration::from_secs(10)),
+            StdioMode::Inherit,
+            PROD_SCENARIO_ID.into(),
+        )
+        .prepare()
+        .expect("prepare production execution");
+        let digest = prepared.contract().contract_digest_blake3.clone();
+        let frozen_hash = prepared.identity().frozen_hash.clone();
+        assert_ne!(digest, frozen_hash);
+        let audit_dir = std::env::var("VETTO_AUDIT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vetto-audit"));
+        let ledger = audit_dir.join(format!("vetto-audit-{}.jsonl", prepared.nonce()));
+        let spawned = prepared.spawn().expect("spawn benign child");
+        assert_eq!(spawned.contract().contract_digest_blake3, digest);
+        let _result = spawned.wait_collect();
+        let body = std::fs::read_to_string(&ledger).expect("production audit ledger");
+        let records: Vec<VettoAuditRecord> = body
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records[0].record_type,
+            crate::audit::record::RecordType::SessionInit
+        );
+        assert_eq!(
+            records[1].record_type,
+            crate::audit::record::RecordType::TreeExtinction
+        );
+        assert_eq!(
+            records[2].record_type,
+            crate::audit::record::RecordType::SessionVerdict
+        );
+        for record in records {
+            assert_eq!(record.contract_digest, digest);
+            assert_ne!(record.contract_digest, frozen_hash);
+        }
+        assert!(AuditLedger::verify_file(&ledger).unwrap());
+        std::fs::remove_file(ledger).unwrap();
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     /// TEST-PROD-BACKEND-FAIL-CLOSED-001: preparation failure spawns nothing.

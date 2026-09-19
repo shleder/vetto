@@ -16,6 +16,7 @@
 pub mod caps;
 pub mod collector;
 pub mod engine;
+pub mod environment;
 pub mod evidence;
 pub mod exit;
 pub mod fixture;
@@ -24,6 +25,7 @@ pub mod host_evidence;
 pub mod killer;
 pub mod linux_enforce;
 pub mod model;
+pub mod network;
 pub mod oracle;
 pub mod redact;
 pub mod registry;

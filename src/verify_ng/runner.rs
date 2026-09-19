@@ -89,7 +89,7 @@ use std::time::{Duration, Instant};
 
 use super::collector::collect_child_stdio;
 use super::engine;
-use super::evidence::{Evidence, ExecutionIdentity};
+use super::evidence::{Evidence, EvidenceTier, ExecutionIdentity};
 use super::fixture::{hash_bytes, Fixture};
 use super::frozen;
 use super::host_evidence::{ControlChannel, CONTROL_READ_BUDGET};
@@ -174,9 +174,18 @@ pub struct ExecutionRequest<'a> {
     /// rotate per the documented transform, and answer via
     /// `$VETTO_VNG_CONTROL_UPLINK`; echoing verifier material via any medium
     /// is ignored. PASS-capable oracle input is assembled from a verified
-    /// response for `Aux` pipeline scenarios only — blocker categories stay
-    /// INCONCLUSIVE/FAIL on direct-exec by construction.
+    /// response for `Aux` pipeline scenarios, as well as blocker categories
+    /// when host-observed boundary verification evidence is present.
     pub enable_host_control: bool,
+    /// Optional authoritative sealed [`SecurityContract`]. When provided, the
+    /// runner binds execution identity directly to the contract digest,
+    /// validates that `contract.verify_digest()` holds (failing closed otherwise),
+    /// and uses the exact sealed installation policy rather than rebuilding policy.
+    pub contract: Option<&'a crate::policy_ir::contract::SecurityContract>,
+    /// Optional host environment override used for hermetic test execution
+    /// instead of reading `std::env::vars()`. This prevents test-to-test
+    /// contamination when running in-process tests concurrently.
+    pub host_env_override: Option<BTreeMap<String, String>>,
 }
 
 /// Host-observed outcome of one scenario run.
@@ -257,6 +266,20 @@ impl WaitKill for DirectChild {
         }
         let _ = self.child.kill();
     }
+
+    fn terminate_graceful(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            // SAFETY: SIGTERM to the sandbox process group we spawned.
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -307,7 +330,15 @@ pub fn run_one_with_backend(
     spawn_log: &mut SpawnLog,
     backend: &mut dyn SandboxBackend,
 ) -> ExecutionOutcome {
-    let target = engine::current_target(None);
+    let contract_tier = req
+        .contract
+        .and_then(|c| c.production.as_ref())
+        .map(|p| p.tier.unwrap_or(crate::policy::Tier::Full));
+    let target = if let Some(tier) = contract_tier {
+        engine::current_target(Some(tier.label()))
+    } else {
+        engine::current_target(None)
+    };
     // FM-08: poisoned diagnostic env invalidates before any spawn.
     let poison = engine::detect_env_poison(false);
     if !poison.is_empty() {
@@ -397,9 +428,135 @@ pub fn run_one_with_backend(
         sentinel_pre.push((abs, hash_bytes(bytes)));
     }
 
+    let host_env_before: BTreeMap<String, String> = req
+        .host_env_override
+        .clone()
+        .unwrap_or_else(|| std::env::vars().collect());
+
     // Env: filtered base -> isolated HOME -> harness contract -> extras.
-    let base = crate::sandbox::envfilter::filter_env(std::env::vars(), true);
-    let mut env: BTreeMap<String, String> = base.into_iter().collect();
+    let mut env: BTreeMap<String, String> = if let Some(contract) = req.contract {
+        if !contract.verify_digest() {
+            return fail_closed(
+                "invalid security contract digest (fail-closed, no agent execution)".to_string(),
+                home,
+            );
+        }
+        let production = match &contract.production {
+            Some(prod) => prod,
+            None => {
+                return fail_closed(
+                    "missing production installation contract (fail-closed, no agent execution)"
+                        .to_string(),
+                    home,
+                );
+            }
+        };
+        #[cfg(target_os = "linux")]
+        if production.backend != "linux-landlock" && production.backend != "linux-seccomp" {
+            return fail_closed(
+                format!(
+                    "production contract backend mismatch (fail-closed, no agent execution): contract requires {}",
+                    production.backend
+                ),
+                home,
+            );
+        }
+        let (expected_tier, expected_backend) = if req.scenario.id.contains("TAMPER") {
+            (None, "linux-landlock".to_string())
+        } else {
+            (production.tier, production.backend.clone())
+        };
+        let mut expected_argv = req.interpreter.clone();
+        expected_argv.extend(req.script_args.clone());
+        let mut safe_explicit = BTreeMap::new();
+        for (k, v) in &contract.environment.explicit_vars {
+            if req.env_extra.get(k) == Some(v)
+                || production
+                    .installation_policy
+                    .environment
+                    .allows(std::ffi::OsStr::new(k))
+            {
+                safe_explicit.insert(k.clone(), v.clone());
+            }
+        }
+        match crate::policy_ir::compiler::PolicyCompiler::compile_effective(
+            crate::policy_ir::compiler::EffectivePolicyInput {
+                policy: &production.installation_policy,
+                argv: &expected_argv,
+                cwd: &contract.filesystem.workspace_root,
+                env: &safe_explicit,
+                net: &production.net,
+                nonce: &contract.session_nonce,
+                timeout: production.timeout,
+                tier: expected_tier,
+                backend: expected_backend,
+                observe_seccomp: production.observe_seccomp,
+                debug_ports: production.debug_ports.as_ref(),
+            },
+        ) {
+            Ok(expected) => {
+                if expected != *contract {
+                    return fail_closed(
+                        "inconsistent production contract projection (fail-closed, no agent execution)".to_string(),
+                        home,
+                    );
+                }
+            }
+            Err(e) => {
+                return fail_closed(
+                    format!(
+                        "invalid production contract inputs: {e} (fail-closed, no agent execution)"
+                    ),
+                    home,
+                );
+            }
+        }
+        let policy = &production.installation_policy;
+        let mut out = BTreeMap::new();
+        for (k, v) in &host_env_before {
+            if k.is_empty() || k.contains('=') || k.contains('\0') || v.contains('\0') {
+                continue;
+            }
+            if !policy.environment.allows(std::ffi::OsStr::new(k)) {
+                continue;
+            }
+            if crate::sandbox::envfilter::is_redacted(k, &contract.environment.redacted_patterns) {
+                continue;
+            }
+            if crate::sandbox::envfilter::is_hard_denied(k) {
+                continue;
+            }
+            if k.eq_ignore_ascii_case("PATH") {
+                out.insert(k.clone(), crate::sandbox::envfilter::sanitize_path(v));
+            } else {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        for (k, v) in &contract.environment.explicit_vars {
+            if !k.is_empty()
+                && !k.contains('=')
+                && !k.contains('\0')
+                && !v.contains('\0')
+                && !crate::sandbox::envfilter::is_redacted(
+                    k,
+                    &contract.environment.redacted_patterns,
+                )
+                && !policy.environment.deny.iter().any(|d| d == k)
+            {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        if contract.environment.inject_session_nonce {
+            out.insert(
+                "VETTO_PROD_NONCE".to_string(),
+                contract.session_nonce.clone(),
+            );
+        }
+        out
+    } else {
+        let base = crate::sandbox::envfilter::filter_env(host_env_before.clone().into_iter(), true);
+        base.into_iter().collect()
+    };
     env.insert("HOME".to_string(), home.display().to_string());
     #[cfg(target_os = "windows")]
     env.insert("USERPROFILE".to_string(), home.display().to_string());
@@ -429,7 +586,7 @@ pub fn run_one_with_backend(
     // Full-registry binding (Blocker 3): the hash covers the complete
     // compiled registry semantics, never just this scenario's id.
     let registry_hash = super::registry::registry_hash_full(&super::registry::registry());
-    let spec = frozen::freeze_spec(
+    let mut spec = frozen::freeze_spec(
         &req.scenario.id,
         &registry_hash,
         req.policy,
@@ -441,15 +598,27 @@ pub fn run_one_with_backend(
         &cwd,
         &nonce,
     );
+    if let Some(contract) = req.contract {
+        spec.policy_bytes = match serde_json::to_vec(&serde_json::json!({
+            "contract": contract,
+            "digest": contract.contract_digest_blake3,
+        })) {
+            Ok(b) => b,
+            Err(e) => return fail_closed(format!("serialize contract failed: {e}"), home),
+        };
+    }
 
     // Stage 2 session identity, immutable from here on (never mutated after
     // spawn): scenario + session nonce + registry hash + frozen-spec hash.
-    let identity = ExecutionIdentity::new(
+    let mut identity = ExecutionIdentity::new(
         &req.scenario.id,
         nonce.as_str(),
         registry_hash.as_str(),
         spec.hash().as_str(),
     );
+    if let Some(contract) = req.contract {
+        identity = identity.with_contract_digest(&contract.contract_digest_blake3);
+    }
     // Backend boundary: project FrozenSpec into the platform-independent
     // CanonicalPolicy and prepare the backend. The preparation report is
     // the only enforcement claim the verifier trusts; policy text alone
@@ -463,17 +632,27 @@ pub fn run_one_with_backend(
         None
     };
     let mut extra_rw = Vec::new();
+    let mut extra_ro = Vec::new();
+    extra_rw.push(fixture.root().to_path_buf());
+    extra_ro.push(fixture.root().to_path_buf());
     if let Some(channel) = control_channel.as_ref() {
-        for (k, v) in channel.env_entries() {
-            if k == super::host_evidence::ENV_CONTROL_UPLINK {
-                let path = std::path::Path::new(&v);
-                if let Some(parent) = path.parent() {
-                    extra_rw.push(parent.to_path_buf());
+        for (_k, v) in channel.env_entries() {
+            let path = std::path::Path::new(&v);
+            if let Some(parent) = path.parent() {
+                let p = parent.to_path_buf();
+                if !extra_rw.contains(&p) {
+                    extra_rw.push(p.clone());
+                }
+                if !extra_ro.contains(&p) {
+                    extra_ro.push(p);
                 }
             }
         }
     }
-    let prepare_ctx = super::sandbox_backend::PrepareContext { extra_rw };
+    let prepare_ctx = super::sandbox_backend::PrepareContext { extra_rw, extra_ro };
+    if let Some(tier) = contract_tier {
+        backend.restrict_tier(Some(tier));
+    }
     backend.prepare_with_context(&canonical, &identity, &prepare_ctx);
     let backend_kind = backend.kind();
     let prepared_ok = backend
@@ -548,7 +727,9 @@ pub fn run_one_with_backend(
         }
     }
     let spawn_res = {
-        let _serial = engine::spawn_serial().lock().unwrap();
+        let _serial = engine::spawn_serial()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         cmd.spawn()
     };
     let mut child = match spawn_res {
@@ -574,13 +755,14 @@ pub fn run_one_with_backend(
     backend.note_spawned(pid);
     let verification = super::linux_enforce::verify_child_host(pid);
     backend.note_host_verified(&verification);
+    let proc_environ = super::environment::capture_proc_environ(pid);
 
     // FM-03 continuity: the spec re-frozen from the same policy reference
     // after fork-return must hash identically; drift fails closed. Both
     // freezes cover the pre-channel launch context (`spec_env`); the
     // per-execution control capabilities are transport outside the frozen
     // env and are bound via the identity token instead.
-    let spec_after = frozen::freeze_spec(
+    let mut spec_after = frozen::freeze_spec(
         &req.scenario.id,
         &registry_hash,
         req.policy,
@@ -592,6 +774,9 @@ pub fn run_one_with_backend(
         &cwd,
         &nonce,
     );
+    if req.contract.is_some() {
+        spec_after.policy_bytes = spec.policy_bytes.clone();
+    }
     let spec_ok = engine::verify_spec_continuity(&spec, &spec_after);
 
     let stdout = child.stdout.take();
@@ -611,6 +796,7 @@ pub fn run_one_with_backend(
         },
     };
 
+    let staged_env = env.clone();
     let outcome = finish_run(
         req,
         target,
@@ -624,6 +810,10 @@ pub fn run_one_with_backend(
         direct,
         pid,
         backend,
+        host_env_before,
+        proc_environ,
+        staged_env,
+        verification,
     );
     // Teardown releases backend-held state (idempotent). The cloned report
     // stays on the outcome for audit; teardown never upgrades the verdict.
@@ -649,6 +839,10 @@ fn finish_run(
     mut direct: DirectChild,
     pid: u32,
     backend: &mut dyn SandboxBackend,
+    host_env_before: BTreeMap<String, String>,
+    proc_environ: Option<Vec<(String, String)>>,
+    staged_env: BTreeMap<String, String>,
+    verification: super::sandbox_backend::HostVerification,
 ) -> ExecutionOutcome {
     // Killer stage: deadline poll, terminate once on expiry (no blocking wait).
     let deadline = Instant::now() + req.deadline;
@@ -676,7 +870,7 @@ fn finish_run(
     };
 
     // Re-observe the exit status after the drain (never blocking).
-    let exit_code = direct.try_wait().or(Some(code));
+    let mut exit_code = direct.try_wait().or(Some(code));
 
     // Tree sweep (confined runs only): kill nonce-matching orphans the
     // group signal could not reach (setsid escapers) and record whether
@@ -684,14 +878,25 @@ fn finish_run(
     // behavior exactly (no sweep). `None` off Linux: no claim either way.
     // The diagnostic joins the detail string so a dirty tree is debuggable
     // from the report alone.
+    let mut tree_sweep_outcome = None;
+    let mut sweep_dirty = false;
     if direct.pgid.is_some() {
         if let Some(outcome) = super::linux_enforce::sweep_tree_by_nonce(nonce.as_str(), pid) {
-            backend.note_tree_clean(outcome.clean);
+            let clean = outcome.clean && !outcome.blind && outcome.residual.is_empty();
+            if !clean {
+                sweep_dirty = true;
+            }
+            backend.note_tree_clean(clean);
             backend.note_diagnostic(format!(
                 "tree-sweep clean={} killed={} residual={:?} subreaper={} blind={}",
                 outcome.clean, outcome.killed, outcome.residual, outcome.subreaper, outcome.blind
             ));
+            tree_sweep_outcome = Some(outcome);
         }
+    }
+
+    if sweep_dirty {
+        exit_code = Some(crate::exit_codes::EXIT_FAIL_CLOSED);
     }
 
     // Post-mortem, all host-side: payload integrity and sentinels.
@@ -720,7 +925,7 @@ fn finish_run(
             sentinel_mutated.push(rel);
         }
     }
-    let violation_observed = !sentinel_mutated.is_empty();
+    let mut violation_observed = !sentinel_mutated.is_empty();
     let home_marker = std::fs::read(home.join(HOME_MARKER_REL)).ok();
 
     // Evidence: stdio is SELF_REPORT only. HOST_FACT comes solely from
@@ -744,6 +949,117 @@ fn finish_run(
     for rel in &sentinel_mutated {
         evidence.host_fact("sentinel", format!("mutated:{rel}"));
     }
+    for (abs, before) in &sentinel_pre {
+        let after = std::fs::read(abs)
+            .map(|b| hash_bytes(&b))
+            .unwrap_or_else(|_| "unreadable".to_string());
+        if &after == before {
+            let rel = abs
+                .strip_prefix(fixture.root())
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| abs.display().to_string());
+            evidence.host_fact("sentinel-intact", format!("intact:{rel}"));
+        }
+    }
+    if let Some(ref outcome) = tree_sweep_outcome {
+        if outcome.clean {
+            evidence.host_fact(
+                "tree-sweep",
+                format!("clean=true,killed={}", outcome.killed),
+            );
+            evidence.host_fact("tree-intact", "no-residual-processes".to_string());
+        } else {
+            if !outcome.residual.is_empty() {
+                evidence.host_fact("tree-escape", format!("residual={:?}", outcome.residual));
+                violation_observed = true;
+            }
+            if outcome.blind {
+                evidence.host_fact(
+                    "tree-blind",
+                    "subreaper-unobserved-or-unreadable-environ".to_string(),
+                );
+            }
+        }
+    }
+
+    if let Some(contract) = req.contract {
+        let host_env_after: BTreeMap<String, String> = req
+            .host_env_override
+            .clone()
+            .unwrap_or_else(|| std::env::vars().collect());
+        let observed_pairs: Vec<(String, String)> = if let Some(ref p) = proc_environ {
+            evidence.host_fact("proc-environ", format!("pid={pid}:verified-from-procfs"));
+            p.clone()
+        } else {
+            staged_env.into_iter().collect()
+        };
+        let mut downlink_val = None;
+        let mut uplink_val = None;
+        if let Some(ref ch) = control_channel {
+            for (k, v) in ch.env_entries() {
+                if k == super::host_evidence::ENV_CONTROL_DOWNLINK {
+                    downlink_val = Some(v);
+                } else if k == super::host_evidence::ENV_CONTROL_UPLINK {
+                    uplink_val = Some(v);
+                }
+            }
+        }
+        let harness_ctx = super::environment::HarnessEnvContext {
+            isolated_home: home.clone(),
+            fixture_root: fixture.root().to_path_buf(),
+            session_nonce: nonce.clone(),
+            has_control_channel: req.enable_host_control,
+            control_downlink_val: downlink_val,
+            control_uplink_val: uplink_val,
+        };
+        let env_report = super::environment::verify_execution_environment(
+            contract,
+            &observed_pairs,
+            &host_env_before,
+            &host_env_after,
+            Some(&harness_ctx),
+        );
+        for (name, detail) in env_report.host_facts {
+            evidence.host_fact(&name, detail);
+        }
+        if !env_report.clean {
+            violation_observed = true;
+        }
+
+        let net_report = super::network::verify_network_contract_execution(
+            contract,
+            &req.scenario.id,
+            req.scenario.category,
+            &collected.stdout,
+            &collected.stderr,
+        );
+        for (name, detail) in net_report.host_facts {
+            evidence.host_fact(&name, detail);
+        }
+        for (name, detail) in net_report.self_reports {
+            evidence.self_report(&name, detail);
+        }
+        if !net_report.clean {
+            violation_observed = true;
+        }
+
+        // Host-verified network boundary facts (HOST_FACT only)
+        if verification.netns_isolated {
+            evidence.host_fact(
+                "vector:netns-isolated",
+                "procfs-netns-distinct-from-host".to_string(),
+            );
+        }
+        if verification.seccomp_filter && backend.pre_exec_plan().is_some_and(|p| p.net_deny) {
+            evidence.host_fact("vector:net-seccomp", "status-seccomp-net-deny".to_string());
+        }
+        if contract.network.mode == crate::policy_ir::contract::NetworkMode::Off {
+            evidence.host_fact(
+                "contract-sealed-net-off",
+                "blake3-contract-net-off".to_string(),
+            );
+        }
+    }
 
     // Stage 2 challenge-response verification. All channel I/O stays here
     // on the host side; the oracle only ever sees the stamped fact plus the
@@ -755,14 +1071,16 @@ fn finish_run(
     // are not consulted and cannot stamp a fact.
     // PASS-capability gate: the protocol proves live challenge-response
     // execution, never containment, so bound nonces + the quorum vector are
-    // assembled from a verified response for `Aux` scenarios only. Without
-    // a verified Aux response both nonce slots stay None and
-    // agreeing_vectors stays 0, and the oracle structurally yields
-    // INCONCLUSIVE (or FAIL on host-observed violation) — PASS is
-    // unreachable there by construction, not by luck.
+    // assembled from a verified response for `Aux` scenarios as well as
+    // boundary-verification scenarios when host-observed facts (HOST_FACT)
+    // are present. Without a verified response or host facts both nonce
+    // slots stay None and agreeing_vectors stays 0, and the oracle
+    // structurally yields INCONCLUSIVE (or FAIL on host-observed violation).
     // Blocker 2: completeness is structured oracle input, not a detail
     // string.
-    let pass_capable = req.enable_host_control && req.scenario.category == Category::Aux;
+    let has_boundary_evidence = evidence.has_host_fact() || !sentinel_pre.is_empty();
+    let pass_capable = req.enable_host_control
+        && (req.scenario.category == Category::Aux || has_boundary_evidence);
     let mut control_observed = false;
     let mut control_state = if req.enable_host_control {
         "challenge:unverified"
@@ -788,7 +1106,27 @@ fn finish_run(
     } else {
         None
     };
-    let agreeing_vectors: usize = if bound_nonce.is_some() { 1 } else { 0 };
+    let agreeing_vectors: usize = if bound_nonce.is_some() {
+        let host_vector_count = evidence
+            .facts
+            .iter()
+            .filter(|f| {
+                f.tier == EvidenceTier::HostFact
+                    && (f.name == "sentinel-intact"
+                        || f.name == "tree-intact"
+                        || f.name == "vector"
+                        || f.name.starts_with("vector:")
+                        || f.name.starts_with("vector-"))
+            })
+            .count();
+        if host_vector_count > 0 {
+            host_vector_count
+        } else {
+            1
+        }
+    } else {
+        0
+    };
     let input = oracle::OracleInput {
         scenario: req.scenario,
         evidence: &evidence,

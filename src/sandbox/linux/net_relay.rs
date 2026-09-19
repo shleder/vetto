@@ -434,7 +434,7 @@ pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     })
 }
 
-fn is_loopback_host(host: &str) -> bool {
+pub(crate) fn is_loopback_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
     h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
 }
@@ -649,7 +649,7 @@ fn nat64_embedded_ipv4(octets: &[u8; 16]) -> Option<Ipv4Addr> {
 /// answer in the broker, including literal IP targets, IPv4-mapped IPv6
 /// answers, and NAT64-embedded IPv4 answers, before any socket connect is
 /// attempted.
-fn forbidden_destination(ip: IpAddr) -> bool {
+pub(crate) fn forbidden_destination(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => forbidden_ipv4(ip),
         IpAddr::V6(ip) => {
@@ -731,7 +731,7 @@ fn forbidden_ipv4(ip: Ipv4Addr) -> bool {
         || cloud_metadata
 }
 
-fn extract_sni(buf: &[u8]) -> Result<Option<String>, ()> {
+pub(crate) fn extract_sni(buf: &[u8]) -> Result<Option<String>, ()> {
     if buf.is_empty() {
         return Ok(None);
     }

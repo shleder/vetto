@@ -310,6 +310,8 @@ mod tests {
 
     fn mock_contract() -> SecurityContract {
         let unsealed = UnsealedSecurityContract {
+            production: None,
+            crypto: Default::default(),
             contract_version: 1,
             contract_id: "test-contract-001".to_string(),
             session_nonce: "nonce-12345".to_string(),
@@ -483,22 +485,22 @@ mod tests {
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
 
-        let mut contract = mock_contract();
-        let digest_bytes = contract.contract_digest_blake3.as_bytes();
-        let signature = signing_key.sign(digest_bytes);
-
-        let sig_hex: String = signature
-            .to_bytes()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
         let pk_hex: String = verifying_key
             .to_bytes()
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect();
-
-        contract = contract.with_minisign(true, Some(sig_hex), Some(pk_hex));
+        let mut contract = mock_contract().with_minisign(true, None, Some(pk_hex));
+        let sealed_digest = contract.contract_digest_blake3.clone();
+        let signature = signing_key.sign(sealed_digest.as_bytes());
+        let sig_hex: String = signature
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        contract.crypto.signature = Some(sig_hex);
+        assert_eq!(contract.contract_digest_blake3, sealed_digest);
+        assert!(contract.verify_digest());
 
         let verdict = VerdictEngine::evaluate(&contract, 0, 0, 0, true, 0);
         assert_eq!(verdict.status, VerdictStatus::Pass);

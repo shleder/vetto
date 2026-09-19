@@ -33,6 +33,7 @@ use crate::config::NetMode;
 use crate::error::VettoError;
 use crate::policy::Policy;
 
+#[derive(Clone)]
 pub struct MacosSandbox {
     pub net: NetMode,
 }

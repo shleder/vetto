@@ -28,7 +28,120 @@ pub enum CompilerError {
 
 pub struct PolicyCompiler;
 
+/// Already-resolved production inputs. No defaults or path reinterpretation
+/// from the request-oriented compiler are applied at this boundary.
+pub struct EffectivePolicyInput<'a> {
+    pub policy: &'a crate::policy::Policy,
+    pub argv: &'a [String],
+    pub cwd: &'a Path,
+    pub env: &'a BTreeMap<String, String>,
+    pub net: &'a crate::config::NetMode,
+    pub nonce: &'a str,
+    pub timeout: Option<std::time::Duration>,
+    pub tier: Option<crate::policy::Tier>,
+    pub backend: String,
+    pub observe_seccomp: bool,
+    pub debug_ports: Option<&'a crate::multi::DebugPortConfig>,
+}
+
 impl PolicyCompiler {
+    pub fn compile_effective(
+        input: EffectivePolicyInput<'_>,
+    ) -> Result<SecurityContract, CompilerError> {
+        use super::contract::ProductionContract;
+        use crate::config::NetMode;
+        if input.argv.first().map_or(true, |s| s.is_empty()) || input.nonce.is_empty() {
+            return Err(CompilerError::MissingMandatoryField(
+                "command or nonce".into(),
+            ));
+        }
+        let policy = input.policy;
+        // The request-oriented fields are an exact checked projection. The
+        // installation payload preserves values that v1 cannot express (None,
+        // CPU seconds, strict domain/port pairs, platform settings).
+        let (mode, domains, ports) = match input.net {
+            NetMode::Off => (NetworkMode::Off, vec![], vec![]),
+            NetMode::Allowlist(domains) => (NetworkMode::Allowlist, domains.clone(), vec![]),
+            NetMode::Strict(rules) => (
+                NetworkMode::Strict,
+                rules.iter().map(|r| r.domain.clone()).collect(),
+                rules.iter().map(|r| r.port).collect(),
+            ),
+            NetMode::Ask => (NetworkMode::Ask, vec![], vec![]),
+        };
+        let max_pids = resolve_max_pids(policy)?;
+        let max_memory_bytes = resolve_max_memory_bytes(policy);
+        let max_cpu_percent = resolve_cpu_percent(policy);
+        let max_wall_time_ms =
+            u64::try_from(input.timeout.map_or(0, |t| t.as_millis())).map_err(|_| {
+                CompilerError::UnsupportedCapability("timeout exceeds contract range".into())
+            })?;
+        UnsealedSecurityContract {
+            production: Some(ProductionContract {
+                installation_policy: policy.clone(),
+                net: input.net.clone(),
+                timeout: input.timeout,
+                tier: input.tier,
+                backend: input.backend,
+                observe_seccomp: input.observe_seccomp,
+                debug_ports: input.debug_ports.cloned(),
+            }),
+            crypto: Default::default(),
+            contract_version: 1,
+            contract_id: format!("production-{}", input.nonce),
+            session_nonce: input.nonce.to_string(),
+            agent_identity: AgentIdentity {
+                agent_name: policy.name.clone(),
+                agent_preset: policy.name.clone(),
+                agent_version: env!("CARGO_PKG_VERSION").to_string(),
+                invoked_binary: PathBuf::from(&input.argv[0]),
+                invoked_args: input.argv[1..].to_vec(),
+            },
+            filesystem: FilesystemContract {
+                workspace_root: input.cwd.to_path_buf(),
+                allow_read: policy.allow_read.clone(),
+                allow_write: policy.allow_write.clone(),
+                allow_execute: vec![],
+                mask_paths: policy
+                    .deny_resolved
+                    .iter()
+                    .map(|d| d.path.clone())
+                    .collect(),
+                cow_overlay: false,
+                execution_root_ro: false,
+            },
+            network: NetworkContract {
+                mode,
+                allowed_domains: domains,
+                allowed_ports: ports,
+                block_cloud_metadata: input.net.uses_relay(),
+                block_loopback_daemons: input.net.uses_relay(),
+            },
+            resources: ResourceContract {
+                max_pids,
+                max_memory_bytes,
+                max_cpu_percent,
+                max_wall_time_ms,
+                max_stdout_bytes: crate::sandbox::production::PROD_MAX_STDIO as u64,
+                max_file_size_bytes: policy.limits.file_size_bytes.unwrap_or(0),
+            },
+            environment: EnvironmentContract {
+                pass_through_vars: policy.environment.pass_through.clone(),
+                explicit_vars: input.env.clone(),
+                redacted_patterns: policy.environment.deny.clone(),
+                inject_session_nonce: true,
+            },
+            attestation: AttestationContract {
+                generate_audit_jsonl: true,
+                sign_minisign: false,
+                sign_cosign_slsa: false,
+                evidence_level_minimum: "HOST_FACT".into(),
+            },
+        }
+        .seal()
+        .map_err(|e| CompilerError::UnsupportedCapability(format!("contract serialization: {e}")))
+    }
+
     pub fn compile(
         agent_name: &str,
         workspace_raw: &Path,
@@ -215,6 +328,8 @@ impl PolicyCompiler {
         let default_exec = vec![PathBuf::from("/usr"), PathBuf::from("/bin")];
 
         let unsealed = UnsealedSecurityContract {
+            production: None,
+            crypto: Default::default(),
             contract_version: 1,
             contract_id: format!("contract-{}", &session_nonce[..12]),
             session_nonce,
@@ -262,6 +377,71 @@ impl PolicyCompiler {
             CompilerError::PathCanonicalizationFailed(format!("Failed to seal contract: {e}"))
         })
     }
+}
+
+fn resolve_cpu_percent(policy: &crate::policy::Policy) -> u32 {
+    let pol_cpu = policy.cpu_max.as_deref().and_then(cpu_str_to_percent);
+    let cg_cpu = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.cpu_max.as_deref())
+        .and_then(cpu_str_to_percent);
+
+    match (pol_cpu, cg_cpu) {
+        (Some(p1), Some(p2)) => p1.min(p2),
+        (Some(p), None) | (None, Some(p)) => p,
+        (None, None) => 100, // unconstrained default
+    }
+}
+
+fn cpu_str_to_percent(s: &str) -> Option<u32> {
+    let ratio = crate::policy::types::parse_cpu_ratio(s)?;
+    let pct = (ratio * 100.0).round() as u32;
+    Some(pct.max(1))
+}
+
+fn resolve_max_memory_bytes(policy: &crate::policy::Policy) -> u64 {
+    let as_bytes = policy.limits.address_space_bytes.filter(|&b| b > 0);
+    let cg_bytes = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.memory_max.as_deref())
+        .and_then(crate::policy::types::parse_bytes_value)
+        .filter(|&b| b > 0);
+
+    match (as_bytes, cg_bytes) {
+        (Some(a), Some(c)) => a.min(c),
+        (Some(a), None) => a,
+        (None, Some(c)) => c,
+        (None, None) => 0,
+    }
+}
+
+fn resolve_max_pids(policy: &crate::policy::Policy) -> Result<u32, CompilerError> {
+    let proc_limit = policy.limits.processes.filter(|&p| p > 0);
+    let cg_limit = policy
+        .cgroup
+        .as_ref()
+        .and_then(|c| c.pids_max.as_deref())
+        .and_then(|s| {
+            if s.trim().eq_ignore_ascii_case("max") {
+                None
+            } else {
+                s.trim().parse::<u64>().ok()
+            }
+        })
+        .filter(|&p| p > 0);
+
+    let effective_pids = match (proc_limit, cg_limit) {
+        (Some(p1), Some(p2)) => p1.min(p2),
+        (Some(p), None) => p,
+        (None, Some(p)) => p,
+        (None, None) => 0,
+    };
+
+    u32::try_from(effective_pids).map_err(|_| {
+        CompilerError::UnsupportedCapability("process limit exceeds contract v1 range".into())
+    })
 }
 
 fn get_home_dir() -> Option<PathBuf> {
@@ -363,5 +543,91 @@ mod compiler_tests {
         assert!(contract.verify_digest());
 
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn compile_effective_resource_projections() {
+        use crate::policy::types::{CgroupConfig, Policy};
+        use crate::policy_ir::compiler::EffectivePolicyInput;
+        use std::collections::BTreeMap;
+
+        // 1. Unconstrained defaults to 100% CPU, 0 memory, 0 pids
+        let policy = Policy::default();
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let input = EffectivePolicyInput {
+            policy: &policy,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-1",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        assert_eq!(contract.resources.max_cpu_percent, 100);
+        assert_eq!(contract.resources.max_memory_bytes, 0);
+        assert_eq!(contract.resources.max_pids, 0);
+
+        // 2. CPU percentage parsed from policy.cpu_max
+        let policy_cpu = Policy {
+            cpu_max: Some("50%".into()),
+            ..Default::default()
+        };
+        let input = EffectivePolicyInput {
+            policy: &policy_cpu,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-2",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        assert_eq!(contract.resources.max_cpu_percent, 50);
+
+        // 3. Minimum between address_space_bytes and cgroup.memory_max
+        let policy_mem = Policy {
+            limits: crate::policy::types::ResourceLimits {
+                address_space_bytes: Some(2 * 1024 * 1024 * 1024), // 2GB
+                processes: Some(128),
+                ..Default::default()
+            },
+            cgroup: Some(CgroupConfig {
+                memory_max: Some("1G".into()), // 1GB
+                pids_max: Some("64".into()),
+                swap_max: None,
+                cpu_max: Some("40%".into()),
+            }),
+            ..Default::default()
+        };
+
+        let input = EffectivePolicyInput {
+            policy: &policy_mem,
+            argv: &["/bin/true".into()],
+            cwd: &temp_dir,
+            env: &BTreeMap::new(),
+            net: &crate::config::NetMode::Off,
+            nonce: "test-effective-res-3",
+            timeout: None,
+            tier: None,
+            backend: "test".into(),
+            observe_seccomp: false,
+            debug_ports: None,
+        };
+        let contract = PolicyCompiler::compile_effective(input).expect("compile effective");
+        // Effective memory is min(2GB, 1GB) = 1GB
+        assert_eq!(contract.resources.max_memory_bytes, 1024 * 1024 * 1024);
+        // Effective pids is min(128, 64) = 64
+        assert_eq!(contract.resources.max_pids, 64);
+        // Effective cpu is min(default 100, 40) = 40
+        assert_eq!(contract.resources.max_cpu_percent, 40);
     }
 }

@@ -208,6 +208,22 @@ pub fn registry() -> Vec<Scenario> {
             residual_risk: "macOS Shape-A broad reads and Windows ACL fallback may expose entries outside the tail-deny list; strength ceiling PARTIAL there.".to_string(),
         },
         Scenario {
+            id: "VFS-WRITE-001".to_string(),
+            category: Category::FsWrite,
+            severity: Severity::Blocker,
+            required_caps: vec!["spawn".to_string(), "landlock".to_string()],
+            strength: BTreeMap::from([
+                (Target::LinuxFull.label().to_string(), ClaimStrength::Strong),
+                (Target::LinuxFsOnly.label().to_string(), ClaimStrength::Strong),
+                (Target::Macos.label().to_string(), ClaimStrength::Partial),
+                (Target::Windows.label().to_string(), ClaimStrength::Partial),
+            ]),
+            quorum: 2,
+            known_limitation: "Proves writes outside allowlist are denied for the covered vectors only; writes inside $PROJECT are allowed by design and out of scope (see threat-model non-goal #2)."
+                .to_string(),
+            residual_risk: "macOS Shape-A broad paths and Windows ACL fallback may permit writes through aliases outside the deny list; strength ceiling PARTIAL there.".to_string(),
+        },
+        Scenario {
             id: "NET-DNS-IPV6-001".to_string(),
             category: Category::Net,
             severity: Severity::Blocker,
@@ -222,6 +238,22 @@ pub fn registry() -> Vec<Scenario> {
             known_limitation: "Proves --net=off isolation only; allowlist relay modes need a separate broker suite."
                 .to_string(),
             residual_risk: "Without a network namespace (fs-only/mac/win) only syscall/capability denial is proven, not absence of a route.".to_string(),
+        },
+        Scenario {
+            id: "NET-EXFIL-001".to_string(),
+            category: Category::Net,
+            severity: Severity::Blocker,
+            required_caps: vec!["spawn".to_string(), "netns".to_string()],
+            strength: BTreeMap::from([
+                (Target::LinuxFull.label().to_string(), ClaimStrength::Strong),
+                (Target::LinuxFsOnly.label().to_string(), ClaimStrength::Partial),
+                (Target::Macos.label().to_string(), ClaimStrength::Partial),
+                (Target::Windows.label().to_string(), ClaimStrength::Partial),
+            ]),
+            quorum: 3,
+            known_limitation: "Proves --net=off isolation only across the listed egress vectors; allowlist relay modes and TLS-through-allowed-API payload semantics need a separate broker suite (threat-model non-goal #1)."
+                .to_string(),
+            residual_risk: "Without netns (fs-only/mac/win) only syscall/capability denial is proven, not absence of a route. Per-domain egress without admin on Windows is UNPROVABLE.".to_string(),
         },
         Scenario {
             id: "PROC-ESC-001".to_string(),
@@ -240,6 +272,22 @@ pub fn registry() -> Vec<Scenario> {
             residual_risk: "fs-only setsid orphans and macOS watchdog races are known residuals; they FAIL/advisory, never PASS.".to_string(),
         },
         Scenario {
+            id: "PROC-TREE-001".to_string(),
+            category: Category::Proc,
+            severity: Severity::Blocker,
+            required_caps: vec!["spawn".to_string(), "tree-sweep".to_string()],
+            strength: BTreeMap::from([
+                (Target::LinuxFull.label().to_string(), ClaimStrength::Strong),
+                (Target::Windows.label().to_string(), ClaimStrength::Strong),
+                (Target::LinuxFsOnly.label().to_string(), ClaimStrength::Partial),
+                (Target::Macos.label().to_string(), ClaimStrength::Partial),
+            ]),
+            quorum: 2,
+            known_limitation: "Proves process-tree containment for the covered escape shapes only; hostile scheduler delaying reparent past the sweep budget yields INCONCLUSIVE, never PASS."
+                .to_string(),
+            residual_risk: "fs-only setsid orphans and macOS watchdog races are known residuals; verdict is FAIL/INCONCLUSIVE, never PASS.".to_string(),
+        },
+        Scenario {
             id: "ENV-LEAK-001".to_string(),
             category: Category::Secrets,
             severity: Severity::Blocker,
@@ -250,7 +298,7 @@ pub fn registry() -> Vec<Scenario> {
                 (Target::Windows.label().to_string(), ClaimStrength::Strong),
             ]),
             quorum: 1,
-            known_limitation: "Proves scrub of the canary key set; unknown exfil channels (covert timing, allowed-relay payloads) are out of scope."
+            known_limitation: "Proves environment isolation and credential scrub under sealed SecurityContract: scrubbing of arbitrary host vars, sensitive credentials, PATH hygiene, internal Vetto vars, explicitly denied variables, and post-start mutation immutability; unknown exfil channels (covert timing, allowed-relay payloads) are out of scope."
                 .to_string(),
             residual_risk: String::new(),
         },

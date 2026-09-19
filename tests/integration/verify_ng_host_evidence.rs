@@ -74,6 +74,8 @@ fn request_with_control<'a>(
         env_extra: BTreeMap::new(),
         deadline,
         enable_host_control: true,
+        contract: None,
+        host_env_override: None,
     }
 }
 

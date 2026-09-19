@@ -352,8 +352,15 @@ mod tests {
 
         // Verification fails on tampered signature
         let mut tampered_sig = signed.clone();
-        tampered_sig.signature.replace_range(0..2, "00");
-        assert!(tampered_sig.verify(&verifying_key).is_err());
+        let first_byte = u8::from_str_radix(&tampered_sig.signature[..2], 16).unwrap();
+        tampered_sig
+            .signature
+            .replace_range(0..2, &format!("{:02x}", first_byte ^ 1));
+        assert_ne!(tampered_sig.signature, signed.signature);
+        let error = tampered_sig.verify(&verifying_key).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("SLSA cryptographic signature verification failed"));
     }
 
     #[test]

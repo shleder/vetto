@@ -1,0 +1,28 @@
+Working in /home/shleder/prod/vetto (branch feat/phase1-contract-authority). You receive recon results from A1/A2 plus the verbatim filesystem (section 4) and secret isolation (section 8) battery requirements from the master task. Consume the SAME sealed SecurityContract used by production execution; never rebuild policy. Extend VFS-TRAV-001 only where needed; do not duplicate existing checks listed by recon. Cover: traversal, '..', symlink escape, absolute path escape, outside-workspace paths, protected secret paths, forbidden read/write/create/delete, rename across boundary, alternate filesystem representations, symlink-to-secret, relative traversal to secret, alternate path spelling. Linux is the primary target; macOS/Windows only where backend claims the capability, otherwise explicit unsupported/skip, never fake PASS. Independent runtime evidence only; backend self-report is not proof. Write code + tests; run no local builds/tests; do not commit/push. Report changed files with rationale and any NOT PROVEN items.
+
+--- MASTER TASK SECTION 4 ---
+## 4. VERIFICATION BATTERY — FILESYSTEM
+Traversal; '..'; symlink escape; absolute path escape; paths outside workspace; protected secret paths; forbidden read/write/create/delete; rename/move across boundary; alternate filesystem representations. Обязательно сценарий workspace/{allowed/, link -> /outside/} и symlink/race варианты, где backend поддерживает проверку. VFS-TRAV-001 не дублировать — расширять при необходимости.
+
+--- MASTER TASK SECTION 8 ---
+## 8. SECRET ISOLATION
+Known secret path; symlink to secret; relative traversal to secret; alternate path spelling; secret copied into accessible location до execution (если в documented threat model); protected credentials locations. Не утверждать защиту от угроз вне архитектурных обещаний. Verifier проверяет ровно contract semantics.
+
+--- RECON SUMMARY & RELEVANT EXISTING CHECKS ---
+- Existing checks:
+  * VFS-TRAV-001 (src/verify_ng/registry.rs:195, FsRead blocker canary)
+  * ENV-LEAK-001 (src/verify_ng/registry.rs:243, Secrets blocker canary)
+  * deny-path, write-outside in src/verify.rs
+  * test_linux_fs_read_deny_001, test_linux_fs_write_deny_001, test_linux_fs_escape_001, test_linux_fs_root_isolation_001 in tests/integration/verify_ng_linux_enforce.rs
+  * adv_dotdot_*, adv_symlink_*, adv_case_variant_*, adv_proxy_secrets_* in tests/integration/adv_isolation.rs
+- Crucial bug found by recon in src/verify_ng/runner.rs:765:
+  `let pass_capable = req.enable_host_control && req.scenario.category == Category::Aux;` structurally blocks blocker categories (FsRead, FsWrite, Secrets, etc.) from PASS! Ensure runner/oracle allows pass_capable when appropriate HOST_FACT evidence is present for boundary verification.
+- Also note VFS-WRITE-001 in tests/verify_ng/scenarios/VFS-WRITE-001.toml is missing from src/verify_ng/registry.rs.
+
+UNIVERSAL CONSTRAINTS:
+- Repo access: /home/shleder/prod/vetto only. Branch feat/phase1-contract-authority.
+- No local cargo build/test/check/run; GitHub CI is the only execution proof.
+- No sandbox escape payload development or bypass techniques; defensive verification batteries only.
+- No new architecture, no second policy engine, no Phase 3/4 scope, no version bump, no release actions.
+- No commit, no push, no secrets access, no external network calls beyond your model service.
+- Separate confirmed facts (file:line) from assumptions in every report.
