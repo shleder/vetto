@@ -41,13 +41,8 @@ pub fn run_with_timeout(
     let poll_interval = Duration::from_millis(50);
 
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            Err(e) if e.raw_os_error() == Some(libc::ECHILD) => {
-                return Ok(ExitStatusExt::from_raw(0));
-            }
-            Err(e) => return Err(e.into()),
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
         }
         if start.elapsed() >= timeout {
             break;
