@@ -45,7 +45,7 @@ fn test_direct_agent_invocation_auto_enables_shim() {
     );
 
     let out = Command::new(vetto_bin())
-        .args(["--tui=none", "claude"])
+        .args(["--tui=none", "--net=off", "claude"])
         .current_dir(proj_dir)
         .env("PATH", &custom_path)
         .env("HOME", &home_dir)
@@ -75,7 +75,7 @@ fn test_direct_agent_invocation_auto_enables_shim() {
 
     // 3. Subsequent invocation uses already-enabled shim without error
     let out2 = Command::new(vetto_bin())
-        .args(["--tui=none", "claude"])
+        .args(["--tui=none", "--net=off", "claude"])
         .current_dir(proj_dir)
         .env("PATH", &custom_path)
         .env("HOME", &home_dir)
