@@ -34,6 +34,7 @@ pub fn run_cli(
     profile: &str,
     policy_path: Option<&Path>,
     net: &NetMode,
+    limits_spec: Option<&str>,
 ) -> Result<()> {
     // Same detect semantics as a real session: fail-closed when no tier exists.
     let backend = Backend::detect(net.clone(), false).ok();
@@ -52,7 +53,7 @@ pub fn run_cli(
         include_project_policy: true,
         ..PolicyLoadOptions::default()
     };
-    let policy = load_with_options(
+    let mut policy = load_with_options(
         profile,
         policy_path,
         &project,
@@ -60,6 +61,36 @@ pub fn run_cli(
         tier.unwrap_or(Tier::Full), // macOS: no FS-ONLY enumeration semantics
         &options,
     )?;
+
+    if let Some(spec) = limits_spec {
+        super::limits_spec::apply_cli(&mut policy, spec)?;
+    }
+
+    let command_name = if policy.name.is_empty() {
+        "vetto-preview".to_string()
+    } else {
+        policy.name.clone()
+    };
+    let contract_input = crate::policy_ir::compiler::EffectivePolicyInput {
+        policy: &policy,
+        argv: &[command_name],
+        cwd: &project,
+        env: &std::collections::BTreeMap::new(),
+        net,
+        nonce: "explain-preview",
+        timeout: None,
+        tier,
+        backend: backend
+            .as_ref()
+            .map(|b| b.describe())
+            .unwrap_or_else(|| "none".to_string()),
+        observe_seccomp: backend
+            .as_ref()
+            .map(|b| b.observes_seccomp())
+            .unwrap_or(false),
+        debug_ports: None,
+    };
+    let contract = crate::policy_ir::compiler::PolicyCompiler::compile_effective(contract_input)?;
 
     if let Some(target_path) = why {
         let explanation = explain_why(&policy, target_path, &project);
@@ -69,9 +100,9 @@ pub fn run_cli(
             print_why_text(&explanation);
         }
     } else if json {
-        print_json(&policy, tier, net)?;
+        print_json(&policy, &contract, tier, net)?;
     } else {
-        print_text(&policy, tier, net)?;
+        print_text(&policy, &contract, tier, net)?;
     }
 
     Ok(())
@@ -137,6 +168,16 @@ pub fn explain_why(policy: &Policy, target_path: &Path, project: &Path) -> PathE
             format!("allow_write root: {}", matching_write_root.unwrap_or_default()),
             "Path is writable and readable. To restrict to read-only, remove from [filesystem.allow_write] and keep in [filesystem.allow_read].".to_string(),
         )
+    } else if is_denied_write && is_readable {
+        (
+            "READ_ONLY".to_string(),
+            "deny_write".to_string(),
+            format!("subtractive deny_write rule overrides write access in root: {}", matching_write_root.unwrap_or_default()),
+            format!(
+                "Path is read-only due to subtractive [filesystem.deny_write] override. To allow writing: remove \"{}\" from [filesystem.deny_write] in policy.toml.",
+                target_path.display()
+            ),
+        )
     } else if is_readable {
         (
             "READ_ONLY".to_string(),
@@ -151,7 +192,7 @@ pub fn explain_why(policy: &Policy, target_path: &Path, project: &Path) -> PathE
         (
             "BLOCKED".to_string(),
             "unmapped".to_string(),
-            "not in any allowed read or write root".to_string(),
+            "isolated scope (not in any allowed read or write root)".to_string(),
             format!(
                 "Path is outside sandbox scope. To allow reading: add `allow_read = [\"{}\"]` to policy.toml. To allow writing: add to `allow_write`.",
                 target_path.display()
@@ -191,7 +232,58 @@ pub fn run_show(
     net: &NetMode,
 ) -> Result<()> {
     let _ = effective;
-    run_cli(json, None, profile, policy_path, net)
+    run_cli(json, None, profile, policy_path, net, None)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformInfo {
+    pub tier_name: String,
+    pub diagnostic: String,
+}
+
+fn platform_diagnostic(tier: Option<Tier>) -> PlatformInfo {
+    #[cfg(target_os = "linux")]
+    {
+        let tier_name = "Linux Tier 1".to_string();
+        let sub = match tier {
+            Some(Tier::Full) => "Full",
+            Some(Tier::FsOnly) => "FS-Only",
+            Some(Tier::Seccomp) => "Seccomp-Only",
+            None => "Unconfined",
+        };
+        let diagnostic =
+            format!("Linux Tier 1: {sub} (Landlock ABI, namespaces, cgroups v2, seccomp)");
+        PlatformInfo {
+            tier_name,
+            diagnostic,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tier;
+        PlatformInfo {
+            tier_name: "macOS Tier 2".to_string(),
+            diagnostic: "macOS Tier 2: Seatbelt SBPL (rlimits: unverified, cgroups: unsupported)"
+                .to_string(),
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = tier;
+        PlatformInfo {
+            tier_name: "Windows Tier 3".to_string(),
+            diagnostic: "Windows Tier 3: AppContainer / Job Objects (cgroups: unsupported)"
+                .to_string(),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = tier;
+        PlatformInfo {
+            tier_name: "Unknown Tier".to_string(),
+            diagnostic: "Unsupported platform (no sandbox backend)".to_string(),
+        }
+    }
 }
 
 fn tier_label(tier: Option<Tier>) -> &'static str {
@@ -239,11 +331,26 @@ fn format_limit(name: &str, value: u64, is_bytes: bool) -> String {
 
 const MAX_LISTED_READ_ROOTS: usize = 25;
 
-fn print_text(policy: &Policy, tier: Option<Tier>, net: &NetMode) -> Result<()> {
+fn print_text(
+    policy: &Policy,
+    contract: &crate::policy_ir::contract::SecurityContract,
+    tier: Option<Tier>,
+    net: &NetMode,
+) -> Result<()> {
     println!("vetto policy explain");
-    println!("  tier:    {}", tier_label(tier));
-    println!("  net:     {}", net.label());
-    println!("  profile: {}", policy.name);
+    println!("  contract:");
+    println!(
+        "    contract_digest_blake3: {}",
+        contract.contract_digest_blake3
+    );
+    println!("    contract_version:       {}", contract.contract_version);
+    println!("    FSM:                    ContractSealed");
+
+    let p_info = platform_diagnostic(tier);
+    println!("  platform: {}", p_info.diagnostic);
+    println!("  tier:     {} ({})", p_info.tier_name, tier_label(tier));
+    println!("  net:      {}", net.label());
+    println!("  profile:  {}", policy.name);
     println!("  immutable: {}", policy.is_immutable);
 
     println!("  write roots:");
@@ -278,6 +385,104 @@ fn print_text(policy: &Policy, tier: Option<Tier>, net: &NetMode) -> Result<()> 
             if entry.is_dir { "/" } else { "" }
         );
     }
+
+    println!("  Resources:");
+    println!("    CPU:");
+    println!(
+        "      rlimit_cpu: {}",
+        policy
+            .limits
+            .cpu_seconds
+            .map(|s| format!("{s}s"))
+            .unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "      cpu.max:    {}",
+        policy
+            .cpu_max
+            .as_deref()
+            .or_else(|| policy.cgroup.as_ref().and_then(|c| c.cpu_max.as_deref()))
+            .unwrap_or("(none)")
+    );
+    println!("      effective:  {}%", contract.resources.max_cpu_percent);
+
+    println!("    Memory:");
+    println!(
+        "      rlimit_as:  {}",
+        policy
+            .limits
+            .address_space_bytes
+            .map(human_bytes)
+            .unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "      memory.max: {}",
+        policy
+            .cgroup
+            .as_ref()
+            .and_then(|c| c.memory_max.as_deref())
+            .unwrap_or("(none)")
+    );
+    println!(
+        "      swap.max:   {}",
+        policy
+            .cgroup
+            .as_ref()
+            .and_then(|c| c.swap_max.as_deref())
+            .unwrap_or("(none)")
+    );
+    println!(
+        "      effective:  {}",
+        if contract.resources.max_memory_bytes > 0 {
+            human_bytes(contract.resources.max_memory_bytes)
+        } else {
+            "unconstrained".into()
+        }
+    );
+
+    println!("    Process:");
+    println!(
+        "      rlimit_nproc: {}",
+        policy
+            .limits
+            .processes
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "      pids.max:     {}",
+        policy
+            .cgroup
+            .as_ref()
+            .and_then(|c| c.pids_max.as_deref())
+            .unwrap_or("(none)")
+    );
+    println!(
+        "      effective:    {}",
+        if contract.resources.max_pids > 0 {
+            contract.resources.max_pids.to_string()
+        } else {
+            "unconstrained".into()
+        }
+    );
+
+    println!("    File:");
+    println!(
+        "      open_files:      {}",
+        policy
+            .limits
+            .open_files
+            .map(|f| f.to_string())
+            .unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "      file_size_bytes: {}",
+        policy
+            .limits
+            .file_size_bytes
+            .map(human_bytes)
+            .unwrap_or_else(|| "(none)".into())
+    );
 
     println!("  limits:");
     let limits = &policy.limits;
@@ -338,11 +543,31 @@ fn print_text(policy: &Policy, tier: Option<Tier>, net: &NetMode) -> Result<()> 
     Ok(())
 }
 
-fn print_json(policy: &Policy, tier: Option<Tier>, net: &NetMode) -> Result<()> {
+fn print_json(
+    policy: &Policy,
+    contract: &crate::policy_ir::contract::SecurityContract,
+    tier: Option<Tier>,
+    net: &NetMode,
+) -> Result<()> {
     let strategy = masking_strategy(tier);
     let limits = &policy.limits;
+    let p_info = platform_diagnostic(tier);
     let object = serde_json::json!({
+        "contract": {
+            "contract_digest_blake3": contract.contract_digest_blake3,
+            "contract_version": contract.contract_version,
+            "contract_id": contract.contract_id,
+            "fsm_state": "ContractSealed",
+        },
+        "contract_digest_blake3": contract.contract_digest_blake3,
+        "contract_version": contract.contract_version,
+        "fsm_state": "ContractSealed",
         "tier": tier_label(tier),
+        "platform_tier": p_info.tier_name,
+        "platform": {
+            "tier": p_info.tier_name,
+            "diagnostic": p_info.diagnostic,
+        },
         "net": net.label(),
         "profile": policy.name.clone(),
         "immutable": policy.is_immutable,
@@ -362,6 +587,40 @@ fn print_json(policy: &Policy, tier: Option<Tier>, net: &NetMode) -> Result<()> 
                 })
             })
             .collect::<Vec<_>>(),
+        "resources": {
+            "cpu": {
+                "rlimit_cpu": limits.cpu_seconds,
+                "cpu_max": policy.cpu_max.as_deref().or_else(|| policy.cgroup.as_ref().and_then(|c| c.cpu_max.as_deref())),
+                "effective_percent": contract.resources.max_cpu_percent,
+            },
+            "memory": {
+                "rlimit_as": limits.address_space_bytes,
+                "memory_max": policy.cgroup.as_ref().and_then(|c| c.memory_max.as_deref()),
+                "swap_max": policy.cgroup.as_ref().and_then(|c| c.swap_max.as_deref()),
+                "effective_bytes": contract.resources.max_memory_bytes,
+            },
+            "process": {
+                "rlimit_nproc": limits.processes,
+                "pids_max": policy.cgroup.as_ref().and_then(|c| c.pids_max.as_deref()),
+                "effective_pids": contract.resources.max_pids,
+            },
+            "file": {
+                "open_files": limits.open_files,
+                "file_size_bytes": limits.file_size_bytes,
+            },
+            "rlimit_cpu": limits.cpu_seconds,
+            "cpu_max": policy.cpu_max.as_deref().or_else(|| policy.cgroup.as_ref().and_then(|c| c.cpu_max.as_deref())),
+            "rlimit_as": limits.address_space_bytes,
+            "memory_max": policy.cgroup.as_ref().and_then(|c| c.memory_max.as_deref()),
+            "swap_max": policy.cgroup.as_ref().and_then(|c| c.swap_max.as_deref()),
+            "rlimit_nproc": limits.processes,
+            "pids_max": policy.cgroup.as_ref().and_then(|c| c.pids_max.as_deref()),
+            "open_files": limits.open_files,
+            "file_size_bytes": limits.file_size_bytes,
+            "max_pids": contract.resources.max_pids,
+            "max_memory_bytes": contract.resources.max_memory_bytes,
+            "max_cpu_percent": contract.resources.max_cpu_percent,
+        },
         "limits": {
             "cpu_seconds": limits.cpu_seconds,
             "address_space_bytes": limits.address_space_bytes,
@@ -448,7 +707,29 @@ mod tests {
         let etc_pass = PathBuf::from("/etc/shadow");
         let exp_etc = explain_why(&policy, &etc_pass, &project);
         assert_eq!(exp_etc.access, "BLOCKED");
+        assert_eq!(exp_etc.rule_type, "unmapped");
         assert!(!exp_etc.writable);
         assert!(!exp_etc.readable);
+        assert!(exp_etc.matching_rule.contains("isolated scope"));
+
+        // 5. Subtractive deny_write override
+        let sub_write = project.join("src/generated.rs");
+        policy.deny_write = vec![sub_write.clone()];
+        let exp_deny_write = explain_why(&policy, &sub_write, &project);
+        assert_eq!(exp_deny_write.access, "READ_ONLY");
+        assert_eq!(exp_deny_write.rule_type, "deny_write");
+        assert!(!exp_deny_write.writable);
+        assert!(exp_deny_write.readable);
+        assert!(exp_deny_write
+            .matching_rule
+            .contains("subtractive deny_write"));
+        assert!(exp_deny_write.how_to_change.contains("deny_write"));
+    }
+
+    #[test]
+    fn platform_diagnostic_returns_valid_info() {
+        let p_info = platform_diagnostic(Some(Tier::Full));
+        assert!(!p_info.tier_name.is_empty());
+        assert!(!p_info.diagnostic.is_empty());
     }
 }
