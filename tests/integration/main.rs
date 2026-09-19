@@ -51,6 +51,7 @@ mod policy_loading;
 mod policy_overlays;
 mod policy_parity;
 mod policy_tools;
+mod policy_ux_phase5;
 mod prod_stage3c;
 mod rescue;
 mod resource_limits_e2e;

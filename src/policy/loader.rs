@@ -1639,6 +1639,8 @@ fn build_policy(
             deny: normalize_env_patterns(merged.deny_env.clone()),
         },
         deny_network: !merged.deny_network.is_empty(),
+        network_mode: merged.network_mode.clone(),
+        network_allow: merged.network_allow.clone(),
         allow_cidr: merged.allow_cidr.clone(),
         net_quota: merged.net_quota.clone(),
         net_bind_ports: merged.net_bind_ports.clone(),

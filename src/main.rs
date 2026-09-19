@@ -360,14 +360,16 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some(cli::Command::Policy { command }) => match command {
-            cli::PolicyCommand::Explain { json, why } => {
+            cli::PolicyCommand::Explain { json, why, limits } => {
                 let net = vetto::config::parse_net_mode(args.net.as_deref().unwrap_or("off"))?;
+                let effective_limits = limits.as_deref().or(args.limits.as_deref());
                 vetto::policy::explain::run_cli(
                     *json,
                     why.as_deref(),
                     &args.profile,
                     args.policy.as_deref().map(PathBuf::from).as_deref(),
                     &net,
+                    effective_limits,
                 )
             }
             cli::PolicyCommand::Show { effective, json } => {

@@ -445,6 +445,10 @@ pub struct Policy {
     /// enforcement additionally depends on the CLI `--net` mode, which lives
     /// outside the policy: this field only records policy-layer intent.
     pub deny_network: bool,
+    #[serde(default)]
+    pub network_mode: Option<String>,
+    #[serde(default)]
+    pub network_allow: Vec<String>,
     /// CIDR subnets allowed for network connections.
     pub allow_cidr: Vec<String>,
     /// Per-domain byte quotas (in bytes).
@@ -504,6 +508,8 @@ impl Default for Policy {
             deny_resolved: Vec::new(),
             environment: EnvironmentPolicy::default(),
             deny_network: false,
+            network_mode: None,
+            network_allow: Vec::new(),
             allow_cidr: Vec::new(),
             net_quota: std::collections::HashMap::new(),
             net_bind_ports: Vec::new(),

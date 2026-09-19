@@ -701,6 +701,11 @@ pub enum PolicyCommand {
         /// Explain why a specific path is allowed, denied, or writable.
         #[arg(long = "why", value_name = "PATH")]
         why: Option<PathBuf>,
+        /// Resource ceilings for the agent process, comma separated:
+        /// cpu=SECONDS, as=BYTES, procs=N, nofile=N, fsize=BYTES. Merged
+        /// strictest-wins with policy layers.
+        #[arg(long = "limits", value_name = "SPEC")]
+        limits: Option<String>,
     },
     /// Show the resolved effective policy.
     Show {
@@ -1158,6 +1163,18 @@ mod tests {
             Some(Command::Policy {
                 command: PolicyCommand::Explain { why: Some(ref path), .. }
             }) if path == &PathBuf::from("src/main.rs")
+        ));
+    }
+
+    #[test]
+    fn policy_explain_limits_parses() {
+        let cli = Cli::try_parse_from(["vetto", "policy", "explain", "--limits", "cpu=10,procs=5"])
+            .expect("policy explain limits parsing");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Policy {
+                command: PolicyCommand::Explain { limits: Some(ref limits), .. }
+            }) if limits == "cpu=10,procs=5"
         ));
     }
 
