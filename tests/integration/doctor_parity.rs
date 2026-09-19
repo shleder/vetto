@@ -12,40 +12,109 @@ use crate::common::*;
 #[test]
 fn test_doctor_parity_and_tier_honesty() {
     let out = doctor_output();
-    assert!(out.contains("vetto v"), "doctor output must include version: {out}");
+    assert!(
+        out.contains("vetto v"),
+        "doctor output must include version: {out}"
+    );
 
     #[cfg(target_os = "linux")]
     {
-        assert!(out.contains("kernel:"), "Linux doctor missing kernel info: {out}");
-        assert!(out.contains("landlock:"), "Linux doctor missing Landlock status: {out}");
-        assert!(out.contains("unprivileged userns:"), "Linux doctor missing userns: {out}");
-        assert!(out.contains("full namespace stack:"), "Linux doctor missing full namespace stack: {out}");
-        assert!(out.contains("namespaces (user/mount/pid/net):"), "Linux doctor missing namespaces breakdown: {out}");
-        assert!(out.contains("cgroups v2 controllers:"), "Linux doctor missing cgroups v2 controllers: {out}");
-        assert!(out.contains("seccomp filters:"), "Linux doctor missing seccomp filters: {out}");
-        assert!(out.contains("chosen tier:"), "Linux doctor missing chosen tier: {out}");
-        assert!(out.contains("Tier 1"), "Linux doctor missing Tier 1 platform status: {out}");
+        assert!(
+            out.contains("kernel:"),
+            "Linux doctor missing kernel info: {out}"
+        );
+        assert!(
+            out.contains("landlock:"),
+            "Linux doctor missing Landlock status: {out}"
+        );
+        assert!(
+            out.contains("unprivileged userns:"),
+            "Linux doctor missing userns: {out}"
+        );
+        assert!(
+            out.contains("full namespace stack:"),
+            "Linux doctor missing full namespace stack: {out}"
+        );
+        assert!(
+            out.contains("namespaces (user/mount/pid/net):"),
+            "Linux doctor missing namespaces breakdown: {out}"
+        );
+        assert!(
+            out.contains("cgroups v2 controllers:"),
+            "Linux doctor missing cgroups v2 controllers: {out}"
+        );
+        assert!(
+            out.contains("seccomp filters:"),
+            "Linux doctor missing seccomp filters: {out}"
+        );
+        assert!(
+            out.contains("chosen tier:"),
+            "Linux doctor missing chosen tier: {out}"
+        );
+        assert!(
+            out.contains("Tier 1"),
+            "Linux doctor missing Tier 1 platform status: {out}"
+        );
     }
 
     #[cfg(target_os = "macos")]
     {
-        assert!(out.contains("sandbox-exec"), "macOS doctor missing seatbelt status: {out}");
-        assert!(out.contains("sbpl-read-fragment:"), "macOS doctor missing sbpl-read-fragment status: {out}");
-        assert!(out.contains("Shape D"), "macOS doctor missing Shape D AST status: {out}");
-        assert!(out.contains("dyld shared cache:"), "macOS doctor missing dyld shared cache restriction notice (#62): {out}");
-        assert!(out.contains("resource limits:"), "macOS doctor missing resource limits honesty notice: {out}");
-        assert!(out.contains("Tier 2"), "macOS doctor missing Tier 2 platform status: {out}");
+        assert!(
+            out.contains("sandbox-exec"),
+            "macOS doctor missing seatbelt status: {out}"
+        );
+        assert!(
+            out.contains("sbpl-read-fragment:"),
+            "macOS doctor missing sbpl-read-fragment status: {out}"
+        );
+        assert!(
+            out.contains("Shape D"),
+            "macOS doctor missing Shape D AST status: {out}"
+        );
+        assert!(
+            out.contains("dyld shared cache:"),
+            "macOS doctor missing dyld shared cache restriction notice (#62): {out}"
+        );
+        assert!(
+            out.contains("resource limits:"),
+            "macOS doctor missing resource limits honesty notice: {out}"
+        );
+        assert!(
+            out.contains("Tier 2"),
+            "macOS doctor missing Tier 2 platform status: {out}"
+        );
     }
 
     #[cfg(target_os = "windows")]
     {
-        assert!(out.contains("windows capabilities:"), "Windows doctor missing capabilities summary: {out}");
-        assert!(out.contains("job kill-on-close:"), "Windows doctor missing job kill-on-close: {out}");
-        assert!(out.contains("AppContainer API:"), "Windows doctor missing AppContainer API: {out}");
-        assert!(out.contains("LPAC API:"), "Windows doctor missing LPAC API: {out}");
-        assert!(out.contains("network warning:"), "Windows doctor missing WFP network admin warning (#63): {out}");
-        assert!(out.contains("WSL2"), "Windows doctor missing WSL2 recommendation: {out}");
-        assert!(out.contains("Tier 3"), "Windows doctor missing Tier 3 platform status: {out}");
+        assert!(
+            out.contains("windows capabilities:"),
+            "Windows doctor missing capabilities summary: {out}"
+        );
+        assert!(
+            out.contains("job kill-on-close:"),
+            "Windows doctor missing job kill-on-close: {out}"
+        );
+        assert!(
+            out.contains("AppContainer API:"),
+            "Windows doctor missing AppContainer API: {out}"
+        );
+        assert!(
+            out.contains("LPAC API:"),
+            "Windows doctor missing LPAC API: {out}"
+        );
+        assert!(
+            out.contains("network warning:"),
+            "Windows doctor missing WFP network admin warning (#63): {out}"
+        );
+        assert!(
+            out.contains("WSL2"),
+            "Windows doctor missing WSL2 recommendation: {out}"
+        );
+        assert!(
+            out.contains("Tier 3"),
+            "Windows doctor missing Tier 3 platform status: {out}"
+        );
     }
 }
 
@@ -72,7 +141,8 @@ fn test_doctor_probe_parity_no_panic() {
     #[cfg(target_os = "windows")]
     {
         assert!(
-            text.contains("probe: analyzing deny-path overlap") || text.contains("no deny paths"),
+            text.contains("probe: analyzing deny-path overlap")
+                || text.contains("no deny paths"),
             "Windows doctor --probe must perform overlap analysis: {text}\nstderr: {}",
             stderr(&out)
         );
