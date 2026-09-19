@@ -16,9 +16,8 @@ pub use fix::collect_macos_fixes;
 pub use fix::collect_windows_fixes;
 pub use fix::{print_fixes, DoctorFix};
 
-// The probe spawn machinery is unix-only (Captured stdio contract).
-#[cfg(unix)]
 pub mod probe;
 
+pub use probe::{analyze_deny_overlap, DenyOverlapReport};
 #[cfg(unix)]
 pub use probe::{run_probe_script, ProbeOutput};

@@ -93,6 +93,12 @@ The Windows native backend is designated **Tier 3 (Preview)**. It provides proce
 - `sandbox::windows::probe()` inspects `lpac_api` and reports status in `vetto doctor`.
 - **Hardening review (issue #63)**: maximum-achievable surface — AppContainer default-deny DACL on the workspace, LPAC SID opt-in stripping package capabilities, low-integrity token blocking medium-integrity writes, Job Object kill-on-close for the full tree. No silent elevation anywhere: every path that needs admin fails closed with an actionable message.
 
+### Deny-Path Overlap Analysis (Replacing Blanket Refusal)
+- Native Windows uses DACLs and integrity levels rather than Linux VFS mount overlays (`tmpfs` / `/dev/null` binds).
+- In earlier versions, any request specifying secret denials on Windows was met with an uninformative blanket refusal.
+- Vetto now executes `analyze_deny_overlap(allow_paths, deny_paths)`. If a deny path overlaps or is nested inside an allowed workspace root without kernel masking capability, Vetto fails closed (`ExitCode::FAIL_CLOSED`, 125) with a precise diagnostic report detailing the conflicting paths and pointing the operator to WSL2 for Tier 1 mount masking.
+- If deny paths are disjoint from the allowed workspace, AppContainer DACL construction proceeds normally without artificial blockage.
+
 ### WFP lease: explicit admin opt-in, fail-closed without it
 - Fine-grained per-domain egress via Windows Filtering Platform (`src/sandbox/windows/firewall.rs`: dynamic WFP session, private sub-layer, process-image + pinned TCP/IP conditions, filters removed on lease drop) REQUIRES administrator privileges — WFP engine open + filter install fail without elevation by Windows design.
 - Vetto refuses to demand elevation: `firewall::probe()` reports WFP/token state without requesting it; any lease attempt without admin fails closed (`--net` allowlist on native Windows degrades to AppContainer capability deny, never to silent allow).

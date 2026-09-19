@@ -5,38 +5,28 @@ in the current specification. It is not a compatibility promise; supported
 capabilities are determined by `vetto doctor`, platform documentation and the
 test matrix for the exact revision being used.
 
-## In progress — hardening/v0.3 branch
+## Completed in 0.2.25 (Hardening & Stabilization Gate — Issues #26, #62, #63)
 
-- boundary verification battery (`vetto verify`, `--verify` preflight that
-  refuses to start an agent on any leak);
-- `--timeout` session watchdog with guaranteed tree teardown (subreaper sweep
-  for fs-only setsid grandchildren, macOS parent-death watchdog already
-  merged);
-- `--limits` resource ceilings with Linux/Windows/macOS parity;
-- `vetto policy explain` / `vetto policy lint`;
-- Windows: deny-path overlap analysis instead of blanket refusal, Job Object
-  memory/process limits, first enforcement integration tests;
-- black-box e2e spawn benchmark with a CI perf job (baseline fills from CI,
-  never from laptops);
-- pin the llvm-cov `--fail-under` threshold from the first real coverage
-  number, then treat regressions as build failures.
-
-## Stabilization gate
-
-- **Issue #26 Resolution (Platform Parity & Scope Honesty)**: Formalize the 3-tier platform contract across all documentation, doctor probes, and CI matrices. Reject any pull request claiming cross-platform parity without kernel-level enforcement proof:
+- [x] boundary verification battery (`vetto verify`, `--verify` preflight that refuses to start an agent on any leak);
+- [x] `--timeout` session watchdog with guaranteed tree teardown (subreaper sweep for fs-only setsid grandchildren, macOS `pdeath_watch`);
+- [x] `--limits` resource ceilings with Linux/Windows/macOS parity;
+- [x] `vetto policy explain` / `vetto policy lint` (BLAKE3 canonical digests and validation);
+- [x] Windows: deny-path overlap analysis (`analyze_deny_overlap`) instead of blanket refusal, Job Object memory/process limits, first enforcement integration tests;
+- [x] black-box e2e spawn benchmark with CI perf regression gate;
+- [x] llvm-cov coverage threshold pinned (`--fail-under=39%`);
+- [x] **Issue #26 Resolution (Platform Parity & Scope Honesty)**: Formalized the 3-tier platform contract across documentation, doctor probes, and CI matrices:
   - Tier 1 (Linux): Production-grade Landlock ABI v1–v6 + complete namespace isolation (Mount, User, PID, NET) and tmpfs secret masking.
   - Tier 2 (macOS): Experimental Seatbelt SBPL containment; continuous tracking of Apple dyld read-allowlist regressions.
   - Tier 3 (Windows): Experimental AppContainer/Job Object process sandboxing; promote WSL2 as the production pathway on Windows hosts.
-- keep the fail-closed Linux, macOS and Windows capability probes covered by
-  negative integration tests;
-- run the x86-64/ARM64 Linux, macOS Intel/Apple Silicon and Windows build
-  matrix with warnings denied;
-- validate report schemas, shell completions, editor plugins and source-only
-  package recipes without publishing artifacts;
-- replace any unmeasured performance statement with reproducible benchmark
-  output and record the machine/kernel/toolchain used;
-- independently review policy merging, report path handling, DNS validation
-  and every platform-specific unsafe block.
+- [x] **Issue #62 Resolution (macOS dyld read-allowlist)**: Shape A + trailing denies documented and verified as maximum-achievable on Darwin;
+- [x] **Issue #63 Resolution (Windows hardening)**: AppContainer LPAC + Job Object kill-on-close verified, WFP admin opt-in fail-closed boundary enforced;
+- [x] fail-closed Linux, macOS and Windows capability probes covered by negative integration tests;
+- [x] CI build matrices across x86-64/ARM64 Linux, macOS Intel/Apple Silicon, and Windows with warnings denied.
+
+## Stabilization gate (Continuous)
+
+- replace any unmeasured performance statement with reproducible benchmark output and record the machine/kernel/toolchain used;
+- independently review policy merging, report path handling, DNS validation and every platform-specific unsafe block.
 
 ## Ongoing security work
 

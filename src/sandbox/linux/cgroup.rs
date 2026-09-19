@@ -101,6 +101,15 @@ pub fn parse_cpu_max(input: &str) -> Option<String> {
     None
 }
 
+/// Read available cgroup v2 controllers from the cgroup root if mounted.
+pub fn available_controllers() -> Vec<String> {
+    if let Ok(content) = fs::read_to_string("/sys/fs/cgroup/cgroup.controllers") {
+        content.split_whitespace().map(|s| s.to_string()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// Locate a writable cgroup v2 hierarchy.
 pub fn find_cgroup_root() -> Option<PathBuf> {
     if std::env::var_os("VETTO_TEST_NO_CGROUP").is_some() {

@@ -7,7 +7,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions)
 [![Version](https://img.shields.io/badge/version-0.2.25-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.2.25)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license)
-[![Platform support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational?style=flat-square)](#core-architecture--backends)
+[![Platform support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#core-architecture--backends)
 [![Security Model](https://img.shields.io/badge/security-fail--closed-success?style=flat-square)](#zero-leak-design)
 [![npm version](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
 
@@ -38,34 +38,49 @@ When autonomous agents run with full execution privileges (e.g. `--dangerously-s
 vetto enforces isolation using native operating system kernel primitives without requiring root privileges or container daemons:
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        vetto Supervisor Engine                         │
-│   (Fail-Closed Lifecycle · Env Sanitizer · Secret Masker · Audit Log)   │
-└──────────────────────────────────┬─────────────────────────────────────┘
-                                   │
-         ┌─────────────────────────┴─────────────────────────┐
-         ▼                                                   ▼
-┌─────────────────────────────────┐         ┌─────────────────────────────────┐
-│          Linux Backend          │         │          macOS Backend          │
-│ ─────────────────────────────── │         │ ─────────────────────────────── │
-│ • Rootless Namespaces (bwrap)   │         │ • Apple Seatbelt Sandbox C API  │
-│ • Landlock LSM Inode Scoping    │         │ • Dynamic Scheme SBPL Engine    │
-│ • Seccomp-BPF Syscall Filter    │         │ • Strict Workspace Write Bounds │
-│ • PID Namespace / Deathsig      │         │ • Watchdog Supervision & kqueue │
-│ • cgroups v2 / rlimit Ceilings  │         │ • Process-Group Death Sweep     │
-└─────────────────────────────────┘         └─────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                vetto Supervisor Engine                                 │
+│          (Fail-Closed Lifecycle · Env Sanitizer · Secret Masker · Audit Log)           │
+└──────────────────┬────────────────────────────┬────────────────────────────┬───────────┘
+                   │                            │                            │
+                   ▼                            ▼                            ▼
+┌─────────────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────────────┐
+│       Linux Backend (Tier 1)        │ │    macOS Backend (Tier 2)    │ │   Windows Backend (Tier 3)   │
+│ ─────────────────────────────────── │ │ ──────────────────────────── │ │ ──────────────────────────── │
+│ • Landlock LSM (ABI v1–v6) Inodes   │ │ • Apple Seatbelt C API (SBPL)│ │ • AppContainer & LPAC Tokens │
+│ • Rootless Namespaces (bwrap/clone) │ │ • Shape D AST Engine         │ │ • Job Object Kill-On-Close   │
+│ • Seccomp-BPF Syscall Filter        │ │ • dyld Tracking (Issue #62)  │ │ • Deny-Path Overlap Analysis │
+│ • PID Namespace / Deathsig init     │ │ • kqueue Watchdog & pgroup   │ │ • Opt-in WFP Admin Gate (#63)│
+│ • cgroups v2 & rlimits Ceilings     │ │ • Best-effort rlimits        │ │ • WSL2 Production Pathway    │
+└─────────────────────────────────────┘ └──────────────────────────────┘ └──────────────────────────────┘
 ```
 
-### Linux Backend
+### Platform Capability & Assurance Matrix (3-Tier Honesty)
+
+vetto formally separates operating system platforms into 3 distinct tiers to reflect actual kernel guarantees:
+
+| Platform / Tier | Status | Filesystem Write | Filesystem Read | Network Egress | Process Lifecycle | Secret Masking | Recommended Deployment |
+| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Linux (Native & WSL2)**<br/>*Tier 1* | **Production** | **100% Kernel Deny** (Landlock ABI v1–v6 + R/O VFS) | **100% Scoped Read** (Landlock inode rules, secrets blocked) | **Network Namespaces** (`CLONE_NEWNET` + loopback relay broker) | **100% PID Namespace** (`CLONE_NEWPID` init + `PR_SET_PDEATHSIG` + tree sweep) | **tmpfs mode-000** overlays & `/dev/null` binds | **Production Agents** (unattended autonomy) |
+| **macOS (Darwin)**<br/>*Tier 2* | **Experimental** | **Seatbelt SBPL** (write locked to workspace & `/tmp`) | **Broad Reads + Tail Deny** (known dyld shared cache restriction, #62) | **`--net off` lockdown** (SBPL network* deny + UNIX socket exemption) | **kqueue Watchdog** (`EVFILT_PROC` + process-group SIGKILL sweep) | **SBPL tail deny** (unprivileged VFS overlay unsupported) | **Interactive dev** (run inside OrbStack/WSL2 for read secrecy) |
+| **Windows Native**<br/>*Tier 3* | **Experimental** | **AppContainer DACL** (LPAC write grants to workspace) | **Default-Deny + Overlap Analysis** (AppContainer capability sandbox, #63) | **`--net off` only** (WFP domain filtering requires admin opt-in) | **Job Objects** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) | **Fails closed** on deny-path overlap | **Preview / Testing** (run in **WSL2** for production Tier 1 isolation) |
+
+### Linux Backend (Tier 1 — Production)
 - **Rootless Namespaces & Bubblewrap (`bwrap`)**: Isolates Mount (`CLONE_NEWNS`), Network (`CLONE_NEWNET`), PID (`CLONE_NEWPID`), and IPC (`CLONE_NEWIPC`) namespaces entirely in unprivileged user space.
 - **Landlock LSM**: Kernel-level VFS inode access control (ABI v1–v6) restricting filesystem reads and writes.
 - **Seccomp-BPF**: Enforces fine-grained system call interception before `execve` (`UnixOnly` and `AgentMin`), terminating debugger attachment (`ptrace`), eBPF injections (`bpf`), userfaultfd exploits, and raw socket allocations.
 - **cgroups v2 & rlimits**: Immutable resource ceilings on CPU time (`RLIMIT_CPU`), virtual memory address space (`RLIMIT_AS`), process limits (`RLIMIT_NPROC`), and file size (`RLIMIT_FSIZE`).
 
-### macOS Backend
+### macOS Backend (Tier 2 — Experimental)
 - **Native Seatbelt**: Dynamic Scheme SBPL (Sandbox Profile Language) compilation loaded via Apple's private C API (`libsandbox.1.dylib`), bypassing brittle CLI wrappers.
-- **Filesystem Confinement**: Strict write isolation locked to the workspace root and `/tmp`. Known secret paths (`~/.ssh`, `~/.aws`, `.env`) are masked via tail denials (`deny_resolved`).
+- **Filesystem Confinement**: Strict write isolation locked to the workspace root and `/tmp`. Known secret paths (`~/.ssh`, `~/.aws`, `.env`) are masked via tail denials (`deny_resolved`). Broad reads remain permitted due to Apple's `dyld` shared cache constraints (Issue #62).
 - **Process Lifecycle Supervision**: Watchdog supervisor thread monitoring parent death via `kqueue` and executing clean process-group (`pgroup`) SIGKILL sweeps on termination.
+
+### Windows Backend (Tier 3 — Experimental)
+- **AppContainer & LPAC**: Process sandboxing via Less Privileged AppContainer tokens (`S-1-15-2-2`) stripping implicit capabilities and enforcing default-deny filesystem boundaries.
+- **Deny-Path Overlap Analysis**: Replaces blanket refusals with granular verification of display-only deny paths against granted roots; fails closed on unsubtractable subpath collisions (Issue #63).
+- **Job Objects**: Enforces `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` ensuring 100% process tree extinction upon session exit.
+- **WSL2 Production Pathway**: For production-grade Landlock LSM and namespace isolation on Windows, executing through WSL2 (`wsl -- vetto ...`) is recommended.
 
 ### Zero-Leak Design
 - **Sanitized Environment Variables**: Strips all sensitive credentials (`HARD_DENY_PREFIXES`: 35 secret patterns including `AWS_*`, `GITHUB_*`, `OPENAI_*`, `ANTHROPIC_*`, SSH keys, and auth tokens) and normalizes `$PATH` to prevent directory traversal and binary hijacking.
@@ -155,14 +170,22 @@ vetto wrap --profile dev -- cargo test
 vetto --profile dev -- go test ./...
 ```
 
-### 4. Verify & Audit Policies
-Check policies, test path rules, and inspect security violations:
+### 4. Inspect, Lint & Explain Policies (`vetto policy`)
+Deeply inspect active policy boundaries, cryptographic digests, and lint for configuration hazards:
 
 ```bash
 # Check configuration and verify policies without spawning
 vetto check
-# Or lint the policy for dangerous broad paths
-vetto lint --strict
+
+# Lint policy rules for security hazards (broad grants, overlapping secrets)
+vetto policy lint
+# Or run with strict enforcement
+vetto policy lint --strict
+
+# Explain resolved policy boundaries, BLAKE3 contract digest, and resource limits
+vetto policy explain
+# Output machine-readable JSON format
+vetto policy explain --json
 
 # Run throwaway leak-detection battery on current policy
 vetto verify
