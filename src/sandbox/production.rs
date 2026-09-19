@@ -1034,7 +1034,8 @@ impl SpawnedProductionExecution {
         let setsid_orphan_escaped = if matches!(
             self.handle.strategy,
             Some(crate::sandbox::handle::KillStrategy::ProcessGroup { sweep: true, .. })
-        ) && exit_code.unwrap_or(0) == 0 {
+        ) && exit_code.unwrap_or(0) == 0
+        {
             let me = unsafe { libc::getpid() } as u32;
             let my_sid = crate::sandbox::linux::proctrack::session_of(0);
             let deadline = Instant::now() + Duration::from_millis(250);
