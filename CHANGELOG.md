@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.1] - 2026-09-19
+### Fixed
+- **PTY Setsid Orphan Nonce Isolation**: Isolated `setsid_orphan_escaped` detection by session nonce in `src/sandbox/production.rs`, verifying `/proc/<pid>/environ` contains `VETTO_RUN_NONCE=<nonce>` to eliminate flakiness and false-positive Exit 125 verdicts from concurrent processes in `test_prod_pty_stage3b_001`.
+
+### Added
+- **Auto-Enable on Demand (`vetto <agent>`)**: Direct invocation of known AI coding agents (`claude`, `codex`, `cursor`, `aider`, `opencode`, etc.) automatically installs transparent shims on demand and launches the agent in the sandbox with its built-in zero-config profile, preserving backward compatibility with `vetto run -- <cmd>` and `vetto -- <cmd>`.
+
 ## [0.3.0] - 2026-09-19
 ### Added
 - **Canonical Security Contract Authority (Phase 1)**: `SecurityContract` and execution FSM are now the authoritative security boundary across CLI, MCP, and multi-agent execution.
