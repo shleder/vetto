@@ -8,6 +8,7 @@
 mod common;
 
 mod adv_isolation;
+mod cli_auto_enable;
 mod cli_reporting;
 mod doctor_parity;
 mod ecosystem_tier7;

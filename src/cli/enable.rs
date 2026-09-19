@@ -78,8 +78,17 @@ pub fn run_disable(args: &DisableArgs) -> Result<()> {
     disable_agent(&agent_name, args.scope)
 }
 
+/// Enables transparent sandbox wrapping for a specific agent without banner output.
+pub fn enable_agent_silent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
+    enable_agent_internal(agent, force, scope, true)
+}
+
 /// Enables transparent sandbox wrapping for a specific agent.
 pub fn enable_agent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
+    enable_agent_internal(agent, force, scope, false)
+}
+
+fn enable_agent_internal(agent: &str, force: bool, scope: HookScope, silent: bool) -> Result<()> {
     // 1. Resolve the real host binary FIRST to verify it is installed and in PATH
     let real_bin = find_real_binary(agent).map_err(|_| {
         anyhow::anyhow!(
@@ -124,28 +133,32 @@ pub fn enable_agent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
         }
     }
 
-    let net_allowlist = agent_network_allowlist(agent);
-    let net_desc = if net_allowlist.is_empty() {
-        "offline (no outbound access)".to_string()
-    } else {
-        net_allowlist.join(", ")
-    };
+    if !silent {
+        let net_allowlist = agent_network_allowlist(agent);
+        let net_desc = if net_allowlist.is_empty() {
+            "offline (no outbound access)".to_string()
+        } else {
+            net_allowlist.join(", ")
+        };
 
-    println!("vetto: successfully enabled sandbox wrapper for '{agent}'");
-    println!("  real binary : {}", real_bin.display());
-    println!("  shim path   : {}", target_shim_path.display());
-    println!("  profile     : default + agent preset (zero-config)");
-    println!("  network     : allowlisted ({net_desc})");
-    println!();
-    println!("You can now run `{agent}` normally — under the hood it runs in the Vetto sandbox.");
+        println!("vetto: successfully enabled sandbox wrapper for '{agent}'");
+        println!("  real binary : {}", real_bin.display());
+        println!("  shim path   : {}", target_shim_path.display());
+        println!("  profile     : default + agent preset (zero-config)");
+        println!("  network     : allowlisted ({net_desc})");
+        println!();
+        println!(
+            "You can now run `{agent}` normally — under the hood it runs in the Vetto sandbox."
+        );
 
-    // Check if shims_dir is in current PATH
-    if let Some(path_val) = std::env::var_os("PATH") {
-        let in_path = std::env::split_paths(&path_val).any(|p| p == shims_dir);
-        if !in_path {
-            println!();
-            println!("To apply in your current terminal session immediately, run:");
-            println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
+        // Check if shims_dir is in current PATH
+        if let Some(path_val) = std::env::var_os("PATH") {
+            let in_path = std::env::split_paths(&path_val).any(|p| p == shims_dir);
+            if !in_path {
+                println!();
+                println!("To apply in your current terminal session immediately, run:");
+                println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
+            }
         }
     }
 
