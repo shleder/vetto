@@ -4,7 +4,7 @@
 
 **The OS-native, fail-closed sandbox & policy runtime for AI coding agents.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.0) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20%28exit%20125%29-success?style=flat-square)](#what-vetto-intercepts) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.0) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20%28exit%20125%29-success?style=flat-square)](#what-vetto-intercepts)
 
 <br/>
 
