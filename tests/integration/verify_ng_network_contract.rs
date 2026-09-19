@@ -45,9 +45,7 @@ use vetto::verify_ng::network::{
     NetworkViolation,
 };
 use vetto::verify_ng::registry::{registry, Scenario, Severity};
-use vetto::verify_ng::sandbox_backend::{
-    EnforcementState, LinuxBackend, SecurityCapability,
-};
+use vetto::verify_ng::sandbox_backend::{EnforcementState, LinuxBackend, SecurityCapability};
 use vetto::verify_ng::{engine, runner};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
