@@ -5,6 +5,15 @@ use std::process::Command;
 
 #[test]
 fn test_direct_agent_invocation_auto_enables_shim() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
     let project = TempProject::new("cli-auto-enable");
     let proj_dir = project.path();
 
