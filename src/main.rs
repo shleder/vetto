@@ -58,6 +58,153 @@ fn fast_tier_detect() -> &'static str {
     }
 }
 
+fn preprocess_cli_args(raw_args: &[String]) -> Result<Vec<String>> {
+    if raw_args.iter().any(|a| a == "--") {
+        return Ok(raw_args.to_vec());
+    }
+
+    const KNOWN_SUBCOMMANDS: &[&str] = &[
+        "mask",
+        "enable",
+        "disable",
+        "allow",
+        "deny",
+        "doctor",
+        "tour",
+        "status",
+        "kill",
+        "verify",
+        "verify-ng",
+        "run",
+        "wizard",
+        "undo",
+        "ephemeral",
+        "diff",
+        "pack",
+        "unpack",
+        "watchdog",
+        "init",
+        "profiles",
+        "hook",
+        "plugin",
+        "mcp",
+        "daemon",
+        "serve",
+        "shim",
+        "multi",
+        "rescue",
+        "report",
+        "redteam",
+        "policy",
+        "completions",
+        "man",
+        "shell-env",
+        "profile",
+        "why-slow",
+        "upgrade",
+        "scan-secrets",
+        "watch",
+        "rollback",
+        "events",
+        "audit",
+        "digest",
+        "diff-sessions",
+        "replay",
+        "ssh-proxy",
+        "__ssh-proxy",
+        "help",
+        "version",
+    ];
+
+    const OPTIONS_WITH_VALUE: &[&str] = &[
+        "--profile",
+        "--preset",
+        "--policy",
+        "--net",
+        "--tui",
+        "--backend",
+        "--jsonl",
+        "--report",
+        "--report-dir",
+        "--report-retention",
+        "--report-max-age-secs",
+        "--otel-endpoint",
+        "--timeout",
+        "--limits",
+        "--remote",
+        "--agent",
+        "--manifest",
+        "--deny-glob",
+    ];
+
+    let mut i = 1;
+    while i < raw_args.len() {
+        let arg = &raw_args[i];
+        if arg.starts_with("--") {
+            if arg.contains('=') {
+                i += 1;
+                continue;
+            }
+            if arg == "--fail-on-block" {
+                if let Some(next) = raw_args.get(i + 1) {
+                    if next.chars().all(|c| c.is_ascii_digit()) {
+                        i += 2;
+                        continue;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+            if OPTIONS_WITH_VALUE.contains(&arg.as_str()) {
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+
+        if KNOWN_SUBCOMMANDS.contains(&arg.as_str()) {
+            return Ok(raw_args.to_vec());
+        }
+
+        if let Some(canon) =
+            vetto::policy::defaults::canonical_agent_name(arg).filter(|&c| c != "custom")
+        {
+            if let Ok(shims_dir) =
+                vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)
+            {
+                let shim_path = shims_dir.join(canon);
+                let is_wrapped =
+                    shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
+                if !is_wrapped {
+                    let target_agent = if vetto::shim::find_real_binary(arg).is_ok() {
+                        arg.as_str()
+                    } else {
+                        canon
+                    };
+                    let _ = vetto::cli::enable::enable_agent_silent(
+                        target_agent,
+                        false,
+                        vetto::cli::hook::HookScope::Global,
+                    );
+                }
+            }
+
+            let mut rewritten = raw_args.to_vec();
+            rewritten.insert(i, "--".to_string());
+            return Ok(rewritten);
+        }
+
+        break;
+    }
+
+    Ok(raw_args.to_vec())
+}
+
 fn run() -> Result<()> {
     // Activation funnel milestone (issue #27): first-ever run. Once-only via
     // marker file; silent unless telemetry is explicitly opted in.
@@ -96,7 +243,8 @@ fn run() -> Result<()> {
         }
     }
 
-    let args = cli::Cli::parse();
+    let processed_args = preprocess_cli_args(&raw_args)?;
+    let args = cli::Cli::parse_from(&processed_args);
     logger::init_flags(args.quiet, args.verbose);
 
     if let Some(remote_url) = &args.remote {
@@ -480,45 +628,9 @@ fn run() -> Result<()> {
             }
         }
         Some(cli::Command::External(ext_args)) => {
-            if let Some(first) = ext_args.first() {
-                if let Some(canon) =
-                    vetto::policy::defaults::canonical_agent_name(first).filter(|&c| c != "custom")
-                {
-                    let shims_dir =
-                        vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)?;
-                    let shim_path = shims_dir.join(canon);
-                    let is_wrapped =
-                        shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
-                    if !is_wrapped {
-                        vetto::cli::enable::enable_agent(
-                            canon,
-                            false,
-                            vetto::cli::hook::HookScope::Global,
-                        )?;
-                    }
-
-                    let mut cfg = RunConfig::from_cli(&args)?;
-                    let mut full_cmd = ext_args.clone();
-                    let real_bin = vetto::shim::find_real_binary(first)
-                        .or_else(|_| vetto::shim::find_real_binary(canon));
-                    if let Ok(bin) = real_bin {
-                        full_cmd[0] = bin.display().to_string();
-                    }
-                    cfg.agent = full_cmd;
-                    if cfg.agent_preset.is_none() {
-                        cfg.agent_preset = Some(canon.to_string());
-                    }
-                    if matches!(cfg.net, NetMode::Off) && args.net.is_none() {
-                        let domains = policy::presets::agent_network_allowlist(canon);
-                        if !domains.is_empty() {
-                            cfg.net = NetMode::Allowlist(domains);
-                        }
-                    }
-                    return supervise(cfg);
-                }
-
+            if let Some(prof_name) = ext_args.first() {
                 let storage = profile::ProfileStorage::new()?;
-                let prof = storage.load(first)?;
+                let prof = storage.load(prof_name)?;
                 let mut cfg = RunConfig::from_cli(&args)?;
                 cfg.agent = prof.agent;
                 cfg.net = vetto::config::parse_net_mode(&prof.net)?;
@@ -859,6 +971,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let mut env_extra: HashMap<String, String> = {
         let mut env_extra = HashMap::new();
         env_extra.insert("VETTO_SANDBOX".into(), "1".into());
+        env_extra.insert("VETTO_SANDBOXED".into(), "1".into());
         env_extra.insert("VETTO_SESSION_ID".into(), session_id.clone());
         env_extra.insert("VETTO_TIER".into(), tier_label(tier).into());
         env_extra.insert("VETTO_PROFILE".into(), pol.name.clone());
@@ -1766,6 +1879,9 @@ fn resolve_in_path(cmd: &str) -> Result<String> {
     let command_path = Path::new(cmd);
     if command_path.is_absolute() || command_path.components().count() > 1 {
         return Ok(cmd.to_string());
+    }
+    if let Ok(real) = vetto::shim::find_real_binary(cmd) {
+        return Ok(real.to_string_lossy().into_owned());
     }
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {

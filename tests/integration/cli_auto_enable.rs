@@ -49,6 +49,7 @@ fn test_direct_agent_invocation_auto_enables_shim() {
         .current_dir(proj_dir)
         .env("PATH", &custom_path)
         .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
         .output()
         .expect("exec direct claude");
 
@@ -78,6 +79,7 @@ fn test_direct_agent_invocation_auto_enables_shim() {
         .current_dir(proj_dir)
         .env("PATH", &custom_path)
         .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
         .output()
         .expect("exec direct claude second time");
 
