@@ -46,7 +46,7 @@ use vetto::verify_ng::network::{
 };
 use vetto::verify_ng::registry::{registry, Scenario, Severity};
 use vetto::verify_ng::sandbox_backend::{
-    EnforcementState, LinuxBackend, SandboxBackend, SecurityCapability,
+    EnforcementState, LinuxBackend, SecurityCapability,
 };
 use vetto::verify_ng::{engine, runner};
 
