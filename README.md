@@ -4,7 +4,7 @@
 
 **The OS-native, fail-closed sandbox & policy runtime for AI coding agents.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.0) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20(exit%20125)-success?style=flat-square)](#what-vetto-intercepts) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&label=npm%20v0.3.0&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.0) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20%28exit%20125%29-success?style=flat-square)](#what-vetto-intercepts) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto)
 
 <br/>
 
@@ -49,7 +49,7 @@ cargo install vetto --locked
 docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.3.0 vetto doctor
 ```
 
-*Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases/tag/v0.3.0).*
+*Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases/tag/v0.3.0). See [Installation Guide](docs/INSTALL.md) for custom paths and platform options.*
 
 </details>
 
@@ -153,7 +153,7 @@ vetto formally separates operating system platforms into 3 distinct tiers to ref
 <a id="supported-agents"></a>
 ## 🤖 Supported AI Agents (Roster)
 
-vetto includes 20 native agent presets with automatic credential isolation, configuration path allowlisting, and zero-config network profiles:
+vetto includes 20 native agent presets with automatic credential isolation, configuration path allowlisting, and zero-config network profiles (see [Agent Compatibility Registry](docs/agents.md)):
 
 | Agent | Preset | Guide | Agent | Preset | Guide |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -170,7 +170,7 @@ vetto includes 20 native agent presets with automatic credential isolation, conf
 
 ### Model Context Protocol (MCP) Support
 
-Isolate third-party MCP servers connected to Claude Desktop or Codex Desktop:
+Isolate third-party MCP servers connected to Claude Desktop or Codex Desktop (see [MCP Integration Guide](docs/integrations/mcp.md) and [Tutorial](docs/tutorials/mcp.md)):
 
 ```bash
 vetto mcp wrap --allow ./data --allow-read /usr/share --net off -- <mcp-server-binary> [args...]
@@ -248,6 +248,8 @@ Deep architectural specifications, threat models, and verification suites:
 | **Secret Masking** | **Automatic VFS overlays** | None (reads `.env`, `~/.ssh`) | Manual `.dockerignore` | Guest VM disk image |
 | **Network Egress** | **Per-domain loopback broker** | Unfiltered or app-level | Bridge network or none | Virtualized netstack |
 | **Fail-Closed Contract** | **100% Fail-Closed** | Varies / Fail-Open | Container fallback | VM error |
+ 
+See [In-Depth Sandbox Comparison](docs/comparison.md) for full benchmark metrics, microVM trade-offs, and platform breakdown.
 
 ---
 
