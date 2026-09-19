@@ -79,18 +79,18 @@ fn path_is_inside(candidate: &Path, root: &Path) -> bool {
 fn component_matches(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
     use std::path::Component;
     match (left, right) {
-        (Component::Prefix(l), Component::Prefix(r)) => {
-            l.as_os_str()
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&r.as_os_str().to_string_lossy())
-        }
+        (Component::Prefix(l), Component::Prefix(r)) => l
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&r.as_os_str().to_string_lossy()),
         (Component::RootDir, Component::RootDir) => true,
         (Component::CurDir, Component::CurDir) => true,
         (Component::ParentDir, Component::ParentDir) => true,
         (Component::Normal(l), Component::Normal(r)) => {
             #[cfg(windows)]
             {
-                l.to_string_lossy().eq_ignore_ascii_case(&r.to_string_lossy())
+                l.to_string_lossy()
+                    .eq_ignore_ascii_case(&r.to_string_lossy())
             }
             #[cfg(not(windows))]
             {

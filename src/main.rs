@@ -1915,7 +1915,10 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     #[cfg(target_os = "macos")]
     {
         let seatbelt_available = sandbox::macos::MacosSandbox::seatbelt_available();
-        println!("seatbelt (sandbox-exec / libsandbox API): {}", yn(seatbelt_available));
+        println!(
+            "seatbelt (sandbox-exec / libsandbox API): {}",
+            yn(seatbelt_available)
+        );
         let sbpl_status = sandbox::macos::seatbelt::probe_sbpl_read_fragment();
         println!("sbpl-read-fragment:      {}", sbpl_status.as_str());
         println!("  shape status:          Shape D (allow file-read* broad + tail deny; fragmented dyld aborts)");
@@ -1993,7 +1996,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.etw.note);
         println!("  note: {}", optional.windows_sandbox.note);
         println!("  note: {}", optional.eventlog.note);
-        println!("  platform status:       Tier 3 (Experimental: Job Objects + Restricted Token + LPAC)");
+        println!(
+            "  platform status:       Tier 3 (Experimental: Job Objects + Restricted Token + LPAC)"
+        );
         println!("  network warning:       WFP network filtering requires elevated Administrator privileges (Issue #63). Default process sandbox enforces net=off via AppContainer.");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {

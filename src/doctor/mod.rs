@@ -18,6 +18,6 @@ pub use fix::{print_fixes, DoctorFix};
 
 pub mod probe;
 
+pub use probe::{analyze_deny_overlap, DenyOverlapReport};
 #[cfg(unix)]
 pub use probe::{run_probe_script, ProbeOutput};
-pub use probe::{analyze_deny_overlap, DenyOverlapReport};

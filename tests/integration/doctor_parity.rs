@@ -141,8 +141,7 @@ fn test_doctor_probe_parity_no_panic() {
     #[cfg(target_os = "windows")]
     {
         assert!(
-            text.contains("probe: analyzing deny-path overlap")
-                || text.contains("no deny paths"),
+            text.contains("probe: analyzing deny-path overlap") || text.contains("no deny paths"),
             "Windows doctor --probe must perform overlap analysis: {text}\nstderr: {}",
             stderr(&out)
         );
