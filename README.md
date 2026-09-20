@@ -1,119 +1,116 @@
 ![vetto — a kernel wall between the AI agent and your machine](assets/readme/hero.svg)
 
-[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.7-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.7) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license)
+<p align="center">
+  <a href="https://github.com/shleder/vetto/actions"><img src="https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="https://github.com/shleder/vetto/releases/tag/v0.3.7"><img src="https://img.shields.io/badge/version-0.3.7-blue?style=flat-square" alt="Version"></a>
+  <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square" alt="npm"></a>
+  <a href="https://crates.io/crates/vetto"><img src="https://img.shields.io/crates/v/vetto?logo=rust&style=flat-square" alt="crates.io"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License"></a>
+</p>
 
-<table>
-<tr><td>
+Daemon-less, rootless kernel-level sandbox and policy enforcement runtime for AI coding agents (**Claude Code**, **OpenAI Codex CLI**, **Cursor**, **Gemini**, **Aider**). Vetto injects immutable security boundaries directly between `fork()` and `execve()` with sub-4ms initialization latency.
 
-## Proof before promises
+---
 
-Your agent holds your keys — literally. One rogue dependency hook or one injected prompt and it walks off with `~/.ssh` or wipes your home. Under vetto it meets the wall instead:
+## Proof Before Promises
+
+Autonomous agents execute non-deterministic code. Untrusted dependency hooks, prompt injections, or hallucinated commands can compromise host credentials (`~/.ssh`, `~/.aws`, `.env`) or damage the filesystem. Under Vetto, unauthorized system calls are blocked deterministically:
 
 ```text
-> Reading ~/.ssh/id_rsa...        BLOCKED (secret mask, EACCES)
-> Opening raw socket...            BLOCKED (net namespace, EAFNOSUPPORT)
-> Spawning detached daemon...      TERMINATED (tree extinction, exit 125)
+> Reading ~/.ssh/id_rsa...         BLOCKED (secret mask, EACCES)
+> Opening raw socket...             BLOCKED (net namespace, EAFNOSUPPORT)
+> Spawning detached daemon...       TERMINATED (process tree extinction, exit 125)
 ```
 
 ![Blocked exfiltration attempt under vetto](assets/demo.svg)
 
-Exit `125` is the whole contract: if isolation fails or is breached, nothing proceeds. Strays and zombies are reaped within 500 milliseconds. Whatever your OS cannot guarantee is reported as unsupported — never quietly downgraded.
+### Fail-Closed Contract (Exit 125)
 
-</td></tr>
-</table>
+If an isolation boundary is violated or if required kernel primitives cannot be enforced, execution is terminated immediately with exit code 125. Descendant process trees and orphaned subprocesses are reaped synchronously. Guarantees that the underlying OS cannot enforce are reported as unsupported—security is never silently downgraded.
 
-<table>
-<tr><td>
+## Quick Start
 
-## Install
+### 1. Install
+
+Via package managers:
 
 ```bash
+# npm
 npm install -g @shledery/vetto
+# Homebrew
+brew install shleder/tap/vetto
+# Cargo
+cargo install vetto
 ```
 
-Also available as `brew install shleder/tap/vetto`, `cargo install vetto`, a [container image](docs/INSTALL.md), or via curl:
+Or download via standalone installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | sh
 ```
 
-Current release is [v0.3.7](https://github.com/shleder/vetto/releases/tag/v0.3.7).
+### 2. Transparent Agent Sandboxing
 
-</td></tr>
-</table>
-
-<table>
-<tr><td>
-
-## Three ways to use it
-
-**1. Wrap your agent once, then forget vetto exists.**
+Enable zero-configuration sandboxing for your coding agent once. Vetto installs a non-destructive shim in `~/.vetto/shims` with priority in `PATH`:
 
 ```bash
-vetto enable claude   # codex, gemini, cursor, aider, opencode, and 15 more
-claude                # runs as usual — sandboxed underneath
+vetto enable claude   # supports codex, gemini, cursor, aider, and presets
+claude                # runs normally — fully sandboxed at the kernel boundary
 ```
 
-The shim pins `~/.vetto/shims` at the front of your PATH and heals your shell hooks when installers like nvm or conda try to shove past them.
+### 3. Direct Execution & MCP Quarantine
 
-**2. Run anything under the strict default sandbox.**
+Execute standalone scripts under strict default isolation:
 
 ```bash
 vetto run -- python script.py
 vetto -- npm test
 ```
 
-**3. Quarantine an MCP server.**
+Quarantine a Model Context Protocol (MCP) server binary with isolated paths and disabled network egress:
 
 ```bash
 vetto mcp wrap --allow ./data --net off -- <mcp-server-binary>
 ```
 
-After a run, `vetto audit --latest` lists what got stopped and `--recap` prints the security summary. `vetto doctor` shows what your kernel can actually enforce — and repairs what it can with `--fix`.
+Inspect security events and verify platform enforcement:
 
-</td></tr>
-</table>
+```bash
+vetto audit --latest --recap    # review blocked syscalls and file operations
+vetto doctor --fix              # probe kernel LSM support and repair shell hooks
+```
 
-<table>
-<tr><td>
+## Platform Guarantees
 
-## Platform guarantees
+Vetto enforces an immutable three-tier boundary model based on kernel capabilities available to unprivileged userspace:
 
-Three levels, no bluffing. Linux gets full kernel confinement: Landlock rules, user/mount/pid/network namespaces, seccomp filters, cgroup ceilings. macOS gets Seatbelt write locks with best-effort limits (Apple does not allow unprivileged read-denial of the dyld cache). Native Windows gets AppContainer plus Job Objects — a preview tier, so production Windows runs go through WSL2. Full matrix: [platform backends](docs/platform-backends.md).
+| Platform / Tier | Filesystem Isolation | Network Isolation | Process Lifecycle | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Linux (Native)**<br>Tier 1 | Landlock LSM (ABI 1–6)<br>Inode-level VFS masking over `~/.ssh`, `~/.aws`, `.env` | Network Namespaces (`CLONE_NEWNET`)<br>Loopback isolation + local TCP/TLS broker | PID Namespaces (`CLONE_NEWPID`)<br>Deterministic process tree teardown | Production |
+| **Linux (WSL2)**<br>Tier 1 | Landlock LSM via WSL2 kernel<br>Full inode restriction | Network Namespaces inside VM<br>Isolated broker egress | PID Namespaces + `/proc` sweep<br>Full tree extinction | Production (Recommended for Windows) |
+| **macOS (Darwin)**<br>Tier 2 | Seatbelt (SBPL)<br>Write confinement to `$PROJECT` and `/tmp` | Network Lockdown<br>`--net=off` via `(deny network*)` rules | Process Group Sweeping<br>kqueue watchdog supervision | Standard (Requires Full Disk Access for `~/Documents`) |
+| **Windows Native**<br>Tier 3 | AppContainer & LPAC<br>DACL token restriction | Capability Lockdown<br>Restricted network SIDs | Job Objects<br>`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` | Guardrail (Use WSL2 for Tier 1 kernel namespaces) |
 
-Two macOS footnotes that bite people: Terminal needs Full Disk Access for `~/Documents`, `~/Desktop`, `~/Downloads` — or keep work in `~/projects`. And `doctor` tells you exactly which case you are in.
+## Binary Integrity & Attestation
 
-</td></tr>
-</table>
+Releases are built via automated GitHub Actions workflows with public cryptographic verification:
 
-<table>
-<tr><td>
+- **SLSA Level 3 Provenance**: In-toto build attestations generated for all release binaries.
+- **Minisign Signatures**: Published with each release archive under public key `75ECEC9B5080C590`.
+- **Cryptographic Checksums**: Standalone SHA256 hashes generated and verified during installation.
 
-## Trust the binaries
+## Documentation
 
-Every release ships SLSA Level 3 build provenance, Minisign signatures (key `75ECEC9B5080C590`), and CycloneDX SBOMs — published together to GitHub Releases, npm, crates.io, and Homebrew. Bad signature, no install.
+- [Platform Backends & Boundary Specs](docs/platform-backends.md)
+- [Agent Presets & Registry](docs/agents.md)
+- [Threat Model & Security Assumptions](docs/threat-model.md)
+- [Exit Codes & Failure Modes](docs/exit-codes.md)
+- [Vulnerability Reporting (SECURITY.md)](SECURITY.md)
 
-</td></tr>
-</table>
+## Contributing
 
-<table>
-<tr><td>
+Contributions are welcome. Please branch from main. All boundary assertions must include corresponding kernel validation test cases. Pull requests are validated against Linux and macOS kernel runners in GitHub Actions CI.
 
-## Go deeper
+## License
 
-Policies are plain TOML compiled into sealed contracts: `vetto policy explain` previews enforcement, `vetto policy lint` vets it before anything spawns, `vetto allow` / `vetto deny` tweak access without touching files, and `vetto verify` fires a throwaway leak battery. Start at [agent registry](docs/agents.md), [threat model](docs/threat-model.md), [architecture](docs/architecture/NEXT_GEN_SPECIFICATION.md), [exit codes](docs/exit-codes.md).
-
-</td></tr>
-</table>
-
-<table>
-<tr><td>
-
-## Hack on it
-
-Branch from `main`. Back every isolation claim with a real kernel test — mocks for kernel boundaries get rejected. Broken isolation must fail closed with exit `125`. Keep format and clippy clean; CI builds and tests, your laptop does not. Report security issues via [SECURITY.md](SECURITY.md).
-
-Dual licensed Apache-2.0 / MIT ([LICENSE](LICENSE), [notices](THIRD_PARTY_NOTICES.md)).
-
-</td></tr>
-</table>
+Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE)).
