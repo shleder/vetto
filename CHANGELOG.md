@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.9] - 2026-09-20
+### Fixed
+- **Shim Recursion Barrier Bypass**: Removed premature `export VETTO_WRAPPED=1` / `set "VETTO_WRAPPED=1"` from generated POSIX and Windows transparent binary shims (`src/shim/registry.rs`), eliminating inadvertent bypass of sandbox interception in child shells and nested subcommands.
+- **~/.bash_profile PATH Shadowing Protection**: Added `~/.bash_profile` and `~/.profile` to Bash configuration candidates and ensured `repair_shell_profiles` (`src/cli/shell_env.rs`) guarantees the indestructible hook marker block is appended at EOF of `~/.bash_profile` if it exists, preventing late PATH additions from shadowing `~/.vetto/shims`.
+
+### Added
+- **Antigravity CLI and Codex Network & Preset Expansion**: Mapped Antigravity CLI (`antigravity` / `agy`) home root to `~/.gemini`, added security preset mappings for `~/.gemini` and `~/.config/Antigravity`, and expanded network egress allowlists for Google Cloud Code / AI Platform (`cloudcode-pa.googleapis.com`, `aicode.googleapis.com`, `businessaicode.googleapis.com`, `aiplatform.googleapis.com`) and OpenAI Codex (`chat.openai.com`, `platform.openai.com`).
+- **Packaging Parity**: Synchronized version 0.3.9 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
 ## [0.3.8] - 2026-09-20
 ### Changed
 - **README Overhaul to Beautify Standard**: Cleaned up markup, clarified binary trust and security guarantees, modernized typography, and updated architectural documentation.

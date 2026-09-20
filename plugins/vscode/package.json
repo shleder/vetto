@@ -2,7 +2,7 @@
   "name": "vetto-vscode",
   "displayName": "vetto",
   "description": "Run coding agents through the vetto sandbox and inspect session events.",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "publisher": "shleder",
   "license": "Apache-2.0",
   "engines": {
