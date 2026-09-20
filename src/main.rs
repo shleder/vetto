@@ -358,7 +358,7 @@ fn run() -> Result<()> {
                 if cfg.agent_preset.is_none() {
                     cfg.agent_preset = Some(detected.name.to_string());
                 }
-                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
                 if args.tui.is_none() {
@@ -436,7 +436,7 @@ fn run() -> Result<()> {
                 if cfg.agent_preset.is_none() {
                     cfg.agent_preset = Some(detected.name.to_string());
                 }
-                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
             }
@@ -770,7 +770,7 @@ fn run() -> Result<()> {
                 if cfg.agent_preset.is_none() {
                     cfg.agent_preset = Some(detected.name.to_string());
                 }
-                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
             }
