@@ -774,17 +774,23 @@ mod tests {
 
     #[test]
     fn agent_preset_defaults_network_to_allowlist_when_net_omitted() {
-        // Claude defaults to api.anthropic.com,claude.ai
+        // Claude defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com
         let cli = Cli::try_parse_from(["vetto", "--", "claude", "-p", "hello"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+        );
 
-        // Claude-code alias defaults to api.anthropic.com,claude.ai
+        // Claude-code alias defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com
         let cli = Cli::try_parse_from(["vetto", "--", "claude-code"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+        );
 
         // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
@@ -831,13 +837,13 @@ mod tests {
             "allowlist:api.openai.com,api.anthropic.com,openrouter.ai"
         );
 
-        // Cursor defaults to api.cursor.com,api2.cursor.sh,auth.cursor.sh
+        // Cursor defaults to api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh
         let cli = Cli::try_parse_from(["vetto", "--", "cursor-server"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("cursor"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.cursor.com,api2.cursor.sh,auth.cursor.sh"
+            "allowlist:api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh"
         );
 
         // Explicit --agent flag with alias also defaults to agent allowlist
@@ -852,7 +858,10 @@ mod tests {
         .unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+        );
 
         // Non-agent commands default to NetMode::Off
         let cli = Cli::try_parse_from(["vetto", "--", "python", "script.py"]).unwrap();
