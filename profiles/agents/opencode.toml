@@ -3,8 +3,20 @@ name = "opencode"
 description = "Safe compatibility roots for OpenCode agent."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.opencode",
+    "$HOME/.bun",
+    "$HOME/.cache",
+    "/",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.opencode",
+    "$HOME/.bun",
+    "$HOME/.cache",
+    "/tmp",
+]
 
 [environment]
 pass_through = [
