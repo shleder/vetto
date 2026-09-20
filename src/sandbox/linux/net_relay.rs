@@ -1897,10 +1897,8 @@ mod tests {
 
     #[test]
     fn domain_allowed_normalizes_port_suffixes() {
-        let allowlist_with_ports = vec![
-            "crates.io:443".to_string(),
-            "*.github.com:443".to_string(),
-        ];
+        let allowlist_with_ports =
+            vec!["crates.io:443".to_string(), "*.github.com:443".to_string()];
         assert!(domain_allowed("crates.io", &allowlist_with_ports));
         assert!(domain_allowed("crates.io:443", &allowlist_with_ports));
         assert!(domain_allowed("api.github.com", &allowlist_with_ports));

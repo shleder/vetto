@@ -619,8 +619,8 @@ mod tests {
 
     #[test]
     fn parses_allowlist_with_optional_port_suffixes() {
-        let cfg = config(&["--net", "allowlist:crates.io:443,api.github.com"])
-            .expect("allowlist config");
+        let cfg =
+            config(&["--net", "allowlist:crates.io:443,api.github.com"]).expect("allowlist config");
         assert_eq!(cfg.net.label(), "allowlist:crates.io,api.github.com");
         assert!(cfg.explicit_net);
     }
