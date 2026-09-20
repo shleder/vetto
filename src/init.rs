@@ -163,11 +163,11 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             .recommended_network_domains
             .extend(agent_network_allowlist("goose"));
     }
-    if root.join(".gemini").exists() || root.join("GEMINI.md").exists() {
-        analysis.detected_agents.push("Gemini CLI");
+    if root.join(".antigravity").exists() {
+        analysis.detected_agents.push("Antigravity");
         analysis
             .recommended_network_domains
-            .extend(agent_network_allowlist("gemini"));
+            .extend(agent_network_allowlist("antigravity"));
     }
     if root.join("AGENTS.md").exists() {
         analysis.detected_agents.push("AGENTS.md");
