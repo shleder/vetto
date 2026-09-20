@@ -219,6 +219,44 @@ pub fn secure_base_policy(agent: &DetectedAgent) -> RawLayer {
     preset_layer(Preset::Balanced, Some(agent.name))
 }
 
+/// Returns known candidate binary names for an agent or alias.
+pub fn agent_candidate_binaries(agent: &str) -> &'static [&'static str] {
+    let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+    for spec in AGENT_SPECS {
+        if spec.name == canon {
+            return spec.binaries;
+        }
+    }
+    &[]
+}
+
+/// Resolves real host binary for an agent, checking the provided name
+/// and any known alternative binary names (aliases) outside Vetto shims.
+pub fn find_real_agent_binary(agent: &str) -> Result<(String, std::path::PathBuf)> {
+    // 1. Direct check: exact name outside shims
+    if let Ok(real) = crate::shim::find_real_binary(agent) {
+        return Ok((agent.to_string(), real));
+    }
+
+    // 2. Candidate binaries for this agent / alias
+    let candidates = agent_candidate_binaries(agent);
+    for &candidate in candidates {
+        if candidate == agent {
+            continue;
+        }
+        if let Ok(real) = crate::shim::find_real_binary(candidate) {
+            return Ok((candidate.to_string(), real));
+        }
+    }
+
+    bail!(
+        "agent binary for '{agent}' was not found in PATH outside Vetto shims.\n\
+         Please install '{agent}' first or verify that it is present in your PATH.\n\
+         Supported agents: {}",
+        SUPPORTED_AGENTS.join(", ")
+    )
+}
+
 fn find_any_binary(names: &[&str]) -> Option<String> {
     let path_var = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_var) {
@@ -309,5 +347,22 @@ mod tests {
             net.mode.unwrap(),
             "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
         );
+    }
+
+    #[test]
+    fn agent_candidate_binaries_resolves_known_agents() {
+        let claude_bins = agent_candidate_binaries("claude");
+        assert!(claude_bins.contains(&"claude"));
+        assert!(claude_bins.contains(&"claude-code"));
+
+        let aider_bins = agent_candidate_binaries("aider-chat");
+        assert!(aider_bins.contains(&"aider"));
+        assert!(aider_bins.contains(&"aider-chat"));
+
+        let swe_bins = agent_candidate_binaries("swe-agent");
+        assert!(swe_bins.contains(&"swe-agent"));
+        assert!(swe_bins.contains(&"sweagent"));
+
+        assert!(agent_candidate_binaries("unknown-agent").is_empty());
     }
 }

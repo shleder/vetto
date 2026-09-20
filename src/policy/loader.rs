@@ -263,8 +263,22 @@ pub fn expand_net_preset(name: &str) -> Result<Vec<String>> {
             "huggingface.co".to_string(),
             "cdn-lfs.huggingface.co".to_string(),
         ]),
+        "cargo" | "crates" => Ok(vec![
+            "crates.io".to_string(),
+            "static.crates.io".to_string(),
+            "index.crates.io".to_string(),
+        ]),
+        "go" | "golang" => Ok(vec![
+            "proxy.golang.org".to_string(),
+            "sum.golang.org".to_string(),
+        ]),
+        "maven" => Ok(vec![
+            "repo1.maven.org".to_string(),
+            "repo.maven.apache.org".to_string(),
+        ]),
+        "nuget" => Ok(vec!["api.nuget.org".to_string()]),
         unknown => {
-            bail!("unknown net preset '{unknown}'; known presets: npm, git, pip, huggingface")
+            bail!("unknown net preset '{unknown}'; known presets: npm, git, pip, huggingface, cargo, go, maven, nuget")
         }
     }
 }
@@ -2148,6 +2162,20 @@ deny = ["SECRET_*"]
         let hf_domains = expand_net_preset("huggingface").unwrap();
         assert!(hf_domains.contains(&"huggingface.co".to_string()));
         assert!(hf_domains.contains(&"cdn-lfs.huggingface.co".to_string()));
+
+        let cargo_domains = expand_net_preset("cargo").unwrap();
+        assert!(cargo_domains.contains(&"crates.io".to_string()));
+        assert!(cargo_domains.contains(&"static.crates.io".to_string()));
+
+        let go_domains = expand_net_preset("go").unwrap();
+        assert!(go_domains.contains(&"proxy.golang.org".to_string()));
+        assert!(go_domains.contains(&"sum.golang.org".to_string()));
+
+        let maven_domains = expand_net_preset("maven").unwrap();
+        assert!(maven_domains.contains(&"repo1.maven.org".to_string()));
+
+        let nuget_domains = expand_net_preset("nuget").unwrap();
+        assert!(nuget_domains.contains(&"api.nuget.org".to_string()));
 
         assert!(expand_net_preset("unknown-preset").is_err());
     }
