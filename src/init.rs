@@ -54,6 +54,7 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     let is_node = root.join("package.json").exists()
         || root.join("pnpm-lock.yaml").exists()
         || root.join("yarn.lock").exists()
+        || root.join("bun.lock").exists()
         || root.join("bun.lockb").exists();
     if is_node {
         if root.join("tsconfig.json").exists() {
@@ -67,6 +68,11 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
         analysis
             .recommended_allow_read
             .push("$HOME/.local/share/pnpm/store".to_string());
+        if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
+            analysis
+                .recommended_allow_read
+                .push("$HOME/.bun".to_string());
+        }
         analysis
             .recommended_network_domains
             .push("registry.npmjs.org".to_string());
@@ -111,15 +117,60 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     // AI Agents in Repo
     if root.join(".cursor").exists() || root.join(".cursorrules").exists() {
         analysis.detected_agents.push("Cursor");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("cursor"));
     }
     if root.join(".claude").exists() || root.join("CLAUDE.md").exists() {
         analysis.detected_agents.push("Claude Code");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("claude"));
     }
     if root.join("codex.toml").exists() || root.join(".codex").exists() {
         analysis.detected_agents.push("OpenAI Codex");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("codex"));
     }
     if root.join(".aider.conf.yml").exists() || root.join(".aider.tags.cache.v3").exists() {
         analysis.detected_agents.push("Aider");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("aider"));
+    }
+    if root.join(".opencode").exists() || root.join("opencode.json").exists() {
+        analysis.detected_agents.push("OpenCode");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("opencode"));
+    }
+    if root.join(".cline").exists() || root.join(".clinerules").exists() {
+        analysis.detected_agents.push("Cline");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("cline"));
+    }
+    if root.join(".windsurf").exists() || root.join(".windsurfrules").exists() {
+        analysis.detected_agents.push("Windsurf");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("windsurf"));
+    }
+    if root.join(".goose").exists() || root.join(".goosehints").exists() {
+        analysis.detected_agents.push("Goose");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("goose"));
+    }
+    if root.join(".gemini").exists() || root.join("GEMINI.md").exists() {
+        analysis.detected_agents.push("Gemini CLI");
+        analysis
+            .recommended_network_domains
+            .extend(agent_network_allowlist("gemini"));
+    }
+    if root.join("AGENTS.md").exists() {
+        analysis.detected_agents.push("AGENTS.md");
     }
 
     // Always recommend GitHub domain if git is present
@@ -431,11 +482,15 @@ mod tests {
         assert!(analysis
             .recommended_network_domains
             .contains(&"registry.npmjs.org".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"api.anthropic.com".to_string()));
         assert!(analysis.detected_shims.contains(&"cargo".to_string()));
         assert!(analysis.detected_shims.contains(&"node".to_string()));
 
         let toml = generate_policy_toml(&analysis);
         assert!(toml.contains("Rust, Node.js (TypeScript)"));
+        assert!(toml.contains("api.anthropic.com"));
         assert!(toml.contains("$HOME/.cargo/registry"));
         assert!(toml.contains("$PROJECT/.env"));
         assert!(toml.contains("[metadata]"));
@@ -445,6 +500,37 @@ mod tests {
         assert!(toml.contains("[environment]"));
         assert!(toml.contains("[network]"));
         assert!(toml.contains("[limits]"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_opencode_cline_bun_project() {
+        let dir = temp_test_dir("opencode-bun");
+        let path = dir.as_path();
+
+        fs::write(path.join("bun.lock"), "").unwrap();
+        fs::write(path.join("package.json"), "{}").unwrap();
+        fs::write(path.join("opencode.json"), "{}").unwrap();
+        fs::write(path.join(".clinerules"), "rules").unwrap();
+
+        let analysis = analyze_project(path);
+        assert!(analysis.detected_ecosystems.contains(&"Node.js"));
+        assert!(analysis.detected_agents.contains(&"OpenCode"));
+        assert!(analysis.detected_agents.contains(&"Cline"));
+        assert!(analysis
+            .recommended_allow_read
+            .contains(&"$HOME/.bun".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"opencode.ai".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"otel.cline.bot".to_string()));
+
+        let toml = generate_policy_toml(&analysis);
+        assert!(toml.contains("opencode.ai"));
+        assert!(toml.contains("otel.cline.bot"));
 
         let _ = fs::remove_dir_all(&dir);
     }
