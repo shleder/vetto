@@ -110,12 +110,8 @@ fn test_snapshot_creation_on_symlink_to_home_bypasses_crawl() {
         return;
     }
     let start = Instant::now();
-    let meta = vetto::rescue::snapshot::create_snapshot(
-        &link,
-        "test-sess-sym",
-        50 * 1024 * 1024,
-    )
-    .expect("create_snapshot on symlink to home must succeed");
+    let meta = vetto::rescue::snapshot::create_snapshot(&link, "test-sess-sym", 50 * 1024 * 1024)
+        .expect("create_snapshot on symlink to home must succeed");
     let elapsed = start.elapsed();
 
     assert_eq!(

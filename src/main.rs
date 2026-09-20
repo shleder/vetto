@@ -884,7 +884,10 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     // Determine whether working directory is the user home directory or root
     let is_home_or_root = project == home
         || project.parent().is_none()
-        || match (std::fs::canonicalize(&project), std::fs::canonicalize(&home)) {
+        || match (
+            std::fs::canonicalize(&project),
+            std::fs::canonicalize(&home),
+        ) {
             (Ok(cp), Ok(ch)) => cp == ch || cp.parent().is_none(),
             _ => false,
         };
