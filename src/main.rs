@@ -904,7 +904,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if (pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty()) && !is_home_or_root {
+    if (pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty()) && !is_home_or_root
+    {
         match rescue::snapshot::create_snapshot(
             &project,
             &session_id,

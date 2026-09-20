@@ -49,12 +49,8 @@ fn test_snapshot_creation_on_home_bypasses_crawl() {
         });
 
     let start = Instant::now();
-    let meta = vetto::rescue::snapshot::create_snapshot(
-        &home,
-        "test-sess",
-        50 * 1024 * 1024,
-    )
-    .expect("create_snapshot on home must succeed without error");
+    let meta = vetto::rescue::snapshot::create_snapshot(&home, "test-sess", 50 * 1024 * 1024)
+        .expect("create_snapshot on home must succeed without error");
     let elapsed = start.elapsed();
 
     assert_eq!(
