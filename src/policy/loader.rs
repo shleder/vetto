@@ -1829,7 +1829,17 @@ fn mask_project_reads_for_fs_only(
         return Ok(());
     }
 
-    let normalized_project_roots: Vec<(PathBuf, PathBuf)> = project_roots
+    let dir_roots: Vec<PathBuf> = project_roots
+        .iter()
+        .filter(|root| {
+            std::fs::symlink_metadata(root)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+
+    let normalized_dir_roots: Vec<(PathBuf, PathBuf)> = dir_roots
         .iter()
         .map(|root| {
             Some((
@@ -1847,7 +1857,7 @@ fn mask_project_reads_for_fs_only(
         let Some(normalized) = normalize_for_containment(p, project) else {
             return false;
         };
-        !normalized_project_roots
+        !normalized_dir_roots
             .iter()
             .any(|(root_lexical, root_canonical)| {
                 paths_overlap(&lexical, root_lexical) || paths_overlap(&normalized, root_canonical)
@@ -1863,7 +1873,7 @@ fn mask_project_reads_for_fs_only(
 
     let mut enumerated = 0usize;
     let mut excluded = 0usize;
-    for root in &project_roots {
+    for root in &dir_roots {
         match enumerate_tree(root, deny_set, allow_read, &mut enumerated, &mut excluded) {
             Ok(_) => {}
             Err(EnumerationError::BudgetExceeded) => {
@@ -1881,6 +1891,15 @@ fn mask_project_reads_for_fs_only(
                     "fs-only tier: {operation} failed for '{}': {source}; refusing to run",
                     path.display()
                 );
+            }
+        }
+    }
+
+    for root in &project_roots {
+        if is_enumeration_excluded(root, deny_set) {
+            if let Some(pos) = allow_read.iter().position(|p| p == root) {
+                allow_read.remove(pos);
+                excluded += 1;
             }
         }
     }

@@ -214,8 +214,9 @@ fn test_claude_policy_allows_credentials_json_reading() {
         "must resolve claude profile: {}",
         text
     );
+    let deny_section = text.split("deny paths resolved:").nth(1).unwrap_or("");
     assert!(
-        !text.contains(".credentials.json"),
+        !deny_section.contains(".credentials.json"),
         ".credentials.json must NOT be in deny paths: {}",
         text
     );
@@ -282,8 +283,9 @@ fn test_aider_policy_allows_conf_reading() {
         "must resolve aider profile: {}",
         text
     );
+    let deny_section = text.split("deny paths resolved:").nth(1).unwrap_or("");
     assert!(
-        !text.contains(".aider.conf.yml"),
+        !deny_section.contains(".aider.conf.yml"),
         ".aider.conf.yml must NOT be in deny paths: {}",
         text
     );
