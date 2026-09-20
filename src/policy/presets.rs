@@ -64,16 +64,22 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "chatgpt.com".into(),
             "auth.openai.com".into(),
             "cdn.oaistatic.com".into(),
+            "chat.openai.com".into(),
+            "platform.openai.com".into(),
         ],
         "gemini" => vec![
             "generativelanguage.googleapis.com".into(),
             "oauth2.googleapis.com".into(),
             "accounts.google.com".into(),
         ],
-        "antigravity" => vec![
+        "antigravity" | "agy" => vec![
             "generativelanguage.googleapis.com".into(),
             "oauth2.googleapis.com".into(),
             "accounts.google.com".into(),
+            "cloudcode-pa.googleapis.com".into(),
+            "aicode.googleapis.com".into(),
+            "businessaicode.googleapis.com".into(),
+            "aiplatform.googleapis.com".into(),
         ],
         "aider" => vec![
             "api.openai.com".into(),
@@ -316,6 +322,7 @@ pub fn resolve_preset(name: &str) -> Option<&'static [&'static str]> {
         "cargo" => Some(&["$HOME/.cargo/credentials", "$HOME/.cargo/credentials.toml"]),
         "claude" => Some(&["$HOME/.claude"]),
         "codex" => Some(&["$HOME/.codex"]),
+        "antigravity" | "agy" => Some(&["$HOME/.gemini", "$HOME/.config/Antigravity"]),
         _ => None,
     }
 }
@@ -336,6 +343,8 @@ pub const KNOWN_PRESETS: &[&str] = &[
     "cargo",
     "claude",
     "codex",
+    "antigravity",
+    "agy",
 ];
 
 #[cfg(test)]
@@ -367,7 +376,9 @@ mod tests {
                 "api.openai.com",
                 "chatgpt.com",
                 "auth.openai.com",
-                "cdn.oaistatic.com"
+                "cdn.oaistatic.com",
+                "chat.openai.com",
+                "platform.openai.com",
             ]
         );
         assert_eq!(
@@ -376,7 +387,9 @@ mod tests {
                 "api.openai.com",
                 "chatgpt.com",
                 "auth.openai.com",
-                "cdn.oaistatic.com"
+                "cdn.oaistatic.com",
+                "chat.openai.com",
+                "platform.openai.com",
             ]
         );
         assert_eq!(
@@ -400,7 +413,11 @@ mod tests {
             vec![
                 "generativelanguage.googleapis.com",
                 "oauth2.googleapis.com",
-                "accounts.google.com"
+                "accounts.google.com",
+                "cloudcode-pa.googleapis.com",
+                "aicode.googleapis.com",
+                "businessaicode.googleapis.com",
+                "aiplatform.googleapis.com",
             ]
         );
         assert_eq!(
@@ -408,7 +425,11 @@ mod tests {
             vec![
                 "generativelanguage.googleapis.com",
                 "oauth2.googleapis.com",
-                "accounts.google.com"
+                "accounts.google.com",
+                "cloudcode-pa.googleapis.com",
+                "aicode.googleapis.com",
+                "businessaicode.googleapis.com",
+                "aiplatform.googleapis.com",
             ]
         );
         assert_eq!(
@@ -534,6 +555,14 @@ mod tests {
         assert_eq!(
             resolve_preset("docker"),
             Some(&["$HOME/.docker", "$HOME/.docker/config.json"][..])
+        );
+        assert_eq!(
+            resolve_preset("antigravity"),
+            Some(&["$HOME/.gemini", "$HOME/.config/Antigravity"][..])
+        );
+        assert_eq!(
+            resolve_preset("agy"),
+            Some(&["$HOME/.gemini", "$HOME/.config/Antigravity"][..])
         );
     }
 }

@@ -119,12 +119,11 @@ pub fn is_indestructible_hook_snippet(shell: ShellKind, snippet: &str) -> bool {
 pub fn profile_paths_for_shell(shell: ShellKind, home_dir: &Path) -> Vec<PathBuf> {
     match shell {
         ShellKind::Bash => {
-            let mut paths = vec![home_dir.join(".bashrc")];
-            let bash_profile = home_dir.join(".bash_profile");
-            if bash_profile.exists() {
-                paths.push(bash_profile);
-            }
-            paths
+            vec![
+                home_dir.join(".bashrc"),
+                home_dir.join(".bash_profile"),
+                home_dir.join(".profile"),
+            ]
         }
         ShellKind::Zsh => {
             vec![home_dir.join(".zshrc")]
@@ -313,6 +312,12 @@ pub fn repair_shell_profiles(shims_dir: &Path, home_dir: &Path) -> Result<Vec<Pa
                     repaired.push(p);
                 }
             }
+        }
+    }
+    let bash_profile = home_dir.join(".bash_profile");
+    if bash_profile.exists() && !repaired.contains(&bash_profile) {
+        if let Ok(p) = install_shell_hook_to_path(ShellKind::Bash, shims_dir, &bash_profile, true) {
+            repaired.push(p);
         }
     }
     Ok(repaired)
@@ -652,6 +657,30 @@ fi\n\
 
         let content = fs::read_to_string(&bashrc).unwrap();
         assert!(content.contains("_vetto_clean_path"));
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_repair_shell_profiles_handles_bash_profile() {
+        let home = temp_test_dir("repair-bash-profile");
+        let shims = home.join(".vetto").join("shims");
+        let bashrc = home.join(".bashrc");
+        let bash_profile = home.join(".bash_profile");
+
+        fs::write(&bashrc, "export FOO=1\n").unwrap();
+        fs::write(
+            &bash_profile,
+            "export BAR=2\nexport PATH=\"/custom/bin:$PATH\"\n",
+        )
+        .unwrap();
+
+        let repaired = repair_shell_profiles(&shims, &home).unwrap();
+        assert!(repaired.contains(&bash_profile));
+
+        let content = fs::read_to_string(&bash_profile).unwrap();
+        assert!(content.contains("_vetto_clean_path"));
+        assert!(content.contains(MARKER_START));
 
         let _ = fs::remove_dir_all(&home);
     }

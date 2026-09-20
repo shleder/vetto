@@ -148,7 +148,6 @@ if [ -n "$VETTO_SANDBOXED" ] || [ -n "$VETTO_SHIM_ACTIVE" ] || [ -n "$VETTO_WRAP
 fi
 
 # Not sandboxed yet: invoke Vetto native shim dispatcher
-export VETTO_WRAPPED=1
 VETTO_EXE="{vetto_bin}"
 if command -v "$VETTO_EXE" >/dev/null 2>&1; then
     exec "$VETTO_EXE" shim "{binary_name}" -- "$@"
@@ -175,7 +174,6 @@ if "%VETTO_SANDBOXED%"=="1" goto passthrough
 if "%VETTO_SHIM_ACTIVE%"=="1" goto passthrough
 if "%VETTO_WRAPPED%"=="1" goto passthrough
 
-set "VETTO_WRAPPED=1"
 "{vetto_bin}" shim "{binary_name}" -- %*
 exit /b %ERRORLEVEL%
 

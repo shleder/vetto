@@ -786,22 +786,22 @@ mod tests {
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
         assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
 
-        // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com
+        // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com"
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com"
         );
 
-        // Codex-cli alias defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com
+        // Codex-cli alias defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex-cli"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com"
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com"
         );
 
         // Gemini defaults to generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com

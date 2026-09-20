@@ -1718,7 +1718,7 @@ fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
         "codex" => PathBuf::from(".codex"),
         "claude" => PathBuf::from(".claude"),
         "gemini" => PathBuf::from(".gemini"),
-        "antigravity" => PathBuf::from(".antigravity"),
+        "antigravity" | "agy" => PathBuf::from(".gemini"),
         "aider" => PathBuf::from(".aider"),
         "cursor" => PathBuf::from(".cursor"),
         "cline" => PathBuf::from(".cline"),
