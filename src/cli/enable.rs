@@ -12,8 +12,8 @@ use crate::cli::hook::{get_home_dir, get_shims_dir, HookScope};
 use crate::cli::shell_env;
 use crate::onboard::SUPPORTED_AGENTS;
 use crate::policy::presets::agent_network_allowlist;
-use crate::shim::registry::ShimRegistry;
 use crate::shim::is_vetto_shim_content;
+use crate::shim::registry::ShimRegistry;
 
 /// CLI arguments for `vetto enable`.
 #[derive(clap::Args, Debug, Clone)]
