@@ -13,7 +13,7 @@ use crate::cli::shell_env;
 use crate::onboard::SUPPORTED_AGENTS;
 use crate::policy::presets::agent_network_allowlist;
 use crate::shim::registry::ShimRegistry;
-use crate::shim::{find_real_binary, is_vetto_shim_content};
+use crate::shim::is_vetto_shim_content;
 
 /// CLI arguments for `vetto enable`.
 #[derive(clap::Args, Debug, Clone)]
@@ -339,9 +339,7 @@ pub fn disable_agent(agent: &str, scope: HookScope) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "vetto: disabled sandbox wrapper for '{agent}' (removed {removed_count} shim(s))"
-    );
+    println!("vetto: disabled sandbox wrapper for '{agent}' (removed {removed_count} shim(s))");
     println!("'{agent}' will now run unconfined as a standard host binary.");
 
     Ok(())
@@ -362,7 +360,9 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
         }
         let shim_path = shims_dir.join(canon);
         let is_wrapped = shim_path.exists() && is_vetto_shim_content(&shim_path);
-        let real_bin = crate::onboard::find_real_agent_binary(canon).ok().map(|(_, p)| p);
+        let real_bin = crate::onboard::find_real_agent_binary(canon)
+            .ok()
+            .map(|(_, p)| p);
 
         let (status_tag, detail) = if is_wrapped {
             let real_str = real_bin
@@ -450,7 +450,9 @@ pub fn get_wrapped_agents(scope: HookScope) -> Result<Vec<WrappedAgentInfo>> {
             continue;
         }
         let shim_path = shims_dir.join(canon);
-        let real_bin_opt = crate::onboard::find_real_agent_binary(canon).ok().map(|(_, p)| p);
+        let real_bin_opt = crate::onboard::find_real_agent_binary(canon)
+            .ok()
+            .map(|(_, p)| p);
         let is_canon_wrapped = shim_path.exists() && is_vetto_shim_content(&shim_path);
 
         let mut candidate_shim = None;
@@ -463,7 +465,11 @@ pub fn get_wrapped_agents(scope: HookScope) -> Result<Vec<WrappedAgentInfo>> {
         }
 
         if is_canon_wrapped || candidate_shim.is_some() {
-            let actual_shim = if is_canon_wrapped { shim_path } else { candidate_shim.unwrap() };
+            let actual_shim = if is_canon_wrapped {
+                shim_path
+            } else {
+                candidate_shim.unwrap()
+            };
             wrapped.push(WrappedAgentInfo {
                 name: canon.to_string(),
                 shim_path: actual_shim,

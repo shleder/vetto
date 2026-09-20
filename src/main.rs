@@ -181,13 +181,12 @@ fn preprocess_cli_args(raw_args: &[String]) -> Result<Vec<String>> {
                 let is_wrapped =
                     shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
                 if !is_wrapped {
-                    let target_agent = if let Ok((bin, _)) =
-                        vetto::onboard::find_real_agent_binary(arg)
-                    {
-                        bin
-                    } else {
-                        canon.to_string()
-                    };
+                    let target_agent =
+                        if let Ok((bin, _)) = vetto::onboard::find_real_agent_binary(arg) {
+                            bin
+                        } else {
+                            canon.to_string()
+                        };
                     let _ = vetto::cli::enable::enable_agent_silent(
                         &target_agent,
                         false,

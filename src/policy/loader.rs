@@ -276,9 +276,7 @@ pub fn expand_net_preset(name: &str) -> Result<Vec<String>> {
             "repo1.maven.org".to_string(),
             "repo.maven.apache.org".to_string(),
         ]),
-        "nuget" => Ok(vec![
-            "api.nuget.org".to_string(),
-        ]),
+        "nuget" => Ok(vec!["api.nuget.org".to_string()]),
         unknown => {
             bail!("unknown net preset '{unknown}'; known presets: npm, git, pip, huggingface, cargo, go, maven, nuget")
         }
