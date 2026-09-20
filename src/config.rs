@@ -280,7 +280,7 @@ impl RunConfig {
                 || std::env::var("VETTO_WRAPPED")
                     .map(|v| v == "1")
                     .unwrap_or(false);
-            let is_interactive = is_interactive_agent_command(cli.agent.as_deref(), &cli.command);
+            let is_interactive = is_interactive_agent_command(None, &cli.agent);
             use std::io::IsTerminal;
             let is_tty = std::io::stdin().is_terminal() || std::io::stdout().is_terminal();
 

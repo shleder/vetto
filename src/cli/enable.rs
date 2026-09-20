@@ -250,6 +250,7 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
 
 /// Displays status of all currently wrapped agents.
 pub fn show_status(scope: HookScope) -> Result<()> {
+    let shims_dir = get_shims_dir(scope)?;
     let wrapped = get_wrapped_agents(scope)?;
 
     if wrapped.is_empty() {
