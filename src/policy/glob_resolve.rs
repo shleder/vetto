@@ -56,6 +56,17 @@ pub fn resolve_entry_with_agent(entry: &str, vars: &Vars, agent: Option<&Path>) 
         return vec![substituted];
     }
 
+    let is_home_or_root = vars.project == vars.home
+        || vars.project.parent().is_none()
+        || match (std::fs::canonicalize(vars.project), std::fs::canonicalize(vars.home)) {
+            (Ok(cp), Ok(ch)) => cp == ch || cp.parent().is_none(),
+            _ => false,
+        };
+
+    if is_home_or_root && (entry.contains("**") || substituted.to_string_lossy().contains("**")) {
+        return Vec::new();
+    }
+
     let mut opts = glob::MatchOptions::new();
     opts.require_literal_leading_dot = false;
     opts.case_sensitive = true;
@@ -124,5 +135,22 @@ mod tests {
             substitute("$AGENT/cache", &vars),
             PathBuf::from("$AGENT/cache")
         );
+    }
+
+    #[test]
+    fn home_or_root_recursive_glob_bypasses_deep_walk() {
+        let vars = Vars {
+            project: Path::new("/home/user"),
+            home: Path::new("/home/user"),
+        };
+        let paths = resolve_entry_with_agent("$PROJECT/**/*.env", &vars, None);
+        assert!(paths.is_empty());
+
+        let root_vars = Vars {
+            project: Path::new("/"),
+            home: Path::new("/home/user"),
+        };
+        let root_paths = resolve_entry_with_agent("$PROJECT/**/*.pem", &root_vars, None);
+        assert!(root_paths.is_empty());
     }
 }

@@ -119,11 +119,12 @@ pub fn is_indestructible_hook_snippet(shell: ShellKind, snippet: &str) -> bool {
 pub fn profile_paths_for_shell(shell: ShellKind, home_dir: &Path) -> Vec<PathBuf> {
     match shell {
         ShellKind::Bash => {
-            vec![
-                home_dir.join(".bashrc"),
-                home_dir.join(".bash_profile"),
-                home_dir.join(".profile"),
-            ]
+            let mut paths = vec![home_dir.join(".bashrc")];
+            let bash_profile = home_dir.join(".bash_profile");
+            if bash_profile.exists() {
+                paths.push(bash_profile);
+            }
+            paths
         }
         ShellKind::Zsh => {
             vec![home_dir.join(".zshrc")]
