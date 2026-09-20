@@ -774,17 +774,17 @@ mod tests {
 
     #[test]
     fn agent_preset_defaults_network_to_allowlist_when_net_omitted() {
-        // Claude defaults to api.anthropic.com
+        // Claude defaults to api.anthropic.com,claude.ai
         let cli = Cli::try_parse_from(["vetto", "--", "claude", "-p", "hello"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
 
-        // Claude-code alias defaults to api.anthropic.com
+        // Claude-code alias defaults to api.anthropic.com,claude.ai
         let cli = Cli::try_parse_from(["vetto", "--", "claude-code"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
 
         // Codex defaults to api.openai.com,chatgpt.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
@@ -843,7 +843,7 @@ mod tests {
         .unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
-        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com");
+        assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
 
         // Non-agent commands default to NetMode::Off
         let cli = Cli::try_parse_from(["vetto", "--", "python", "script.py"]).unwrap();
