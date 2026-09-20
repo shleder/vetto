@@ -183,6 +183,15 @@ pub fn install_shell_hook(
 }
 
 /// Installs the Vetto shell environment hook into a specific profile path.
+///
+/// When the marker block is already present and `force` is set (e.g. via
+/// `vetto doctor --fix` after PATH shadowing is detected), the old block is
+/// fully excised from its current position and re-appended strictly at the
+/// end of the file (EOF). This guarantees the indestructible hook runs last
+/// at shell startup — after late installers such as nvm, conda, pyenv or
+/// asdf — and restores `~/.vetto/shims` to PATH index 0. Without `force`,
+/// a legacy block is upgraded in place and an up-to-date indestructible
+/// block is left untouched.
 pub fn install_shell_hook_to_path(
     shell: ShellKind,
     shims_dir: &Path,
@@ -225,10 +234,24 @@ pub fn install_shell_hook_to_path(
             .map(|i| after_end + i + 1)
             .unwrap_or(existing_content.len());
 
-        let mut content = existing_content[..start_idx].to_string();
-        content.push_str(&snippet);
-        content.push_str(&existing_content[end_of_line..]);
-        content
+        if force {
+            // Forced repair (shadowing detected or `doctor --fix`): excise the
+            // old block entirely and re-append the fresh snippet at EOF so the
+            // hook executes after any late PATH-mutating installers (nvm,
+            // conda, pyenv, asdf) appended below the previous block position.
+            let mut content = existing_content[..start_idx].to_string();
+            content.push_str(&existing_content[end_of_line..]);
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&snippet);
+            content
+        } else {
+            let mut content = existing_content[..start_idx].to_string();
+            content.push_str(&snippet);
+            content.push_str(&existing_content[end_of_line..]);
+            content
+        }
     } else {
         let mut content = existing_content;
         if !content.is_empty() && !content.ends_with('\n') {
@@ -252,6 +275,10 @@ pub fn install_shell_hook_to_path(
 
 /// Automatically repairs shell configuration profiles by replacing legacy blocks
 /// with the indestructible shell hook template.
+///
+/// Repair runs with `force`, so every relocated block is excised and
+/// re-appended at EOF — eliminating shadowing introduced by PATH-mutating
+/// installers (nvm, conda, pyenv, asdf) that were appended after the hook.
 pub fn repair_shell_profiles(shims_dir: &Path, home_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut repaired = Vec::new();
     let shells = detect_available_shells(home_dir);
@@ -575,6 +602,36 @@ fi\n\
         let status_after = check_shell_hook_status(ShellKind::Bash, &home, &shims);
         assert!(status_after.is_installed);
         assert!(status_after.is_indestructible());
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_force_reinstall_relocates_hook_to_eof() {
+        let home = temp_test_dir("force-relocate");
+        let shims = home.join(".vetto").join("shims");
+        let bashrc = home.join(".bashrc");
+
+        fs::write(&bashrc, "export PRE=1\n").unwrap();
+        install_shell_hook(ShellKind::Bash, &shims, &home, false).unwrap();
+
+        // Simulate a late installer (nvm/conda) appending after the hook.
+        let mut shadowed = fs::read_to_string(&bashrc).unwrap();
+        shadowed.push_str("export POST=1\nexport PATH=\"/mock/late/bin:$PATH\"\n");
+        fs::write(&bashrc, &shadowed).unwrap();
+
+        install_shell_hook(ShellKind::Bash, &shims, &home, true).unwrap();
+
+        let relocated = fs::read_to_string(&bashrc).unwrap();
+        assert!(relocated.contains("export PRE=1"));
+        assert!(relocated.contains("/mock/late/bin"));
+        assert!(relocated.contains("_vetto_clean_path"));
+        assert_eq!(relocated.matches(MARKER_START).count(), 1);
+        let end_idx = relocated.find(MARKER_END).unwrap();
+        assert!(
+            relocated[end_idx + MARKER_END.len()..].trim().is_empty(),
+            "forced reinstall must move the hook strictly to EOF"
+        );
 
         let _ = fs::remove_dir_all(&home);
     }

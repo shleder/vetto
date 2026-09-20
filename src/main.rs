@@ -2137,11 +2137,18 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  platform status:       Tier 2 (Experimental: Seatbelt write isolation + network lockdown + best-effort rlimits)");
         println!("  honest security note:  Apple deprecates SBPL and restricts unprivileged read-denial.");
         println!("                         For 100% Landlock read-masking on macOS, run inside OrbStack or WSL2.");
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if vetto::doctor::fix::is_macos_tcc_protected_path(&cwd) {
+            println!("{}", vetto::doctor::fix::MACOS_TCC_GUIDANCE);
+        }
         if fix {
-            let macos_fixes = vetto::doctor::fix::collect_macos_fixes(
+            let mut macos_fixes = vetto::doctor::fix::collect_macos_fixes(
                 seatbelt_available,
                 sbpl_status != sandbox::macos::seatbelt::SbplFragmentStatus::Ok,
             );
+            if let Some(tcc_fix) = vetto::doctor::fix::macos_tcc_fix_for_path(&cwd) {
+                macos_fixes.push(tcc_fix);
+            }
             vetto::doctor::print_fixes(&macos_fixes);
         }
         if probe_deny {
@@ -2208,6 +2215,14 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
         println!("  note: {}", optional.eventlog.note);
         println!(
             "  platform status:       Tier 3 (Experimental: Job Objects + Restricted Token + LPAC)"
+        );
+        println!(
+            "  {}",
+            vetto::doctor::environment::WINDOWS_TIER3_ISOLATION_NOTICE
+        );
+        println!(
+            "cgroups v2 limits:      {}",
+            vetto::doctor::environment::windows_cgroup_limits_status().as_str()
         );
         println!("  network warning:       WFP network filtering requires elevated Administrator privileges (Issue #63). Default process sandbox enforces net=off via AppContainer.");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");

@@ -81,6 +81,32 @@ pub fn detect_environment() -> EnvironmentInfo {
     }
 }
 
+/// Honest isolation-tier notice printed by `vetto doctor` on native Windows.
+pub const WINDOWS_TIER3_ISOLATION_NOTICE: &str = "Windows operates under Tier 3 isolation (AppContainer LPAC + Job Objects). For Tier 1 full kernel Landlock/cgroups containment, run vetto inside WSL2.";
+
+/// Honest cgroup-limit support status for the native Windows backend.
+/// There is no cgroup surface on Windows, so the answer is always
+/// `Unsupported` — reported with exit code 0 in `vetto doctor`, never a
+/// panic or an `unwrap` on a missing controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsCgroupLimitsStatus {
+    Unsupported,
+}
+
+impl WindowsCgroupLimitsStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported (Windows Tier 3 enforces limits via Job Objects; run inside WSL2 for Tier 1 cgroups v2)",
+        }
+    }
+}
+
+/// Returns the cgroup-limit support status for the native Windows backend.
+/// Total function: no I/O, no `unwrap`, no panic paths.
+pub fn windows_cgroup_limits_status() -> WindowsCgroupLimitsStatus {
+    WindowsCgroupLimitsStatus::Unsupported
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +115,18 @@ mod tests {
     fn environment_detect_runs_without_panic() {
         let env_info = detect_environment();
         assert!(!env_info.summary.is_empty());
+    }
+
+    #[test]
+    fn windows_cgroup_limits_status_is_honest_unsupported() {
+        assert_eq!(
+            windows_cgroup_limits_status(),
+            WindowsCgroupLimitsStatus::Unsupported
+        );
+        assert!(windows_cgroup_limits_status()
+            .as_str()
+            .contains("unsupported"));
+        assert!(WINDOWS_TIER3_ISOLATION_NOTICE.contains("Tier 3"));
+        assert!(WINDOWS_TIER3_ISOLATION_NOTICE.contains("WSL2"));
     }
 }

@@ -399,3 +399,101 @@ fn test_doctor_and_enable_detects_path_shadowing() {
         enable_text
     );
 }
+
+#[test]
+fn test_shell_hook_relocated_to_eof_on_repair_eliminates_shadowing() {
+    // R1 (v0.3.7): late PATH-mutating installers (nvm, conda, pyenv, asdf)
+    // appended after the vetto block shadow `~/.vetto/shims`. Repair — the
+    // engine `auto_repair_shell_hooks` (`vetto doctor --fix`) delegates to —
+    // must excise the block and re-append it strictly at EOF so the hook runs
+    // last and restores shims to PATH index 0.
+    use vetto::cli::shell_env::{self, ShellKind, MARKER_END, MARKER_START};
+
+    let project = TempProject::new("hook-eof-relocation");
+    let home_dir = project.path().join("home");
+    let shims_dir = home_dir.join(".vetto").join("shims");
+    std::fs::create_dir_all(&shims_dir).expect("create shims dir");
+
+    // 1. Install the hook, then simulate a late installer appending
+    // PATH-mutating lines AFTER the vetto block.
+    let bashrc = home_dir.join(".bashrc");
+    shell_env::install_shell_hook(ShellKind::Bash, &shims_dir, &home_dir, false)
+        .expect("install bash hook");
+    let mut shadowed = std::fs::read_to_string(&bashrc).expect("read bashrc");
+    assert!(shadowed.contains(MARKER_START));
+    shadowed.push_str("export NVM_DIR=\"$HOME/.nvm\"\nexport PATH=\"/mock/nvm/bin:$PATH\"\n");
+    write_file(&bashrc, &shadowed);
+    // Keep a copy of the shadowed profile for the before/after sourcing check.
+    let shadowed_copy = home_dir.join(".bashrc.shadowed");
+    write_file(&shadowed_copy, &shadowed);
+
+    // The hook block is now shadowed: installer lines trail the end marker.
+    let before = std::fs::read_to_string(&bashrc).expect("read shadowed bashrc");
+    let end_idx = before.find(MARKER_END).expect("end marker present");
+    assert!(
+        before[end_idx + MARKER_END.len()..].contains("/mock/nvm/bin"),
+        "late installer lines must trail the hook block before repair"
+    );
+
+    // 2. Repair must relocate the block strictly to EOF, preserving content.
+    let repaired =
+        shell_env::repair_shell_profiles(&shims_dir, &home_dir).expect("repair profiles");
+    assert!(
+        repaired.contains(&bashrc),
+        "repair must touch .bashrc: {repaired:?}"
+    );
+    let after = std::fs::read_to_string(&bashrc).expect("read repaired bashrc");
+    assert!(
+        after.contains("/mock/nvm/bin"),
+        "late installer lines must be preserved: {after}"
+    );
+    assert!(
+        after.contains("_vetto_clean_path"),
+        "indestructible hook must survive repair: {after}"
+    );
+    assert_eq!(
+        after.matches(MARKER_START).count(),
+        1,
+        "exactly one hook block must remain: {after}"
+    );
+    let end_idx = after.find(MARKER_END).expect("end marker present");
+    assert!(
+        after[end_idx + MARKER_END.len()..].trim().is_empty(),
+        "hook block must be last (EOF), trailing: {:?}",
+        &after[end_idx + MARKER_END.len()..]
+    );
+
+    // 3. Sourcing the repaired profile restores shims to PATH index 0,
+    // while the shadowed profile leaves the late installer on top.
+    #[cfg(unix)]
+    {
+        let shims_str = shims_dir.to_string_lossy().to_string();
+        let dirty = format!("/usr/bin:/bin:{shims_str}");
+        let eval_profile = |profile: &std::path::Path| {
+            let script = format!(
+                "PATH='{dirty}'; source '{}'; echo \"$PATH\"",
+                profile.display()
+            );
+            let out = Command::new("bash")
+                .args(["-c", &script])
+                .output()
+                .expect("run bash");
+            assert!(
+                out.status.success(),
+                "bash source failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let shadowed_path = eval_profile(&shadowed_copy);
+        assert!(
+            shadowed_path.starts_with("/mock/nvm/bin:"),
+            "shadowed profile must leave late installer on top: {shadowed_path}"
+        );
+        let repaired_path = eval_profile(&bashrc);
+        assert!(
+            repaired_path.starts_with(&shims_str),
+            "repaired profile must restore shims to PATH index 0: {repaired_path}"
+        );
+    }
+}

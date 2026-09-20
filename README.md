@@ -4,7 +4,7 @@
 
 **The OS-native, fail-closed sandbox & policy runtime for AI coding agents.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.6-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.6) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20%28exit%20125%29-success?style=flat-square)](#what-vetto-intercepts)
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.7-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.7) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees) [![Security](https://img.shields.io/badge/security-fail--closed%20%28exit%20125%29-success?style=flat-square)](#what-vetto-intercepts)
 
 <br/>
 
@@ -46,10 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/shleder/vetto/main/install.sh | sh 
 cargo install vetto --locked
 
 # Docker / Devcontainer (unprivileged user namespaces)
-docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.3.6 vetto doctor
+docker run --rm -it --security-opt seccomp=unconfined ghcr.io/shleder/vetto:0.3.7 vetto doctor
 ```
 
-*Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases/tag/v0.3.6). See [Installation Guide](docs/INSTALL.md) for custom paths and platform options.*
+*Every release binary is attested with **SLSA Level 3 Provenance** and signed with **Minisign** (Key ID `75ECEC9B5080C590`). Pre-built archives and CycloneDX 1.5 SBOMs are published on [GitHub Releases](https://github.com/shleder/vetto/releases/tag/v0.3.7). See [Installation Guide](docs/INSTALL.md) for custom paths and platform options.*
 
 </details>
 

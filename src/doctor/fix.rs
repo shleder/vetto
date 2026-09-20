@@ -1,5 +1,76 @@
 //! Concrete remediation commands and steps for missing sandbox primitives.
 
+use std::path::{Path, PathBuf};
+
+/// Honest guidance printed when a macOS Seatbelt/libsandbox denial smells
+/// like TCC (Transparency, Consent, and Control): the terminal host lacks
+/// Full Disk Access for a guarded user folder.
+pub const MACOS_TCC_GUIDANCE: &str = "vetto: macOS TCC restriction: Terminal requires Full Disk Access to sandbox paths under ~/Documents or ~/Downloads. Grant access in System Settings > Privacy & Security > Full Disk Access, or run workloads from standard workspace paths (e.g. ~/projects).";
+
+/// Top-level folders under `$HOME` guarded by macOS TCC.
+const MACOS_TCC_GUARDED_FOLDERS: [&str; 3] = ["Documents", "Desktop", "Downloads"];
+
+/// Returns true when `path` sits directly under a TCC-guarded user folder
+/// (`~/Documents`, `~/Desktop`, `~/Downloads`). A leading `~` is expanded
+/// against `$HOME`. Paths outside `$HOME` are never treated as TCC-guarded.
+pub fn is_macos_tcc_protected_path(path: &Path) -> bool {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let expanded: PathBuf = match path.components().next() {
+        Some(std::path::Component::Normal(first)) if first == "~" => match home.clone() {
+            Some(h) => h.join(path.strip_prefix("~").unwrap_or(path)),
+            None => return false,
+        },
+        _ => path.to_path_buf(),
+    };
+    let Some(home) = home else {
+        return false;
+    };
+    let Ok(relative) = expanded.strip_prefix(&home) else {
+        return false;
+    };
+    match relative.components().next() {
+        Some(std::path::Component::Normal(top)) => MACOS_TCC_GUARDED_FOLDERS
+            .iter()
+            .any(|guarded| top == *guarded),
+        _ => false,
+    }
+}
+
+/// Returns [`MACOS_TCC_GUIDANCE`] when `io_error` is a permission failure
+/// (`EPERM`/`EACCES`) for a TCC-guarded path, `None` otherwise. Pure and
+/// total: never panics, never touches the filesystem.
+pub fn macos_tcc_hint_for_error(path: &Path, io_error: &std::io::Error) -> Option<&'static str> {
+    if !is_macos_tcc_protected_path(path) {
+        return None;
+    }
+    if io_error.kind() == std::io::ErrorKind::PermissionDenied || io_error.raw_os_error() == Some(1)
+    {
+        Some(MACOS_TCC_GUIDANCE)
+    } else {
+        None
+    }
+}
+
+/// Builds a [`DoctorFix`] pointing at TCC remediation for `path`,
+/// `None` when the path is not TCC-guarded.
+pub fn macos_tcc_fix_for_path(path: &Path) -> Option<DoctorFix> {
+    if !is_macos_tcc_protected_path(path) {
+        return None;
+    }
+    Some(DoctorFix {
+        primitive: "macOS TCC (Full Disk Access)",
+        issue: format!(
+            "working directory '{}' sits under a TCC-guarded folder (~/Documents, ~/Desktop, ~/Downloads); Seatbelt/libsandbox may return EPERM without Full Disk Access",
+            path.display()
+        ),
+        commands: vec![
+            "# Grant Full Disk Access to your terminal in System Settings > Privacy & Security > Full Disk Access, or move the workload:".into(),
+            "mkdir -p ~/projects && cd ~/projects".into(),
+        ],
+        explanation: MACOS_TCC_GUIDANCE.into(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoctorFix {
     pub primitive: &'static str,
@@ -214,5 +285,46 @@ mod tests {
             explanation: "needed for overlay masking".into(),
         }];
         print_fixes(&fixes);
+    }
+
+    #[test]
+    fn macos_tcc_guided_paths_are_detected_without_filesystem_access() {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME is set");
+        for guarded in ["Documents", "Desktop", "Downloads"] {
+            assert!(
+                is_macos_tcc_protected_path(&home.join(guarded).join("work")),
+                "{guarded} under $HOME must be TCC-guarded"
+            );
+        }
+        assert!(!is_macos_tcc_protected_path(
+            &home.join("projects").join("work")
+        ));
+        assert!(!is_macos_tcc_protected_path(Path::new(
+            "/definitely/not/a/home/Documents/work"
+        )));
+    }
+
+    #[test]
+    fn macos_tcc_hint_fires_only_on_eperm_for_guarded_paths() {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME is set");
+        let guarded = home.join("Documents").join("work");
+        let eperm = std::io::Error::from_raw_os_error(1);
+        assert_eq!(
+            macos_tcc_hint_for_error(&guarded, &eperm),
+            Some(MACOS_TCC_GUIDANCE)
+        );
+        let not_found = std::io::Error::from_raw_os_error(2);
+        assert_eq!(macos_tcc_hint_for_error(&guarded, &not_found), None);
+        let plain = home.join("projects").join("work");
+        assert_eq!(macos_tcc_hint_for_error(&plain, &eperm), None);
+
+        let fix = macos_tcc_fix_for_path(&guarded).expect("fix for guarded path");
+        assert_eq!(fix.primitive, "macOS TCC (Full Disk Access)");
+        assert!(fix.explanation.contains("Full Disk Access"));
+        assert!(macos_tcc_fix_for_path(&plain).is_none());
     }
 }

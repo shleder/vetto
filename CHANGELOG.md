@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.7] - 2026-09-20
+### Fixed
+- **Shell Hook End-of-File Relocation**: `install_shell_hook_to_path` (`src/cli/shell_env.rs`) now excises the vetto marker block and re-appends it strictly at EOF on forced repair (`vetto doctor --fix`), so late PATH-mutating installers (nvm, conda, pyenv, asdf) can no longer shadow `~/.vetto/shims` off PATH index 0.
+
+### Added
+- **macOS TCC Diagnostic Transparency**: New TCC helpers in `src/doctor/fix.rs` (`is_macos_tcc_protected_path`, `macos_tcc_hint_for_error`, `macos_tcc_fix_for_path`) detect `~/Documents`, `~/Desktop`, `~/Downloads` workloads and print an honest Full Disk Access guidance note in `vetto doctor` when Seatbelt/libsandbox risks EPERM.
+- **Windows Tier 3 Honesty & WSL2 Recommendation**: `vetto doctor` on native Windows now prints the explicit Tier 3 isolation notice (AppContainer LPAC + Job Objects) with the Tier 1 WSL2 pointer, and reports cgroup v2 limits as honest `unsupported` via a total, panic-free query (`windows_cgroup_limits_status`) with exit code 0.
+
 ## [0.3.6] - 2026-09-20
 ### Fixed
 - **Eliminate Home Directory Recursive Glob Walk**: Replaced full recursive filesystem crawling with an instant `$HOME`/root bypass check in `resolve_entry_with_agent` (`src/policy/glob_resolve.rs`), eliminating up to 20 seconds of disk scan freeze upon agent startup.
