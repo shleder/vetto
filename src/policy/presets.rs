@@ -91,6 +91,7 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "aicode.googleapis.com".into(),
             "businessaicode.googleapis.com".into(),
             "aiplatform.googleapis.com".into(),
+            "play.googleapis.com".into(),
         ],
         "aider" => vec![
             "api.openai.com".into(),
@@ -447,6 +448,7 @@ mod tests {
                 "aicode.googleapis.com",
                 "businessaicode.googleapis.com",
                 "aiplatform.googleapis.com",
+                "play.googleapis.com",
             ]
         );
         assert_eq!(
@@ -464,6 +466,7 @@ mod tests {
                 "aicode.googleapis.com",
                 "businessaicode.googleapis.com",
                 "aiplatform.googleapis.com",
+                "play.googleapis.com",
             ]
         );
         assert_eq!(
