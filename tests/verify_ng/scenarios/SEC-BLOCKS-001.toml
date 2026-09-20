@@ -24,5 +24,5 @@ errno_class = "запрещённые вызовы обязаны вернуть
 vectors = ["ptrace", "process_vm_readv-writev", "pidfd_getfd", "mount-pivot-umount", "io_uring", "userfaultfd", "bpf-perf"]
 
 [evidence.not_applicable]
-macos = "Darwin не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-evidence блокирует gate"
-windows = "Windows не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-evidence блокирует gate"
+macos = "Darwin не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-absence-evidence блокирует gate"
+windows = "Windows не имеет seccomp-bpf; требуется probe-доказательство отсутствия capability, иначе N/A-without-absence-evidence блокирует gate"

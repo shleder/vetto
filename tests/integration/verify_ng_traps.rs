@@ -1015,7 +1015,7 @@ fn trap_gate_na_without_or_blank_evidence_fails() {
     assert!(report
         .blocking
         .iter()
-        .any(|b| b.contains("N/A-without-evidence")));
+        .any(|b| b.contains("N/A-without-absence-evidence")));
 
     // Case 2: Empty evidence list -> fails
     let mut ev_empty = std::collections::BTreeMap::new();
@@ -1025,7 +1025,7 @@ fn trap_gate_na_without_or_blank_evidence_fails() {
     assert!(report
         .blocking
         .iter()
-        .any(|b| b.contains("N/A-without-evidence")));
+        .any(|b| b.contains("N/A-without-absence-evidence")));
 
     // Case 3: Whitespace-only evidence item -> fails
     let mut ev_blank = std::collections::BTreeMap::new();
@@ -1035,13 +1035,13 @@ fn trap_gate_na_without_or_blank_evidence_fails() {
     assert!(report
         .blocking
         .iter()
-        .any(|b| b.contains("N/A-without-evidence")));
+        .any(|b| b.contains("N/A-without-absence-evidence")));
 
     // Case 4: Valid evidence item -> passes
     let mut ev_valid = std::collections::BTreeMap::new();
     ev_valid.insert(
         "NA-TEST-001".to_string(),
-        vec!["probe: feature absent on kernel < 5.13".to_string()],
+        vec!["probe: absent (feature missing on kernel < 5.13)".to_string()],
     );
     let report = exit::evaluate_gate(&suite, &ev_valid, "reg");
     assert_eq!(report.status, "pass");
