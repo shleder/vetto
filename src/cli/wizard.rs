@@ -347,7 +347,7 @@ allow = [
 "#,
             );
             if config.network_domains.is_empty() {
-                toml.push_str("  \"github.com:443\",\n");
+                toml.push_str("  \"github.com\",\n");
             } else {
                 for domain in &config.network_domains {
                     toml.push_str(&format!("  \"{domain}\",\n"));

@@ -391,11 +391,33 @@ fn read_framed_request(ctrl: &mut std::os::unix::net::UnixStream) -> Option<Rela
     serde_json::from_slice(&buf).ok()
 }
 
+pub fn strip_domain_port(s: &str) -> &str {
+    let s = s.trim().trim_end_matches('.');
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(end_bracket) = rest.find(']') {
+            &rest[..end_bracket]
+        } else {
+            s
+        }
+    } else if let Some((host_part, port_part)) = s.rsplit_once(':') {
+        if !port_part.is_empty()
+            && port_part.chars().all(|c| c.is_ascii_digit())
+            && !host_part.contains(':')
+        {
+            host_part
+        } else {
+            s
+        }
+    } else {
+        s
+    }
+}
+
 /// Allowlist semantics: exact match, wildcard subdomain (*.domain.com), or parent domain match
 pub fn domain_allowed(host: &str, allowlist: &[String]) -> bool {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = strip_domain_port(host).to_ascii_lowercase();
     allowlist.iter().any(|pat| {
-        let pat = pat.trim().trim_end_matches('.').to_ascii_lowercase();
+        let pat = strip_domain_port(pat).to_ascii_lowercase();
         if pat == "*" {
             return true;
         }
@@ -1871,5 +1893,22 @@ mod tests {
             443,
             Some("93.184.216.34".parse().unwrap())
         ));
+    }
+
+    #[test]
+    fn domain_allowed_normalizes_port_suffixes() {
+        let allowlist_with_ports = vec![
+            "crates.io:443".to_string(),
+            "*.github.com:443".to_string(),
+        ];
+        assert!(domain_allowed("crates.io", &allowlist_with_ports));
+        assert!(domain_allowed("crates.io:443", &allowlist_with_ports));
+        assert!(domain_allowed("api.github.com", &allowlist_with_ports));
+        assert!(domain_allowed("api.github.com:443", &allowlist_with_ports));
+        assert!(!domain_allowed("evil.com", &allowlist_with_ports));
+
+        let plain_allowlist = vec!["crates.io".to_string(), "*.github.com".to_string()];
+        assert!(domain_allowed("crates.io:443", &plain_allowlist));
+        assert!(domain_allowed("api.github.com:443", &plain_allowlist));
     }
 }

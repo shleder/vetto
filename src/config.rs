@@ -147,6 +147,7 @@ pub struct RunConfig {
     pub preset: Option<Preset>,
     pub policy_path: Option<PathBuf>,
     pub net: NetMode,
+    pub explicit_net: bool,
     pub tui: TuiMode,
     pub backend: Option<String>,
     pub oslog: bool,
@@ -208,6 +209,7 @@ impl RunConfig {
             }
         };
 
+        let explicit_net = cli.net.is_some();
         let net = match cli.net.as_deref().or(global.net.as_deref()) {
             Some(raw) => parse_net_mode(raw)?,
             None => {
@@ -361,6 +363,7 @@ impl RunConfig {
             preset,
             policy_path: cli.policy.as_ref().map(PathBuf::from),
             net,
+            explicit_net,
             tui,
             backend: cli.backend.clone(),
             oslog: cli.oslog,
@@ -412,7 +415,18 @@ pub fn parse_net_mode(s: &str) -> Result<NetMode> {
     if let Some(rest) = s.strip_prefix("allowlist:") {
         let domains: Vec<String> = rest
             .split(',')
-            .map(|d| d.trim().to_ascii_lowercase())
+            .map(|d| {
+                let d = d.trim().to_ascii_lowercase();
+                if let Some((h, p)) = d.rsplit_once(':') {
+                    if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) && !h.contains(':') {
+                        h.to_string()
+                    } else {
+                        d
+                    }
+                } else {
+                    d
+                }
+            })
             .filter(|d| !d.is_empty())
             .collect();
         if domains.is_empty() {
@@ -601,6 +615,23 @@ mod tests {
             cfg.net.label(),
             "strict:github.com:443,registry.npmjs.org:443"
         );
+    }
+
+    #[test]
+    fn parses_allowlist_with_optional_port_suffixes() {
+        let cfg = config(&["--net", "allowlist:crates.io:443,api.github.com"])
+            .expect("allowlist config");
+        assert_eq!(cfg.net.label(), "allowlist:crates.io,api.github.com");
+        assert!(cfg.explicit_net);
+    }
+
+    #[test]
+    fn explicit_net_flag_tracks_cli_presence() {
+        let default_cfg = config(&[]).expect("default config");
+        assert!(!default_cfg.explicit_net);
+
+        let explicit_cfg = config(&["--net", "off"]).expect("explicit net config");
+        assert!(explicit_cfg.explicit_net);
     }
 
     #[test]
