@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.8] - 2026-09-20
+### Changed
+- **README Overhaul to Beautify Standard**: Cleaned up markup, clarified binary trust and security guarantees, modernized typography, and updated architectural documentation.
+- **Maintenance & Pruning**: Removed dead branches and completed Apache-2.0 license normalization.
+- **Packaging Parity**: Synchronized version 0.3.8 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
 ## [0.3.7] - 2026-09-20
 ### Fixed
 - **Shell Hook End-of-File Relocation**: `install_shell_hook_to_path` (`src/cli/shell_env.rs`) now excises the vetto marker block and re-appends it strictly at EOF on forced repair (`vetto doctor --fix`), so late PATH-mutating installers (nvm, conda, pyenv, asdf) can no longer shadow `~/.vetto/shims` off PATH index 0.
