@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.3] - 2026-09-20
+### Added
+- **PATH Shadowing Diagnostic & Warning in `doctor` and `enable`**: Added diagnostics in `src/doctor/` and `src/cli/enable.rs` detecting when an unshimmed binary appears earlier in `$PATH` than `~/.vetto/shims`, warning users with corrective guidance (`export PATH="$HOME/.vetto/shims:$PATH"`). Ensured shell hook instructions explicitly prepend `~/.vetto/shims` to the front of `$PATH`.
+- **Interactive Agent TUI Pass-Through**: Defaulted `TuiMode` to `TuiMode::None` when running interactive CLI agents (`codex`, `claude`, `opencode`, `aider`, etc.) and when running via transparent shims, preserving raw stdio pass-through without freezing or swallowing alternate-screen sequences.
+
+### Fixed
+- **Claude Code OAuth & Persistent Configuration**: Unmasked `~/.claude/.credentials.json` by removing `$AGENT/.credentials.json` from `[display_only_deny]`, added `~/.claude.json` to `allow_write`, and added `claude.ai` to the Claude Code network allowlist for native OAuth token refresh.
+- **Aider Configuration & API Key Pass-Through**: Unmasked `~/.aider.conf.yml`, added `$AGENT` to `allow_write` and `allow_read`, and passed through standard LLM API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`).
+- **Gemini CLI Authentication**: Unmasked `~/.gemini/auth.json` in `profiles/agents/gemini.toml`.
+
 ## [0.3.2] - 2026-09-19
 ### Fixed
 - **fix(policy): allow codex to read ~/.codex/auth.json for native ChatGPT OAuth authentication**: Unmasked `~/.codex/auth.json` by removing `$AGENT/auth.json` from `[display_only_deny]` in `profiles/agents/codex.toml`, allowing Codex CLI inside Vetto to read native session OAuth tokens without triggering Landlock permission denials or HTTP 401 Unauthorized errors.

@@ -6,7 +6,7 @@ pub mod agent_check;
 pub mod environment;
 pub mod fix;
 
-pub use agent_check::{probe, probe_agent, AgentCheck, ProbeStatus};
+pub use agent_check::{check_path_shadowing, probe, probe_agent, AgentCheck, ProbeStatus};
 pub use environment::{detect_environment, EnvironmentInfo};
 #[cfg(target_os = "linux")]
 pub use fix::collect_linux_fixes;

@@ -151,12 +151,15 @@ fn enable_agent_internal(agent: &str, force: bool, scope: HookScope, silent: boo
             "You can now run `{agent}` normally — under the hood it runs in the Vetto sandbox."
         );
 
-        // Check if shims_dir is in current PATH
-        if let Some(path_val) = std::env::var_os("PATH") {
+        // Check if shims_dir is in current PATH or if an unshimmed binary shadows the shim
+        if let Some(warning) = crate::doctor::check_path_shadowing(agent, Some(&shims_dir)) {
+            println!();
+            println!("{warning}");
+        } else if let Some(path_val) = std::env::var_os("PATH") {
             let in_path = std::env::split_paths(&path_val).any(|p| p == shims_dir);
             if !in_path {
                 println!();
-                println!("To apply in your current terminal session immediately, run:");
+                println!("To apply in your current terminal session immediately, prepend '~/.vetto/shims' to the FRONT of your PATH:");
                 println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
             }
         }
@@ -275,6 +278,9 @@ pub fn show_status(scope: HookScope) -> Result<()> {
             w.preset,
             w.shim_path.display()
         );
+        if let Some(warning) = crate::doctor::check_path_shadowing(&w.name, Some(&shims_dir)) {
+            println!("{warning}");
+        }
     }
 
     Ok(())

@@ -1,6 +1,7 @@
 //! Safe, honest agent version probes.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -268,6 +269,97 @@ fn parse_version(output: &str) -> Option<String> {
         })
         .map(|line| line.chars().take(256).collect::<String>())
         .find(|line| !line.is_empty())
+}
+
+/// Diagnostic check: verifies whether an unshimmed binary in `$PATH` appears before
+/// the Vetto shims directory, shadowing the shim.
+///
+/// Returns `Some(warning_message)` if an unshimmed executable precedes the shim, or `None` if
+/// the shim directory takes precedence or no unshimmed executable precedes it.
+pub fn check_path_shadowing(agent: &str, custom_shims_dir: Option<&Path>) -> Option<String> {
+    let shims_dir = match custom_shims_dir {
+        Some(d) => d.to_path_buf(),
+        None => {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from)?;
+            home.join(".vetto").join("shims")
+        }
+    };
+
+    let shim_path = shims_dir.join(agent);
+    let path_var = std::env::var_os("PATH")?;
+
+    for dir in std::env::split_paths(&path_var) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+
+        // If we reached the shims directory, the shim takes precedence
+        if dir == shims_dir
+            || (dir.exists()
+                && shims_dir.exists()
+                && dir.canonicalize().ok() == shims_dir.canonicalize().ok())
+            || crate::shim::is_shim_directory(&dir)
+        {
+            return None;
+        }
+
+        // Check if an unshimmed binary for this agent exists in this directory
+        let candidate = dir.join(agent);
+        let mut found_candidate: Option<PathBuf> = None;
+
+        if is_executable_binary(&candidate) {
+            found_candidate = Some(candidate);
+        } else {
+            #[cfg(windows)]
+            {
+                let pathext =
+                    std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+                for ext in pathext.to_string_lossy().split(';') {
+                    let ext = ext.trim().trim_start_matches('.');
+                    if !ext.is_empty() {
+                        let ext_candidate = candidate.with_extension(ext);
+                        if is_executable_binary(&ext_candidate) {
+                            found_candidate = Some(ext_candidate);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(shadow_path) = found_candidate {
+            return Some(format!(
+                "vetto: warning: '{agent}' in '{}' shadows the vetto shim at '{}'. Prepend '~/.vetto/shims' to your PATH: export PATH=\"$HOME/.vetto/shims:$PATH\"",
+                shadow_path.display(),
+                shim_path.display()
+            ));
+        }
+    }
+
+    None
+}
+
+fn is_executable_binary(p: &Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    if crate::shim::is_vetto_shim_content(p) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(p) {
+            return (m.permissions().mode() & 0o111) != 0;
+        }
+        false
+    }
+    #[cfg(windows)]
+    {
+        true
+    }
 }
 
 #[cfg(test)]

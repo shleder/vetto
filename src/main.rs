@@ -298,6 +298,18 @@ fn run() -> Result<()> {
                         }
                     }
                 }
+                if args.tui.is_none() {
+                    let is_interactive = vetto::config::is_interactive_agent_command(
+                        cfg.agent_preset.as_deref(),
+                        &cfg.agent,
+                    );
+                    use std::io::IsTerminal;
+                    if is_interactive
+                        && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
+                    {
+                        cfg.tui = TuiMode::None;
+                    }
+                }
             }
             supervise(cfg)
         }
@@ -684,6 +696,18 @@ fn run() -> Result<()> {
                 }
                 if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+            }
+            if args.tui.is_none() {
+                let is_interactive = vetto::config::is_interactive_agent_command(
+                    cfg.agent_preset.as_deref(),
+                    &cfg.agent,
+                );
+                use std::io::IsTerminal;
+                if is_interactive
+                    && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
+                {
+                    cfg.tui = TuiMode::None;
                 }
             }
             supervise(cfg)
@@ -2169,6 +2193,12 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
             .any(|a| vetto::shim::find_real_binary(a).is_ok());
         if !has_any_agent {
             println!("agents in PATH:          none detected (run `vetto enable` to see supported agents)");
+        } else {
+            for agent in vetto::onboard::SUPPORTED_AGENTS {
+                if let Some(warning) = vetto::doctor::check_path_shadowing(agent, None) {
+                    println!("{warning}");
+                }
+            }
         }
     }
     Ok(())
@@ -2177,6 +2207,9 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
 fn doctor_agent_check(agent: &str) -> Result<()> {
     let result = vetto::doctor::probe_agent(agent, std::time::Duration::from_secs(5));
     println!("agent check: {}", result.summary());
+    if let Some(warning) = vetto::doctor::check_path_shadowing(agent, None) {
+        println!("{warning}");
+    }
     Ok(())
 }
 

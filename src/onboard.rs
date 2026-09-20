@@ -304,6 +304,6 @@ mod tests {
             .into_vec()
             .contains(&"$PROJECT".to_string()));
         let net = layer.network.unwrap();
-        assert_eq!(net.mode.unwrap(), "allowlist:api.anthropic.com");
+        assert_eq!(net.mode.unwrap(), "allowlist:api.anthropic.com,claude.ai");
     }
 }

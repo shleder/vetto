@@ -260,8 +260,9 @@ impl RunConfig {
             "default".to_string()
         };
 
-        let raw_tui = if cli.tui != "statusline" {
-            cli.tui.as_str()
+        let explicit_tui = cli.tui.is_some() || global.tui.is_some();
+        let raw_tui = if let Some(ref ct) = cli.tui {
+            ct.as_str()
         } else if let Some(ref gt) = global.tui {
             gt.as_str()
         } else {
@@ -270,6 +271,22 @@ impl RunConfig {
         let mut tui = parse_tui_mode(raw_tui)?;
         if cli.ci && tui == TuiMode::Statusline {
             tui = TuiMode::None;
+        }
+
+        if !explicit_tui && tui == TuiMode::Statusline {
+            let is_shim = std::env::var("VETTO_SHIM_ACTIVE")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+                || std::env::var("VETTO_WRAPPED")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+            let is_interactive = is_interactive_agent_command(cli.agent.as_deref(), &cli.command);
+            use std::io::IsTerminal;
+            let is_tty = std::io::stdin().is_terminal() || std::io::stdout().is_terminal();
+
+            if is_shim || (is_interactive && is_tty) {
+                tui = TuiMode::None;
+            }
         }
 
         let timeout_str = cli.timeout.as_deref().or(global.timeout.as_deref());
@@ -482,6 +499,39 @@ fn parse_tui_mode(s: &str) -> Result<TuiMode> {
         "full" => Ok(TuiMode::Full),
         "none" => Ok(TuiMode::None),
         other => bail!("invalid --tui mode '{other}' (expected statusline, full or none)"),
+    }
+}
+
+/// Returns true if the given agent name or command refers to an interactive CLI agent
+/// (e.g. codex, claude, opencode, aider) whose alternate-screen or raw TUI output should not
+/// be swallowed by the statusline.
+pub fn is_interactive_agent_command(agent: Option<&str>, command: &[String]) -> bool {
+    let name = agent.or_else(|| {
+        command
+            .first()
+            .and_then(|c| std::path::Path::new(c).file_stem().and_then(|s| s.to_str()))
+    });
+    if let Some(n) = name {
+        let lower = n.to_ascii_lowercase();
+        matches!(
+            lower.as_str(),
+            "codex"
+                | "claude"
+                | "opencode"
+                | "aider"
+                | "gemini"
+                | "antigravity"
+                | "cursor"
+                | "cursor-agent"
+                | "cline"
+                | "windsurf"
+                | "goose"
+                | "openhands"
+                | "mentat"
+                | "devin"
+        )
+    } else {
+        false
     }
 }
 
