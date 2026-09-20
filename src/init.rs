@@ -44,10 +44,10 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             .push("$HOME/.rustup".to_string());
         analysis
             .recommended_network_domains
-            .push("crates.io:443".to_string());
+            .push("crates.io".to_string());
         analysis
             .recommended_network_domains
-            .push("static.crates.io:443".to_string());
+            .push("static.crates.io".to_string());
     }
 
     // Node.js / TypeScript
@@ -69,7 +69,7 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             .push("$HOME/.local/share/pnpm/store".to_string());
         analysis
             .recommended_network_domains
-            .push("registry.npmjs.org:443".to_string());
+            .push("registry.npmjs.org".to_string());
     }
 
     // Python
@@ -88,10 +88,10 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             .push("$HOME/.cache/uv".to_string());
         analysis
             .recommended_network_domains
-            .push("pypi.org:443".to_string());
+            .push("pypi.org".to_string());
         analysis
             .recommended_network_domains
-            .push("files.pythonhosted.org:443".to_string());
+            .push("files.pythonhosted.org".to_string());
     }
 
     // Go
@@ -102,10 +102,10 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             .push("$HOME/go/pkg/mod".to_string());
         analysis
             .recommended_network_domains
-            .push("proxy.golang.org:443".to_string());
+            .push("proxy.golang.org".to_string());
         analysis
             .recommended_network_domains
-            .push("sum.golang.org:443".to_string());
+            .push("sum.golang.org".to_string());
     }
 
     // AI Agents in Repo
@@ -126,10 +126,10 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     if root.join(".git").exists() {
         analysis
             .recommended_network_domains
-            .push("github.com:443".to_string());
+            .push("github.com".to_string());
         analysis
             .recommended_network_domains
-            .push("api.github.com:443".to_string());
+            .push("api.github.com".to_string());
     }
 
     analysis.recommended_allow_read.sort();
@@ -241,7 +241,7 @@ allow = [
     );
 
     if analysis.recommended_network_domains.is_empty() {
-        out.push_str("  \"github.com:443\",\n");
+        out.push_str("  \"github.com\",\n");
     } else {
         for domain in &analysis.recommended_network_domains {
             out.push_str(&format!("  \"{domain}\",\n"));
@@ -427,10 +427,10 @@ mod tests {
             .contains(&"$HOME/.cargo/registry".to_string()));
         assert!(analysis
             .recommended_network_domains
-            .contains(&"crates.io:443".to_string()));
+            .contains(&"crates.io".to_string()));
         assert!(analysis
             .recommended_network_domains
-            .contains(&"registry.npmjs.org:443".to_string()));
+            .contains(&"registry.npmjs.org".to_string()));
         assert!(analysis.detected_shims.contains(&"cargo".to_string()));
         assert!(analysis.detected_shims.contains(&"node".to_string()));
 

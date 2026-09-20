@@ -783,7 +783,7 @@ fn scan_secrets_cli(
 // supervise: a sandboxed agent session
 // ---------------------------------------------------------------------------
 
-fn supervise(cfg: RunConfig) -> Result<()> {
+fn supervise(mut cfg: RunConfig) -> Result<()> {
     if cfg.agent.is_empty() {
         bail!("no agent command provided; usage: vetto [OPTIONS] -- <command> [args...]");
     }
@@ -812,7 +812,7 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         cfg.observe_seccomp,
         cfg.backend.as_deref(),
     );
-    let (backend_opt, tier) = match backend_res {
+    let (mut backend_opt, tier) = match backend_res {
         Ok(b) => {
             let t = b.tier();
             (Some(Box::new(b)), t)
@@ -870,6 +870,31 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         tier_for_policy,
         &policy_options,
     )?;
+
+    // Bridge policy network allowlist into runtime configuration if network was not explicitly set on CLI.
+    if !cfg.explicit_net {
+        if pol.deny_network || pol.network_mode.as_deref() == Some("off") {
+            cfg.net = NetMode::Off;
+        } else if !pol.network_allow.is_empty() {
+            let mut domains = match &cfg.net {
+                NetMode::Allowlist(existing) => existing.clone(),
+                _ => Vec::new(),
+            };
+            domains.extend(pol.network_allow.clone());
+            domains.sort();
+            domains.dedup();
+            if !domains.is_empty() {
+                cfg.net = NetMode::Allowlist(domains);
+            }
+        }
+        if backend_opt.is_some() {
+            backend_opt = Some(Box::new(sandbox::Backend::detect_with_backend(
+                cfg.net.clone(),
+                cfg.observe_seccomp,
+                cfg.backend.as_deref(),
+            )?));
+        }
+    }
 
     if (pol.git_guard || cfg.git_guard) && !pol.allow_write.is_empty() {
         if let Some(branch) = policy::conditions::detect_git_branch(&project) {

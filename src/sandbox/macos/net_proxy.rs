@@ -196,7 +196,30 @@ pub fn validate_public_addr(addr: IpAddr) -> Result<()> {
     Ok(())
 }
 
+fn strip_domain_port(s: &str) -> &str {
+    let s = s.trim().trim_end_matches('.');
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(end_bracket) = rest.find(']') {
+            &rest[..end_bracket]
+        } else {
+            s
+        }
+    } else if let Some((host_part, port_part)) = s.rsplit_once(':') {
+        if !port_part.is_empty()
+            && port_part.chars().all(|c| c.is_ascii_digit())
+            && !host_part.contains(':')
+        {
+            host_part
+        } else {
+            s
+        }
+    } else {
+        s
+    }
+}
+
 fn normalize_host(host: &str) -> Result<String> {
+    let host = strip_domain_port(host);
     if host.is_empty() || host.contains('\0') || host.chars().any(char::is_whitespace) {
         bail!("host is empty, contains NUL, or contains whitespace");
     }
@@ -223,10 +246,21 @@ fn normalize_host(host: &str) -> Result<String> {
 }
 
 fn host_matches(host: &str, configured: &str) -> bool {
-    let Ok(configured) = normalize_host(configured) else {
+    let configured_clean = strip_domain_port(configured);
+    let (is_wildcard, clean_target) = if let Some(suffix) = configured_clean.strip_prefix("*.") {
+        (true, suffix)
+    } else {
+        (false, configured_clean)
+    };
+    let Ok(configured) = normalize_host(clean_target) else {
         return false;
     };
-    host == configured || host.ends_with(&format!(".{configured}"))
+    let host = strip_domain_port(host).to_ascii_lowercase();
+    if is_wildcard {
+        host.ends_with(&format!(".{configured}"))
+    } else {
+        host == configured || host.ends_with(&format!(".{configured}"))
+    }
 }
 
 fn is_loopback(addr: IpAddr) -> bool {
@@ -346,5 +380,18 @@ mod tests {
             LocalBroker::tls_mode(),
             "TLS pass-through only; no certificate interception or MITM"
         );
+    }
+
+    #[test]
+    fn host_matches_handles_ports_and_wildcards() {
+        assert!(host_matches("crates.io", "crates.io:443"));
+        assert!(host_matches("crates.io:443", "crates.io"));
+        assert!(host_matches("crates.io:443", "crates.io:443"));
+        assert!(host_matches("index.crates.io", "crates.io"));
+        assert!(host_matches("index.crates.io:443", "crates.io:443"));
+        assert!(host_matches("api.github.com", "*.github.com:443"));
+        assert!(host_matches("api.github.com:443", "*.github.com"));
+        assert!(!host_matches("github.com", "*.github.com:443"));
+        assert!(!host_matches("notgithub.com", "*.github.com:443"));
     }
 }
