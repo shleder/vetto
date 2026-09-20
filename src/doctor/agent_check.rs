@@ -303,9 +303,7 @@ pub fn check_path_shadowing_with_fix(
     let shims_dir = match custom_shims_dir {
         Some(d) => d.to_path_buf(),
         None => {
-            let Some(ref home_path) = home else {
-                return None;
-            };
+            let home_path = home.as_ref()?;
             home_path.join(".vetto").join("shims")
         }
     };
