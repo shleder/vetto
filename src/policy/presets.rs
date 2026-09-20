@@ -58,7 +58,13 @@ impl std::fmt::Display for Preset {
 pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
     let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
     match canon {
-        "claude" => vec!["api.anthropic.com".into(), "claude.ai".into()],
+        "claude" => vec![
+            "api.anthropic.com".into(),
+            "auth.anthropic.com".into(),
+            "claude.ai".into(),
+            "statsig.anthropic.com".into(),
+            "platform.anthropic.com".into(),
+        ],
         "codex" => vec![
             "api.openai.com".into(),
             "chatgpt.com".into(),
@@ -95,9 +101,10 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "openrouter.ai".into(),
         ],
         "cursor" => vec![
-            "api.cursor.com".into(),
             "api2.cursor.sh".into(),
+            "api.cursor.sh".into(),
             "auth.cursor.sh".into(),
+            "repo.cursor.sh".into(),
         ],
         "copilot" => vec![
             "api.github.com".into(),
@@ -364,11 +371,23 @@ mod tests {
     fn auto_allowlist_matches_known_agents() {
         assert_eq!(
             agent_network_allowlist("claude"),
-            vec!["api.anthropic.com", "claude.ai"]
+            vec![
+                "api.anthropic.com",
+                "auth.anthropic.com",
+                "claude.ai",
+                "statsig.anthropic.com",
+                "platform.anthropic.com",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("claude-code"),
-            vec!["api.anthropic.com", "claude.ai"]
+            vec![
+                "api.anthropic.com",
+                "auth.anthropic.com",
+                "claude.ai",
+                "statsig.anthropic.com",
+                "platform.anthropic.com",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("codex"),
@@ -460,11 +479,21 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("cursor"),
-            vec!["api.cursor.com", "api2.cursor.sh", "auth.cursor.sh"]
+            vec![
+                "api2.cursor.sh",
+                "api.cursor.sh",
+                "auth.cursor.sh",
+                "repo.cursor.sh",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("cursor-server"),
-            vec!["api.cursor.com", "api2.cursor.sh", "auth.cursor.sh"]
+            vec![
+                "api2.cursor.sh",
+                "api.cursor.sh",
+                "auth.cursor.sh",
+                "repo.cursor.sh",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("cline"),

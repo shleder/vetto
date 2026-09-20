@@ -186,3 +186,59 @@ fn test_enable_collision_protection() {
     let content = std::fs::read_to_string(&collision_file).expect("read overwritten shim");
     assert!(content.contains("Vetto transparent binary shim"));
 }
+
+#[test]
+fn test_enable_all_command() {
+    let project = TempProject::new("enable-all");
+    let proj_dir = project.path();
+
+    // 1. Create mock agents claude and agy in host_bin
+    let bin_dir = proj_dir.join("host_bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_claude = bin_dir.join("claude");
+    write_file(&mock_claude, "#!/bin/sh\necho \"claude agent running\"\n");
+    let mock_agy = bin_dir.join("agy");
+    write_file(&mock_agy, "#!/bin/sh\necho \"agy agent running\"\n");
+    #[cfg(windows)]
+    {
+        write_file(&bin_dir.join("claude.cmd"), "@echo off\r\necho claude\r\n");
+        write_file(&bin_dir.join("agy.cmd"), "@echo off\r\necho agy\r\n");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in [&mock_claude, &mock_agy] {
+            let mut perms = std::fs::metadata(p).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(p, perms).unwrap();
+        }
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    // 2. Run vetto enable --all --scope local
+    let out = Command::new(vetto_bin())
+        .args(["enable", "--all", "--scope", "local"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", test_home())
+        .output()
+        .expect("exec enable --all");
+
+    assert!(
+        out.status.success(),
+        "vetto enable --all failed: {}",
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(text.contains("claude"));
+    assert!(text.contains("agy"));
+    assert!(text.contains("Successfully wrapped 2 agent(s)."));
+
+    let shims_dir = proj_dir.join(".vetto").join("shims");
+    assert!(shims_dir.join("claude").exists(), "claude shim must exist");
+    assert!(shims_dir.join("agy").exists(), "agy shim must exist");
+}

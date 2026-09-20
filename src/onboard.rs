@@ -14,12 +14,13 @@ use anyhow::{bail, Result};
 use crate::policy::loader::RawLayer;
 use crate::policy::presets::{agent_network_allowlist, preset_layer, Preset};
 
-pub const SUPPORTED_AGENTS: [&str; 20] = [
+pub const SUPPORTED_AGENTS: [&str; 21] = [
     "claude",
     "codex",
     "opencode",
     "gemini",
     "antigravity",
+    "agy",
     "cursor",
     "aider",
     "cline",
@@ -304,6 +305,9 @@ mod tests {
             .into_vec()
             .contains(&"$PROJECT".to_string()));
         let net = layer.network.unwrap();
-        assert_eq!(net.mode.unwrap(), "allowlist:api.anthropic.com,claude.ai");
+        assert_eq!(
+            net.mode.unwrap(),
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+        );
     }
 }

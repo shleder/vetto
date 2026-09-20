@@ -22,6 +22,10 @@ pub struct EnableArgs {
     #[arg(value_name = "AGENT")]
     pub agent: Option<String>,
 
+    /// Wrap all detected AI coding agents in PATH in a single command
+    #[arg(long = "all", conflicts_with = "agent")]
+    pub all: bool,
+
     /// Show status of wrapped agents
     #[arg(long)]
     pub status: bool,
@@ -67,6 +71,10 @@ pub fn run_enable(args: &EnableArgs) -> Result<()> {
         return show_status(args.scope);
     }
 
+    if args.all {
+        return enable_all(args.force, args.fix, args.scope);
+    }
+
     match &args.agent {
         None => list_agents(args.scope),
         Some(agent_raw) => {
@@ -74,6 +82,93 @@ pub fn run_enable(args: &EnableArgs) -> Result<()> {
             enable_agent_internal(&agent_name, args.force, args.fix, args.scope, false)
         }
     }
+}
+
+/// Enables transparent sandbox wrapping for all detected AI agents in PATH.
+pub fn enable_all(force: bool, fix: bool, scope: HookScope) -> Result<()> {
+    let shims_dir = get_shims_dir(scope)?;
+    let mut installed_agents = Vec::new();
+
+    for &agent in &SUPPORTED_AGENTS {
+        if let Ok(real_bin) = find_real_binary(agent) {
+            installed_agents.push((agent, real_bin));
+        }
+    }
+
+    if installed_agents.is_empty() {
+        println!("vetto: no supported AI coding agents detected in PATH outside Vetto shims.");
+        println!("Supported agents: {}", SUPPORTED_AGENTS.join(", "));
+        return Ok(());
+    }
+
+    println!(
+        "vetto: detected {} installed agent(s), enabling sandbox wrappers...",
+        installed_agents.len()
+    );
+    println!();
+
+    let mut newly_wrapped = Vec::new();
+    let mut failed = Vec::new();
+
+    for &(agent, ref real_bin) in &installed_agents {
+        match enable_agent_internal(agent, force, fix, scope, true) {
+            Ok(()) => {
+                let net_allowlist = agent_network_allowlist(agent);
+                let net_desc = if net_allowlist.is_empty() {
+                    "offline (no outbound access)".to_string()
+                } else {
+                    net_allowlist.join(", ")
+                };
+                newly_wrapped.push((agent, real_bin.clone(), net_desc));
+            }
+            Err(err) => {
+                failed.push((agent, err.to_string()));
+            }
+        }
+    }
+
+    if !newly_wrapped.is_empty() {
+        let scope_str = match scope {
+            HookScope::Global => "global",
+            HookScope::Local => "local",
+        };
+        println!("Wrapped AI Agents ({} scope):", scope_str);
+        println!(
+            "  {:<12} {:<10} {:<30} NETWORK ALLOWLIST",
+            "AGENT", "STATUS", "REAL BINARY"
+        );
+        println!("  {}", "-".repeat(75));
+        for (agent, real_bin, net_desc) in &newly_wrapped {
+            println!(
+                "  {:<12} {:<10} {:<30} {}",
+                agent,
+                "wrapped",
+                real_bin.display(),
+                net_desc
+            );
+        }
+        println!();
+        println!("Successfully wrapped {} agent(s).", newly_wrapped.len());
+    }
+
+    if !failed.is_empty() {
+        println!();
+        println!("Failed to wrap {} agent(s):", failed.len());
+        for (agent, err) in &failed {
+            println!("  - {agent}: {err}");
+        }
+    }
+
+    if let Some(path_val) = std::env::var_os("PATH") {
+        let in_path = std::env::split_paths(&path_val).any(|p| p == shims_dir);
+        if !in_path {
+            println!();
+            println!("To apply in your current terminal session immediately, prepend '~/.vetto/shims' to the FRONT of your PATH:");
+            println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
+        }
+    }
+
+    Ok(())
 }
 
 /// Entrypoint for `vetto disable`.
@@ -263,6 +358,9 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
     println!("To enable sandboxing for an agent:");
     println!("  vetto enable <agent>");
     println!();
+    println!("To enable sandboxing for all detected agents:");
+    println!("  vetto enable --all");
+    println!();
     println!("To disable sandboxing for an agent:");
     println!("  vetto disable <agent>");
 
@@ -375,6 +473,7 @@ mod tests {
         match cli.command {
             TestSubcommand::Enable(args) => {
                 assert_eq!(args.agent.as_deref(), Some("claude"));
+                assert!(!args.all);
                 assert!(!args.status);
                 assert!(!args.force);
                 assert!(!args.fix);
@@ -382,6 +481,23 @@ mod tests {
             }
             _ => panic!("expected enable"),
         }
+
+        let cli_all =
+            TestCli::try_parse_from(["vetto", "enable", "--all"]).expect("parse enable --all");
+        match cli_all.command {
+            TestSubcommand::Enable(args) => {
+                assert!(args.all);
+                assert_eq!(args.agent, None);
+                assert!(!args.status);
+                assert!(!args.force);
+                assert!(!args.fix);
+                assert_eq!(args.scope, HookScope::Global);
+            }
+            _ => panic!("expected enable --all"),
+        }
+
+        // --all conflicts with positional agent
+        assert!(TestCli::try_parse_from(["vetto", "enable", "--all", "claude"]).is_err());
 
         let cli_fix = TestCli::try_parse_from(["vetto", "enable", "--fix", "claude"])
             .expect("parse enable fix");
