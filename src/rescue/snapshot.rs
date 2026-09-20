@@ -153,6 +153,26 @@ pub fn create_snapshot(
     session_id: &str,
     max_bytes: u64,
 ) -> Result<SnapshotMetadata> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from));
+    let is_home_or_root = project_dir.parent().is_none()
+        || home.as_deref().map(|h| h == project_dir).unwrap_or(false);
+    if is_home_or_root {
+        tracing::debug!(
+            "vetto: snapshot skipped for user home or root filesystem: {}",
+            project_dir.display()
+        );
+        return Ok(SnapshotMetadata {
+            session_id: session_id.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            project_dir: project_dir.to_path_buf(),
+            archive_file: snapshots_root_dir()?.join(session_id).join("snapshot.tar"),
+            file_count: 0,
+            total_size_bytes: 0,
+        });
+    }
+
     let snapshots_dir = snapshots_root_dir()?.join(session_id);
     std::fs::create_dir_all(&snapshots_dir)
         .with_context(|| format!("create snapshot dir {}", snapshots_dir.display()))?;
