@@ -176,3 +176,146 @@ fn test_codex_policy_allows_auth_json_reading() {
         );
     }
 }
+
+#[test]
+fn test_claude_policy_allows_credentials_json_reading() {
+    let project = TempProject::new("claude-auth");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    let claude_dir = home_dir.join(".claude");
+    std::fs::create_dir_all(&claude_dir).expect("create .claude dir");
+
+    let creds_json = claude_dir.join(".credentials.json");
+    write_file(
+        &creds_json,
+        "{\"sessionToken\":\"mock-claude-token-abc\"}\n",
+    );
+
+    let claude_json = home_dir.join(".claude.json");
+    write_file(&claude_json, "{\"autoUpdaterStatus\":\"disabled\"}\n");
+
+    let out = Command::new(vetto_bin())
+        .args(["--dry-run", "--agent", "claude", "--", "/bin/true"])
+        .current_dir(proj_dir)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto dry-run");
+
+    assert!(
+        out.status.success(),
+        "vetto dry-run must succeed: {}",
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("profile 'claude'"),
+        "must resolve claude profile: {}",
+        text
+    );
+    assert!(
+        !text.contains(".credentials.json"),
+        ".credentials.json must NOT be in deny paths: {}",
+        text
+    );
+
+    #[cfg(unix)]
+    if have_landlock() {
+        let read_out = Command::new(vetto_bin())
+            .args([
+                "--tui=none",
+                "--net=off",
+                "--agent",
+                "claude",
+                "--",
+                "cat",
+                creds_json.to_str().unwrap(),
+            ])
+            .current_dir(proj_dir)
+            .env("HOME", &home_dir)
+            .env("USERPROFILE", &home_dir)
+            .output()
+            .expect("exec cat .credentials.json under vetto");
+
+        assert!(
+            read_out.status.success(),
+            "cat .credentials.json must succeed under vetto sandbox: stdout: {} stderr: {}",
+            stdout(&read_out),
+            stderr(&read_out)
+        );
+        assert!(
+            stdout(&read_out).contains("mock-claude-token-abc"),
+            ".credentials.json contents must be readable inside vetto sandbox: {}",
+            stdout(&read_out)
+        );
+    }
+}
+
+#[test]
+fn test_aider_policy_allows_conf_reading() {
+    let project = TempProject::new("aider-conf");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create home dir");
+
+    let aider_conf = home_dir.join(".aider.conf.yml");
+    write_file(&aider_conf, "model: claude-3-5-sonnet-20241022\n");
+
+    let out = Command::new(vetto_bin())
+        .args(["--dry-run", "--agent", "aider", "--", "/bin/true"])
+        .current_dir(proj_dir)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto dry-run");
+
+    assert!(
+        out.status.success(),
+        "vetto dry-run must succeed: {}",
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("profile 'aider'"),
+        "must resolve aider profile: {}",
+        text
+    );
+    assert!(
+        !text.contains(".aider.conf.yml"),
+        ".aider.conf.yml must NOT be in deny paths: {}",
+        text
+    );
+
+    #[cfg(unix)]
+    if have_landlock() {
+        let read_out = Command::new(vetto_bin())
+            .args([
+                "--tui=none",
+                "--net=off",
+                "--agent",
+                "aider",
+                "--",
+                "cat",
+                aider_conf.to_str().unwrap(),
+            ])
+            .current_dir(proj_dir)
+            .env("HOME", &home_dir)
+            .env("USERPROFILE", &home_dir)
+            .output()
+            .expect("exec cat .aider.conf.yml under vetto");
+
+        assert!(
+            read_out.status.success(),
+            "cat .aider.conf.yml must succeed under vetto sandbox: stdout: {} stderr: {}",
+            stdout(&read_out),
+            stderr(&read_out)
+        );
+        assert!(
+            stdout(&read_out).contains("claude-3-5-sonnet-20241022"),
+            ".aider.conf.yml contents must be readable inside vetto sandbox: {}",
+            stdout(&read_out)
+        );
+    }
+}

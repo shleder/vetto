@@ -1,9 +1,32 @@
 [metadata]
 name = "aider"
-description = "Safe read-only compatibility roots for Aider."
+description = "Safe compatibility roots for Aider."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_read = [
+    "$HOME/.aider.conf.yml",
+    "$AGENT",
+]
+allow_write = [
+    "$AGENT",
+]
+
+[environment]
+pass_through = [
+    "AIDER_*",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+    "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY",
+]
 
 [display_only_deny]
-paths = ["$AGENT/.aider.conf.yml", "$AGENT/.env"]
+paths = [
+    "$AGENT/*.sock",
+    "$AGENT/*.ipc",
+]

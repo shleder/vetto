@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.3] - 2026-09-20
+### Fixed
+- Unmask `~/.claude/.credentials.json` and make `~/.claude.json` writable in Claude Code profile for native OAuth/subscription support.
+- Add `claude.ai` to default agent network allowlist for Claude Code token refresh.
+- Unmask `~/.aider.conf.yml`, add `$AGENT` write permissions, and pass through LLM API keys for Aider.
+- Unmask `~/.gemini/auth.json` in Gemini profile.
+
 ## [0.3.2] - 2026-09-19
 ### Fixed
 - **fix(policy): allow codex to read ~/.codex/auth.json for native ChatGPT OAuth authentication**: Unmasked `~/.codex/auth.json` by removing `$AGENT/auth.json` from `[display_only_deny]` in `profiles/agents/codex.toml`, allowing Codex CLI inside Vetto to read native session OAuth tokens without triggering Landlock permission denials or HTTP 401 Unauthorized errors.

@@ -3,8 +3,14 @@ name = "claude"
 description = "Safe compatibility roots for Claude Code."
 
 [filesystem]
-allow_write = ["$AGENT"]
-allow_read = ["$HOME/.claude.json", "$AGENT"]
+allow_write = [
+    "$HOME/.claude.json",
+    "$AGENT",
+]
+allow_read = [
+    "$HOME/.claude.json",
+    "$AGENT",
+]
 
 [environment]
 pass_through = [
@@ -15,8 +21,6 @@ pass_through = [
 
 [display_only_deny]
 paths = [
-    "$AGENT/.credentials.json",
     "$AGENT/*.sock",
     "$AGENT/*.ipc",
 ]
-

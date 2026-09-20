@@ -58,7 +58,7 @@ impl std::fmt::Display for Preset {
 pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
     let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
     match canon {
-        "claude" => vec!["api.anthropic.com".into()],
+        "claude" => vec!["api.anthropic.com".into(), "claude.ai".into()],
         "codex" => vec!["api.openai.com".into(), "chatgpt.com".into()],
         "gemini" => vec!["generativelanguage.googleapis.com".into()],
         "antigravity" => vec![
@@ -336,10 +336,13 @@ mod tests {
 
     #[test]
     fn auto_allowlist_matches_known_agents() {
-        assert_eq!(agent_network_allowlist("claude"), vec!["api.anthropic.com"]);
+        assert_eq!(
+            agent_network_allowlist("claude"),
+            vec!["api.anthropic.com", "claude.ai"]
+        );
         assert_eq!(
             agent_network_allowlist("claude-code"),
-            vec!["api.anthropic.com"]
+            vec!["api.anthropic.com", "claude.ai"]
         );
         assert_eq!(
             agent_network_allowlist("codex"),
