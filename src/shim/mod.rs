@@ -341,6 +341,7 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
             .unwrap_or(false);
 
     let real_binary = find_real_binary(binary_name)
+        .or_else(|_| crate::onboard::find_real_agent_binary(binary_name).map(|(_, path)| path))
         .with_context(|| format!("shim: failed to resolve host binary for '{binary_name}'"))?;
 
     // Git guard check: block destructive git commands

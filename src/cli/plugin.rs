@@ -112,7 +112,7 @@ pub fn install_claude_code() -> Result<()> {
         },
         "vetto": {
             "enabled": true,
-            "version": "0.2.5",
+            "version": env!("CARGO_PKG_VERSION"),
             "managed": true
         }
     });

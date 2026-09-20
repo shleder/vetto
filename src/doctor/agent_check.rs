@@ -79,7 +79,7 @@ pub fn probe_agent(agent: &str, timeout: Duration) -> AgentCheck {
         };
     };
 
-    probe_command(agent, command, timeout)
+    probe_command(agent, &command, timeout)
 }
 
 /// Short alias for callers that expose this as a generic doctor probe.
@@ -87,30 +87,36 @@ pub fn probe(agent: &str, timeout: Duration) -> AgentCheck {
     probe_agent(agent, timeout)
 }
 
-fn command_for_agent(agent: &str) -> Option<&'static str> {
-    match agent {
-        "codex" => Some("codex"),
-        "claude" => Some("claude"),
-        "gemini" => Some("gemini"),
-        "antigravity" => Some("antigravity"),
-        "aider" => Some("aider"),
-        "cursor" => Some("cursor-agent"),
-        "cline" => Some("cline"),
-        "opencode" => Some("opencode"),
-        "copilot" => Some("copilot"),
-        "windsurf" => Some("windsurf"),
-        "continue" => Some("continue"),
-        "goose" => Some("goose"),
-        "openhands" => Some("openhands"),
-        "swe_agent" => Some("swe-agent"),
-        "plandex" => Some("plandex"),
-        "mentat" => Some("mentat"),
-        "gpt_engineer" => Some("gpt-engineer"),
-        "devin" => Some("devin"),
-        "crust" => Some("crust"),
-        "amp" => Some("amp"),
+fn command_for_agent(agent: &str) -> Option<String> {
+    let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+    if canon == "custom" {
+        return None;
+    }
+    if let Ok((bin, _)) = crate::onboard::find_real_agent_binary(canon) {
+        return Some(bin);
+    }
+    match canon {
+        "codex" => Some("codex".to_string()),
+        "claude" => Some("claude".to_string()),
+        "gemini" => Some("gemini".to_string()),
+        "antigravity" => Some("antigravity".to_string()),
+        "aider" => Some("aider".to_string()),
+        "cursor" => Some("cursor-agent".to_string()),
+        "cline" => Some("cline".to_string()),
+        "opencode" => Some("opencode".to_string()),
+        "copilot" => Some("copilot".to_string()),
+        "windsurf" => Some("windsurf".to_string()),
+        "continue" => Some("continue".to_string()),
+        "goose" => Some("goose".to_string()),
+        "openhands" => Some("openhands".to_string()),
+        "swe_agent" => Some("swe-agent".to_string()),
+        "plandex" => Some("plandex".to_string()),
+        "mentat" => Some("mentat".to_string()),
+        "gpt_engineer" => Some("gpt-engineer".to_string()),
+        "devin" => Some("devin".to_string()),
+        "crust" => Some("crust".to_string()),
+        "amp" => Some("amp".to_string()),
         // A custom executable cannot be safely inferred from an agent name.
-        "custom" => None,
         _ => None,
     }
 }

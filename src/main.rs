@@ -181,13 +181,15 @@ fn preprocess_cli_args(raw_args: &[String]) -> Result<Vec<String>> {
                 let is_wrapped =
                     shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
                 if !is_wrapped {
-                    let target_agent = if vetto::shim::find_real_binary(arg).is_ok() {
-                        arg.as_str()
+                    let target_agent = if let Ok((bin, _)) =
+                        vetto::onboard::find_real_agent_binary(arg)
+                    {
+                        bin
                     } else {
-                        canon
+                        canon.to_string()
                     };
                     let _ = vetto::cli::enable::enable_agent_silent(
-                        target_agent,
+                        &target_agent,
                         false,
                         vetto::cli::hook::HookScope::Global,
                     );
@@ -676,14 +678,13 @@ fn run() -> Result<()> {
                 let detected = match vetto::onboard::detect_agent(&project) {
                     Ok(detected) => detected,
                     Err(e) => bail!(
-                        "no AI agent detected in {} ({e})\n\n\
+                        "{e}\n\n\
                          Get started:\n  \
                          1. `vetto enable` — wrap installed agents (e.g. `vetto enable claude`)\n  \
                          2. `vetto doctor` — see what this kernel can enforce\n  \
                          3. `vetto tour` — guided introduction\n  \
                          4. `vetto -- <command>` — sandbox any binary, e.g. `vetto -- python agent.py`\n\n\
-                         Docs: https://shleder.github.io/vetto/",
-                        project.display()
+                         Docs: https://shleder.github.io/vetto/"
                     ),
                 };
                 eprintln!(
@@ -2239,7 +2240,7 @@ fn doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Result<()> 
     } else {
         let has_any_agent = vetto::onboard::SUPPORTED_AGENTS
             .iter()
-            .any(|a| vetto::shim::find_real_binary(a).is_ok());
+            .any(|a| vetto::onboard::find_real_agent_binary(a).is_ok());
         if !has_any_agent {
             println!("agents in PATH:          none detected (run `vetto enable` to see supported agents)");
         } else {

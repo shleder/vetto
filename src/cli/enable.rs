@@ -88,10 +88,15 @@ pub fn run_enable(args: &EnableArgs) -> Result<()> {
 pub fn enable_all(force: bool, fix: bool, scope: HookScope) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
     let mut installed_agents = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
     for &agent in &SUPPORTED_AGENTS {
-        if let Ok(real_bin) = find_real_binary(agent) {
-            installed_agents.push((agent, real_bin));
+        let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+        if !seen.insert(canon) {
+            continue;
+        }
+        if let Ok((_real_name, real_bin)) = crate::onboard::find_real_agent_binary(canon) {
+            installed_agents.push((canon, real_bin));
         }
     }
 
@@ -200,38 +205,41 @@ fn enable_agent_internal(
     silent: bool,
 ) -> Result<()> {
     // 1. Resolve the real host binary FIRST to verify it is installed and in PATH
-    let real_bin = find_real_binary(agent).map_err(|_| {
-        anyhow::anyhow!(
-            "agent binary '{agent}' was not found in PATH outside Vetto shims.\n\
-             Please install '{agent}' first or verify that it is present in your PATH.\n\
-             Supported agents: {}",
-            SUPPORTED_AGENTS.join(", ")
-        )
-    })?;
+    let (real_bin_name, real_bin) = crate::onboard::find_real_agent_binary(agent)?;
+
+    let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
 
     // 2. Prepare target shims directory
     let shims_dir = get_shims_dir(scope)?;
     fs::create_dir_all(&shims_dir)
         .with_context(|| format!("failed to create shims dir: {}", shims_dir.display()))?;
 
-    let target_shim_path = shims_dir.join(agent);
+    let mut shim_names = vec![agent.to_string()];
+    if canon != agent {
+        shim_names.push(canon.to_string());
+    }
+    if !shim_names.contains(&real_bin_name) {
+        shim_names.push(real_bin_name.clone());
+    }
 
-    // 3. Collision check: if a file already exists at target location
-    if target_shim_path.exists() {
-        let is_vetto = is_vetto_shim_content(&target_shim_path);
-        if !is_vetto && !force {
-            bail!(
-                "target '{}' already exists and is not a Vetto shim.\n\
-                 Refusing to overwrite without --force.",
-                target_shim_path.display()
-            );
+    // 3. Collision check: if a non-Vetto file already exists at any target location
+    for name in &shim_names {
+        let target_shim_path = shims_dir.join(name);
+        if target_shim_path.exists() {
+            let is_vetto = is_vetto_shim_content(&target_shim_path);
+            if !is_vetto && !force {
+                bail!(
+                    "target '{}' already exists and is not a Vetto shim.\n\
+                     Refusing to overwrite without --force.",
+                    target_shim_path.display()
+                );
+            }
         }
     }
 
-    // 4. Create transparent shim
+    // 4. Create transparent shims
     let current_exe = std::env::current_exe().ok();
-    let binaries = vec![agent.to_string()];
-    ShimRegistry::create_shims(&shims_dir, &binaries, current_exe.as_deref())?;
+    ShimRegistry::create_shims(&shims_dir, &shim_names, current_exe.as_deref())?;
 
     // 5. Ensure shell environment integration is installed and up to date
     let home_dir = get_home_dir()?;
@@ -248,13 +256,14 @@ fn enable_agent_internal(
     }
 
     if !silent {
-        let net_allowlist = agent_network_allowlist(agent);
+        let net_allowlist = agent_network_allowlist(canon);
         let net_desc = if net_allowlist.is_empty() {
             "offline (no outbound access)".to_string()
         } else {
             net_allowlist.join(", ")
         };
 
+        let target_shim_path = shims_dir.join(agent);
         println!("vetto: successfully enabled sandbox wrapper for '{agent}'");
         println!("  real binary : {}", real_bin.display());
         println!("  shim path   : {}", target_shim_path.display());
@@ -290,35 +299,48 @@ fn enable_agent_internal(
 /// Disables transparent sandbox wrapping for a specific agent.
 pub fn disable_agent(agent: &str, scope: HookScope) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
-    let target_shim_path = shims_dir.join(agent);
-    let target_cmd_path = shims_dir.join(format!("{agent}.cmd"));
+    let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
 
-    if !target_shim_path.exists() && !target_cmd_path.exists() {
+    let mut to_remove = vec![agent.to_string()];
+    if canon != agent {
+        to_remove.push(canon.to_string());
+    }
+    for &cand in crate::onboard::agent_candidate_binaries(canon) {
+        if !to_remove.iter().any(|c| c == cand) {
+            to_remove.push(cand.to_string());
+        }
+    }
+
+    let mut removed_count = 0;
+    for name in &to_remove {
+        let shim = shims_dir.join(name);
+        let cmd = shims_dir.join(format!("{name}.cmd"));
+        if shim.exists() {
+            if !is_vetto_shim_content(&shim) {
+                bail!(
+                    "refusing to remove '{}': file exists but is not a Vetto shim",
+                    shim.display()
+                );
+            }
+            fs::remove_file(&shim)
+                .with_context(|| format!("failed to remove shim: {}", shim.display()))?;
+            removed_count += 1;
+        }
+        if cmd.exists() {
+            let _ = fs::remove_file(&cmd);
+        }
+    }
+
+    if removed_count == 0 {
         println!(
             "vetto: '{agent}' is not currently wrapped by Vetto (shim not found at {})",
-            target_shim_path.display()
+            shims_dir.join(agent).display()
         );
         return Ok(());
     }
 
-    if target_shim_path.exists() {
-        if !is_vetto_shim_content(&target_shim_path) {
-            bail!(
-                "refusing to remove '{}': file exists but is not a Vetto shim",
-                target_shim_path.display()
-            );
-        }
-        fs::remove_file(&target_shim_path)
-            .with_context(|| format!("failed to remove shim: {}", target_shim_path.display()))?;
-    }
-
-    if target_cmd_path.exists() {
-        let _ = fs::remove_file(&target_cmd_path);
-    }
-
     println!(
-        "vetto: disabled sandbox wrapper for '{agent}' (removed {})",
-        target_shim_path.display()
+        "vetto: disabled sandbox wrapper for '{agent}' (removed {removed_count} shim(s))"
     );
     println!("'{agent}' will now run unconfined as a standard host binary.");
 
@@ -332,13 +354,19 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
     println!("AI Coding Agents (vetto enable):");
     println!("{}", "-".repeat(60));
 
+    let mut seen = std::collections::HashSet::new();
     for &agent in &SUPPORTED_AGENTS {
-        let shim_path = shims_dir.join(agent);
+        let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+        if !seen.insert(canon) {
+            continue;
+        }
+        let shim_path = shims_dir.join(canon);
         let is_wrapped = shim_path.exists() && is_vetto_shim_content(&shim_path);
-        let real_bin = find_real_binary(agent).ok();
+        let real_bin = crate::onboard::find_real_agent_binary(canon).ok().map(|(_, p)| p);
 
         let (status_tag, detail) = if is_wrapped {
             let real_str = real_bin
+                .clone()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             (
@@ -351,7 +379,7 @@ pub fn list_agents(scope: HookScope) -> Result<()> {
             ("[not found]", "not detected in PATH".to_string())
         };
 
-        println!("  {:<10} {:<12} {}", agent, status_tag, detail);
+        println!("  {:<12} {:<12} {}", canon, status_tag, detail);
     }
 
     println!("{}", "-".repeat(60));
@@ -414,17 +442,34 @@ pub fn get_wrapped_agents(scope: HookScope) -> Result<Vec<WrappedAgentInfo>> {
     }
 
     let mut wrapped = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
     for &agent in &SUPPORTED_AGENTS {
-        let shim_path = shims_dir.join(agent);
-        if shim_path.exists() && is_vetto_shim_content(&shim_path) {
-            let real_bin = find_real_binary(agent).ok();
+        let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+        if !seen.insert(canon) {
+            continue;
+        }
+        let shim_path = shims_dir.join(canon);
+        let real_bin_opt = crate::onboard::find_real_agent_binary(canon).ok().map(|(_, p)| p);
+        let is_canon_wrapped = shim_path.exists() && is_vetto_shim_content(&shim_path);
+
+        let mut candidate_shim = None;
+        for &cand in crate::onboard::agent_candidate_binaries(canon) {
+            let p = shims_dir.join(cand);
+            if p.exists() && is_vetto_shim_content(&p) {
+                candidate_shim = Some(p);
+                break;
+            }
+        }
+
+        if is_canon_wrapped || candidate_shim.is_some() {
+            let actual_shim = if is_canon_wrapped { shim_path } else { candidate_shim.unwrap() };
             wrapped.push(WrappedAgentInfo {
-                name: agent.to_string(),
-                shim_path,
-                real_binary: real_bin,
+                name: canon.to_string(),
+                shim_path: actual_shim,
+                real_binary: real_bin_opt,
                 preset: "default+agent",
-                network_allowlist: agent_network_allowlist(agent),
+                network_allowlist: agent_network_allowlist(canon),
             });
         }
     }
@@ -583,6 +628,39 @@ mod tests {
         fs::write(&fake_file, "custom non vetto binary content").unwrap();
 
         assert!(!is_vetto_shim_content(&fake_file));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enable_agent_resolves_and_shims_aliases() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = temp_test_dir("alias-resolution");
+
+        // Write a mock binary for claude-code (NOT claude) in a fake PATH
+        let bin_dir = dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let mock_claude_code = bin_dir.join("claude-code");
+        fs::write(&mock_claude_code, "#!/bin/sh\necho mock_claude_code\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&mock_claude_code).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&mock_claude_code, perms).unwrap();
+        }
+
+        let orig_path = std::env::var_os("PATH").unwrap();
+        let mut new_path = std::env::split_paths(&orig_path).collect::<Vec<_>>();
+        new_path.insert(0, bin_dir.clone());
+        std::env::set_var("PATH", std::env::join_paths(new_path).unwrap());
+
+        // Call find_real_agent_binary for "claude"
+        let (bin_name, path) = crate::onboard::find_real_agent_binary("claude").unwrap();
+        assert_eq!(bin_name, "claude-code");
+        assert_eq!(path, mock_claude_code);
+
+        // Restore PATH
+        std::env::set_var("PATH", orig_path);
         let _ = fs::remove_dir_all(&dir);
     }
 }
