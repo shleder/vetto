@@ -521,6 +521,7 @@ pub fn is_interactive_agent_command(agent: Option<&str>, command: &[String]) -> 
                 | "aider"
                 | "gemini"
                 | "antigravity"
+                | "agy"
                 | "cursor"
                 | "cursor-agent"
                 | "cline"
