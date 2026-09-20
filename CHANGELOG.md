@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.13] - 2026-09-20
+### Fixed
+- **Bun Runtime Compatibility for OpenCode & Cline CLI**: Configured filesystem read and write rules in `profiles/agents/opencode.toml` and `profiles/agents/cline.toml` to permit access to `$HOME/.bun`, `$HOME/.cache`, `/tmp`, and root system paths `/` alongside agent state directories (`$HOME/.opencode`, `$HOME/.cline`, VSCode global storage). This resolves SIGABRT (exit 134) and SIGTRAP (exit 133) aborts triggered by Bun engine caching, JIT, and module loading inside sandboxed environments.
+- **Packaging Parity**: Synchronized version 0.3.13 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
+### Added
+- **Expanded OpenCode & Cline Network Presets**: Added `opencode.ai`, `api.github.com`, and `github.com` to OpenCode egress presets; added `otel.cline.bot` and `registry.npmjs.org` to Cline egress presets in `src/policy/presets.rs`.
+
 ## [0.3.12] - 2026-09-20
 ### Fixed
 - **Network Broker Concurrency & Head-of-Line Blocking**: Decoupled data tunnel forwarding and pump execution (`forward_data_tunnel`) out of the synchronous broker thread into dedicated `broker-tunnel` worker threads in `src/sandbox/linux/net_relay.rs`. This allows concurrent HTTP/HTTPS, SSE, and long-polling requests (e.g. Unleash flags alongside CodeAssist APIs) without head-of-line blocking deadlocks or `context deadline exceeded` timeouts.

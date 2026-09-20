@@ -5,11 +5,21 @@ description = "Compatibility profile for Cline (Claude Dev) extension agent."
 [filesystem]
 allow_read = [
     "$AGENT",
+    "$HOME/.cline",
+    "$HOME/.config/Code",
     "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
+    "$HOME/.bun",
+    "$HOME/.cache",
+    "/",
 ]
 allow_write = [
     "$AGENT",
+    "$HOME/.cline",
+    "$HOME/.config/Code",
     "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
+    "$HOME/.bun",
+    "$HOME/.cache",
+    "/tmp",
 ]
 
 [environment]

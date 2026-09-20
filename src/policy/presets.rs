@@ -105,6 +105,9 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.openai.com".into(),
             "api.anthropic.com".into(),
             "openrouter.ai".into(),
+            "opencode.ai".into(),
+            "api.github.com".into(),
+            "github.com".into(),
         ],
         "cursor" => vec![
             "api2.cursor.sh".into(),
@@ -120,6 +123,8 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.anthropic.com".into(),
             "api.openai.com".into(),
             "openrouter.ai".into(),
+            "otel.cline.bot".into(),
+            "registry.npmjs.org".into(),
         ],
         "windsurf" => vec!["api.codeium.com".into(), "windsurf.codeium.com".into()],
         "continue" => vec![
@@ -493,7 +498,14 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("opencode"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "opencode.ai",
+                "api.github.com",
+                "github.com",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("cursor"),
@@ -515,7 +527,13 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("cline"),
-            vec!["api.anthropic.com", "api.openai.com", "openrouter.ai"]
+            vec![
+                "api.anthropic.com",
+                "api.openai.com",
+                "openrouter.ai",
+                "otel.cline.bot",
+                "registry.npmjs.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("copilot"),
