@@ -7,6 +7,7 @@ allow_read = [
     "$HOME/.config/Antigravity",
     "$HOME/.gemini",
     "$AGENT",
+    "/run/user",
 ]
 allow_write = [
     "$HOME/.config/Antigravity",
@@ -20,6 +21,14 @@ pass_through = [
     "AGY_*",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
 ]
 
 [display_only_deny]

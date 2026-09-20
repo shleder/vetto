@@ -22,6 +22,7 @@ allow_read = [
   "$HOME/.local/share/pnpm/store",
   "$HOME/.gradle/caches", "$HOME/.m2/repository",
   "$HOME/.gitconfig",
+  "/run/user",
 ]
 
 # Only these safe session variables reach the agent. Exact names are allowed;
@@ -32,6 +33,8 @@ pass_through = [
   "HOME", "PATH", "SHELL", "USER", "LOGNAME",
   "TERM", "COLORTERM", "LANG", "LC_*",
   "TMPDIR", "PWD", "OLDPWD", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
+  "DISPLAY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE",
+  "XDG_SESSION_DESKTOP", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "BROWSER",
   "NO_COLOR", "CI", "TERM_PROGRAM",
 ]
 

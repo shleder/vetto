@@ -122,6 +122,25 @@ pub fn isolate_tmp(preserve_paths: &[&Path]) -> VettoResult<()> {
         }
     }
 
+    if let Ok(entries) = std::fs::read_dir(target) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+            if name == ".X11-unix"
+                || name.starts_with("scoped_dir")
+                || name.starts_with(".org.chromium.Chromium")
+            {
+                let path = entry.path();
+                if let Ok(c_path) = cstr(&path) {
+                    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+                    if fd >= 0 {
+                        preserved.push((Box::leak(path.into_boxed_path()), fd));
+                    }
+                }
+            }
+        }
+    }
+
     // SAFETY: valid NUL-terminated mount arguments; flags are scalar.
     let mount_res = unsafe {
         libc::mount(
