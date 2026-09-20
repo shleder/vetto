@@ -153,6 +153,42 @@ pub fn create_snapshot(
     session_id: &str,
     max_bytes: u64,
 ) -> Result<SnapshotMetadata> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from));
+    let is_home_or_root = project_dir.parent().is_none()
+        || std::fs::canonicalize(project_dir)
+            .map(|cp| cp.parent().is_none())
+            .unwrap_or(false)
+        || home
+            .as_deref()
+            .map(|h| {
+                h == project_dir
+                    || match (std::fs::canonicalize(h), std::fs::canonicalize(project_dir)) {
+                        (Ok(ch), Ok(cp)) => ch == cp,
+                        _ => false,
+                    }
+            })
+            .unwrap_or(false);
+    if is_home_or_root {
+        tracing::debug!(
+            "vetto: snapshot skipped for user home or root filesystem: {}",
+            project_dir.display()
+        );
+        let archive_file = snapshots_root_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join(".vetto").join("snapshots"))
+            .join(session_id)
+            .join("snapshot.tar");
+        return Ok(SnapshotMetadata {
+            session_id: session_id.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            project_dir: project_dir.to_path_buf(),
+            archive_file,
+            file_count: 0,
+            total_size_bytes: 0,
+        });
+    }
+
     let snapshots_dir = snapshots_root_dir()?.join(session_id);
     std::fs::create_dir_all(&snapshots_dir)
         .with_context(|| format!("create snapshot dir {}", snapshots_dir.display()))?;

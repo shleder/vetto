@@ -38,6 +38,98 @@ fn test_startup_manifest_capture_on_home_bypasses_crawl() {
 }
 
 #[test]
+fn test_snapshot_creation_on_home_bypasses_crawl() {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from))
+        .unwrap_or_else(|| {
+            let tmp = std::env::temp_dir();
+            std::env::set_var("HOME", &tmp);
+            tmp
+        });
+
+    let start = Instant::now();
+    let meta = vetto::rescue::snapshot::create_snapshot(&home, "test-sess", 50 * 1024 * 1024)
+        .expect("create_snapshot on home must succeed without error");
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        meta.file_count, 0,
+        "Snapshot on home directory must return 0 files"
+    );
+    assert_eq!(
+        meta.total_size_bytes, 0,
+        "Snapshot on home directory must return 0 total bytes"
+    );
+    assert!(
+        elapsed < Duration::from_millis(5),
+        "Snapshot creation on home directory must complete in <5ms, took {:?}",
+        elapsed
+    );
+}
+
+#[test]
+fn test_snapshot_creation_on_root_bypasses_crawl() {
+    #[cfg(unix)]
+    let root = std::path::PathBuf::from("/");
+    #[cfg(windows)]
+    let root = std::path::PathBuf::from(
+        std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string()) + "\\",
+    );
+
+    let start = Instant::now();
+    let meta = vetto::rescue::snapshot::create_snapshot(&root, "test-sess-root", 50 * 1024 * 1024)
+        .expect("create_snapshot on root must succeed without error");
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        meta.file_count, 0,
+        "Snapshot on root directory must return 0 files"
+    );
+    assert_eq!(
+        meta.total_size_bytes, 0,
+        "Snapshot on root directory must return 0 total bytes"
+    );
+    assert!(
+        elapsed < Duration::from_millis(5),
+        "Snapshot creation on root directory must complete in <5ms, took {:?}",
+        elapsed
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_creation_on_symlink_to_home_bypasses_crawl() {
+    let home = match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        Some(h) => h,
+        None => return,
+    };
+    let temp = TempProject::new("home-symlink-test");
+    let link = temp.path().join("home_symlink");
+    if std::os::unix::fs::symlink(&home, &link).is_err() {
+        return;
+    }
+    let start = Instant::now();
+    let meta = vetto::rescue::snapshot::create_snapshot(&link, "test-sess-sym", 50 * 1024 * 1024)
+        .expect("create_snapshot on symlink to home must succeed");
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        meta.file_count, 0,
+        "Snapshot on symlink to home must return 0 files"
+    );
+    assert_eq!(
+        meta.total_size_bytes, 0,
+        "Snapshot on symlink to home must return 0 total bytes"
+    );
+    assert!(
+        elapsed < Duration::from_millis(15),
+        "Snapshot creation on symlinked home must complete quickly, took {:?}",
+        elapsed
+    );
+}
+
+#[test]
 fn test_startup_manifest_fast_respects_budget_and_file_caps() {
     let dir = TempProject::new("startup-latency");
     let root = dir.path();

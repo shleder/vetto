@@ -882,7 +882,15 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     }
 
     // Determine whether working directory is the user home directory or root
-    let is_home_or_root = project == home || project.parent().is_none();
+    let is_home_or_root = project == home
+        || project.parent().is_none()
+        || match (
+            std::fs::canonicalize(&project),
+            std::fs::canonicalize(&home),
+        ) {
+            (Ok(cp), Ok(ch)) => cp == ch || cp.parent().is_none(),
+            _ => false,
+        };
 
     // Only capture a project manifest if diff reporting or snapshotting is requested
     let diff_requested = cfg.snapshot || cfg.ephemeral || !cfg.report_formats.is_empty();
@@ -904,7 +912,8 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty() {
+    if (pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty()) && !is_home_or_root
+    {
         match rescue::snapshot::create_snapshot(
             &project,
             &session_id,

@@ -3,6 +3,10 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.5] - 2026-09-20
+### Fixed
+- **Bypass Session Snapshotting on $HOME and Root Filesystem**: Eliminated 32-second freeze when launching agents directly from `$HOME` or root directory by guarding session snapshot creation in `src/main.rs` and `src/rescue/snapshot.rs`. Returning an instant empty snapshot prevents deep recursive file tree crawling across user homes while preserving rescue rollback guarantees for project workspaces.
+
 ## [0.3.4] - 2026-09-20
 ### Fixed
 - **Eliminate Startup Filesystem Stall**: Guarded `ProjectManifest::capture` against running on `$HOME`, made manifest capture lazy (opt-in for diffing/rollback), replaced full SHA-256 pre-spawn hashing with stat-only metadata fingerprints, and enforced a 150ms/1000-file circuit breaker.
