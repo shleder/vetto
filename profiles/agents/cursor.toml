@@ -6,6 +6,7 @@ description = "Compatibility profile for Cursor editor agent."
 allow_read = [
     "$AGENT",
     "$HOME/.config/Cursor",
+    "/run/user",
 ]
 allow_write = [
     "$AGENT",
@@ -15,6 +16,14 @@ allow_write = [
 [environment]
 pass_through = [
     "CURSOR_*",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
 ]
 
 [display_only_deny]

@@ -8,7 +8,7 @@
 set -eu
 
 GITHUB_REPO="shleder/vetto"
-DEFAULT_FALLBACK_VERSION="0.3.10"
+DEFAULT_FALLBACK_VERSION="0.3.11"
 
 # Initialize colors if stdout is connected to a terminal
 if [ -t 1 ]; then

@@ -79,6 +79,10 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "accounts.google.com".into(),
         ],
         "antigravity" | "agy" => vec![
+            "accounts.google.com".into(),
+            "oauth2.googleapis.com".into(),
+            "antigravity.google".into(),
+            "www.googleapis.com".into(),
             "cloudcode-pa.googleapis.com".into(),
             "daily-cloudcode-pa.googleapis.com".into(),
             "antigravity-unleash.goog".into(),
@@ -431,6 +435,10 @@ mod tests {
         assert_eq!(
             agent_network_allowlist("antigravity"),
             vec![
+                "accounts.google.com",
+                "oauth2.googleapis.com",
+                "antigravity.google",
+                "www.googleapis.com",
                 "cloudcode-pa.googleapis.com",
                 "daily-cloudcode-pa.googleapis.com",
                 "antigravity-unleash.goog",
@@ -444,6 +452,10 @@ mod tests {
         assert_eq!(
             agent_network_allowlist("agy"),
             vec![
+                "accounts.google.com",
+                "oauth2.googleapis.com",
+                "antigravity.google",
+                "www.googleapis.com",
                 "cloudcode-pa.googleapis.com",
                 "daily-cloudcode-pa.googleapis.com",
                 "antigravity-unleash.goog",

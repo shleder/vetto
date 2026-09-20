@@ -80,3 +80,38 @@ To verify that your desktop agent is properly sandboxed:
 2. Observe the result:
    - **Unsandboxed**: Returns the private key header (High risk!).
    - **With Vetto**: Returns `Permission denied: ~/.ssh/id_rsa` or `Landlock LSM kernel barrier blocked read`.
+
+---
+
+## 4. Desktop GUI & Session Bus Support
+
+AI coding agents running in desktop environments (such as Antigravity CLI `agy`, Cursor, and VS Code extensions) often require communication with the active user session for GUI rendering, browser OAuth authentication, and IDE single-instance IPC.
+
+Vetto natively supports desktop GUI sessions with the following capabilities:
+
+### Wayland & X11 Display Passthrough
+Desktop display and session identifiers are passed through to sandboxed processes:
+- `DISPLAY`, `XAUTHORITY` (X11 sessions)
+- `WAYLAND_DISPLAY` (Wayland sessions)
+- `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, `XDG_SESSION_DESKTOP`
+- `BROWSER` (Default web browser launcher)
+
+### D-Bus Session Bus & `/run/user` Access
+The sandbox allows read access to `/run/user/$UID/` and passes `DBUS_SESSION_BUS_ADDRESS`, enabling:
+- System notification popups and system-tray integration
+- System service queries (subject to agent policy)
+- IPC communication with desktop session managers
+
+### Electron & Chromium Singleton Sockets
+Desktop IDEs and Electron applications create singleton synchronization sockets and lockfiles in `/tmp`:
+- `/tmp/.X11-unix`: X11 communication sockets
+- `/tmp/scoped_dir*`: Chromium/Electron instance and IPC sockets
+- `/tmp/.org.chromium.Chromium*`: Browser communication channels
+
+During private `/tmp` filesystem isolation (`isolate_tmp`), Vetto automatically scans and preserves existing `/tmp/.X11-unix` and `scoped_dir*` directories by bind-mounting their file descriptors into the isolated namespace. This prevents "Another instance is running" or broken IPC errors when desktop agents communicate with already-running IDE instances.
+
+### Browser OAuth Flows
+When CLI agents (such as `agy`) initiate web-based OAuth authentication (e.g. Google OAuth endpoints `accounts.google.com`, `oauth2.googleapis.com`):
+1. The agent invokes `xdg-open` or `$BROWSER`.
+2. Access to `/run/user` and Wayland/X11 variables allows the browser to open without sandbox rejection.
+3. Network relay allowlist rules permit outbound HTTPS connections to authentication endpoints (`accounts.google.com`, `oauth2.googleapis.com`, `antigravity.google`, `www.googleapis.com`).

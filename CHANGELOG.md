@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.11] - 2026-09-20
+### Added
+- **Desktop GUI & IDE Environment Passthrough**: Added desktop session environment variables (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, `XDG_SESSION_DESKTOP`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, `BROWSER`) to `DEFAULT_ENV_PASSTHROUGH` and agent profiles (`default.toml`, `antigravity.toml`, `cursor.toml`), with `/run/user` read access for Wayland compositor and D-Bus IPC sockets.
+- **Automatic Desktop Socket Preservation in `/tmp`**: Enhanced `/tmp` isolation (`isolate_tmp`) to automatically scan and preserve X11 sockets (`/tmp/.X11-unix`) and Electron / Chromium SingletonSockets (`/tmp/scoped_dir*`, `/tmp/.org.chromium.Chromium*`), preventing IPC failures with already-running IDE instances.
+- **Full Antigravity CLI Google OAuth Endpoints**: Added Google authentication endpoints (`accounts.google.com`, `oauth2.googleapis.com`, `antigravity.google`, `www.googleapis.com`) to the network allowlist preset for `antigravity` and `agy`, completing browser-based sign-in flows under sandboxed execution.
+- **Desktop Integration Documentation**: Added desktop GUI session documentation in `docs/integrations/desktop.md`.
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.3.11 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
 ## [0.3.10] - 2026-09-20
 ### Added
 - **Wrap All Agents in PATH (`vetto enable --all`)**: Added the `--all` flag to `vetto enable` to automatically discover and wrap all installed coding CLI agents in `$PATH` simultaneously.
