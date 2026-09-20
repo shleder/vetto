@@ -4,9 +4,9 @@
 //! and compares it with the final session state to report modified/created/deleted files
 //! without duplicating the whole project tree.
 
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// File metadata captured in the baseline manifest.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -23,17 +23,26 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
-    /// Create a project manifest by inspecting all relevant files in the directory.
-    pub fn capture(root: &Path) -> Self {
+    /// Captures a project manifest using fast metadata inspection without reading file contents.
+    pub fn capture_fast(root: &Path, max_files: usize, budget: Duration) -> Self {
         let mut files = BTreeMap::new();
         let mut queue = vec![root.to_path_buf()];
+        let start = std::time::Instant::now();
 
         while let Some(dir) = queue.pop() {
+            if start.elapsed() >= budget || files.len() >= max_files {
+                break;
+            }
+
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
 
             for entry in entries.flatten() {
+                if start.elapsed() >= budget || files.len() >= max_files {
+                    break;
+                }
+
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
 
@@ -43,7 +52,7 @@ impl ProjectManifest {
                     }
                 } else if path.is_file() {
                     if let Ok(rel) = path.strip_prefix(root) {
-                        if let Some(fp) = fingerprint_file(&path) {
+                        if let Some(fp) = fast_fingerprint_file(&path) {
                             files.insert(rel.to_path_buf(), fp);
                         }
                     }
@@ -52,6 +61,11 @@ impl ProjectManifest {
         }
 
         Self { files }
+    }
+
+    /// Legacy capture compatibility method with bounded budget.
+    pub fn capture(root: &Path) -> Self {
+        Self::capture_fast(root, 1000, Duration::from_millis(150))
     }
 }
 
@@ -123,7 +137,7 @@ impl ProjectDiff {
     }
 }
 
-fn fingerprint_file(path: &Path) -> Option<FileFingerprint> {
+pub fn fast_fingerprint_file(path: &Path) -> Option<FileFingerprint> {
     let meta = std::fs::symlink_metadata(path).ok()?;
     if meta.file_type().is_symlink() || !meta.is_file() {
         return None;
@@ -137,23 +151,18 @@ fn fingerprint_file(path: &Path) -> Option<FileFingerprint> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // For files < 10 MB, compute sha256 hash. For larger files, use size + mtime hash
-    let sha256 = if size <= 10 * 1024 * 1024 {
-        if let Ok(bytes) = std::fs::read(path) {
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            format!("{:x}", hasher.finalize())
-        } else {
-            format!("{size}-{mtime_secs}")
-        }
-    } else {
-        format!("{size}-{mtime_secs}")
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        meta.ino()
     };
+    #[cfg(not(unix))]
+    let inode = 0u64;
 
     Some(FileFingerprint {
         size,
         mtime_secs,
-        sha256,
+        sha256: format!("{size}-{mtime_secs}-{inode}"),
     })
 }
 
@@ -198,6 +207,46 @@ mod tests {
         assert_eq!(diff.deleted, vec![PathBuf::from("deleted.txt")]);
         assert_eq!(diff.total_changed(), 3);
         assert!(diff.summary().contains("3 file(s)"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_fast_respects_max_files() {
+        let dir = temp_test_dir("max-files-test");
+        for i in 0..10 {
+            fs::write(dir.join(format!("file_{i}.txt")), format!("data {i}\n")).unwrap();
+        }
+
+        let manifest = ProjectManifest::capture_fast(&dir, 4, Duration::from_secs(5));
+        assert_eq!(manifest.files.len(), 4);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fast_fingerprint_file_format_and_properties() {
+        let dir = temp_test_dir("fp-test");
+        let file = dir.join("test.txt");
+        fs::write(&file, "hello world\n").unwrap();
+
+        let fp = fast_fingerprint_file(&file).expect("fingerprint should succeed");
+        assert_eq!(fp.size, 12);
+        assert!(fp.sha256.starts_with("12-"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fast_fingerprint_file_rejects_symlinks() {
+        let dir = temp_test_dir("symlink-test");
+        let file = dir.join("target.txt");
+        let link = dir.join("link.txt");
+        fs::write(&file, "target\n").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+
+        assert!(fast_fingerprint_file(&link).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }

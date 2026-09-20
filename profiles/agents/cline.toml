@@ -1,10 +1,25 @@
 [metadata]
 name = "cline"
-description = "Safe read-only compatibility roots for Cline."
+description = "Compatibility profile for Cline (Claude Dev) extension agent."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
+]
+
+[environment]
+pass_through = [
+    "CLINE_*",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+]
 
 [display_only_deny]
-paths = ["$AGENT/secrets.json"]
-
+paths = [
+    "$AGENT/*.sock",
+]

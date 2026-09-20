@@ -59,6 +59,11 @@ mod rescue;
 mod resource_limits_e2e;
 mod secret_masking;
 mod shim_interception;
+mod test_agent_profiles_e2e;
+#[cfg(target_os = "linux")]
+mod test_job_control;
+mod test_shell_hook_precedence;
+mod test_startup_latency;
 mod tier3_files_secrets;
 mod tier8_release;
 mod tier9_friction;

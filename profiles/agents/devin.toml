@@ -1,25 +1,17 @@
 [metadata]
 name = "devin"
-description = "Safe compatibility roots for Cognition Devin CLI."
+description = "Compatibility profile for Devin CLI environment."
 
 [filesystem]
-allow_write = [
-  "$HOME/.devin",
-  "$AGENT",
-]
-allow_read = [
-  "$HOME/.devin",
-  "$AGENT",
-]
+allow_read = ["$AGENT"]
+allow_write = ["$AGENT"]
 
 [environment]
 pass_through = [
-  "DEVIN_*",
-  "COGNITION_*",
+    "DEVIN_*",
 ]
 
 [display_only_deny]
 paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "$AGENT/*.sock",
 ]

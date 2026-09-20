@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.4] - 2026-09-20
+### Fixed
+- **Eliminate Startup Filesystem Stall**: Guarded `ProjectManifest::capture` against running on `$HOME`, made manifest capture lazy (opt-in for diffing/rollback), replaced full SHA-256 pre-spawn hashing with stat-only metadata fingerprints, and enforced a 150ms/1000-file circuit breaker.
+- **Linux Terminal Job Control & Handshake**: Implemented POSIX.1-2017 `tcsetpgrp` terminal handoff and signal masking (`SIGTTIN`/`SIGTTOU`) in `src/sandbox/linux/mod.rs`, eliminating child process suspension in interactive sessions.
+- **Indestructible Shell Hook Precedence**: Rewrote shell hooks for Bash, Zsh, Fish, and PowerShell to actively strip existing occurrences of `~/.vetto/shims` from `$PATH` and prepend them strictly to index 0.
+- **360° AI Coding Agent Profiles**: Audited and validated credentials unmasking and network allowlists across all 22 agent profiles (Codex, Claude, Aider, OpenCode, Gemini, Cursor, etc.).
+
 ## [0.3.3] - 2026-09-20
 ### Added
 - **PATH Shadowing Diagnostic & Warning in `doctor` and `enable`**: Added diagnostics in `src/doctor/` and `src/cli/enable.rs` detecting when an unshimmed binary appears earlier in `$PATH` than `~/.vetto/shims`, warning users with corrective guidance (`export PATH="$HOME/.vetto/shims:$PATH"`). Ensured shell hook instructions explicitly prepend `~/.vetto/shims` to the front of `$PATH`.

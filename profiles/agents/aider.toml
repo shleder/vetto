@@ -1,14 +1,16 @@
 [metadata]
 name = "aider"
-description = "Safe compatibility roots for Aider."
+description = "Hardened compatibility roots for Aider pair programmer."
 
 [filesystem]
 allow_read = [
     "$HOME/.aider.conf.yml",
     "$AGENT",
+    "$PROJECT/.aider.chat.history.md",
 ]
 allow_write = [
     "$AGENT",
+    "$PROJECT/.aider.chat.history.md",
 ]
 
 [environment]

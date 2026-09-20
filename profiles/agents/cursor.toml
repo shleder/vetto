@@ -1,14 +1,24 @@
 [metadata]
 name = "cursor"
-description = "Safe read-only compatibility roots for Cursor Agent."
+description = "Compatibility profile for Cursor editor agent."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.config/Cursor",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.config/Cursor",
+]
+
+[environment]
+pass_through = [
+    "CURSOR_*",
+]
 
 [display_only_deny]
 paths = [
-    "$AGENT/User/globalStorage",
     "$AGENT/*.sock",
     "$AGENT/*.ipc",
 ]
-

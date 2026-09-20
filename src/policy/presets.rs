@@ -59,23 +59,40 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
     let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
     match canon {
         "claude" => vec!["api.anthropic.com".into(), "claude.ai".into()],
-        "codex" => vec!["api.openai.com".into(), "chatgpt.com".into()],
-        "gemini" => vec!["generativelanguage.googleapis.com".into()],
+        "codex" => vec![
+            "api.openai.com".into(),
+            "chatgpt.com".into(),
+            "auth.openai.com".into(),
+            "cdn.oaistatic.com".into(),
+        ],
+        "gemini" => vec![
+            "generativelanguage.googleapis.com".into(),
+            "oauth2.googleapis.com".into(),
+            "accounts.google.com".into(),
+        ],
         "antigravity" => vec![
             "generativelanguage.googleapis.com".into(),
             "oauth2.googleapis.com".into(),
+            "accounts.google.com".into(),
         ],
         "aider" => vec![
             "api.openai.com".into(),
             "api.anthropic.com".into(),
             "openrouter.ai".into(),
+            "api.deepseek.com".into(),
+            "api.groq.com".into(),
+            "generativelanguage.googleapis.com".into(),
         ],
         "opencode" => vec![
             "api.openai.com".into(),
             "api.anthropic.com".into(),
             "openrouter.ai".into(),
         ],
-        "cursor" => vec!["api.cursor.com".into(), "api2.cursor.sh".into()],
+        "cursor" => vec![
+            "api.cursor.com".into(),
+            "api2.cursor.sh".into(),
+            "auth.cursor.sh".into(),
+        ],
         "copilot" => vec![
             "api.github.com".into(),
             "copilot-proxy.githubusercontent.com".into(),
@@ -346,27 +363,75 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("codex"),
-            vec!["api.openai.com", "chatgpt.com"]
+            vec![
+                "api.openai.com",
+                "chatgpt.com",
+                "auth.openai.com",
+                "cdn.oaistatic.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("codex-cli"),
-            vec!["api.openai.com", "chatgpt.com"]
+            vec![
+                "api.openai.com",
+                "chatgpt.com",
+                "auth.openai.com",
+                "cdn.oaistatic.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("gemini"),
-            vec!["generativelanguage.googleapis.com"]
+            vec![
+                "generativelanguage.googleapis.com",
+                "oauth2.googleapis.com",
+                "accounts.google.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("gemini-cli"),
-            vec!["generativelanguage.googleapis.com"]
+            vec![
+                "generativelanguage.googleapis.com",
+                "oauth2.googleapis.com",
+                "accounts.google.com"
+            ]
+        );
+        assert_eq!(
+            agent_network_allowlist("antigravity"),
+            vec![
+                "generativelanguage.googleapis.com",
+                "oauth2.googleapis.com",
+                "accounts.google.com"
+            ]
+        );
+        assert_eq!(
+            agent_network_allowlist("agy"),
+            vec![
+                "generativelanguage.googleapis.com",
+                "oauth2.googleapis.com",
+                "accounts.google.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("aider"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "api.deepseek.com",
+                "api.groq.com",
+                "generativelanguage.googleapis.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("aider-chat"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "api.deepseek.com",
+                "api.groq.com",
+                "generativelanguage.googleapis.com"
+            ]
         );
         assert_eq!(
             agent_network_allowlist("opencode"),
@@ -374,11 +439,11 @@ mod tests {
         );
         assert_eq!(
             agent_network_allowlist("cursor"),
-            vec!["api.cursor.com", "api2.cursor.sh"]
+            vec!["api.cursor.com", "api2.cursor.sh", "auth.cursor.sh"]
         );
         assert_eq!(
             agent_network_allowlist("cursor-server"),
-            vec!["api.cursor.com", "api2.cursor.sh"]
+            vec!["api.cursor.com", "api2.cursor.sh", "auth.cursor.sh"]
         );
         assert_eq!(
             agent_network_allowlist("cline"),
@@ -404,6 +469,39 @@ mod tests {
             agent_network_allowlist("goose"),
             vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
         );
+        assert_eq!(
+            agent_network_allowlist("openhands"),
+            vec!["api.all-hands.dev", "api.openai.com", "api.anthropic.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("swe_agent"),
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+        );
+        assert_eq!(
+            agent_network_allowlist("plandex"),
+            vec!["api.plandex.ai", "api.openai.com", "api.anthropic.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("mentat"),
+            vec!["api.mentat.ai", "api.openai.com", "api.anthropic.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("gpt_engineer"),
+            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+        );
+        assert_eq!(
+            agent_network_allowlist("devin"),
+            vec!["api.devin.ai", "cognition.ai", "api.openai.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("crust"),
+            vec!["api.crustdata.com", "api.openai.com"]
+        );
+        assert_eq!(
+            agent_network_allowlist("amp"),
+            vec!["api.amp.dev", "api.openai.com", "api.anthropic.com"]
+        );
+        assert!(agent_network_allowlist("custom").is_empty());
         assert!(agent_network_allowlist("unknown").is_empty());
     }
 

@@ -1,27 +1,24 @@
 [metadata]
 name = "windsurf"
-description = "Safe compatibility roots for Codeium Windsurf CLI."
+description = "Compatibility profile for Windsurf (Codeium) editor agent."
 
 [filesystem]
-allow_write = [
-  "$HOME/.codeium",
-  "$HOME/.windsurf",
-  "$AGENT",
-]
 allow_read = [
-  "$HOME/.codeium",
-  "$HOME/.windsurf",
-  "$AGENT",
+    "$AGENT",
+    "$HOME/.codeium",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.codeium",
 ]
 
 [environment]
 pass_through = [
-  "WINDSURF_*",
-  "CODEIUM_*",
+    "WINDSURF_*",
+    "CODEIUM_*",
 ]
 
 [display_only_deny]
 paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "$AGENT/*.sock",
 ]
