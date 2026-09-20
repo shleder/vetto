@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.6] - 2026-09-20
+### Fixed
+- **Eliminate Home Directory Recursive Glob Walk**: Replaced full recursive filesystem crawling with an instant `$HOME`/root bypass check in `resolve_entry_with_agent` (`src/policy/glob_resolve.rs`), eliminating up to 20 seconds of disk scan freeze upon agent startup.
+- **Interactive TTY Pass-Through**: Restored direct terminal inheritance (`StdioMode::Inherit`) for interactive agent sessions when `TuiMode::None` is active, removing `/dev/null` stdin redirection and ensuring interactive terminal prompts operate seamlessly.
+- **Front-of-PATH ~/.bash_profile Precedence**: Added `~/.bash_profile` to candidate startup scripts in `ShellKind::Bash` (`src/cli/shell_env.rs`) to guarantee `~/.vetto/shims` remains at the front of `$PATH` across all login shell environments.
+
 ## [0.3.5] - 2026-09-20
 ### Fixed
 - **Bypass Session Snapshotting on $HOME and Root Filesystem**: Eliminated 32-second freeze when launching agents directly from `$HOME` or root directory by guarding session snapshot creation in `src/main.rs` and `src/rescue/snapshot.rs`. Returning an instant empty snapshot prevents deep recursive file tree crawling across user homes while preserving rescue rollback guarantees for project workspaces.
