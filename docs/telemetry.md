@@ -37,7 +37,7 @@ When enabled, a single anonymous JSON payload is transmitted via HTTP POST upon 
 ```json
 {
   "schema_version": 1,
-  "vetto_version": "0.3.0",
+  "vetto_version": "0.3.8",
   "os": "linux",
   "arch": "x86_64",
   "tier": "full",
@@ -54,7 +54,7 @@ When enabled, a single anonymous JSON payload is transmitted via HTTP POST upon 
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | integer | Schema version format identifier (`1`). |
-| `vetto_version` | string | Installed `vetto` version (e.g. `0.3.0`). |
+| `vetto_version` | string | Installed `vetto` version (e.g. `0.3.8`). |
 | `os` | string | Target operating system family (`linux`, `macos`, `windows`). |
 | `arch` | string | Target CPU architecture (`x86_64`, `aarch64`). |
 | `tier` | string | Activated sandbox tier (`full`, `fs-only`, `macos-seatbelt`, `windows-appcontainer`). |
