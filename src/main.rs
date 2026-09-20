@@ -285,6 +285,31 @@ fn run() -> Result<()> {
         }) => {
             let mut cfg = RunConfig::from_cli(&args)?;
             if let Some(cmd) = command {
+                if let Some(canon) =
+                    vetto::policy::defaults::canonical_agent_name(cmd).filter(|&c| c != "custom")
+                {
+                    if let Ok(shims_dir) =
+                        vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)
+                    {
+                        let shim_path = shims_dir.join(canon);
+                        let is_wrapped =
+                            shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
+                        if !is_wrapped {
+                            let target_agent =
+                                if let Ok((bin, _)) = vetto::onboard::find_real_agent_binary(cmd) {
+                                    bin
+                                } else {
+                                    canon.to_string()
+                                };
+                            let _ = vetto::cli::enable::enable_agent_silent(
+                                &target_agent,
+                                false,
+                                vetto::cli::hook::HookScope::Global,
+                            );
+                        }
+                    }
+                }
+
                 let mut full_cmd = vec![cmd.clone()];
                 full_cmd.extend(run_args.clone());
                 cfg.agent = full_cmd;
@@ -309,6 +334,57 @@ fn run() -> Result<()> {
                         && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
                     {
                         cfg.tui = TuiMode::None;
+                    }
+                }
+            }
+            if cfg.agent.is_empty() {
+                let project = std::env::current_dir().context("getcwd")?;
+                let detected = match vetto::onboard::detect_agent(&project) {
+                    Ok(detected) => detected,
+                    Err(e) => bail!(
+                        "{e}\n\n\
+                         Get started:\n  \
+                         1. `vetto enable` — wrap installed agents (e.g. `vetto enable claude`)\n  \
+                         2. `vetto run <command>` — e.g. `vetto run claude` or `vetto run -- python agent.py`\n  \
+                         3. `vetto doctor` — see what this kernel can enforce\n\n\
+                         Docs: https://shleder.github.io/vetto/"
+                    ),
+                };
+                eprintln!(
+                    "vetto: zero-config auto-detected agent '{}' ({})",
+                    detected.name, detected.reason
+                );
+                cfg.agent = detected.command;
+                if cfg.agent_preset.is_none() {
+                    cfg.agent_preset = Some(detected.name.to_string());
+                }
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
+                    cfg.net = NetMode::Allowlist(detected.network_domains);
+                }
+                if args.tui.is_none() {
+                    let is_interactive = vetto::config::is_interactive_agent_command(
+                        cfg.agent_preset.as_deref(),
+                        &cfg.agent,
+                    );
+                    use std::io::IsTerminal;
+                    if is_interactive
+                        && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
+                    {
+                        cfg.tui = TuiMode::None;
+                    }
+                }
+                if let Ok(shims_dir) =
+                    vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)
+                {
+                    let shim_path = shims_dir.join(detected.name);
+                    let is_wrapped =
+                        shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
+                    if !is_wrapped {
+                        let _ = vetto::cli::enable::enable_agent_silent(
+                            detected.name,
+                            false,
+                            vetto::cli::hook::HookScope::Global,
+                        );
                     }
                 }
             }
@@ -360,7 +436,7 @@ fn run() -> Result<()> {
                 if cfg.agent_preset.is_none() {
                     cfg.agent_preset = Some(detected.name.to_string());
                 }
-                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
             }
@@ -694,7 +770,7 @@ fn run() -> Result<()> {
                 if cfg.agent_preset.is_none() {
                     cfg.agent_preset = Some(detected.name.to_string());
                 }
-                if matches!(cfg.net, NetMode::Off) && !detected.network_domains.is_empty() {
+                if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
             }
