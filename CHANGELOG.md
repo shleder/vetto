@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.12] - 2026-09-20
+### Fixed
+- **Network Broker Concurrency & Head-of-Line Blocking**: Decoupled data tunnel forwarding and pump execution (`forward_data_tunnel`) out of the synchronous broker thread into dedicated `broker-tunnel` worker threads in `src/sandbox/linux/net_relay.rs`. This allows concurrent HTTP/HTTPS, SSE, and long-polling requests (e.g. Unleash flags alongside CodeAssist APIs) without head-of-line blocking deadlocks or `context deadline exceeded` timeouts.
+- **Packaging Parity**: Synchronized version 0.3.12 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
+### Added
+- **Google Client Telemetry Allowlist**: Added `play.googleapis.com` to the default network egress allowlist presets and verification suites for `antigravity` and `agy`.
+
 ## [0.3.11] - 2026-09-20
 ### Added
 - **Desktop GUI & IDE Environment Passthrough**: Added desktop session environment variables (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, `XDG_SESSION_DESKTOP`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, `BROWSER`) to `DEFAULT_ENV_PASSTHROUGH` and agent profiles (`default.toml`, `antigravity.toml`, `cursor.toml`), with `/run/user` read access for Wayland compositor and D-Bus IPC sockets.

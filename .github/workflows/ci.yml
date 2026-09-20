@@ -4,9 +4,13 @@ on:
   push:
     # `*` does not cross `/`: nested platform/integration branches
     # (`feat/platform/*`, `integration/*`) need `**` to trigger CI.
-    branches: [main, 'tier-*', 'feat/*', 'feat/**', 'fix/*', 'integration/**']
+    branches: [main, 'tier-*', 'fix/*', 'integration/**']
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -89,6 +93,13 @@ jobs:
 
       - name: Release build
         run: cargo build --release --all-features
+
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: vetto-x86_64-unknown-linux-gnu
+          path: target/release/vetto
+          if-no-files-found: error
 
   check-aarch64:
     name: compile + syscall ABI tests (aarch64 via QEMU)

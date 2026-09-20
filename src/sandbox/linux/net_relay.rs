@@ -841,11 +841,29 @@ fn create_and_send_data_fd(
 
     // Two independent half-duplex pumps with byte counting and quota enforcement:
     let mine = unsafe { std::os::unix::net::UnixStream::from_raw_fd(mine.into_raw_fd()) };
+    let host_owned = host.to_string();
+    std::thread::Builder::new()
+        .name("broker-tunnel".into())
+        .spawn(move || {
+            forward_data_tunnel(mine, tcp, host_owned, target_addr, quota, bus);
+        })
+        .map_err(|_| ())?;
+    Ok(())
+}
+
+fn forward_data_tunnel(
+    mine: std::os::unix::net::UnixStream,
+    tcp: TcpStream,
+    host_owned: String,
+    target_addr: SocketAddr,
+    quota: Option<u64>,
+    bus: EventBus,
+) {
     let Ok(unix_write) = mine.try_clone() else {
-        return Ok(());
+        return;
     };
     let Ok(tcp_read) = tcp.try_clone() else {
-        return Ok(());
+        return;
     };
 
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -860,7 +878,6 @@ fn create_and_send_data_fd(
     let quota_kill_rx = Arc::clone(&quota_killed);
     let quota_kill_tx = Arc::clone(&quota_killed);
 
-    let host_owned = host.to_string();
     let host_rx = host_owned.clone();
     let host_tx = host_owned.clone();
     let bus_rx = bus.clone();
@@ -961,11 +978,11 @@ fn create_and_send_data_fd(
 
         if !sni_ok {
             let _ = outbound.shutdown(std::net::Shutdown::Both);
-            return Ok(());
+            return;
         }
 
         if outbound.write_all(&sni_buf).is_err() {
-            return Ok(());
+            return;
         }
         bytes_tx.fetch_add(sni_buf.len() as u64, Ordering::Relaxed);
     }
@@ -1018,8 +1035,6 @@ fn create_and_send_data_fd(
         bytes_tx: final_tx,
         bytes_rx: final_rx,
     });
-
-    Ok(())
 }
 
 fn socketpair_stream() -> Result<(OwnedFd, OwnedFd), ()> {
