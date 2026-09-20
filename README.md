@@ -1,8 +1,26 @@
+![vetto — kernel wall between the agent and your machine](assets/readme/hero.svg)
+
 # vetto
 
 Your coding agent runs with your privileges. It can read your SSH keys, exfiltrate your `.env`, and fork-bomb your machine — by accident, on a normal Tuesday, because a dependency hook or a prompt injection told it to. `vetto` puts a kernel wall between the agent and your machine, so the worst case is a blocked syscall instead of a wiped home directory.
 
 No root. No daemons. Cold start in about 4 milliseconds.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/shleder/vetto/actions) [![Version](https://img.shields.io/badge/version-0.3.7-blue?style=flat-square)](https://github.com/shleder/vetto/releases/tag/v0.3.7) [![npm](https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square)](https://www.npmjs.com/package/@shledery/vetto) [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-green?style=flat-square)](#license) [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square)](#platform-guarantees)
+
+## Proof before promises
+
+A confined agent that reaches for secrets or the network meets the boundary, not your files:
+
+```text
+> Reading ~/.ssh/id_rsa...        BLOCKED (secret mask, EACCES)
+> Opening raw socket...            BLOCKED (net namespace, EAFNOSUPPORT)
+> Spawning detached daemon...      TERMINATED (tree extinction, exit 125)
+```
+
+![Blocked exfiltration attempt under vetto](assets/demo.svg)
+
+Exit `125` is the whole contract: isolation failed or was breached, so nothing proceeds. Orphaned and zombie processes are swept within 500 milliseconds. Anything the sandbox cannot guarantee on your OS is reported as unsupported — never silently downgraded.
 
 ## Install
 
@@ -38,17 +56,7 @@ vetto mcp wrap --allow ./data --net off -- <mcp-server-binary>
 
 After a run, `vetto audit --latest` shows what got blocked; `--recap` prints the security summary. `vetto doctor` reports what your kernel can actually enforce and fixes what it can with `--fix`.
 
-## When it says no
-
-A confined agent that reaches for secrets or the network meets the boundary, not your files:
-
-```text
-> Reading ~/.ssh/id_rsa...        BLOCKED (secret mask, EACCES)
-> Opening raw socket...            BLOCKED (net namespace, EAFNOSUPPORT)
-> Spawning detached daemon...      TERMINATED (tree extinction, exit 125)
-```
-
-Exit `125` is the whole contract: isolation failed or was breached, so nothing proceeds. Orphaned and zombie processes are swept within 500 milliseconds. Anything the sandbox cannot guarantee on your OS is reported as unsupported — never silently downgraded.
+## Platform guarantees
 
 That honesty has three levels. Linux gets full kernel confinement: Landlock rules, user/mount/pid/network namespaces, seccomp filters, cgroup ceilings. macOS gets Seatbelt write locks with best-effort limits (Apple does not allow unprivileged read-denial of the dyld cache). Native Windows gets AppContainer plus Job Objects — a preview tier, so production Windows runs go through WSL2. Full matrix: [platform backends](docs/platform-backends.md).
 
