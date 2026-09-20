@@ -115,6 +115,18 @@ fn test_doctor_parity_and_tier_honesty() {
             out.contains("Tier 3"),
             "Windows doctor missing Tier 3 platform status: {out}"
         );
+        assert!(
+            out.contains("Windows operates under Tier 3 isolation"),
+            "Windows doctor missing honest Tier 3 notice: {out}"
+        );
+        assert!(
+            out.contains("cgroups v2 limits:"),
+            "Windows doctor missing honest cgroup limits status: {out}"
+        );
+        assert!(
+            out.contains("unsupported"),
+            "Windows doctor must report cgroup limits as unsupported, not panic: {out}"
+        );
     }
 }
 
