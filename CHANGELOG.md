@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.3.10] - 2026-09-20
+### Added
+- **Wrap All Agents in PATH (`vetto enable --all`)**: Added the `--all` flag to `vetto enable` to automatically discover and wrap all installed coding CLI agents in `$PATH` simultaneously.
+- **Antigravity Network Preset Expansion**: Added `daily-cloudcode-pa.googleapis.com`, `antigravity-unleash.goog`, `alkalimodelplatform-pa.googleapis.com`, and `generativelanguage.googleapis.com` to Antigravity CLI network egress presets.
+- **Strengthened Claude Code and Cursor Network Presets**: Expanded default egress domain allowlists for Claude Code and Cursor CLI agents.
+
+### Fixed
+- **Preserve `/tmp` Workspaces Across Mount Isolation**: Pinned inode descriptors via `O_PATH` prior to mounting isolated `tmpfs` over `/tmp`, ensuring CWD and writable workspaces under `/tmp` are restored and re-bound, preventing `ENOENT` (exit code 117) errors during agent startup.
+- **Packaging Parity**: Synchronized version 0.3.10 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VSCode extensions).
+
 ## [0.3.9] - 2026-09-20
 ### Fixed
 - **Shim Recursion Barrier Bypass**: Removed premature `export VETTO_WRAPPED=1` / `set "VETTO_WRAPPED=1"` from generated POSIX and Windows transparent binary shims (`src/shim/registry.rs`), eliminating inadvertent bypass of sandbox interception in child shells and nested subcommands.

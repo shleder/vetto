@@ -100,15 +100,30 @@ pub fn isolate_dev_shm() -> VettoResult<()> {
 }
 
 /// Mount a private, bounded `tmpfs` over `/tmp` (64 MB, mode 1777, nosuid, nodev).
-pub fn isolate_tmp() -> VettoResult<()> {
+pub fn isolate_tmp(preserve_paths: &[&Path]) -> VettoResult<()> {
     let target = Path::new("/tmp");
     if !target.exists() || !target.is_dir() {
         return Ok(());
     }
     let dst = cstr(target)?;
     let options = cstr(Path::new(TMP_MOUNT_OPTIONS))?;
+
+    // Filter paths that are located under /tmp (excluding /tmp itself) and exist
+    let mut preserved: Vec<(&Path, libc::c_int)> = Vec::new();
+    for &path in preserve_paths {
+        if path.starts_with("/tmp") && path != Path::new("/tmp") && path.exists() {
+            if let Ok(c_path) = cstr(path) {
+                // SAFETY: open with O_PATH and O_CLOEXEC to hold an inode descriptor
+                let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+                if fd >= 0 {
+                    preserved.push((path, fd));
+                }
+            }
+        }
+    }
+
     // SAFETY: valid NUL-terminated mount arguments; flags are scalar.
-    if unsafe {
+    let mount_res = unsafe {
         libc::mount(
             std::ptr::null(),
             dst.as_ptr(),
@@ -116,12 +131,51 @@ pub fn isolate_tmp() -> VettoResult<()> {
             MS_NOSUID | MS_NODEV,
             options.as_ptr().cast(),
         )
-    } != 0
-    {
+    };
+    if mount_res != 0 {
+        for (_, fd) in preserved {
+            unsafe {
+                libc::close(fd);
+            }
+        }
         return Err(VettoError::Mount(format!(
             "isolated /tmp tmpfs: {}",
             std::io::Error::last_os_error()
         )));
+    }
+
+    // Restore preserved paths into the new tmpfs
+    for (path, fd) in preserved {
+        let metadata = path.metadata();
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(true);
+        if is_dir {
+            let _ = std::fs::create_dir_all(path);
+        } else if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+            let _ = std::fs::File::create(path);
+        }
+        let proc_fd = format!("/proc/self/fd/{fd}");
+        if let (Ok(c_src), Ok(c_dst)) = (cstr(Path::new(&proc_fd)), cstr(path)) {
+            let bind_res = unsafe {
+                libc::mount(
+                    c_src.as_ptr(),
+                    c_dst.as_ptr(),
+                    std::ptr::null(),
+                    MS_BIND | MS_REC,
+                    std::ptr::null(),
+                )
+            };
+            if bind_res != 0 {
+                eprintln!(
+                    "vetto: warning: failed to bind-mount preserved path {}: {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        unsafe {
+            libc::close(fd);
+        }
     }
     Ok(())
 }

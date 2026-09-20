@@ -78,6 +78,7 @@ fn test_interactive_agent_preserves_stdin_terminal() {
         "cursor",
         "aider",
         "antigravity",
+        "agy",
     ];
     for agent in agents {
         assert!(

@@ -53,6 +53,20 @@ pub fn resolve_in_path(cmd: &str) -> Result<PathBuf> {
             }
         }
     }
+    #[cfg(unix)]
+    {
+        for dir in ["/bin", "/usr/bin"] {
+            let candidate = Path::new(dir).join(cmd);
+            if candidate.is_file() {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = candidate.metadata() {
+                    if meta.permissions().mode() & 0o111 != 0 {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
     bail!("command '{cmd}' not found in PATH")
 }
 
