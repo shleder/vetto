@@ -71,7 +71,14 @@ fn test_interactive_agent_preserves_stdin_terminal() {
     use std::os::fd::AsRawFd;
 
     // Verify that interactive agents are recognized by the runtime
-    let agents = ["claude", "codex", "gemini", "cursor", "aider", "antigravity"];
+    let agents = [
+        "claude",
+        "codex",
+        "gemini",
+        "cursor",
+        "aider",
+        "antigravity",
+    ];
     for agent in agents {
         assert!(
             vetto::config::is_interactive_agent_command(Some(agent), &[]),

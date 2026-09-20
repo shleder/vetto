@@ -58,7 +58,10 @@ pub fn resolve_entry_with_agent(entry: &str, vars: &Vars, agent: Option<&Path>) 
 
     let is_home_or_root = vars.project == vars.home
         || vars.project.parent().is_none()
-        || match (std::fs::canonicalize(vars.project), std::fs::canonicalize(vars.home)) {
+        || match (
+            std::fs::canonicalize(vars.project),
+            std::fs::canonicalize(vars.home),
+        ) {
             (Ok(cp), Ok(ch)) => cp == ch || cp.parent().is_none(),
             _ => false,
         };
