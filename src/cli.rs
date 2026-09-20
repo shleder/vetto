@@ -74,8 +74,8 @@ pub struct Cli {
     pub net: Option<String>,
 
     /// UI mode: statusline | full | none
-    #[arg(long, value_name = "MODE", default_value = "statusline")]
-    pub tui: String,
+    #[arg(long, value_name = "MODE")]
+    pub tui: Option<String>,
 
     /// Explicit sandbox backend: auto | process | win-sandbox
     #[arg(long, value_name = "BACKEND")]

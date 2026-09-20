@@ -224,7 +224,7 @@ fn handle_install(
         println!("  git hooks : configured in {}", gdir.display());
     }
     println!();
-    println!("To apply in your current shell session, run:");
+    println!("To apply in your current shell session, prepend '~/.vetto/shims' to the FRONT of your PATH:");
     println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
 
     Ok(())

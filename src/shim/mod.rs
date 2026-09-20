@@ -365,6 +365,9 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         // Recursion barrier active — execute real binary directly with zero overhead
         let mut cmd = Command::new(&real_binary);
         cmd.args(&clean_args);
+        cmd.stdin(std::process::Stdio::inherit());
+        cmd.stdout(std::process::Stdio::inherit());
+        cmd.stderr(std::process::Stdio::inherit());
         if let Some(limit) = configured_timeout {
             let status = crate::watchdog::timeout::run_with_timeout(&mut cmd, limit)?;
             status.code().unwrap_or(124)
@@ -382,6 +385,12 @@ pub fn dispatch(binary_name: &str, args: &[String]) -> Result<i32> {
         supervisor_cmd.env(ENV_VETTO_SHIM_ACTIVE, "1");
         supervisor_cmd.env(ENV_VETTO_WRAPPED, "1");
 
+        // Preserve raw stdio pass-through without freezing
+        supervisor_cmd.stdin(std::process::Stdio::inherit());
+        supervisor_cmd.stdout(std::process::Stdio::inherit());
+        supervisor_cmd.stderr(std::process::Stdio::inherit());
+
+        supervisor_cmd.arg("--tui=none");
         supervisor_cmd.arg("--");
         supervisor_cmd.arg(&real_binary);
         supervisor_cmd.args(&clean_args);
