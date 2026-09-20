@@ -328,14 +328,13 @@ pub enum Command {
         lint: bool,
     },
     /// Run an agent command under the Vetto sandbox supervisor
-    #[command(hide = true)]
     Run {
         /// Target agent binary or command
         #[arg(value_name = "COMMAND")]
         command: Option<String>,
 
         /// Arguments passed to the agent
-        #[arg(last = true, value_name = "ARGS")]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "ARGS")]
         args: Vec<String>,
     },
     /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml

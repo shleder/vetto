@@ -497,3 +497,179 @@ fn test_shell_hook_relocated_to_eof_on_repair_eliminates_shadowing() {
         );
     }
 }
+
+#[test]
+fn test_vetto_run_subcommand_with_flags_and_trailing_args() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
+    let project = TempProject::new("vetto-run-flags");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_tool = bin_dir.join("myagent");
+    write_file(
+        &mock_tool,
+        "#!/bin/sh\necho \"args: $@\"\nexit 0\n",
+    );
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho args: %*\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_tool, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    // 1. Verify `vetto run myagent -p "fix bug" --verbose --model sonnet` passes flags cleanly
+    let out = Command::new(vetto_bin())
+        .args([
+            "--tui=none",
+            "--net=off",
+            "run",
+            "myagent",
+            "-p",
+            "fix bug",
+            "--verbose",
+            "--model",
+            "sonnet",
+        ])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto run myagent");
+
+    assert!(
+        out.status.success(),
+        "vetto run with flags must succeed: stdout: {} stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("fix bug") && text.contains("--verbose") && text.contains("sonnet"),
+        "flags and options must pass through to tool: {text}"
+    );
+
+    // 2. Verify `vetto run -- myagent -p "fix bug 2"` also works with double dash
+    let out2 = Command::new(vetto_bin())
+        .args([
+            "--tui=none",
+            "--net=off",
+            "run",
+            "--",
+            "myagent",
+            "-p",
+            "fix bug 2",
+        ])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto run with double dash");
+
+    assert!(
+        out2.status.success(),
+        "vetto run with -- must succeed: stdout: {} stderr: {}",
+        stdout(&out2),
+        stderr(&out2)
+    );
+    let text2 = stdout(&out2);
+    assert!(
+        text2.contains("fix bug 2"),
+        "arguments must pass through with double dash: {text2}"
+    );
+}
+
+#[test]
+fn test_vetto_run_subcommand_zero_arg_auto_detect() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
+    let project = TempProject::new("vetto-run-autodetect");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    // Create marker CLAUDE.md
+    write_file(&proj_dir.join("CLAUDE.md"), "# Project Guide\n");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_claude = bin_dir.join("claude");
+    write_file(
+        &mock_claude,
+        "#!/bin/sh\necho \"auto-detected claude ran successfully\"\nexit 0\n",
+    );
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("claude.cmd"),
+            "@echo off\r\necho auto-detected claude ran successfully\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_claude).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_claude, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out = Command::new(vetto_bin())
+        .args(["--tui=none", "--net=off", "run"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto run zero-arg");
+
+    assert!(
+        out.status.success(),
+        "vetto run zero-arg must succeed: stdout: {} stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("auto-detected claude ran successfully"),
+        "mock claude must have executed: {text}"
+    );
+}
