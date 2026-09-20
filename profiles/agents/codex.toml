@@ -1,6 +1,6 @@
 [metadata]
 name = "codex"
-description = "Safe compatibility roots for the Codex CLI."
+description = "Hardened compatibility roots for OpenAI Codex CLI."
 
 [filesystem]
 allow_write = ["$AGENT"]
@@ -17,5 +17,5 @@ pass_through = [
 paths = [
     "$AGENT/app_server.sock",
     "$AGENT/*.sock",
+    "$AGENT/*.ipc",
 ]
-

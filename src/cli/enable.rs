@@ -30,6 +30,10 @@ pub struct EnableArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
+    /// Automatically repair shell configuration profiles with indestructible hooks
+    #[arg(long)]
+    pub fix: bool,
+
     /// Installation scope (global: ~/.vetto/shims, local: .vetto/shims)
     #[arg(long, value_enum, default_value = "global")]
     pub scope: HookScope,
@@ -67,7 +71,7 @@ pub fn run_enable(args: &EnableArgs) -> Result<()> {
         None => list_agents(args.scope),
         Some(agent_raw) => {
             let agent_name = agent_raw.trim().to_lowercase();
-            enable_agent(&agent_name, args.force, args.scope)
+            enable_agent_internal(&agent_name, args.force, args.fix, args.scope, false)
         }
     }
 }
@@ -80,15 +84,26 @@ pub fn run_disable(args: &DisableArgs) -> Result<()> {
 
 /// Enables transparent sandbox wrapping for a specific agent without banner output.
 pub fn enable_agent_silent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
-    enable_agent_internal(agent, force, scope, true)
+    enable_agent_internal(agent, force, false, scope, true)
 }
 
 /// Enables transparent sandbox wrapping for a specific agent.
 pub fn enable_agent(agent: &str, force: bool, scope: HookScope) -> Result<()> {
-    enable_agent_internal(agent, force, scope, false)
+    enable_agent_internal(agent, force, false, scope, false)
 }
 
-fn enable_agent_internal(agent: &str, force: bool, scope: HookScope, silent: bool) -> Result<()> {
+/// Enables transparent sandbox wrapping for a specific agent with explicit auto-repair control.
+pub fn enable_agent_with_fix(agent: &str, force: bool, fix: bool, scope: HookScope) -> Result<()> {
+    enable_agent_internal(agent, force, fix, scope, false)
+}
+
+fn enable_agent_internal(
+    agent: &str,
+    force: bool,
+    fix: bool,
+    scope: HookScope,
+    silent: bool,
+) -> Result<()> {
     // 1. Resolve the real host binary FIRST to verify it is installed and in PATH
     let real_bin = find_real_binary(agent).map_err(|_| {
         anyhow::anyhow!(
@@ -123,13 +138,17 @@ fn enable_agent_internal(agent: &str, force: bool, scope: HookScope, silent: boo
     let binaries = vec![agent.to_string()];
     ShimRegistry::create_shims(&shims_dir, &binaries, current_exe.as_deref())?;
 
-    // 5. Ensure shell environment integration is installed
+    // 5. Ensure shell environment integration is installed and up to date
     let home_dir = get_home_dir()?;
-    let shells = shell_env::detect_available_shells(&home_dir);
-    for &shell in &shells {
-        let status = shell_env::check_shell_hook_status(shell, &home_dir, &shims_dir);
-        if !status.is_installed {
-            let _ = shell_env::install_shell_hook(shell, &shims_dir, &home_dir, false);
+    if fix {
+        let _ = shell_env::repair_shell_profiles(&shims_dir, &home_dir);
+    } else {
+        let shells = shell_env::detect_available_shells(&home_dir);
+        for &shell in &shells {
+            let status = shell_env::check_shell_hook_status(shell, &home_dir, &shims_dir);
+            if !status.is_installed || force || !status.is_indestructible() {
+                let _ = shell_env::install_shell_hook(shell, &shims_dir, &home_dir, force);
+            }
         }
     }
 
@@ -152,7 +171,9 @@ fn enable_agent_internal(agent: &str, force: bool, scope: HookScope, silent: boo
         );
 
         // Check if shims_dir is in current PATH or if an unshimmed binary shadows the shim
-        if let Some(warning) = crate::doctor::check_path_shadowing(agent, Some(&shims_dir)) {
+        if let Some(warning) =
+            crate::doctor::agent_check::check_path_shadowing_with_fix(agent, Some(&shims_dir), fix)
+        {
             println!();
             println!("{warning}");
         } else if let Some(path_val) = std::env::var_os("PATH") {
@@ -356,9 +377,20 @@ mod tests {
                 assert_eq!(args.agent.as_deref(), Some("claude"));
                 assert!(!args.status);
                 assert!(!args.force);
+                assert!(!args.fix);
                 assert_eq!(args.scope, HookScope::Global);
             }
             _ => panic!("expected enable"),
+        }
+
+        let cli_fix = TestCli::try_parse_from(["vetto", "enable", "--fix", "claude"])
+            .expect("parse enable fix");
+        match cli_fix.command {
+            TestSubcommand::Enable(args) => {
+                assert_eq!(args.agent.as_deref(), Some("claude"));
+                assert!(args.fix);
+            }
+            _ => panic!("expected enable fix"),
         }
 
         let cli_status =

@@ -786,34 +786,40 @@ mod tests {
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
         assert_eq!(cfg.net.label(), "allowlist:api.anthropic.com,claude.ai");
 
-        // Codex defaults to api.openai.com,chatgpt.com
+        // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
-        assert_eq!(cfg.net.label(), "allowlist:api.openai.com,chatgpt.com");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com"
+        );
 
-        // Codex-cli alias defaults to api.openai.com,chatgpt.com
+        // Codex-cli alias defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com
         let cli = Cli::try_parse_from(["vetto", "--", "codex-cli"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
-        assert_eq!(cfg.net.label(), "allowlist:api.openai.com,chatgpt.com");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com"
+        );
 
-        // Gemini defaults to generativelanguage.googleapis.com
+        // Gemini defaults to generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com
         let cli = Cli::try_parse_from(["vetto", "--", "gemini"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("gemini"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:generativelanguage.googleapis.com"
+            "allowlist:generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com"
         );
 
-        // Aider defaults to api.openai.com,api.anthropic.com,openrouter.ai
+        // Aider defaults to api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com
         let cli = Cli::try_parse_from(["vetto", "--", "aider"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("aider"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai"
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com"
         );
 
         // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai
@@ -825,11 +831,14 @@ mod tests {
             "allowlist:api.openai.com,api.anthropic.com,openrouter.ai"
         );
 
-        // Cursor defaults to api.cursor.com,api2.cursor.sh
+        // Cursor defaults to api.cursor.com,api2.cursor.sh,auth.cursor.sh
         let cli = Cli::try_parse_from(["vetto", "--", "cursor-server"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("cursor"));
-        assert_eq!(cfg.net.label(), "allowlist:api.cursor.com,api2.cursor.sh");
+        assert_eq!(
+            cfg.net.label(),
+            "allowlist:api.cursor.com,api2.cursor.sh,auth.cursor.sh"
+        );
 
         // Explicit --agent flag with alias also defaults to agent allowlist
         let cli = Cli::try_parse_from([

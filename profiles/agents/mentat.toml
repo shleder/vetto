@@ -1,26 +1,13 @@
 [metadata]
 name = "mentat"
-description = "Safe compatibility roots for Mentat CLI."
+description = "Compatibility profile for Mentat coding assistant."
 
 [filesystem]
-allow_write = [
-  "$HOME/.mentat",
-  "$AGENT",
-]
-allow_read = [
-  "$HOME/.mentat",
-  "$AGENT",
-]
+allow_read = ["$AGENT"]
+allow_write = ["$AGENT"]
 
 [environment]
 pass_through = [
-  "MENTAT_*",
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-]
-
-[display_only_deny]
-paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "MENTAT_*",
+    "OPENAI_API_KEY",
 ]

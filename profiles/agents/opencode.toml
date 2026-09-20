@@ -1,34 +1,21 @@
 [metadata]
 name = "opencode"
-description = "Safe compatibility roots for OpenCode CLI."
+description = "Safe compatibility roots for OpenCode agent."
 
 [filesystem]
-allow_write = [
-  "$HOME/.config/opencode",
-  "$HOME/.local/share/opencode",
-  "$HOME/.opencode",
-  "$AGENT",
-]
-allow_read = [
-  "$HOME/.config/opencode",
-  "$HOME/.local/share/opencode",
-  "$HOME/.opencode",
-  "$HOME/.local/bin",
-  "$AGENT",
-]
+allow_read = ["$AGENT"]
+allow_write = ["$AGENT"]
 
 [environment]
 pass_through = [
-  "OPENCODE_*",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_BASE_URL",
-  "OPENROUTER_API_KEY",
+    "OPENCODE_*",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
 ]
 
 [display_only_deny]
 paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "$AGENT/*.sock",
+    "$AGENT/*.ipc",
 ]

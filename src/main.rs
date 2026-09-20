@@ -881,7 +881,24 @@ fn supervise(cfg: RunConfig) -> Result<()> {
         }
     }
 
-    let initial_manifest = report::diff_project::ProjectManifest::capture(&project);
+    // Determine whether working directory is the user home directory or root
+    let is_home_or_root = project == home || project.parent().is_none();
+
+    // Only capture a project manifest if diff reporting or snapshotting is requested
+    let diff_requested = cfg.snapshot || cfg.ephemeral || !cfg.report_formats.is_empty();
+
+    let diff_enabled = diff_requested && !is_home_or_root;
+
+    let initial_manifest = if diff_enabled {
+        // Fast stat-only capture with budget cap (1000 files, 150ms budget)
+        report::diff_project::ProjectManifest::capture_fast(
+            &project,
+            1000,
+            std::time::Duration::from_millis(150),
+        )
+    } else {
+        report::diff_project::ProjectManifest::default()
+    };
     let session_id = format!(
         "{}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
@@ -1547,7 +1564,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
     let _ = vetto::telemetry::send_session_telemetry(&snap, tier_label(tier));
     // Activation funnel milestone (issue #27): first supervised session done.
     let _ = vetto::telemetry::record_funnel_milestone("first_session");
-    let diff = report::diff_project::ProjectDiff::compute(&initial_manifest, &project);
+    let diff = if diff_enabled {
+        report::diff_project::ProjectDiff::compute(&initial_manifest, &project)
+    } else {
+        report::diff_project::ProjectDiff::default()
+    };
     if !diff.is_empty() {
         bus.publish(Event::Notice {
             ts: events::types::now(),

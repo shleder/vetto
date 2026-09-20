@@ -1,3 +1,12 @@
 [metadata]
 name = "custom"
-description = "Neutral compatibility preset for a custom agent."
+description = "Generic sandboxed execution profile for user-defined tools."
+
+[filesystem]
+allow_read = ["$PROJECT"]
+allow_write = ["$PROJECT", "/tmp"]
+
+[environment]
+pass_through = [
+    "PATH", "HOME", "USER", "SHELL", "LANG", "LC_*", "TERM",
+]

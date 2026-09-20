@@ -1,9 +1,20 @@
 [metadata]
 name = "copilot"
-description = "Safe read-only compatibility roots for GitHub Copilot CLI."
+description = "Compatibility profile for GitHub Copilot CLI."
 
 [filesystem]
-allow_read = ["$AGENT/cache", "$AGENT/logs"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.config/github-copilot",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.config/github-copilot",
+]
 
-[display_only_deny]
-paths = ["$AGENT/hosts.json", "$AGENT/config.json"]
+[environment]
+pass_through = [
+    "COPILOT_*",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+]

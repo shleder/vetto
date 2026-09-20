@@ -185,11 +185,31 @@ impl LinuxSandbox {
             }
             NetMode::Off => None,
         };
-        match self.tier {
+        let stdio = opts.stdio;
+        let spawned = match self.tier {
             Tier::Full => spawn_full(policy, opts, self.observe_seccomp, relay_port),
             Tier::FsOnly => spawn_fs_only(policy, opts, self.observe_seccomp),
             Tier::Seccomp => spawn_seccomp_only(policy, opts, self.observe_seccomp),
+        }?;
+
+        // Transfer terminal foreground ownership if running interactively with StdioMode::Inherit
+        #[cfg(target_os = "linux")]
+        if matches!(stdio, StdioMode::Inherit) {
+            let stdin_fd = std::io::stdin().as_raw_fd();
+            if unsafe { libc::isatty(stdin_fd) } == 1 {
+                unsafe {
+                    let old_sigttou = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+                    let old_sigttin = libc::signal(libc::SIGTTIN, libc::SIG_IGN);
+
+                    libc::tcsetpgrp(stdin_fd, spawned.handle.root_pid as libc::pid_t);
+
+                    libc::signal(libc::SIGTTOU, old_sigttou);
+                    libc::signal(libc::SIGTTIN, old_sigttin);
+                }
+            }
         }
+
+        Ok(spawned)
     }
 }
 
@@ -371,6 +391,12 @@ fn install_child_session_and_ceilings(policy: &Policy, stdio: &StdioMode, err_w:
                     125,
                     &format!("setpgid: {}", std::io::Error::last_os_error()),
                 );
+            }
+            // Reset terminal signals inside the child so it can handle stdin/stdout normally
+            unsafe {
+                libc::signal(libc::SIGTTIN, libc::SIG_DFL);
+                libc::signal(libc::SIGTTOU, libc::SIG_DFL);
+                libc::signal(libc::SIGTSTP, libc::SIG_DFL);
             }
         }
     }
@@ -907,6 +933,13 @@ fn child_b(
         if matches!(opts.stdio, StdioMode::Pty { .. }) && unsafe { libc::setsid() } < 0 {
             child_fail(err_w, 125, "setsid failed");
         }
+        if matches!(opts.stdio, StdioMode::Captured { .. } | StdioMode::Inherit) {
+            unsafe {
+                libc::signal(libc::SIGTTIN, libc::SIG_DFL);
+                libc::signal(libc::SIGTTOU, libc::SIG_DFL);
+                libc::signal(libc::SIGTSTP, libc::SIG_DFL);
+            }
+        }
         if let Err(msg) = child_stdio_setup(&opts.stdio) {
             child_fail(err_w, 124, &format!("stdio: {msg}"));
         }
@@ -1070,6 +1103,15 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     close_all_except(&keep);
 
     child_pdeathsig(parent_pid);
+
+    if matches!(opts.stdio, StdioMode::Captured { .. } | StdioMode::Inherit) {
+        let _ = unsafe { libc::setpgid(0, 0) };
+        unsafe {
+            libc::signal(libc::SIGTTIN, libc::SIG_DFL);
+            libc::signal(libc::SIGTTOU, libc::SIG_DFL);
+            libc::signal(libc::SIGTSTP, libc::SIG_DFL);
+        }
+    }
 
     // User namespace + id-maps handshake with the real parent.
     if let Err(e) = namespaces::unshare(namespaces::CLONE_NEWUSER) {
@@ -1357,6 +1399,7 @@ fn spawn_full(
             strategy: Some(KillStrategy::PidNsPipe(alive_w)),
             _cgroup: cgroup_handle,
             pidfd,
+            options: opts,
         },
         broker_ctrl_fd: broker_end,
         relay_port,
@@ -1591,6 +1634,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
             }),
             _cgroup: cgroup_handle,
             pidfd,
+            options: opts,
         },
         broker_ctrl_fd: None,
         relay_port: None,
@@ -1764,6 +1808,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
             }),
             _cgroup: cgroup_handle,
             pidfd,
+            options: opts,
         },
         broker_ctrl_fd: None,
         relay_port: None,

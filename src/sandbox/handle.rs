@@ -78,9 +78,29 @@ pub struct SandboxHandle {
     pub _cgroup: Option<crate::sandbox::linux::cgroup::CgroupHandle>,
     #[cfg(target_os = "linux")]
     pub pidfd: Option<OwnedFd>,
+    #[cfg(target_os = "linux")]
+    pub options: SpawnOptions,
 }
 
 impl SandboxHandle {
+    /// Reclaim terminal foreground ownership upon child exit or termination.
+    #[cfg(target_os = "linux")]
+    pub fn reclaim_terminal_control(&self) {
+        if matches!(self.options.stdio, StdioMode::Inherit) {
+            let stdin_fd = std::io::stdin().as_raw_fd();
+            if unsafe { libc::isatty(stdin_fd) } == 1 {
+                unsafe {
+                    let old_sigttou = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+                    libc::tcsetpgrp(stdin_fd, libc::getpgrp());
+                    libc::signal(libc::SIGTTOU, old_sigttou);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn reclaim_terminal_control(&self) {}
+
     /// Suspend the sandboxed process tree without releasing its kill
     /// strategy. This is used by the interactive dashboards' pause control;
     /// it is deliberately best-effort on platforms where a group signal is
@@ -147,10 +167,12 @@ impl SandboxHandle {
             // SAFETY: plain waitpid with WNOHANG on our own child.
             let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
             if r == pid {
+                self.reclaim_terminal_control();
                 Some(decode_status(status))
             } else if r == 0 {
                 None
             } else if errno() == libc::ECHILD {
+                self.reclaim_terminal_control();
                 Some(-1)
             } else {
                 None
@@ -158,7 +180,11 @@ impl SandboxHandle {
         }
         #[cfg(windows)]
         {
-            windows_try_wait(self.strategy.as_ref())
+            let res = windows_try_wait(self.strategy.as_ref());
+            if res.is_some() {
+                self.reclaim_terminal_control();
+            }
+            res
         }
     }
 
@@ -172,16 +198,20 @@ impl SandboxHandle {
                 let mut status = 0i32;
                 let r = unsafe { libc::waitpid(pid, &mut status, 0) };
                 if r == pid {
+                    self.reclaim_terminal_control();
                     return decode_status(status);
                 }
                 if r < 0 && errno() != libc::EINTR {
+                    self.reclaim_terminal_control();
                     return -1;
                 }
             }
         }
         #[cfg(windows)]
         {
-            windows_wait(self.strategy.as_ref())
+            let code = windows_wait(self.strategy.as_ref());
+            self.reclaim_terminal_control();
+            code
         }
     }
 
@@ -269,6 +299,7 @@ impl SandboxHandle {
                 cg.cleanup();
             }
         }
+        self.reclaim_terminal_control();
     }
 }
 

@@ -274,38 +274,71 @@ fn parse_version(output: &str) -> Option<String> {
 /// Diagnostic check: verifies whether an unshimmed binary in `$PATH` appears before
 /// the Vetto shims directory, shadowing the shim.
 ///
-/// Returns `Some(warning_message)` if an unshimmed executable precedes the shim, or `None` if
-/// the shim directory takes precedence or no unshimmed executable precedes it.
+/// Implements index-based validation:
+/// 1. Parse `$PATH`.
+/// 2. Find the index of `~/.vetto/shims` (`shims_index`).
+/// 3. Find the index of any other directory containing an executable matching the agent's name (`binary_index`).
+/// 4. If `binary_index < shims_index`:
+///    - Emit a high-visibility diagnostic error.
+///    - If `--fix` was passed to `vetto doctor`, automatically patch the user's shell configuration profile
+///      (`~/.bashrc`, `~/.zshrc`) by replacing legacy vetto blocks with the indestructible template.
 pub fn check_path_shadowing(agent: &str, custom_shims_dir: Option<&Path>) -> Option<String> {
+    let fix = std::env::args().any(|a| a == "--fix")
+        || std::env::var("VETTO_DOCTOR_FIX")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+    check_path_shadowing_with_fix(agent, custom_shims_dir, fix)
+}
+
+/// Dynamic index-based PATH shadowing check with explicit auto-repair (`--fix`) control.
+pub fn check_path_shadowing_with_fix(
+    agent: &str,
+    custom_shims_dir: Option<&Path>,
+    fix: bool,
+) -> Option<String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+
     let shims_dir = match custom_shims_dir {
         Some(d) => d.to_path_buf(),
         None => {
-            let home = std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(PathBuf::from)?;
-            home.join(".vetto").join("shims")
+            let Some(ref home_path) = home else {
+                return None;
+            };
+            home_path.join(".vetto").join("shims")
         }
     };
 
-    let shim_path = shims_dir.join(agent);
     let path_var = std::env::var_os("PATH")?;
+    let path_entries: Vec<PathBuf> = std::env::split_paths(&path_var)
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
 
-    for dir in std::env::split_paths(&path_var) {
-        if dir.as_os_str().is_empty() {
+    let is_shim_dir = |dir: &Path| -> bool {
+        if dir == shims_dir {
+            return true;
+        }
+        if dir.exists() && shims_dir.exists() {
+            if let (Ok(c1), Ok(c2)) = (dir.canonicalize(), shims_dir.canonicalize()) {
+                if c1 == c2 {
+                    return true;
+                }
+            }
+        }
+        crate::shim::is_shim_directory(dir)
+    };
+
+    // 1. Find index of ~/.vetto/shims in PATH
+    let shims_index = path_entries.iter().position(|dir| is_shim_dir(dir));
+
+    // 2. Find index of any other directory containing an executable matching the agent's name
+    let mut first_shadow: Option<(usize, PathBuf)> = None;
+    for (idx, dir) in path_entries.iter().enumerate() {
+        if is_shim_dir(dir) {
             continue;
         }
 
-        // If we reached the shims directory, the shim takes precedence
-        if dir == shims_dir
-            || (dir.exists()
-                && shims_dir.exists()
-                && dir.canonicalize().ok() == shims_dir.canonicalize().ok())
-            || crate::shim::is_shim_directory(&dir)
-        {
-            return None;
-        }
-
-        // Check if an unshimmed binary for this agent exists in this directory
         let candidate = dir.join(agent);
         let mut found_candidate: Option<PathBuf> = None;
 
@@ -329,16 +362,66 @@ pub fn check_path_shadowing(agent: &str, custom_shims_dir: Option<&Path>) -> Opt
             }
         }
 
-        if let Some(shadow_path) = found_candidate {
-            return Some(format!(
+        if let Some(cand) = found_candidate {
+            first_shadow = Some((idx, cand));
+            break;
+        }
+    }
+
+    // 3. If binary_index < shims_index: report diagnostic error and optionally auto-repair
+    if let Some((binary_index, shadow_path)) = first_shadow {
+        let is_shadowed = match shims_index {
+            Some(s_idx) => binary_index < s_idx,
+            None => true,
+        };
+
+        if is_shadowed {
+            let shim_path = shims_dir.join(agent);
+            let mut warning = format!(
                 "vetto: warning: '{agent}' in '{}' shadows the vetto shim at '{}'. Prepend '~/.vetto/shims' to your PATH: export PATH=\"$HOME/.vetto/shims:$PATH\"",
                 shadow_path.display(),
                 shim_path.display()
-            ));
+            );
+
+            if fix {
+                if let Some(ref h) = home {
+                    if let Ok(repaired) =
+                        crate::cli::shell_env::repair_shell_profiles(&shims_dir, h)
+                    {
+                        if !repaired.is_empty() {
+                            let names: Vec<String> =
+                                repaired.iter().map(|p| p.display().to_string()).collect();
+                            warning.push_str(&format!(
+                                "\nvetto: doctor --fix: automatically repaired shell configuration in {} with indestructible hook template",
+                                names.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
+
+            return Some(warning);
         }
     }
 
     None
+}
+
+/// Programmatically runs auto-repair of shell configuration profiles with indestructible hooks.
+pub fn auto_repair_shell_hooks(
+    custom_shims_dir: Option<&Path>,
+) -> Result<Vec<PathBuf>, anyhow::Error> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("neither HOME nor USERPROFILE is set"))?;
+
+    let shims_dir = match custom_shims_dir {
+        Some(d) => d.to_path_buf(),
+        None => home.join(".vetto").join("shims"),
+    };
+
+    crate::cli::shell_env::repair_shell_profiles(&shims_dir, &home)
 }
 
 fn is_executable_binary(p: &Path) -> bool {
@@ -395,5 +478,82 @@ mod tests {
         );
         assert_eq!(result.status, ProbeStatus::Unavailable);
         assert!(!result.tested_registry);
+    }
+
+    #[test]
+    fn test_index_based_path_shadowing_and_repair() {
+        use std::sync::Mutex;
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap();
+
+        let temp = std::env::temp_dir().join(format!("vetto-shadow-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let shims_dir = temp.join("shims");
+        let bin_dir = temp.join("bin");
+        std::fs::create_dir_all(&shims_dir).unwrap();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let mock_claude = bin_dir.join("claude");
+        std::fs::write(&mock_claude, "#!/bin/sh\necho mock\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&mock_claude).unwrap().permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&mock_claude, perms);
+        }
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        let orig_home = std::env::var_os("HOME");
+
+        std::env::set_var("HOME", &temp);
+
+        // Case 1: bin_dir precedes shims_dir (shadowing)
+        let shadow_path = std::env::join_paths([&bin_dir, &shims_dir]).unwrap();
+        std::env::set_var("PATH", &shadow_path);
+
+        let warning = check_path_shadowing_with_fix("claude", Some(&shims_dir), false);
+        assert!(
+            warning.is_some(),
+            "Must detect shadowing when bin precedes shims"
+        );
+        assert!(warning.unwrap().contains("shadows the vetto shim at"));
+
+        // Case 2: shims_dir precedes bin_dir (no shadowing)
+        let clean_path = std::env::join_paths([&shims_dir, &bin_dir]).unwrap();
+        std::env::set_var("PATH", &clean_path);
+
+        let no_warning = check_path_shadowing_with_fix("claude", Some(&shims_dir), false);
+        assert!(
+            no_warning.is_none(),
+            "Must not detect shadowing when shims precede bin"
+        );
+
+        // Case 3: with fix = true, patches shell configuration
+        std::env::set_var("PATH", &shadow_path);
+        let bashrc = temp.join(".bashrc");
+        std::fs::write(
+            &bashrc,
+            "# Legacy\n# >>> vetto shim environment >>>\n# Old\n# <<< vetto shim environment <<<\n",
+        )
+        .unwrap();
+
+        let fix_warning = check_path_shadowing_with_fix("claude", Some(&shims_dir), true);
+        assert!(fix_warning.is_some());
+        assert!(fix_warning
+            .unwrap()
+            .contains("automatically repaired shell configuration"));
+
+        let repaired_content = std::fs::read_to_string(&bashrc).unwrap();
+        assert!(repaired_content.contains("_vetto_clean_path"));
+
+        // Restore
+        std::env::set_var("PATH", orig_path);
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        }
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

@@ -1,6 +1,6 @@
 [metadata]
 name = "claude"
-description = "Safe compatibility roots for Claude Code."
+description = "Hardened compatibility roots for Claude Code CLI."
 
 [filesystem]
 allow_write = [

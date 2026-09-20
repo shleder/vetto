@@ -1,25 +1,12 @@
 [metadata]
 name = "crust"
-description = "Safe compatibility roots for Crust AI CLI."
+description = "Compatibility profile for Crust Rust coding assistant."
 
 [filesystem]
-allow_write = [
-  "$HOME/.crust",
-  "$AGENT",
-]
-allow_read = [
-  "$HOME/.crust",
-  "$AGENT",
-]
+allow_read = ["$AGENT"]
+allow_write = ["$AGENT"]
 
 [environment]
 pass_through = [
-  "CRUST_*",
-  "OPENAI_API_KEY",
-]
-
-[display_only_deny]
-paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "CRUST_*",
 ]

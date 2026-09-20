@@ -1,29 +1,25 @@
 [metadata]
 name = "goose"
-description = "Safe compatibility roots for Block Goose CLI."
+description = "Compatibility profile for Block Goose agent."
 
 [filesystem]
-allow_write = [
-  "$HOME/.config/goose",
-  "$HOME/.goose",
-  "$AGENT",
-]
 allow_read = [
-  "$HOME/.config/goose",
-  "$HOME/.goose",
-  "$AGENT",
+    "$AGENT",
+    "$HOME/.config/goose",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.config/goose",
 ]
 
 [environment]
 pass_through = [
-  "GOOSE_*",
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OPENROUTER_API_KEY",
+    "GOOSE_*",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
 ]
 
 [display_only_deny]
 paths = [
-  "$AGENT/*.sock",
-  "$AGENT/*.ipc",
+    "$AGENT/*.sock",
 ]

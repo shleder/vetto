@@ -9,9 +9,8 @@ allow_write = ["$AGENT"]
 [environment]
 pass_through = [
     "GEMINI_API_KEY",
-    "GEMINI_BASE_URL",
-    "GEMINI_*",
     "GOOGLE_API_KEY",
+    "GEMINI_*",
 ]
 
 [display_only_deny]
