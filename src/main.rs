@@ -1116,7 +1116,11 @@ fn supervise(cfg: RunConfig) -> Result<()> {
             stdio
         }
         TuiMode::None => {
-            if cfg.mask_secrets {
+            let is_interactive = vetto::config::is_interactive_agent_command(
+                cfg.agent_preset.as_deref(),
+                &cfg.agent,
+            );
+            if !is_interactive && cfg.mask_secrets {
                 let (r1, w1) = pipe2()?;
                 let (r2, w2) = pipe2()?;
                 let stdio = sandbox::StdioMode::Captured {

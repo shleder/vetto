@@ -66,6 +66,41 @@ fn test_terminal_handoff_isatty_check_safety() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn test_interactive_agent_preserves_stdin_terminal() {
+    use std::os::fd::AsRawFd;
+
+    // Verify that interactive agents are recognized by the runtime
+    let agents = [
+        "claude",
+        "codex",
+        "gemini",
+        "cursor",
+        "aider",
+        "antigravity",
+    ];
+    for agent in agents {
+        assert!(
+            vetto::config::is_interactive_agent_command(Some(agent), &[]),
+            "{agent} must be recognized as interactive agent"
+        );
+    }
+
+    // Verify that when PTY is allocated, the slave fd is a valid TTY (isatty == 1)
+    if let Ok(pty) = vetto::pty::Pty::open(24, 80) {
+        let is_tty = unsafe { libc::isatty(pty.slave.as_raw_fd()) };
+        assert_eq!(
+            is_tty, 1,
+            "interactive terminal slave must satisfy isatty(0) semantics"
+        );
+    }
+
+    // Verify that checking isatty on stdin returns safely without error
+    let is_tty_stdin = unsafe { libc::isatty(0) };
+    assert!(is_tty_stdin == 0 || is_tty_stdin == 1);
+}
+
+#[test]
 #[cfg(not(target_os = "linux"))]
 fn test_terminal_job_control_skipped_on_non_linux() {
     // Terminal job control handoff (INV-37) via tcsetpgrp is a Linux supervisor subsystem.

@@ -697,21 +697,8 @@ fn child_stdio_setup(stdio: &StdioMode) -> Result<(), String> {
             dup2_all(slave_fd)
         }
         StdioMode::Captured { stdout_w, stderr_w } => {
-            // SAFETY: open of a static NUL-terminated path.
-            let devnull = unsafe {
-                libc::open(
-                    b"/dev/null\0".as_ptr().cast(),
-                    libc::O_RDONLY | libc::O_CLOEXEC,
-                )
-            };
-            if devnull < 0 {
-                return Err(format!("open /dev/null: {}", errno_val()));
-            }
-            dup2_all(devnull)?;
             dup2_to(stdout_w, 1)?;
             dup2_to(stderr_w, 2)?;
-            // SAFETY: plain close on our temporary descriptor.
-            unsafe { libc::close(devnull) };
             Ok(())
         }
         StdioMode::Inherit => Ok(()),

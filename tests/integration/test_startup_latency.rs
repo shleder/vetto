@@ -201,3 +201,34 @@ fn test_startup_manifest_fast_captures_under_cap() {
         "Small directory under cap must capture all 5 files"
     );
 }
+
+#[test]
+fn test_home_glob_resolution_latency_under_5ms() {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from))
+        .unwrap_or_else(|| std::env::temp_dir());
+    let vars = vetto::policy::glob_resolve::Vars {
+        project: &home,
+        home: &home,
+    };
+
+    // Warm-up call
+    let _ = vetto::policy::glob_resolve::resolve_entry_with_agent("$PROJECT/**/*.pem", &vars, None);
+
+    let start = Instant::now();
+    let resolved =
+        vetto::policy::glob_resolve::resolve_entry_with_agent("$PROJECT/**/*.pem", &vars, None);
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        resolved.len(),
+        0,
+        "Home recursive glob resolution must return 0 files"
+    );
+    assert!(
+        elapsed < Duration::from_millis(5),
+        "Home recursive glob resolution must complete in <5ms, took {:?}",
+        elapsed
+    );
+}
