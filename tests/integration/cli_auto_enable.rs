@@ -518,10 +518,7 @@ fn test_vetto_run_subcommand_with_flags_and_trailing_args() {
     let bin_dir = proj_dir.join("bin");
     std::fs::create_dir_all(&bin_dir).expect("create bin dir");
     let mock_tool = bin_dir.join("myagent");
-    write_file(
-        &mock_tool,
-        "#!/bin/sh\necho \"args: $@\"\nexit 0\n",
-    );
+    write_file(&mock_tool, "#!/bin/sh\necho \"args: $@\"\nexit 0\n");
     #[cfg(windows)]
     {
         write_file(

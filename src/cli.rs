@@ -334,7 +334,11 @@ pub enum Command {
         command: Option<String>,
 
         /// Arguments passed to the agent
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "ARGS")]
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            value_name = "ARGS"
+        )]
         args: Vec<String>,
     },
     /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml
