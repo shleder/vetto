@@ -119,6 +119,7 @@ fn test_bash_hook_handles_multiple_dirty_shims_occurrences() {
     std::fs::create_dir_all(&shims).expect("create shims dir");
 
     let hook_script = generate_shell_hook(ShellKind::Bash, &shims);
+    assert!(!hook_script.is_empty());
 
     #[cfg(unix)]
     {

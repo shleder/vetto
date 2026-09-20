@@ -56,6 +56,7 @@ paths = [
   "$HOME/.cargo/credentials", "$HOME/.cargo/credentials.toml",
   "$HOME/.config/gh", "$HOME/.config/github-copilot",
   "$HOME/.config/gcloud", "$HOME/.kube", "$HOME/.docker/config.json",
+  "$HOME/.claude", "$HOME/.codex",
   "$PROJECT/.env", "$PROJECT/.env.*",
   "$PROJECT/**/.env", "$PROJECT/**/.env.*",
   "$PROJECT/*.pem", "$PROJECT/**/*.pem",
