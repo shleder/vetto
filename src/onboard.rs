@@ -258,37 +258,12 @@ pub fn find_real_agent_binary(agent: &str) -> Result<(String, std::path::PathBuf
 }
 
 fn find_any_binary(names: &[&str]) -> Option<String> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        for name in names {
-            let candidate = dir.join(name);
-            if is_executable(&candidate) {
-                return Some((*name).to_string());
-            }
-            #[cfg(windows)]
-            {
-                let candidate_exe = dir.join(format!("{name}.exe"));
-                if is_executable(&candidate_exe) {
-                    return Some((*name).to_string());
-                }
-            }
+    for name in names {
+        if crate::shim::find_real_binary(name).is_ok() {
+            return Some((*name).to_string());
         }
     }
     None
-}
-
-fn is_executable(p: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(p)
-            .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(windows)]
-    {
-        p.is_file()
-    }
 }
 
 #[cfg(test)]

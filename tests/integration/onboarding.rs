@@ -1,6 +1,6 @@
 //! Integration tests for Tier 1: Onboarding and Zero-Friction Entry.
 
-use super::common::{run_vetto_in, stderr, stdout, write_file, TempProject};
+use super::common::{run_vetto_env_in, run_vetto_in, stderr, stdout, write_file, TempProject};
 
 #[test]
 fn man_command_renders_troff_manpage() {
@@ -224,3 +224,100 @@ fn zero_config_fails_cleanly_with_agent_guidance_when_no_agent_found() {
     assert!(err_text.contains("could not auto-detect AI agent"));
     assert!(err_text.contains("Supported agents:"));
 }
+
+#[test]
+fn zero_config_auto_detects_claude_from_marker() {
+    let project = TempProject::new("zero-config-claude");
+    let bin_dir = project.path().join("bin");
+    let mock_agent = bin_dir.join("claude");
+    write_file(
+        &mock_agent,
+        "#!/bin/sh\necho \"claude agent running under vetto\"\nexit 0\n",
+    );
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("claude.cmd"),
+            "@echo off\r\necho claude agent running under vetto\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_agent).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_agent, perms).unwrap();
+    }
+
+    let marker = project.path().join("CLAUDE.md");
+    write_file(&marker, "# Claude rules\n");
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir);
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out = run_vetto_env_in(
+        project.path(),
+        &["--dry-run"],
+        &[("PATH", custom_path.to_str().unwrap())],
+    );
+    assert!(
+        out.status.success(),
+        "zero-config dry-run with detected agent must succeed: {}",
+        stderr(&out)
+    );
+    let err_text = stderr(&out);
+    assert!(err_text.contains("vetto: zero-config auto-detected agent 'claude'"));
+    let out_text = stdout(&out);
+    assert!(out_text.contains("claude"));
+}
+
+#[test]
+fn zero_config_auto_detects_from_agents_md() {
+    let project = TempProject::new("zero-config-agents-md");
+    let bin_dir = project.path().join("bin");
+    let mock_agent = bin_dir.join("opencode");
+    write_file(
+        &mock_agent,
+        "#!/bin/sh\necho \"opencode agent running under vetto\"\nexit 0\n",
+    );
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("opencode.cmd"),
+            "@echo off\r\necho opencode agent running under vetto\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_agent).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_agent, perms).unwrap();
+    }
+
+    let marker = project.path().join("AGENTS.md");
+    write_file(&marker, "# Agent instructions\n");
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir);
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out = run_vetto_env_in(
+        project.path(),
+        &["--dry-run"],
+        &[("PATH", custom_path.to_str().unwrap())],
+    );
+    assert!(
+        out.status.success(),
+        "zero-config dry-run with AGENTS.md must succeed: {}",
+        stderr(&out)
+    );
+    let err_text = stderr(&out);
+    assert!(err_text.contains("vetto: zero-config auto-detected agent 'opencode'"));
+    let out_text = stdout(&out);
+    assert!(out_text.contains("opencode"));
+}
+
