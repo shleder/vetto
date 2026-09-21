@@ -194,7 +194,12 @@ pub struct Cli {
     pub system_log: bool,
 
     /// Select an agent preset, or provide NAME=PROGRAM entries with --multi.
-    #[arg(long = "agent", value_name = "NAME", action = clap::ArgAction::Append)]
+    #[arg(
+        short = 'a',
+        long = "agent",
+        value_name = "NAME",
+        action = clap::ArgAction::Append
+    )]
     pub agents: Vec<String>,
 
     /// Run the compatibility multi-agent frontend without a `multi` subcommand.
