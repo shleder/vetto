@@ -43,7 +43,7 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
         analysis.detected_ecosystems.push("Rust");
         analysis
             .recommended_allow_write
-            .push("$PROJECT/target".to_string());
+            .push("$PROJECT/target/".to_string());
         analysis
             .recommended_allow_read
             .push("$HOME/.cargo/registry".to_string());
@@ -519,7 +519,7 @@ mod tests {
             .contains(&"api.anthropic.com".to_string()));
         assert!(analysis
             .recommended_allow_write
-            .contains(&"$PROJECT/target".to_string()));
+            .contains(&"$PROJECT/target/".to_string()));
         assert!(analysis
             .recommended_allow_write
             .contains(&"$PROJECT/node_modules/.cache".to_string()));
@@ -531,7 +531,7 @@ mod tests {
         assert!(toml.contains("Rust, Node.js (TypeScript)"));
         assert!(toml.contains("api.anthropic.com"));
         assert!(toml.contains("$HOME/.cargo/registry"));
-        assert!(toml.contains("$PROJECT/target"));
+        assert!(toml.contains("$PROJECT/target/"));
         assert!(toml.contains("$PROJECT/.env"));
         assert!(toml.contains("[metadata]"));
         assert!(toml.contains("[security]"));
