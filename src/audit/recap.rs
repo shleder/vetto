@@ -113,7 +113,7 @@ pub fn format_session_recap(input: &SessionRecapInput) -> Option<Vec<String>> {
             hints.push(format!("run `vetto allow {first_path}`"));
         }
         if let Some((first_egress, _)) = input.egress_denied.first() {
-            let domain = first_egress.split(':').next().unwrap_or(first_egress);
+            let domain = crate::cred_broker::strip_domain_port(first_egress);
             hints.push(format!("run `vetto allow --net {domain}`"));
         }
         if !hints.is_empty() {
@@ -165,5 +165,19 @@ mod tests {
         assert!(lines[3].contains("files changed 4"));
         assert!(lines[4].contains("to allow: run `vetto allow /etc/shadow`"));
         assert!(lines[4].contains("run `vetto allow --net api.example.com`"));
+    }
+
+    #[test]
+    fn recap_handles_ipv6_egress_denials_cleanly() {
+        let input = SessionRecapInput {
+            denials_total: 0,
+            egress_denied: vec![("[::1]:8080".into(), 1)],
+            files_changed: 0,
+            ..Default::default()
+        };
+        let lines = format_session_recap(&input).expect("recap");
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("run `vetto allow --net ::1`")));
     }
 }

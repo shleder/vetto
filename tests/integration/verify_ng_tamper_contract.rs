@@ -178,6 +178,9 @@ const POSITIVE_SCRIPT: &str = concat!(
 
 #[test]
 fn test_tamper_matrix_all_field_classes_rejected_no_spawn() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let ws = temp_dir("tamper-matrix-ws");
     let scen = test_scenario("TAMPER-MATRIX-001", Category::FsRead, 1);
     let policy = functional_policy(&ws);
@@ -369,6 +372,9 @@ fn test_tamper_matrix_all_field_classes_rejected_no_spawn() {
 
 #[test]
 fn test_tamper_matrix_resealed_fails_closed_no_spawn() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let ws = temp_dir("tamper-resealed-ws");
     let scen = test_scenario("TAMPER-RESEAL-001", Category::FsRead, 1);
     let policy = functional_policy(&ws);
@@ -502,6 +508,9 @@ fn test_tamper_matrix_resealed_fails_closed_no_spawn() {
 
 #[test]
 fn test_tamper_production_spawn_ledger_and_marker_guarantee() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = temp_dir("prod-spawn-ledger");
     let marker = tmp.join("child-started");
 

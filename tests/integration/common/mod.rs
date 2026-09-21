@@ -202,3 +202,9 @@ pub fn ensure_fake_ssh_key() {
         let _ = std::fs::write(&key, "FAKE-TEST-KEY-MATERIAL-FOR-VETTO-IT\n");
     }
 }
+
+/// Serializes tests measuring global `PROD_SPAWN_COUNT` to avoid race conditions.
+pub fn prod_spawn_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
