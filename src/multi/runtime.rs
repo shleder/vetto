@@ -438,9 +438,9 @@ fn activate_pending(
                 NetMode::Strict(rules) => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
                 }
-                NetMode::Ask => {
-                    crate::sandbox::linux::net_relay::BrokerPolicy::Ask(policy.network_allow.clone())
-                }
+                NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask(
+                    policy.network_allow.clone(),
+                ),
                 NetMode::Off => {
                     crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new())
                 }

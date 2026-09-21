@@ -2026,7 +2026,8 @@ mod tests {
         );
         assert!(allowed);
         let out_str = String::from_utf8_lossy(&output);
-        assert!(out_str.contains("allow network connection to 'api.example.com:443'? [y/N/p (permanent)]:"));
+        assert!(out_str
+            .contains("allow network connection to 'api.example.com:443'? [y/N/p (permanent)]:"));
         assert!(!out_str.contains("permanently allowed"));
 
         let mut output2 = Vec::new();
@@ -2044,7 +2045,12 @@ mod tests {
 
     #[test]
     fn interactive_ask_denial_on_no_or_invalid() {
-        for input in [b"n\n".as_slice(), b"no\n".as_slice(), b"\n".as_slice(), b"invalid\n".as_slice()] {
+        for input in [
+            b"n\n".as_slice(),
+            b"no\n".as_slice(),
+            b"\n".as_slice(),
+            b"invalid\n".as_slice(),
+        ] {
             let mut output = Vec::new();
             let reader = std::io::Cursor::new(input);
             let allowed = prompt_confirmation_interactive(
@@ -2089,7 +2095,8 @@ mod tests {
 
     #[test]
     fn interactive_ask_permanent_persists_ip_as_cidr() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-ask-ip-test-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-ask-ip-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let policy_file = temp_dir.join("policy.toml");
 
