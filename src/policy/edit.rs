@@ -263,11 +263,7 @@ pub fn run_allow(
 }
 
 /// CLI entry point for `vetto deny`.
-pub fn run_deny(
-    target: &str,
-    global: bool,
-    custom_policy: Option<&Path>,
-) -> Result<()> {
+pub fn run_deny(target: &str, global: bool, custom_policy: Option<&Path>) -> Result<()> {
     let grant = Grant::Deny;
     let path = apply(grant, target, global, custom_policy)?;
     println!(
@@ -356,7 +352,10 @@ mod tests {
 
     #[test]
     fn test_normalize_net_target() {
-        assert_eq!(normalize_net_target("api.anthropic.com"), "api.anthropic.com");
+        assert_eq!(
+            normalize_net_target("api.anthropic.com"),
+            "api.anthropic.com"
+        );
         assert_eq!(
             normalize_net_target("https://api.anthropic.com/v1/messages"),
             "api.anthropic.com"
@@ -382,10 +381,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let custom = dir.join("custom.toml");
-        assert_eq!(
-            resolve_target_file(false, Some(&custom)).unwrap(),
-            custom
-        );
+        assert_eq!(resolve_target_file(false, Some(&custom)).unwrap(), custom);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
