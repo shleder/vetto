@@ -45,11 +45,8 @@ use vetto::verify_ng::sandbox_backend::{
 /// the Job Object tree assertions stay exact under the harness's default
 /// parallel threads.
 #[cfg(target_os = "windows")]
-static WIN_PROD_SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
 fn win_prod_serial() -> &'static std::sync::Mutex<()> {
-    WIN_PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
+    crate::common::prod_spawn_test_lock()
 }
 
 /// True only when doctor reports the full Windows process-sandbox stack.

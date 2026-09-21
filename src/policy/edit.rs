@@ -238,7 +238,7 @@ pub fn normalize_net_target(raw: &str) -> String {
 }
 
 /// Apply a grant to the target policy file. Returns the file it wrote.
-fn apply(
+pub fn apply(
     grant: Grant,
     target: &str,
     global: bool,
@@ -262,6 +262,25 @@ fn apply(
     let _added = edit_document(&mut doc, grant, target)?;
     std::fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
     Ok(path)
+}
+
+/// Persist a network target (domain or IP/CIDR) to the policy file.
+pub fn persist_net_target(
+    target: &str,
+    custom_policy: Option<&Path>,
+) -> Result<(PathBuf, &'static str)> {
+    let clean = target.trim();
+    if let Some(cidr) = try_parse_cidr_or_ip(clean) {
+        let path = apply(Grant::NetCidr, &cidr, false, custom_policy)?;
+        Ok((path, "CIDR"))
+    } else {
+        let normalized = normalize_net_target(clean);
+        if normalized.is_empty() {
+            bail!("invalid network domain '{target}'");
+        }
+        let path = apply(Grant::Net, &normalized, false, custom_policy)?;
+        Ok((path, "domain"))
+    }
 }
 
 /// CLI entry point for `vetto allow`.

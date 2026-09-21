@@ -216,6 +216,9 @@ fn test_mcp_entrypoint_executes_through_production_boundary() {
 
 #[test]
 fn test_multi_agent_entrypoint_uses_production_boundary() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = test_temp_dir("multi-agent-bnd");
     let policy = test_policy_with_roots(&tmp);
     let backend = match Backend::detect(NetMode::Off, false) {

@@ -16,6 +16,7 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::config::NetRule;
@@ -39,7 +40,7 @@ pub enum RelayMode {
 pub enum BrokerPolicy {
     Allowlist(Vec<String>),
     Strict(Vec<NetRule>),
-    Ask,
+    Ask(Vec<String>),
 }
 
 impl From<Vec<String>> for BrokerPolicy {
@@ -55,6 +56,7 @@ pub struct BrokerConfig {
     pub mode: RelayMode,
     pub allow_cidr: Vec<String>,
     pub quotas: std::collections::HashMap<String, u64>,
+    pub policy_path: Option<PathBuf>,
 }
 
 impl From<BrokerPolicy> for BrokerConfig {
@@ -65,6 +67,7 @@ impl From<BrokerPolicy> for BrokerConfig {
             mode: RelayMode::NetNs,
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
+            policy_path: None,
         }
     }
 }
@@ -102,11 +105,71 @@ fn get_domain_bytes(host: &str) -> u64 {
 
 static ASK_CACHE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
 
+#[cfg(test)]
+pub fn reset_ask_cache() {
+    let mut guard = ASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
+}
+
 fn is_stdin_tty() -> bool {
     unsafe { libc::isatty(0) == 1 }
 }
 
-fn ask_confirmation(host: &str, port: u16) -> bool {
+pub fn prompt_confirmation_interactive<R: std::io::BufRead, W: std::io::Write>(
+    host: &str,
+    port: u16,
+    policy_path: Option<&Path>,
+    is_tty: bool,
+    mut reader: R,
+    mut writer: W,
+) -> bool {
+    let key = host.trim().trim_end_matches('.').to_ascii_lowercase();
+
+    if !is_tty {
+        let _ = writeln!(
+            writer,
+            "vetto: [net=ask] interactive confirmation unavailable (stdin is not a tty); connection to '{host}:{port}' denied (fail-closed)"
+        );
+        return false;
+    }
+
+    let _ = write!(
+        writer,
+        "vetto: allow network connection to '{host}:{port}'? [y/N/p (permanent)]: "
+    );
+    let _ = writer.flush();
+
+    let mut line = String::new();
+    let (allowed, permanent) = if reader.read_line(&mut line).is_ok() {
+        let trimmed = line.trim().to_ascii_lowercase();
+        match trimmed.as_str() {
+            "y" | "yes" => (true, false),
+            "p" | "perm" | "permanent" => (true, true),
+            _ => (false, false),
+        }
+    } else {
+        (false, false)
+    };
+
+    if permanent {
+        match crate::policy::edit::persist_net_target(&key, policy_path) {
+            Ok((path, kind)) => {
+                let _ = writeln!(
+                    writer,
+                    "vetto: {kind} '{key}' permanently allowed and saved to {}",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "vetto: failed to persist '{key}': {e}");
+            }
+        }
+    }
+
+    allowed
+}
+
+fn ask_confirmation(host: &str, port: u16, policy_path: Option<&Path>) -> bool {
     let mut guard = ASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let cache = guard.get_or_insert_with(std::collections::HashMap::new);
     let key = host.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -114,23 +177,14 @@ fn ask_confirmation(host: &str, port: u16) -> bool {
         return allowed;
     }
 
-    if !is_stdin_tty() {
-        eprintln!(
-            "vetto: [net=ask] interactive confirmation unavailable (stdin is not a tty); connection to '{host}:{port}' denied (fail-closed)"
-        );
-        cache.insert(key, false);
-        return false;
-    }
-
-    eprint!("vetto: allow network connection to '{host}:{port}'? [y/N]: ");
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    let allowed = if std::io::stdin().read_line(&mut line).is_ok() {
-        let trimmed = line.trim().to_ascii_lowercase();
-        trimmed == "y" || trimmed == "yes"
-    } else {
-        false
-    };
+    let allowed = prompt_confirmation_interactive(
+        host,
+        port,
+        policy_path,
+        is_stdin_tty(),
+        &mut std::io::stdin().lock(),
+        &mut std::io::stderr(),
+    );
     cache.insert(key, allowed);
     allowed
 }
@@ -505,7 +559,13 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
     match &config.policy {
         BrokerPolicy::Allowlist(domains) => domain_allowed(host, domains),
         BrokerPolicy::Strict(rules) => strict_allowed(host, port, rules),
-        BrokerPolicy::Ask => ask_confirmation(host, port),
+        BrokerPolicy::Ask(allowlist) => {
+            if domain_allowed(host, allowlist) {
+                true
+            } else {
+                ask_confirmation(host, port, config.policy_path.as_deref())
+            }
+        }
     }
 }
 
@@ -1825,6 +1885,7 @@ mod tests {
             mode: RelayMode::NetNs,
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
+            policy_path: None,
         };
 
         // Blocked without token
@@ -1931,5 +1992,151 @@ mod tests {
         let plain_allowlist = vec!["crates.io".to_string(), "*.github.com".to_string()];
         assert!(domain_allowed("crates.io:443", &plain_allowlist));
         assert!(domain_allowed("api.github.com:443", &plain_allowlist));
+    }
+
+    #[test]
+    fn interactive_ask_non_tty_fails_closed() {
+        let mut output = Vec::new();
+        let reader = std::io::Cursor::new(b"y\n");
+        let allowed = prompt_confirmation_interactive(
+            "api.example.com",
+            443,
+            None,
+            false,
+            reader,
+            &mut output,
+        );
+        assert!(!allowed);
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str.contains("interactive confirmation unavailable (stdin is not a tty)"));
+        assert!(out_str.contains("connection to 'api.example.com:443' denied (fail-closed)"));
+    }
+
+    #[test]
+    fn interactive_ask_temporary_yes() {
+        let mut output = Vec::new();
+        let reader = std::io::Cursor::new(b"y\n");
+        let allowed = prompt_confirmation_interactive(
+            "api.example.com",
+            443,
+            None,
+            true,
+            reader,
+            &mut output,
+        );
+        assert!(allowed);
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str
+            .contains("allow network connection to 'api.example.com:443'? [y/N/p (permanent)]:"));
+        assert!(!out_str.contains("permanently allowed"));
+
+        let mut output2 = Vec::new();
+        let reader2 = std::io::Cursor::new(b"yes\n");
+        let allowed2 = prompt_confirmation_interactive(
+            "api2.example.com",
+            443,
+            None,
+            true,
+            reader2,
+            &mut output2,
+        );
+        assert!(allowed2);
+    }
+
+    #[test]
+    fn interactive_ask_denial_on_no_or_invalid() {
+        for input in [
+            b"n\n".as_slice(),
+            b"no\n".as_slice(),
+            b"\n".as_slice(),
+            b"invalid\n".as_slice(),
+        ] {
+            let mut output = Vec::new();
+            let reader = std::io::Cursor::new(input);
+            let allowed = prompt_confirmation_interactive(
+                "blocked.example.com",
+                443,
+                None,
+                true,
+                reader,
+                &mut output,
+            );
+            assert!(!allowed);
+        }
+    }
+
+    #[test]
+    fn interactive_ask_permanent_persists_domain() {
+        let temp_dir = std::env::temp_dir().join(format!("vetto-ask-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let policy_file = temp_dir.join("policy.toml");
+
+        let mut output = Vec::new();
+        let reader = std::io::Cursor::new(b"p\n");
+        let allowed = prompt_confirmation_interactive(
+            "api.github.com",
+            443,
+            Some(&policy_file),
+            true,
+            reader,
+            &mut output,
+        );
+        assert!(allowed);
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str.contains("domain 'api.github.com' permanently allowed and saved to"));
+
+        assert!(policy_file.is_file());
+        let content = std::fs::read_to_string(&policy_file).unwrap();
+        assert!(content.contains("\"api.github.com\""));
+        assert!(content.contains("mode = \"allowlist\""));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn interactive_ask_permanent_persists_ip_as_cidr() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-ask-ip-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let policy_file = temp_dir.join("policy.toml");
+
+        let mut output = Vec::new();
+        let reader = std::io::Cursor::new(b"permanent\n");
+        let allowed = prompt_confirmation_interactive(
+            "192.168.1.100",
+            8080,
+            Some(&policy_file),
+            true,
+            reader,
+            &mut output,
+        );
+        assert!(allowed);
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str.contains("CIDR '192.168.1.100' permanently allowed and saved to"));
+
+        assert!(policy_file.is_file());
+        let content = std::fs::read_to_string(&policy_file).unwrap();
+        assert!(content.contains("192.168.1.100/32"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn request_allowed_ask_preallowed_domain_does_not_prompt() {
+        let config = BrokerConfig {
+            policy: BrokerPolicy::Ask(vec!["preallowed.com".into()]),
+            debug_guard: None,
+            mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
+            policy_path: None,
+        };
+
+        // Pre-allowed domain is permitted immediately without prompt
+        assert!(request_allowed("preallowed.com", 443, None, &config));
+        assert!(request_allowed("sub.preallowed.com", 443, None, &config));
+
+        // Non-preallowed domain goes to ask_confirmation; in non-tty test env it fails closed
+        assert!(!request_allowed("unknown.com", 443, None, &config));
     }
 }

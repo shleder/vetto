@@ -463,7 +463,9 @@ pub fn run_wrap(args: &McpWrapArgs) -> Result<()> {
             NetMode::Strict(rules) => {
                 crate::sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
             }
-            NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask,
+            NetMode::Ask => crate::sandbox::linux::net_relay::BrokerPolicy::Ask(
+                production.installation_policy.network_allow.clone(),
+            ),
             NetMode::Off => crate::sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
         };
         let mut broker_config = crate::sandbox::linux::net_relay::BrokerConfig::from(broker_policy);

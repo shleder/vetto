@@ -326,3 +326,41 @@ net_quota = { "github.com" = "100mb" }
         stderr(&out)
     );
 }
+
+#[test]
+fn net_ask_non_tty_fails_closed_with_diagnostic() {
+    if detected_tier().as_deref() != Some("full") {
+        eprintln!("SKIP: needs full tier");
+        return;
+    }
+    if !tool_available("curl") {
+        eprintln!("SKIP: curl not installed");
+        return;
+    }
+    let proj = TempProject::new("net-ask-nontty");
+    let out = run_vetto_in(
+        proj.path(),
+        &[
+            "--tui=none",
+            "--net=ask",
+            "--",
+            "curl",
+            "-sS",
+            "-m",
+            "3",
+            "https://example.com",
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "curl under --net=ask in non-tty must fail closed: stdout: {}, stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let err = stderr(&out);
+    assert!(
+        err.contains("[net=ask] interactive confirmation unavailable (stdin is not a tty)")
+            || err.contains("fail-closed"),
+        "expected fail-closed diagnostic on stderr, got: {err}"
+    );
+}

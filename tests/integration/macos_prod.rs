@@ -35,11 +35,8 @@ use vetto::verify_ng::sandbox_backend::{
 static MACOS_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
-static MACOS_PROD_SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "macos")]
 fn macos_prod_serial() -> &'static std::sync::Mutex<()> {
-    MACOS_PROD_SERIAL.get_or_init(|| std::sync::Mutex::new(()))
+    crate::common::prod_spawn_test_lock()
 }
 
 #[cfg(target_os = "macos")]
