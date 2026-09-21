@@ -221,3 +221,49 @@ fn test_feature_100_policy_show_effective() {
     assert!(json["write_roots"].is_array());
     assert!(json["limits"].is_object());
 }
+
+#[test]
+fn test_actionable_remediation_in_session_recap() {
+    let input = vetto::audit::SessionRecapInput {
+        exit_code: 0,
+        duration_secs: 5,
+        events_total: 10,
+        top_denied: vec![("/etc/shadow".to_string(), 3)],
+        denials_total: 3,
+        egress_denied: vec![("api.blocked-service.com:443".to_string(), 1)],
+        egress_allowed: vec!["api.anthropic.com".to_string()],
+        op_counts: std::collections::BTreeMap::new(),
+        files_changed: 0,
+        verify_status: "off".to_string(),
+    };
+    let lines = vetto::audit::format_session_recap(&input).expect("recap lines");
+    let allow_line = lines
+        .iter()
+        .find(|l| l.starts_with("to allow:"))
+        .expect("remediation guidance line present");
+    assert!(allow_line.contains("run `vetto allow /etc/shadow`"));
+    assert!(allow_line.contains("run `vetto allow --net api.blocked-service.com`"));
+}
+
+#[test]
+fn test_app_describe_actionable_remediation_hint() {
+    let blocked_file = vetto::events::Event::BlockedAttempt {
+        ts: vetto::events::types::now(),
+        pid: 1234,
+        comm: "agent".to_string(),
+        path: "/var/secret".to_string(),
+        source: "landlock".to_string(),
+    };
+    let desc_file = vetto::tui::app::describe(&blocked_file);
+    assert!(desc_file.contains("to allow: run `vetto allow /var/secret`"));
+
+    let denied_net = vetto::events::Event::NetRequest {
+        ts: vetto::events::types::now(),
+        host: "custom-api.internal".to_string(),
+        port: 443,
+        allowed: false,
+    };
+    let desc_net = vetto::tui::app::describe(&denied_net);
+    assert!(desc_net.contains("to allow: run `vetto allow --net custom-api.internal`"));
+}
+
