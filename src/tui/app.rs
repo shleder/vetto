@@ -515,7 +515,7 @@ pub fn describe(ev: &Event) -> String {
         Event::BlockedAttempt {
             comm, path, source, ..
         } => format!(
-            "[{t}] BLOCKED [{source}] {comm} -> {path} (to allow: add `read = \"{path}\"` (or net domain) to policy.toml)"
+            "[{t}] BLOCKED [{source}] {comm} -> {path} (to allow: run `vetto allow {path}`)"
         ),
         Event::NetRequest {
             host,
@@ -526,9 +526,7 @@ pub fn describe(ev: &Event) -> String {
             if *allowed {
                 format!("[{t}] net allow {host}:{port}")
             } else {
-                format!(
-                    "[{t}] net DENY {host}:{port} (to allow: add `allow = [\"{host}\"]` (or net domain) to policy.toml)"
-                )
+                format!("[{t}] net DENY {host}:{port} (to allow: run `vetto allow --net {host}`)")
             }
         }
         Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),

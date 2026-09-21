@@ -69,17 +69,44 @@ pub fn filter_proxy_secrets(
     });
 }
 
+fn strip_domain_port(s: &str) -> &str {
+    let s = s.trim().trim_end_matches('.');
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(end_bracket) = rest.find(']') {
+            &rest[..end_bracket]
+        } else {
+            s
+        }
+    } else if let Some((host_part, port_part)) = s.rsplit_once(':') {
+        if !port_part.is_empty()
+            && port_part.chars().all(|c| c.is_ascii_digit())
+            && !host_part.contains(':')
+        {
+            host_part
+        } else {
+            s
+        }
+    } else {
+        s
+    }
+}
+
 /// Helper to check if a domain is allowed by the broker allowlist.
 pub fn is_domain_allowed(domain: &str, allowlist: &[String]) -> bool {
     if allowlist.is_empty() {
         return false;
     }
-    let domain_clean = domain.trim().to_ascii_lowercase();
+    let host = strip_domain_port(domain).to_ascii_lowercase();
     allowlist.iter().any(|allowed| {
-        let allowed_clean = allowed.trim().to_ascii_lowercase();
-        allowed_clean == "*"
-            || allowed_clean == domain_clean
-            || domain_clean.ends_with(&format!(".{allowed_clean}"))
+        let pat = strip_domain_port(allowed).to_ascii_lowercase();
+        if pat == "*" {
+            return true;
+        }
+        if let Some(suffix) = pat.strip_prefix("*.") {
+            host.ends_with(&format!(".{suffix}"))
+        } else {
+            host == pat || host.ends_with(&format!(".{pat}"))
+        }
     })
 }
 
@@ -252,10 +279,18 @@ mod tests {
 
     #[test]
     fn validates_domain_allowlist() {
-        let allowlist = vec!["api.anthropic.com".to_string(), "openai.com".to_string()];
+        let allowlist = vec![
+            "api.anthropic.com".to_string(),
+            "openai.com".to_string(),
+            "*.github.com".to_string(),
+        ];
 
         assert!(is_domain_allowed("api.anthropic.com", &allowlist));
+        assert!(is_domain_allowed("api.anthropic.com:443", &allowlist));
         assert!(is_domain_allowed("api.openai.com", &allowlist));
+        assert!(is_domain_allowed("api.github.com", &allowlist));
+        assert!(is_domain_allowed("raw.github.com:443", &allowlist));
+        assert!(!is_domain_allowed("github.com", &allowlist));
         assert!(!is_domain_allowed("evil.com", &allowlist));
     }
 

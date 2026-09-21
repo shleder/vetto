@@ -107,6 +107,19 @@ pub fn format_session_recap(input: &SessionRecapInput) -> Option<Vec<String>> {
             input.files_changed,
         ));
     }
+    if !input.top_denied.is_empty() || !input.egress_denied.is_empty() {
+        let mut hints = Vec::new();
+        if let Some((first_path, _)) = input.top_denied.first() {
+            hints.push(format!("run `vetto allow {first_path}`"));
+        }
+        if let Some((first_egress, _)) = input.egress_denied.first() {
+            let domain = first_egress.split(':').next().unwrap_or(first_egress);
+            hints.push(format!("run `vetto allow --net {domain}`"));
+        }
+        if !hints.is_empty() {
+            lines.push(format!("to allow: {}", hints.join(" | ")));
+        }
+    }
     Some(lines)
 }
 
@@ -150,5 +163,7 @@ mod tests {
         assert!(lines[2].contains("api.example.com:443 x2"));
         assert!(lines[2].contains("registry.npmjs.org"));
         assert!(lines[3].contains("files changed 4"));
+        assert!(lines[4].contains("to allow: run `vetto allow /etc/shadow`"));
+        assert!(lines[4].contains("run `vetto allow --net api.example.com`"));
     }
 }
