@@ -263,15 +263,18 @@ pub enum Command {
 
     /// Grant the agent access to a path or network domain (writes policy)
     Allow {
-        /// Filesystem path, or network domain with --net
-        #[arg(value_name = "PATH|DOMAIN")]
-        target: String,
+        /// Filesystem path, network domain, or network preset name
+        #[arg(value_name = "PATH|DOMAIN|PRESET", required_unless_present = "preset")]
+        target: Option<String>,
         /// Filesystem only: read-only grant (default is read + write)
         #[arg(long)]
         read_only: bool,
         /// Treat TARGET as a network domain instead of a path
         #[arg(long)]
         net: bool,
+        /// Add a network preset (e.g. npm, git, pip, cargo, huggingface, go, maven, nuget)
+        #[arg(long, value_name = "PRESET")]
+        preset: Option<String>,
         /// Edit ~/.vetto/config.toml instead of the project policy
         #[arg(long)]
         global: bool,
