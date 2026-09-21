@@ -404,14 +404,28 @@ mod tests {
         assert!(content.contains("\"npm\""));
 
         // Allow wildcard domain
-        run_allow(Some("*.anthropic.com:443"), None, false, true, false, Some(&custom))
-            .expect("allow wildcard");
+        run_allow(
+            Some("*.anthropic.com:443"),
+            None,
+            false,
+            true,
+            false,
+            Some(&custom),
+        )
+        .expect("allow wildcard");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("\"*.anthropic.com\""));
 
         // Allow filesystem path
-        run_allow(Some("/tmp/scratch"), None, false, false, false, Some(&custom))
-            .expect("allow fs");
+        run_allow(
+            Some("/tmp/scratch"),
+            None,
+            false,
+            false,
+            false,
+            Some(&custom),
+        )
+        .expect("allow fs");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("\"/tmp/scratch\""));
 

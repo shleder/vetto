@@ -466,14 +466,10 @@ fn run() -> Result<()> {
             *read_only,
             *net,
             *global,
-            args.policy.as_deref(),
+            args.policy.as_deref().map(Path::new),
         ),
         Some(cli::Command::Deny { target, global }) => {
-            vetto::policy::edit::run_deny(
-                target,
-                *global,
-                args.policy.as_deref(),
-            )
+            vetto::policy::edit::run_deny(target, *global, args.policy.as_deref().map(Path::new))
         }
         Some(cli::Command::Multi {
             manifest,

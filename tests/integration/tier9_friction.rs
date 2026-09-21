@@ -270,7 +270,8 @@ fn test_app_describe_actionable_remediation_hint() {
 
 #[test]
 fn test_cli_allow_and_deny_operations() {
-    let temp_dir = std::env::temp_dir().join(format!("vetto-cli-allow-deny-{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("vetto-cli-allow-deny-{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
     let fake_home = temp_dir.join("home");
@@ -357,7 +358,8 @@ fn test_cli_allow_and_deny_operations() {
 
 #[test]
 fn test_cli_allow_respects_existing_dot_vetto_policy() {
-    let temp_dir = std::env::temp_dir().join(format!("vetto-dot-hierarchy-{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("vetto-dot-hierarchy-{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     let dot_vetto = temp_dir.join(".vetto");
     fs::create_dir_all(&dot_vetto).unwrap();
@@ -384,4 +386,3 @@ fn test_cli_allow_respects_existing_dot_vetto_policy() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
-
