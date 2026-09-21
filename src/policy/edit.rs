@@ -296,17 +296,17 @@ pub fn set_domain_quota(
         .context("policy section [network] is not a table")?;
 
     if net_table.get("net_quota").is_none() {
-        net_table.insert(
-            "net_quota",
-            toml_edit::Item::Table(toml_edit::Table::new()),
-        );
+        net_table.insert("net_quota", toml_edit::Item::Table(toml_edit::Table::new()));
     }
     let quota_item = net_table
         .get_mut("net_quota")
         .context("net_quota went missing after insert")?;
 
     if let Some(tbl) = quota_item.as_table_mut() {
-        tbl.insert(&clean_domain, toml_edit::Item::Value(toml_edit::Value::from(quota)));
+        tbl.insert(
+            &clean_domain,
+            toml_edit::Item::Value(toml_edit::Value::from(quota)),
+        );
     } else if let Some(inline) = quota_item.as_inline_table_mut() {
         inline.insert(&clean_domain, toml_edit::Value::from(quota));
     } else {
@@ -410,7 +410,13 @@ pub fn run_allow(
         }
 
         if let Some(normalized_cidr) = try_parse_cidr_or_ip(raw_target) {
-            let path = apply_with_quota(Grant::NetCidr, &normalized_cidr, quota, global, custom_policy)?;
+            let path = apply_with_quota(
+                Grant::NetCidr,
+                &normalized_cidr,
+                quota,
+                global,
+                custom_policy,
+            )?;
             if let Some(q) = quota {
                 println!(
                     "vetto: `{normalized_cidr}` granted ({}) with quota {q}, policy file: {}",
@@ -755,8 +761,14 @@ mod tests {
         set_domain_quota(&mut doc, "github.com", "1gb").expect("set quota 2");
         let s = doc.to_string();
         assert!(s.contains("net_quota"));
-        assert!(s.contains("\"api.openai.com\" = \"100mb\"") || s.contains("api.openai.com = \"100mb\""));
-        assert!(s.contains("\"github.com\" = \"1gb\"") || s.contains("github.com = \"1gb\""));
+        assert!(
+            s.contains("\"api.openai.com\" = \"100mb\"")
+                || s.contains("api.openai.com = \"100mb\"")
+        );
+        assert!(
+            s.contains("\"github.com\" = \"1gb\"")
+                || s.contains("github.com = \"1gb\"")
+        );
     }
 
     #[test]

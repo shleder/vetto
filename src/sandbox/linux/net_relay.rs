@@ -112,7 +112,7 @@ pub fn domain_matches_pattern(host: &str, pattern: &str) -> bool {
     }
     let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = clean_ip.parse::<std::net::IpAddr>() {
-        if let Ok(cidr) = crate::policy::cidr::IpCidr::parse(&pat) {
+        if let Ok(cidr) = IpCidr::parse(&pat) {
             return cidr.contains(ip);
         }
     }
@@ -1031,7 +1031,6 @@ fn forward_data_tunnel(
     let quota_kill_rx = Arc::clone(&quota_killed);
     let quota_kill_tx = Arc::clone(&quota_killed);
 
-    let host_rx = host_owned.clone();
     let host_tx = host_owned.clone();
     let bus_rx = bus.clone();
     let quotas_rx = Arc::clone(&quotas);
