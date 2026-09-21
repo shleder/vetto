@@ -279,11 +279,7 @@ pub fn apply_with_quota(
 }
 
 /// Mutate a parsed policy document to add or update a per-domain quota under `[network.net_quota]`.
-pub fn set_domain_quota(
-    doc: &mut toml_edit::DocumentMut,
-    domain: &str,
-    quota: &str,
-) -> Result<()> {
+pub fn set_domain_quota(doc: &mut toml_edit::DocumentMut, domain: &str, quota: &str) -> Result<()> {
     let clean_domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     let table = doc.as_table_mut();
     if table.get("network").is_none() {
@@ -765,10 +761,7 @@ mod tests {
             s.contains("\"api.openai.com\" = \"100mb\"")
                 || s.contains("api.openai.com = \"100mb\"")
         );
-        assert!(
-            s.contains("\"github.com\" = \"1gb\"")
-                || s.contains("github.com = \"1gb\"")
-        );
+        assert!(s.contains("\"github.com\" = \"1gb\"") || s.contains("github.com = \"1gb\""));
     }
 
     #[test]
