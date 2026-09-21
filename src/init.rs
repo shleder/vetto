@@ -32,18 +32,12 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     analysis.detected_shims = ShimRegistry::detect_for_project(root);
 
     // Base writable roots
-    analysis
-        .recommended_allow_write
-        .push("$PROJECT".to_string());
-    analysis
-        .recommended_allow_write
-        .push("/tmp".to_string());
-    analysis
-        .recommended_allow_write
-        .push("/var/tmp".to_string());
-    analysis
-        .recommended_allow_write
-        .push("/dev/null".to_string());
+    analysis.recommended_allow_write.extend([
+        "$PROJECT".to_string(),
+        "/tmp".to_string(),
+        "/var/tmp".to_string(),
+        "/dev/null".to_string(),
+    ]);
 
     // Rust
     if root.join("Cargo.toml").exists() {
@@ -277,7 +271,6 @@ allow_write = [
 # System toolchain caches and package registries allowed for reading:
 allow_read = [
 "#,
-        analysis.project_name, eco_str
     );
 
     if analysis.recommended_allow_read.is_empty() {

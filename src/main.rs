@@ -768,10 +768,8 @@ fn run() -> Result<()> {
                 }
             }
             if args.tui.is_none() && cfg.tui == TuiMode::Statusline {
-                if vetto::config::should_default_to_no_tui(
-                    cfg.agent_preset.as_deref(),
-                    &cfg.agent,
-                ) {
+                if vetto::config::should_default_to_no_tui(cfg.agent_preset.as_deref(), &cfg.agent)
+                {
                     cfg.tui = TuiMode::None;
                 }
             }

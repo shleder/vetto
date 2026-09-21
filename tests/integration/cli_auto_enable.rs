@@ -765,7 +765,10 @@ fn test_vetto_headless_flag_alias_emits_ci_json() {
     write_file(&mock_tool, "#!/bin/sh\necho \"agent ran\"\nexit 0\n");
     #[cfg(windows)]
     {
-        write_file(&bin_dir.join("myagent.cmd"), "@echo off\r\necho agent ran\r\n");
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho agent ran\r\n",
+        );
     }
     #[cfg(unix)]
     {
@@ -843,10 +846,16 @@ fn test_vetto_ci_env_defaults_to_no_tui() {
     let bin_dir = proj_dir.join("bin");
     std::fs::create_dir_all(&bin_dir).expect("create bin dir");
     let mock_tool = bin_dir.join("myagent");
-    write_file(&mock_tool, "#!/bin/sh\necho \"running in automated CI\"\nexit 0\n");
+    write_file(
+        &mock_tool,
+        "#!/bin/sh\necho \"running in automated CI\"\nexit 0\n",
+    );
     #[cfg(windows)]
     {
-        write_file(&bin_dir.join("myagent.cmd"), "@echo off\r\necho running in automated CI\r\n");
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho running in automated CI\r\n",
+        );
     }
     #[cfg(unix)]
     {
