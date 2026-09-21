@@ -177,10 +177,7 @@ pub fn parse_and_validate_cidr(raw: &str) -> Result<String> {
             .parse()
             .with_context(|| format!("invalid prefix in CIDR '{raw}'"))?;
 
-        let ip_clean = ip_part
-            .trim()
-            .trim_start_matches('[')
-            .trim_end_matches(']');
+        let ip_clean = ip_part.trim().trim_start_matches('[').trim_end_matches(']');
         let ip: std::net::IpAddr = ip_clean
             .parse()
             .with_context(|| format!("invalid IP in CIDR '{raw}'"))?;
@@ -498,10 +495,7 @@ mod tests {
 
     #[test]
     fn test_parse_and_validate_cidr() {
-        assert_eq!(
-            parse_and_validate_cidr("10.0.0.0/8").unwrap(),
-            "10.0.0.0/8"
-        );
+        assert_eq!(parse_and_validate_cidr("10.0.0.0/8").unwrap(), "10.0.0.0/8");
         assert_eq!(
             parse_and_validate_cidr("192.168.1.0/24").unwrap(),
             "192.168.1.0/24"
@@ -518,14 +512,8 @@ mod tests {
             parse_and_validate_cidr("https://10.0.0.0/8").unwrap(),
             "10.0.0.0/8"
         );
-        assert_eq!(
-            parse_and_validate_cidr("::1").unwrap(),
-            "::1/128"
-        );
-        assert_eq!(
-            parse_and_validate_cidr("[::1]:8080").unwrap(),
-            "::1/128"
-        );
+        assert_eq!(parse_and_validate_cidr("::1").unwrap(), "::1/128");
+        assert_eq!(parse_and_validate_cidr("[::1]:8080").unwrap(), "::1/128");
         assert_eq!(
             parse_and_validate_cidr("[2001:db8::]/32").unwrap(),
             "2001:db8::/32"
@@ -543,16 +531,8 @@ mod tests {
         let custom = dir.join("policy.toml");
 
         // Allow preset npm
-        run_allow(
-            Some("npm"),
-            None,
-            false,
-            true,
-            false,
-            false,
-            Some(&custom),
-        )
-        .expect("allow preset");
+        run_allow(Some("npm"), None, false, true, false, false, Some(&custom))
+            .expect("allow preset");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("mode = \"allowlist\""));
         assert!(content.contains("\"npm\""));

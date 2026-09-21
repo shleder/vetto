@@ -264,7 +264,10 @@ pub enum Command {
     /// Grant the agent access to a path or network domain (writes policy)
     Allow {
         /// Filesystem path, network domain, CIDR, or network preset name
-        #[arg(value_name = "PATH|DOMAIN|CIDR|PRESET", required_unless_present = "preset")]
+        #[arg(
+            value_name = "PATH|DOMAIN|CIDR|PRESET",
+            required_unless_present = "preset"
+        )]
         target: Option<String>,
         /// Filesystem only: read-only grant (default is read + write)
         #[arg(long)]

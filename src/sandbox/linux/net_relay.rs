@@ -264,9 +264,7 @@ pub fn is_doh_or_dot(host: &str, port: u16, ip: Option<IpAddr>) -> bool {
     {
         return true;
     }
-    let clean_ip = host
-        .trim_start_matches('[')
-        .trim_end_matches(']');
+    let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip_addr) = clean_ip.parse::<IpAddr>() {
         if DOH_DOT_DENY_IPS
             .iter()
@@ -492,9 +490,7 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
     }
 
     // If host is an IP that matches an allowed CIDR
-    let clean_ip = host
-        .trim_start_matches('[')
-        .trim_end_matches(']');
+    let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = clean_ip.parse::<IpAddr>() {
         let cidrs: Vec<IpCidr> = config
             .allow_cidr
