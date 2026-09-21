@@ -745,13 +745,11 @@ fn resolve_target_agent(
         {
             cfg.tui = TuiMode::None;
         }
-        let canon =
-            vetto::policy::defaults::canonical_agent_name(agent_name).unwrap_or(agent_name);
+        let canon = vetto::policy::defaults::canonical_agent_name(agent_name).unwrap_or(agent_name);
         if let Ok(shims_dir) = vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)
         {
             let shim_path = shims_dir.join(canon);
-            let is_wrapped =
-                shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
+            let is_wrapped = shim_path.exists() && vetto::shim::is_vetto_shim_content(&shim_path);
             if !is_wrapped {
                 let _ = vetto::cli::enable::enable_agent_silent(
                     canon,

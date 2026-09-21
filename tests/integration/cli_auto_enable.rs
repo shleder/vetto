@@ -904,10 +904,7 @@ fn test_vetto_explicit_agent_flag_resolves_and_dry_runs() {
     let bin_dir = proj_dir.join("bin");
     std::fs::create_dir_all(&bin_dir).expect("create bin dir");
     let mock_codex = bin_dir.join("codex");
-    write_file(
-        &mock_codex,
-        "#!/bin/sh\necho \"codex v1.0.0\"\nexit 0\n",
-    );
+    write_file(&mock_codex, "#!/bin/sh\necho \"codex v1.0.0\"\nexit 0\n");
     #[cfg(windows)]
     {
         write_file(
@@ -945,7 +942,10 @@ fn test_vetto_explicit_agent_flag_resolves_and_dry_runs() {
         stderr(&out)
     );
     let text = stdout(&out);
-    assert!(text.contains("profile 'codex'"), "must resolve codex profile: {text}");
+    assert!(
+        text.contains("profile 'codex'"),
+        "must resolve codex profile: {text}"
+    );
 
     // 2. vetto -a codex --dry-run (short flag)
     let out_short = Command::new(vetto_bin())
@@ -969,19 +969,19 @@ fn test_vetto_explicit_agent_flag_resolves_and_dry_runs() {
         "must resolve codex profile via short flag: {text_short}"
     );
 
-    // 3. vetto run -a codex --dry-run
+    // 3. vetto --dry-run -a codex run
     let out_run = Command::new(vetto_bin())
-        .args(["run", "--dry-run", "-a", "codex"])
+        .args(["--dry-run", "-a", "codex", "run"])
         .current_dir(proj_dir)
         .env("PATH", &custom_path)
         .env("HOME", &home_dir)
         .env("USERPROFILE", &home_dir)
         .output()
-        .expect("exec vetto run -a codex --dry-run");
+        .expect("exec vetto --dry-run -a codex run");
 
     assert!(
         out_run.status.success(),
-        "vetto run -a codex --dry-run must succeed: stdout: {} stderr: {}",
+        "vetto --dry-run -a codex run must succeed: stdout: {} stderr: {}",
         stdout(&out_run),
         stderr(&out_run)
     );
@@ -1014,4 +1014,3 @@ fn test_vetto_explicit_agent_not_found_returns_clean_guidance() {
         "must list supported agents: {err_text}"
     );
 }
-
