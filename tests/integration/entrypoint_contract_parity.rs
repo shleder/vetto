@@ -174,6 +174,9 @@ fn test_mcp_parse_command_tokens_no_shell() {
 
 #[test]
 fn test_mcp_entrypoint_executes_through_production_boundary() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let echo_bin = match vetto::mcp::wrap::resolve_in_path("echo") {
         Ok(bin) => bin,
         Err(_) => {
@@ -252,6 +255,9 @@ fn test_multi_agent_entrypoint_uses_production_boundary() {
 
 #[test]
 fn test_tamper_parity_across_all_entrypoints() {
+    let _lock = crate::common::prod_spawn_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = test_temp_dir("tamper-parity-all");
     let policy = test_policy_with_roots(&tmp);
     let marker = tmp.join("should-not-exist-tamper");
