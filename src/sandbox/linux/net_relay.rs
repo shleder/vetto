@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::config::NetRule;
 use crate::events::{bus::EventBus, Event};
@@ -81,6 +81,14 @@ impl From<Vec<String>> for BrokerConfig {
 static DOMAIN_TRANSFER_STATS: Mutex<Option<std::collections::HashMap<String, DomainStats>>> =
     Mutex::new(None);
 
+#[cfg(test)]
+pub fn reset_domain_transfer_stats() {
+    let mut guard = DOMAIN_TRANSFER_STATS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *guard = None;
+}
+
 fn add_domain_transfer(host: &str, tx: u64, rx: u64) {
     let mut guard = DOMAIN_TRANSFER_STATS
         .lock()
@@ -90,6 +98,61 @@ fn add_domain_transfer(host: &str, tx: u64, rx: u64) {
     entry.requests += 1;
     entry.bytes_tx += tx;
     entry.bytes_rx += rx;
+}
+
+/// Match a hostname against a pattern (exact match, wildcard *.suffix, or parent domain match).
+pub fn domain_matches_pattern(host: &str, pattern: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let pat = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+    if pat == "*" {
+        return true;
+    }
+    if host == pat {
+        return true;
+    }
+    let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = clean_ip.parse::<std::net::IpAddr>() {
+        if let Ok(cidr) = crate::policy::cidr::IpCidr::parse(&pat) {
+            return cidr.contains(ip);
+        }
+    }
+    if let Some(suffix) = pat.strip_prefix("*.") {
+        host.ends_with(&format!(".{suffix}")) || host == suffix
+    } else {
+        host.ends_with(&format!(".{pat}"))
+    }
+}
+
+/// Return the total bytes transferred across all recorded domains matching `pattern`.
+pub fn get_quota_bytes(pattern: &str) -> u64 {
+    let guard = DOMAIN_TRANSFER_STATS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let Some(map) = guard.as_ref() else {
+        return 0;
+    };
+    let mut total: u64 = 0;
+    for (recorded_host, stats) in map {
+        if domain_matches_pattern(recorded_host, pattern) {
+            total = total.saturating_add(stats.bytes_tx.saturating_add(stats.bytes_rx));
+        }
+    }
+    total
+}
+
+/// Find all quota rules matching `host`, sorted by specificity (most specific first).
+pub fn find_matching_quotas(
+    host: &str,
+    quotas: &std::collections::HashMap<String, u64>,
+) -> Vec<(String, u64)> {
+    let mut matches = Vec::new();
+    for (pat, &limit) in quotas {
+        if domain_matches_pattern(host, pat) {
+            matches.push((pat.clone(), limit));
+        }
+    }
+    matches.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    matches
 }
 
 fn get_domain_bytes(host: &str) -> u64 {
@@ -373,13 +436,14 @@ where
                             port: req.port,
                             allowed: true,
                         });
-                        let quota = config.quotas.get(&req.host).copied();
+                        let active_quotas =
+                            Arc::new(find_matching_quotas(&req.host, &config.quotas));
                         if create_and_send_data_fd(
                             &mut ctrl,
                             tcp,
                             &req.host,
                             addr,
-                            quota,
+                            Arc::clone(&active_quotas),
                             bus.clone(),
                         )
                         .is_err()
@@ -535,10 +599,11 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
         }
     }
 
-    // Check per-domain quota
-    if let Some(&limit) = config.quotas.get(host) {
-        let used = get_domain_bytes(host);
-        if used >= limit {
+    // Check per-domain quota (hierarchical)
+    let matching_quotas = find_matching_quotas(host, &config.quotas);
+    for (pat, limit) in &matching_quotas {
+        let used = get_quota_bytes(pat);
+        if used >= *limit {
             return false;
         }
     }
@@ -915,7 +980,7 @@ fn create_and_send_data_fd(
     tcp: TcpStream,
     host: &str,
     target_addr: SocketAddr,
-    quota: Option<u64>,
+    quotas: std::sync::Arc<Vec<(String, u64)>>,
     bus: EventBus,
 ) -> Result<(), ()> {
     let Some((mine, theirs)) = socketpair_stream().ok() else {
@@ -933,7 +998,7 @@ fn create_and_send_data_fd(
     std::thread::Builder::new()
         .name("broker-tunnel".into())
         .spawn(move || {
-            forward_data_tunnel(mine, tcp, host_owned, target_addr, quota, bus);
+            forward_data_tunnel(mine, tcp, host_owned, target_addr, quotas, bus);
         })
         .map_err(|_| ())?;
     Ok(())
@@ -944,7 +1009,7 @@ fn forward_data_tunnel(
     tcp: TcpStream,
     host_owned: String,
     target_addr: SocketAddr,
-    quota: Option<u64>,
+    quotas: std::sync::Arc<Vec<(String, u64)>>,
     bus: EventBus,
 ) {
     let Ok(unix_write) = mine.try_clone() else {
@@ -969,6 +1034,8 @@ fn forward_data_tunnel(
     let host_rx = host_owned.clone();
     let host_tx = host_owned.clone();
     let bus_rx = bus.clone();
+    let quotas_rx = Arc::clone(&quotas);
+    let quotas_tx = Arc::clone(&quotas);
 
     // thread: outbound TCP -> unix (server responses toward the relay)
     let rev = std::thread::Builder::new()
@@ -986,14 +1053,15 @@ fn forward_data_tunnel(
                     Ok(n) => {
                         let total_rx = rx_clone.fetch_add(n as u64, Ordering::Relaxed) + (n as u64);
                         let total_tx = tx_clone.load(Ordering::Relaxed);
-                        if let Some(limit) = quota {
-                            let total = get_domain_bytes(&host_rx) + total_rx + total_tx;
-                            if total > limit {
+                        let transfer_now = total_rx + total_tx;
+                        for (pat, limit) in quotas_rx.as_ref() {
+                            let total = get_quota_bytes(pat) + transfer_now;
+                            if total > *limit {
                                 quota_kill_rx.store(true, Ordering::Relaxed);
                                 bus_rx.publish(Event::NetQuotaExceeded {
                                     ts: crate::events::types::now(),
-                                    host: host_rx.clone(),
-                                    limit_bytes: limit,
+                                    host: pat.clone(),
+                                    limit_bytes: *limit,
                                     used_bytes: total,
                                 });
                                 break;
@@ -1085,14 +1153,15 @@ fn forward_data_tunnel(
             Ok(n) => {
                 let total_tx = bytes_tx.fetch_add(n as u64, Ordering::Relaxed) + (n as u64);
                 let total_rx = bytes_rx.load(Ordering::Relaxed);
-                if let Some(limit) = quota {
-                    let total = get_domain_bytes(&host_tx) + total_rx + total_tx;
-                    if total > limit {
+                let transfer_now = total_rx + total_tx;
+                for (pat, limit) in quotas_tx.as_ref() {
+                    let total = get_quota_bytes(pat) + transfer_now;
+                    if total > *limit {
                         quota_kill_tx.store(true, Ordering::Relaxed);
                         bus.publish(Event::NetQuotaExceeded {
                             ts: crate::events::types::now(),
-                            host: host_tx.clone(),
-                            limit_bytes: limit,
+                            host: pat.clone(),
+                            limit_bytes: *limit,
                             used_bytes: total,
                         });
                         break;
@@ -2138,5 +2207,66 @@ mod tests {
 
         // Non-preallowed domain goes to ask_confirmation; in non-tty test env it fails closed
         assert!(!request_allowed("unknown.com", 443, None, &config));
+    }
+
+    #[test]
+    fn test_domain_matches_pattern_hierarchy() {
+        assert!(domain_matches_pattern("github.com", "github.com"));
+        assert!(domain_matches_pattern("api.github.com", "github.com"));
+        assert!(domain_matches_pattern("codeload.github.com", "github.com"));
+        assert!(domain_matches_pattern("a.b.c.github.com", "github.com"));
+        assert!(!domain_matches_pattern("notgithub.com", "github.com"));
+
+        assert!(domain_matches_pattern("api.github.com", "*.github.com"));
+        assert!(domain_matches_pattern("github.com", "*.github.com"));
+        assert!(!domain_matches_pattern("evil.com", "*.github.com"));
+
+        assert!(domain_matches_pattern("anything.com", "*"));
+
+        assert!(domain_matches_pattern("10.0.1.5", "10.0.0.0/16"));
+        assert!(!domain_matches_pattern("192.168.1.1", "10.0.0.0/16"));
+    }
+
+    #[test]
+    fn test_hierarchical_quota_aggregation_and_enforcement() {
+        reset_domain_transfer_stats();
+
+        // Record traffic across different subdomains
+        add_domain_transfer("api.github.com", 30 * 1024 * 1024, 10 * 1024 * 1024); // 40MB
+        add_domain_transfer("codeload.github.com", 15 * 1024 * 1024, 5 * 1024 * 1024); // 20MB
+        add_domain_transfer("crates.io", 5 * 1024 * 1024, 5 * 1024 * 1024); // 10MB
+
+        // Check aggregate bytes
+        assert_eq!(get_quota_bytes("api.github.com"), 40 * 1024 * 1024);
+        assert_eq!(get_quota_bytes("codeload.github.com"), 20 * 1024 * 1024);
+        // Parent domain aggregates all github.com subdomains
+        assert_eq!(get_quota_bytes("github.com"), 60 * 1024 * 1024);
+        assert_eq!(get_quota_bytes("crates.io"), 10 * 1024 * 1024);
+        assert_eq!(get_quota_bytes("other.org"), 0);
+
+        // Test request_allowed with parent domain quota
+        let mut quotas = std::collections::HashMap::new();
+        quotas.insert("github.com".to_string(), 100 * 1024 * 1024); // 100MB limit
+        let config = BrokerConfig {
+            policy: BrokerPolicy::Allowlist(vec!["github.com".into()]),
+            debug_guard: None,
+            mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas,
+            policy_path: None,
+        };
+
+        // 60MB used < 100MB limit -> allowed
+        assert!(request_allowed("gist.github.com", 443, None, &config));
+
+        // Add more traffic that exceeds the 100MB parent limit
+        add_domain_transfer("gist.github.com", 25 * 1024 * 1024, 25 * 1024 * 1024); // +50MB -> total 110MB
+        assert_eq!(get_quota_bytes("github.com"), 110 * 1024 * 1024);
+
+        // Now parent domain limit is exceeded: fail-closed on any github.com subdomain
+        assert!(!request_allowed("api.github.com", 443, None, &config));
+        assert!(!request_allowed("raw.github.com", 443, None, &config));
+
+        reset_domain_transfer_stats();
     }
 }

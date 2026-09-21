@@ -708,7 +708,8 @@ impl MergedPolicy {
             for quotas in [&network.net_quota, &network.quota].into_iter().flatten() {
                 for (domain, val) in quotas {
                     let bytes = parse_quota_bytes(val)?;
-                    self.net_quota.insert(domain.clone(), bytes);
+                    let clean = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+                    self.net_quota.insert(clean, bytes);
                 }
             }
             if let Some(ports) = &network.net_ports {
@@ -832,6 +833,7 @@ pub struct PolicyOverrides {
     pub git_guard: Option<bool>,
     pub snapshot: Option<bool>,
     pub auto_deny_secrets: Option<bool>,
+    pub net_quota: std::collections::HashMap<String, u64>,
 }
 
 /// Context for the 7-tier layered policy loader.
@@ -1467,6 +1469,10 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     }
     if let Some(true) = overrides.auto_deny_secrets {
         merged.auto_deny_secrets = true;
+    }
+
+    for (domain, quota) in &overrides.net_quota {
+        merged.net_quota.insert(domain.clone(), *quota);
     }
 
     if let Some(name) = &overrides.name {

@@ -244,6 +244,17 @@ pub fn apply(
     global: bool,
     custom_policy: Option<&Path>,
 ) -> Result<PathBuf> {
+    apply_with_quota(grant, target, None, global, custom_policy)
+}
+
+/// Apply a grant and optional quota to the target policy file. Returns the file it wrote.
+pub fn apply_with_quota(
+    grant: Grant,
+    target: &str,
+    quota: Option<&str>,
+    global: bool,
+    custom_policy: Option<&Path>,
+) -> Result<PathBuf> {
     let path = resolve_target_file(global, custom_policy)?;
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -260,8 +271,48 @@ pub fn apply(
         .parse()
         .with_context(|| format!("parse {}", path.display()))?;
     let _added = edit_document(&mut doc, grant, target)?;
+    if let Some(q) = quota {
+        set_domain_quota(&mut doc, target, q)?;
+    }
     std::fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
     Ok(path)
+}
+
+/// Mutate a parsed policy document to add or update a per-domain quota under `[network.net_quota]`.
+pub fn set_domain_quota(
+    doc: &mut toml_edit::DocumentMut,
+    domain: &str,
+    quota: &str,
+) -> Result<()> {
+    let clean_domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    let table = doc.as_table_mut();
+    if table.get("network").is_none() {
+        table.insert("network", toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    let net_table = table
+        .get_mut("network")
+        .context("network section went missing after insert")?
+        .as_table_mut()
+        .context("policy section [network] is not a table")?;
+
+    if net_table.get("net_quota").is_none() {
+        net_table.insert(
+            "net_quota",
+            toml_edit::Item::Table(toml_edit::Table::new()),
+        );
+    }
+    let quota_item = net_table
+        .get_mut("net_quota")
+        .context("net_quota went missing after insert")?;
+
+    if let Some(tbl) = quota_item.as_table_mut() {
+        tbl.insert(&clean_domain, toml_edit::Item::Value(toml_edit::Value::from(quota)));
+    } else if let Some(inline) = quota_item.as_inline_table_mut() {
+        inline.insert(&clean_domain, toml_edit::Value::from(quota));
+    } else {
+        bail!("network.net_quota is not a table");
+    }
+    Ok(())
 }
 
 /// Persist a network target (domain or IP/CIDR) to the policy file.
@@ -287,13 +338,22 @@ pub fn persist_net_target(
 pub fn run_allow(
     target: Option<&str>,
     preset: Option<&str>,
+    quota: Option<&str>,
     read_only: bool,
     net: bool,
     cidr: bool,
     global: bool,
     custom_policy: Option<&Path>,
 ) -> Result<()> {
+    if let Some(q) = quota {
+        // Validate quota syntax early
+        crate::policy::loader::parse_quota_bytes(q)?;
+    }
+
     if let Some(p) = preset {
+        if quota.is_some() {
+            bail!("--quota cannot be specified with --preset");
+        }
         let preset_clean = p.trim().to_ascii_lowercase();
         let domains = crate::policy::loader::expand_net_preset(&preset_clean)?;
         let path = apply(Grant::NetPreset, &preset_clean, global, custom_policy)?;
@@ -314,19 +374,30 @@ pub fn run_allow(
 
     if cidr {
         let normalized = parse_and_validate_cidr(raw_target)?;
-        let path = apply(Grant::NetCidr, &normalized, global, custom_policy)?;
-        println!(
-            "vetto: `{normalized}` granted ({}), policy file: {}",
-            Grant::NetCidr.describe(),
-            path.display()
-        );
+        let path = apply_with_quota(Grant::NetCidr, &normalized, quota, global, custom_policy)?;
+        if let Some(q) = quota {
+            println!(
+                "vetto: `{normalized}` granted ({}) with quota {q}, policy file: {}",
+                Grant::NetCidr.describe(),
+                path.display()
+            );
+        } else {
+            println!(
+                "vetto: `{normalized}` granted ({}), policy file: {}",
+                Grant::NetCidr.describe(),
+                path.display()
+            );
+        }
         println!("vetto: the grant applies to the next session");
         return Ok(());
     }
 
-    if net {
+    if net || quota.is_some() {
         let candidate = raw_target.to_ascii_lowercase();
         if let Ok(domains) = crate::policy::loader::expand_net_preset(&candidate) {
+            if quota.is_some() {
+                bail!("--quota cannot be specified with preset '{candidate}'");
+            }
             let path = apply(Grant::NetPreset, &candidate, global, custom_policy)?;
             println!(
                 "vetto: preset `{}` granted (network preset: {}), policy file: {}",
@@ -339,12 +410,20 @@ pub fn run_allow(
         }
 
         if let Some(normalized_cidr) = try_parse_cidr_or_ip(raw_target) {
-            let path = apply(Grant::NetCidr, &normalized_cidr, global, custom_policy)?;
-            println!(
-                "vetto: `{normalized_cidr}` granted ({}), policy file: {}",
-                Grant::NetCidr.describe(),
-                path.display()
-            );
+            let path = apply_with_quota(Grant::NetCidr, &normalized_cidr, quota, global, custom_policy)?;
+            if let Some(q) = quota {
+                println!(
+                    "vetto: `{normalized_cidr}` granted ({}) with quota {q}, policy file: {}",
+                    Grant::NetCidr.describe(),
+                    path.display()
+                );
+            } else {
+                println!(
+                    "vetto: `{normalized_cidr}` granted ({}), policy file: {}",
+                    Grant::NetCidr.describe(),
+                    path.display()
+                );
+            }
             println!("vetto: the grant applies to the next session");
             return Ok(());
         }
@@ -353,12 +432,20 @@ pub fn run_allow(
         if normalized.is_empty() {
             bail!("invalid network domain '{raw_target}'");
         }
-        let path = apply(Grant::Net, &normalized, global, custom_policy)?;
-        println!(
-            "vetto: `{normalized}` granted ({}), policy file: {}",
-            Grant::Net.describe(),
-            path.display()
-        );
+        let path = apply_with_quota(Grant::Net, &normalized, quota, global, custom_policy)?;
+        if let Some(q) = quota {
+            println!(
+                "vetto: `{normalized}` granted ({}) with quota {q}, policy file: {}",
+                Grant::Net.describe(),
+                path.display()
+            );
+        } else {
+            println!(
+                "vetto: `{normalized}` granted ({}), policy file: {}",
+                Grant::Net.describe(),
+                path.display()
+            );
+        }
         println!("vetto: the grant applies to the next session");
         return Ok(());
     }
@@ -550,8 +637,17 @@ mod tests {
         let custom = dir.join("policy.toml");
 
         // Allow preset npm
-        run_allow(Some("npm"), None, false, true, false, false, Some(&custom))
-            .expect("allow preset");
+        run_allow(
+            Some("npm"),
+            None,
+            None,
+            false,
+            true,
+            false,
+            false,
+            Some(&custom),
+        )
+        .expect("allow preset");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("mode = \"allowlist\""));
         assert!(content.contains("\"npm\""));
@@ -559,6 +655,7 @@ mod tests {
         // Allow wildcard domain
         run_allow(
             Some("*.anthropic.com:443"),
+            None,
             None,
             false,
             true,
@@ -574,6 +671,7 @@ mod tests {
         run_allow(
             Some("/tmp/scratch"),
             None,
+            None,
             false,
             false,
             false,
@@ -587,6 +685,7 @@ mod tests {
         // Allow CIDR via --net
         run_allow(
             Some("10.0.0.0/8"),
+            None,
             None,
             false,
             true,
@@ -603,6 +702,7 @@ mod tests {
         run_allow(
             Some("192.168.1.100"),
             None,
+            None,
             false,
             true,
             false,
@@ -617,6 +717,7 @@ mod tests {
         run_allow(
             Some("172.16.0.0/12"),
             None,
+            None,
             false,
             false,
             true,
@@ -627,7 +728,35 @@ mod tests {
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("\"172.16.0.0/12\""));
 
+        // Allow domain with quota
+        run_allow(
+            Some("api.openai.com"),
+            None,
+            Some("100mb"),
+            false,
+            true,
+            false,
+            false,
+            Some(&custom),
+        )
+        .expect("allow domain with quota");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("\"api.openai.com\""));
+        assert!(content.contains("net_quota"));
+        assert!(content.contains("\"100mb\""));
+
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_domain_quota_creates_and_updates_net_quota() {
+        let mut doc = doc_with(PROJECT_HEADER);
+        set_domain_quota(&mut doc, "api.openai.com", "100mb").expect("set quota");
+        set_domain_quota(&mut doc, "github.com", "1gb").expect("set quota 2");
+        let s = doc.to_string();
+        assert!(s.contains("net_quota"));
+        assert!(s.contains("\"api.openai.com\" = \"100mb\"") || s.contains("api.openai.com = \"100mb\""));
+        assert!(s.contains("\"github.com\" = \"1gb\"") || s.contains("github.com = \"1gb\""));
     }
 
     #[test]
