@@ -178,7 +178,7 @@ pub struct Cli {
     pub dry_run: bool,
 
     /// Non-interactive mode for CI: implies --tui=none and a JSON summary on stdout
-    #[arg(long)]
+    #[arg(long, alias = "headless", alias = "non-interactive")]
     pub ci: bool,
 
     /// Suppress diagnostic and non-essential progress messages on stderr
@@ -1212,6 +1212,20 @@ mod tests {
                 non_interactive: true,
             })
         ));
+    }
+
+    #[test]
+    fn cli_parses_headless_and_non_interactive_flags_as_ci() {
+        let cli_headless =
+            Cli::try_parse_from(["vetto", "--headless", "run"]).expect("headless parsing");
+        assert!(cli_headless.ci);
+
+        let cli_non_interactive = Cli::try_parse_from(["vetto", "--non-interactive", "run"])
+            .expect("non-interactive parsing");
+        assert!(cli_non_interactive.ci);
+
+        let cli_ci = Cli::try_parse_from(["vetto", "--ci", "run"]).expect("ci parsing");
+        assert!(cli_ci.ci);
     }
 
     #[test]

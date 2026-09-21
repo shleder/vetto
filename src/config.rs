@@ -275,20 +275,9 @@ impl RunConfig {
             tui = TuiMode::None;
         }
 
-        if !explicit_tui && tui == TuiMode::Statusline {
-            let is_shim = std::env::var("VETTO_SHIM_ACTIVE")
-                .map(|v| v == "1")
-                .unwrap_or(false)
-                || std::env::var("VETTO_WRAPPED")
-                    .map(|v| v == "1")
-                    .unwrap_or(false);
-            let is_interactive = is_interactive_agent_command(None, &cli.agent);
-            use std::io::IsTerminal;
-            let is_tty = std::io::stdin().is_terminal() || std::io::stdout().is_terminal();
-
-            if is_shim || (is_interactive && is_tty) {
-                tui = TuiMode::None;
-            }
+        if !explicit_tui && tui == TuiMode::Statusline && should_default_to_no_tui(None, &cli.agent)
+        {
+            tui = TuiMode::None;
         }
 
         let timeout_str = cli.timeout.as_deref().or(global.timeout.as_deref());
@@ -548,6 +537,56 @@ pub fn is_interactive_agent_command(agent: Option<&str>, command: &[String]) -> 
     } else {
         false
     }
+}
+
+/// Determines if the current execution environment is a headless / CI runner
+/// (e.g. GitHub Actions, GitLab CI, Buildkite, Jenkins, Azure Pipelines, Cirrus, etc.).
+pub fn is_ci_environment() -> bool {
+    std::env::var_os("CI").is_some()
+        || std::env::var_os("GITHUB_ACTIONS").is_some()
+        || std::env::var_os("GITLAB_CI").is_some()
+        || std::env::var_os("CONTINUOUS_INTEGRATION").is_some()
+        || std::env::var_os("BUILDKITE").is_some()
+        || std::env::var_os("TF_BUILD").is_some()
+        || std::env::var_os("CIRRUS_CI").is_some()
+        || std::env::var_os("TRAVIS").is_some()
+        || std::env::var_os("APPVEYOR").is_some()
+}
+
+/// Determines whether TuiMode should automatically default to None.
+/// This applies when:
+/// 1. The invocation is a wrapped shim (`VETTO_SHIM_ACTIVE=1` or `VETTO_WRAPPED=1`), or
+/// 2. Running in a CI or headless automation environment, or
+/// 3. Neither stdin nor stdout is an interactive terminal (pipes, background jobs), or
+/// 4. An interactive AI agent command (claude, codex, etc.) is running in a terminal
+///    and requires direct raw pass-through instead of statusline framing.
+pub fn should_default_to_no_tui(agent_preset: Option<&str>, command: &[String]) -> bool {
+    use std::io::IsTerminal;
+
+    let is_shim = std::env::var("VETTO_SHIM_ACTIVE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        || std::env::var("VETTO_WRAPPED")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+    if is_shim {
+        return true;
+    }
+
+    if is_ci_environment() {
+        return true;
+    }
+
+    let is_tty = std::io::stdin().is_terminal() || std::io::stdout().is_terminal();
+    if !is_tty {
+        return true;
+    }
+
+    if is_interactive_agent_command(agent_preset, command) {
+        return true;
+    }
+
+    false
 }
 
 /// Parse `--timeout` durations: bare seconds, `90s`, `30m`, `2h`.
@@ -922,5 +961,17 @@ mod tests {
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert!(cfg.ephemeral);
         assert!(cfg.snapshot);
+    }
+
+    #[test]
+    fn test_should_default_to_no_tui_for_interactive_and_shims() {
+        let claude_cmd = vec!["claude".to_string()];
+        assert!(should_default_to_no_tui(Some("claude"), &claude_cmd));
+
+        let codex_cmd = vec!["codex".to_string(), "-p".to_string(), "hi".to_string()];
+        assert!(should_default_to_no_tui(Some("codex"), &codex_cmd));
+
+        let agy_cmd = vec!["agy".to_string()];
+        assert!(should_default_to_no_tui(Some("antigravity"), &agy_cmd));
     }
 }

@@ -741,3 +741,154 @@ fn test_vetto_exec_subcommand_alias_with_flags() {
         "flags and options must pass through via vetto exec: {text}"
     );
 }
+
+#[test]
+fn test_vetto_headless_flag_alias_emits_ci_json() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
+    let project = TempProject::new("vetto-headless-flags");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_tool = bin_dir.join("myagent");
+    write_file(&mock_tool, "#!/bin/sh\necho \"agent ran\"\nexit 0\n");
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho agent ran\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_tool, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out_headless = Command::new(vetto_bin())
+        .args(["--headless", "--net=off", "exec", "myagent"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto --headless");
+
+    assert!(
+        out_headless.status.success(),
+        "--headless run must succeed: stdout: {} stderr: {}",
+        stdout(&out_headless),
+        stderr(&out_headless)
+    );
+    let text_headless = stdout(&out_headless);
+    assert!(
+        text_headless.contains("\"vetto_ci\""),
+        "--headless must emit JSON report on stdout: {text_headless}"
+    );
+
+    let out_non_interactive = Command::new(vetto_bin())
+        .args(["--non-interactive", "--net=off", "exec", "myagent"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto --non-interactive");
+
+    assert!(
+        out_non_interactive.status.success(),
+        "--non-interactive run must succeed: stdout: {} stderr: {}",
+        stdout(&out_non_interactive),
+        stderr(&out_non_interactive)
+    );
+    let text_non_interactive = stdout(&out_non_interactive);
+    assert!(
+        text_non_interactive.contains("\"vetto_ci\""),
+        "--non-interactive must emit JSON report on stdout: {text_non_interactive}"
+    );
+}
+
+#[test]
+fn test_vetto_ci_env_defaults_to_no_tui() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
+    let project = TempProject::new("vetto-ci-env");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_tool = bin_dir.join("myagent");
+    write_file(
+        &mock_tool,
+        "#!/bin/sh\necho \"running in automated CI\"\nexit 0\n",
+    );
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho running in automated CI\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_tool, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out = Command::new(vetto_bin())
+        .args(["--net=off", "exec", "myagent"])
+        .current_dir(proj_dir)
+        .env("CI", "true")
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto under CI=true");
+
+    assert!(
+        out.status.success(),
+        "vetto run under CI=true must succeed: stdout: {} stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("running in automated CI"),
+        "command output must be present: {text}"
+    );
+}

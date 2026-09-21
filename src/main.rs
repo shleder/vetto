@@ -325,17 +325,14 @@ fn run() -> Result<()> {
                         }
                     }
                 }
-                if args.tui.is_none() {
-                    let is_interactive = vetto::config::is_interactive_agent_command(
+                if args.tui.is_none()
+                    && cfg.tui == TuiMode::Statusline
+                    && vetto::config::should_default_to_no_tui(
                         cfg.agent_preset.as_deref(),
                         &cfg.agent,
-                    );
-                    use std::io::IsTerminal;
-                    if is_interactive
-                        && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
-                    {
-                        cfg.tui = TuiMode::None;
-                    }
+                    )
+                {
+                    cfg.tui = TuiMode::None;
                 }
             }
             if cfg.agent.is_empty() {
@@ -362,17 +359,14 @@ fn run() -> Result<()> {
                 if !cfg.explicit_net && !detected.network_domains.is_empty() {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
-                if args.tui.is_none() {
-                    let is_interactive = vetto::config::is_interactive_agent_command(
+                if args.tui.is_none()
+                    && cfg.tui == TuiMode::Statusline
+                    && vetto::config::should_default_to_no_tui(
                         cfg.agent_preset.as_deref(),
                         &cfg.agent,
-                    );
-                    use std::io::IsTerminal;
-                    if is_interactive
-                        && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
-                    {
-                        cfg.tui = TuiMode::None;
-                    }
+                    )
+                {
+                    cfg.tui = TuiMode::None;
                 }
                 if let Ok(shims_dir) =
                     vetto::cli::hook::get_shims_dir(vetto::cli::hook::HookScope::Global)
@@ -775,17 +769,11 @@ fn run() -> Result<()> {
                     cfg.net = NetMode::Allowlist(detected.network_domains);
                 }
             }
-            if args.tui.is_none() {
-                let is_interactive = vetto::config::is_interactive_agent_command(
-                    cfg.agent_preset.as_deref(),
-                    &cfg.agent,
-                );
-                use std::io::IsTerminal;
-                if is_interactive
-                    && (std::io::stdin().is_terminal() || std::io::stdout().is_terminal())
-                {
-                    cfg.tui = TuiMode::None;
-                }
+            if args.tui.is_none()
+                && cfg.tui == TuiMode::Statusline
+                && vetto::config::should_default_to_no_tui(cfg.agent_preset.as_deref(), &cfg.agent)
+            {
+                cfg.tui = TuiMode::None;
             }
             supervise(cfg)
         }
