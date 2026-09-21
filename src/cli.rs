@@ -263,15 +263,18 @@ pub enum Command {
 
     /// Grant the agent access to a path or network domain (writes policy)
     Allow {
-        /// Filesystem path, network domain, or network preset name
-        #[arg(value_name = "PATH|DOMAIN|PRESET", required_unless_present = "preset")]
+        /// Filesystem path, network domain, CIDR, or network preset name
+        #[arg(value_name = "PATH|DOMAIN|CIDR|PRESET", required_unless_present = "preset")]
         target: Option<String>,
         /// Filesystem only: read-only grant (default is read + write)
         #[arg(long)]
         read_only: bool,
-        /// Treat TARGET as a network domain instead of a path
+        /// Treat TARGET as a network domain or CIDR/IP instead of a path
         #[arg(long)]
         net: bool,
+        /// Explicitly treat TARGET as a network CIDR or IP range (e.g. 10.0.0.0/8, 192.168.1.0/24)
+        #[arg(long)]
+        cidr: bool,
         /// Add a network preset (e.g. npm, git, pip, cargo, huggingface, go, maven, nuget)
         #[arg(long, value_name = "PRESET")]
         preset: Option<String>,

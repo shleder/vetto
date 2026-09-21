@@ -532,6 +532,9 @@ fn print_text(
     }
 
     println!("  deny_network: {}", policy.deny_network);
+    if !policy.allow_cidr.is_empty() {
+        println!("  allow_cidr: {}", policy.allow_cidr.join(", "));
+    }
 
     if policy.warnings.is_empty() {
         println!("  warnings: (none)");
@@ -634,6 +637,7 @@ fn print_json(
             "deny": policy.environment.deny.clone(),
         },
         "deny_network": policy.deny_network,
+        "allow_cidr": policy.allow_cidr.clone(),
         "warnings": policy.warnings.clone(),
     });
     println!("{}", serde_json::to_string_pretty(&object)?);
