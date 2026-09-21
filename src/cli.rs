@@ -1220,8 +1220,8 @@ mod tests {
             Cli::try_parse_from(["vetto", "--headless", "run"]).expect("headless parsing");
         assert!(cli_headless.ci);
 
-        let cli_non_interactive =
-            Cli::try_parse_from(["vetto", "--non-interactive", "run"]).expect("non-interactive parsing");
+        let cli_non_interactive = Cli::try_parse_from(["vetto", "--non-interactive", "run"])
+            .expect("non-interactive parsing");
         assert!(cli_non_interactive.ci);
 
         let cli_ci = Cli::try_parse_from(["vetto", "--ci", "run"]).expect("ci parsing");
