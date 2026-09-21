@@ -526,9 +526,7 @@ pub fn describe(ev: &Event) -> String {
             if *allowed {
                 format!("[{t}] net allow {host}:{port}")
             } else {
-                format!(
-                    "[{t}] net DENY {host}:{port} (to allow: run `vetto allow --net {host}`)"
-                )
+                format!("[{t}] net DENY {host}:{port} (to allow: run `vetto allow --net {host}`)")
             }
         }
         Event::SecretMasked { path, .. } => format!("[{t}] secret masked: {path}"),

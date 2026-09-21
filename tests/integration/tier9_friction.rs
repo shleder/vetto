@@ -245,6 +245,7 @@ fn test_actionable_remediation_in_session_recap() {
     assert!(allow_line.contains("run `vetto allow --net api.blocked-service.com`"));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_app_describe_actionable_remediation_hint() {
     let blocked_file = vetto::events::Event::BlockedAttempt {
@@ -266,4 +267,3 @@ fn test_app_describe_actionable_remediation_hint() {
     let desc_net = vetto::tui::app::describe(&denied_net);
     assert!(desc_net.contains("to allow: run `vetto allow --net custom-api.internal`"));
 }
-
