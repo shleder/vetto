@@ -275,9 +275,7 @@ impl RunConfig {
             tui = TuiMode::None;
         }
 
-        if !explicit_tui
-            && tui == TuiMode::Statusline
-            && should_default_to_no_tui(None, &cli.agent)
+        if !explicit_tui && tui == TuiMode::Statusline && should_default_to_no_tui(None, &cli.agent)
         {
             tui = TuiMode::None;
         }
