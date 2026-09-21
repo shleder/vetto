@@ -228,6 +228,9 @@ fn zero_config_fails_cleanly_with_agent_guidance_when_no_agent_found() {
 #[test]
 fn zero_config_auto_detects_claude_from_marker() {
     let project = TempProject::new("zero-config-claude");
+    let home_dir = project.path().join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
     let bin_dir = project.path().join("bin");
     let mock_agent = bin_dir.join("claude");
     write_file(
@@ -256,11 +259,16 @@ fn zero_config_auto_detects_claude_from_marker() {
     let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
     paths.insert(0, bin_dir);
     let custom_path = std::env::join_paths(paths).unwrap();
+    let home_str = home_dir.to_str().unwrap();
 
     let out = run_vetto_env_in(
         project.path(),
         &["--dry-run"],
-        &[("PATH", custom_path.to_str().unwrap())],
+        &[
+            ("PATH", custom_path.to_str().unwrap()),
+            ("HOME", home_str),
+            ("USERPROFILE", home_str),
+        ],
     );
     assert!(
         out.status.success(),
@@ -276,6 +284,9 @@ fn zero_config_auto_detects_claude_from_marker() {
 #[test]
 fn zero_config_auto_detects_from_agents_md() {
     let project = TempProject::new("zero-config-agents-md");
+    let home_dir = project.path().join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
     let bin_dir = project.path().join("bin");
     let mock_agent = bin_dir.join("opencode");
     write_file(
@@ -304,11 +315,16 @@ fn zero_config_auto_detects_from_agents_md() {
     let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
     paths.insert(0, bin_dir);
     let custom_path = std::env::join_paths(paths).unwrap();
+    let home_str = home_dir.to_str().unwrap();
 
     let out = run_vetto_env_in(
         project.path(),
         &["--dry-run"],
-        &[("PATH", custom_path.to_str().unwrap())],
+        &[
+            ("PATH", custom_path.to_str().unwrap()),
+            ("HOME", home_str),
+            ("USERPROFILE", home_str),
+        ],
     );
     assert!(
         out.status.success(),
@@ -320,4 +336,3 @@ fn zero_config_auto_detects_from_agents_md() {
     let out_text = stdout(&out);
     assert!(out_text.contains("opencode"));
 }
-
