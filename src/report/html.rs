@@ -48,6 +48,41 @@ pub fn render(stats: &SessionStats) -> String {
         net.push_str("<p class=\"muted\">No network requests (network is off by default).</p>\n");
     }
 
+    let mut dns = String::new();
+    if !stats.dns_resolutions.is_empty() {
+        dns.push_str("<h2>DNS resolutions</h2>\n");
+        dns.push_str("<table><tr><th>host</th><th>resolved IPs</th></tr>\n");
+        for d in &stats.dns_resolutions {
+            dns.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>\n",
+                html_escape(&clean(&d.host)),
+                html_escape(&clean(&d.ips.join(", ")))
+            ));
+        }
+        dns.push_str("</table>\n");
+    }
+
+    let mut egress = String::new();
+    if !stats.egress_connections.is_empty() {
+        egress.push_str("<h2>Egress traffic</h2>\n");
+        egress.push_str(
+            "<table><tr><th>host</th><th>IP</th><th>port</th>\
+             <th class=\"num\">tx bytes</th><th class=\"num\">rx bytes</th></tr>\n",
+        );
+        for e in &stats.egress_connections {
+            egress.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td class=\"num\">{}</td>\
+                 <td class=\"num\">{}</td><td class=\"num\">{}</td></tr>\n",
+                html_escape(&clean(&e.host)),
+                html_escape(&clean(&e.ip)),
+                e.port,
+                e.bytes_tx,
+                e.bytes_rx
+            ));
+        }
+        egress.push_str("</table>\n");
+    }
+
     let mut notices = String::new();
     for n in &stats.notices {
         notices.push_str(&format!("<li>{}</li>\n", html_escape(&clean(n))));
@@ -131,6 +166,9 @@ observation is best-effort (/proc polling, ~100 ms granularity)</p>
 <h2>Network requests</h2>
 {net_tbl}
 
+{dns}
+{egress}
+
 <h2>Suspicious signals (best-effort)</h2>
 {suspicious}
 
@@ -158,6 +196,8 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
         writes = stats.file_writes,
         blocked = blocked,
         net_tbl = net,
+        dns = dns,
+        egress = egress,
         suspicious = suspicious,
         notices = notices,
         version = env!("CARGO_PKG_VERSION"),
@@ -188,5 +228,30 @@ mod tests {
         let report = render(&stats);
         assert!(!report.contains(secret), "secret leaked: {report}");
         assert!(report.contains("off&lt;script&gt;"), "HTML was not escaped");
+    }
+
+    #[test]
+    fn test_dns_and_egress_rendered_in_html() {
+        let stats = SessionStats {
+            dns_resolutions: vec![super::super::stats::DnsRecord {
+                host: "api.anthropic.com".into(),
+                ips: vec!["104.18.2.1".into()],
+            }],
+            egress_connections: vec![super::super::stats::EgressRecord {
+                host: "api.anthropic.com".into(),
+                ip: "104.18.2.1".into(),
+                port: 443,
+                bytes_tx: 1200,
+                bytes_rx: 8500,
+            }],
+            ..SessionStats::default()
+        };
+        let report = render(&stats);
+        assert!(report.contains("<h2>DNS resolutions</h2>"));
+        assert!(report.contains("api.anthropic.com"));
+        assert!(report.contains("104.18.2.1"));
+        assert!(report.contains("<h2>Egress traffic</h2>"));
+        assert!(report.contains("<td class=\"num\">1200</td>"));
+        assert!(report.contains("<td class=\"num\">8500</td>"));
     }
 }

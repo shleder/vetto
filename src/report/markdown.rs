@@ -63,6 +63,35 @@ pub fn render(stats: &SessionStats) -> String {
         out.push('\n');
     }
 
+    if !stats.dns_resolutions.is_empty() {
+        out.push_str("## DNS resolutions\n\n");
+        out.push_str("| host | resolved IPs |\n|---|---|\n");
+        for d in &stats.dns_resolutions {
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                markdown_cell(&d.host),
+                markdown_cell(&d.ips.join(", "))
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !stats.egress_connections.is_empty() {
+        out.push_str("## Egress traffic\n\n");
+        out.push_str("| host | IP | port | tx bytes | rx bytes |\n|---|---|---|---|---|\n");
+        for e in &stats.egress_connections {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_cell(&e.host),
+                markdown_cell(&e.ip),
+                e.port,
+                e.bytes_tx,
+                e.bytes_rx
+            ));
+        }
+        out.push('\n');
+    }
+
     out.push_str("## Suspicious signals (best-effort)\n\n");
     if stats.suspicious_signals.is_empty() {
         out.push_str("None observed. This classifier is advisory and incomplete.\n\n");
@@ -132,5 +161,28 @@ mod tests {
             "secret leaked: {report}"
         );
         assert!(report.contains("row \\| injected\\nnext"));
+    }
+
+    #[test]
+    fn dns_and_egress_logs_are_rendered_in_markdown() {
+        let stats = SessionStats {
+            dns_resolutions: vec![super::super::stats::DnsRecord {
+                host: "api.anthropic.com".into(),
+                ips: vec!["104.18.2.1".into(), "104.18.3.1".into()],
+            }],
+            egress_connections: vec![super::super::stats::EgressRecord {
+                host: "api.anthropic.com".into(),
+                ip: "104.18.2.1".into(),
+                port: 443,
+                bytes_tx: 1200,
+                bytes_rx: 8500,
+            }],
+            ..SessionStats::default()
+        };
+        let report = render(&stats);
+        assert!(report.contains("## DNS resolutions"));
+        assert!(report.contains("| api.anthropic.com | 104.18.2.1, 104.18.3.1 |"));
+        assert!(report.contains("## Egress traffic"));
+        assert!(report.contains("| api.anthropic.com | 104.18.2.1 | 443 | 1200 | 8500 |"));
     }
 }
