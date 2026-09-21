@@ -208,4 +208,3 @@ pub fn prod_spawn_test_lock() -> &'static std::sync::Mutex<()> {
     static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
-
