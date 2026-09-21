@@ -1522,12 +1522,15 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
                 NetMode::Strict(rules) => {
                     sandbox::linux::net_relay::BrokerPolicy::Strict(rules.clone())
                 }
-                NetMode::Ask => sandbox::linux::net_relay::BrokerPolicy::Ask,
+                NetMode::Ask => {
+                    sandbox::linux::net_relay::BrokerPolicy::Ask(pol.network_allow.clone())
+                }
                 NetMode::Off => sandbox::linux::net_relay::BrokerPolicy::Allowlist(Vec::new()),
             };
             let mut broker_config = sandbox::linux::net_relay::BrokerConfig::from(broker_policy);
             broker_config.allow_cidr = pol.allow_cidr.clone();
             broker_config.quotas = pol.net_quota.clone();
+            broker_config.policy_path = cfg.policy_path.clone();
             sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus.clone());
         }
         let _ = relay_port;

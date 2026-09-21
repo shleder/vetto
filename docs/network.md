@@ -59,7 +59,15 @@ checked, so `notgithub.com` does not match `github.com`.
 vetto --net=ask -- agent command
 ```
 
-In interactive mode, any network connection attempt triggers an interactive confirmation prompt on stderr. Confirmed domains are cached in-memory for the duration of the session. If stdin is not a TTY (such as in CI or background scripts), interactive prompts fail closed and deny the connection.
+In interactive mode, any network connection to an unlisted domain triggers an interactive confirmation prompt on stderr:
+```console
+vetto: allow network connection to 'api.example.com:443'? [y/N/p (permanent)]:
+```
+- `y` / `yes`: Allow the connection for the duration of the current session (cached in-memory).
+- `N` / `no`: Deny the connection (cached fail-closed).
+- `p` / `permanent`: Allow the connection and permanently persist the domain (or CIDR for direct IPs) into the project policy file (`vetto.toml` or `.vetto/policy.toml`).
+
+Pre-configured allowlisted domains (e.g. from presets or policy files) are permitted automatically without prompting. If stdin is not a TTY (such as in CI or automated background jobs), interactive prompts fail closed and deny the connection.
 
 ## Wildcard Domains and Presets
 
