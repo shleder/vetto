@@ -670,3 +670,74 @@ fn test_vetto_run_subcommand_zero_arg_auto_detect() {
         "mock claude must have executed: {text}"
     );
 }
+
+#[test]
+fn test_vetto_exec_subcommand_alias_with_flags() {
+    #[cfg(target_os = "windows")]
+    {
+        let doc = doctor_output();
+        if !doc.contains("experimental-process-sandbox=yes") {
+            eprintln!("SKIP: Windows AppContainer/experimental sandbox backend is unavailable");
+            return;
+        }
+    }
+
+    let project = TempProject::new("vetto-exec-flags");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_tool = bin_dir.join("myagent");
+    write_file(&mock_tool, "#!/bin/sh\necho \"exec args: $@\"\nexit 0\n");
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("myagent.cmd"),
+            "@echo off\r\necho exec args: %*\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_tool, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    let out = Command::new(vetto_bin())
+        .args([
+            "--tui=none",
+            "--net=off",
+            "exec",
+            "myagent",
+            "-p",
+            "test prompt",
+            "--verbose",
+        ])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto exec myagent");
+
+    assert!(
+        out.status.success(),
+        "vetto exec with flags must succeed: stdout: {} stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("test prompt") && text.contains("--verbose"),
+        "flags and options must pass through via vetto exec: {text}"
+    );
+}

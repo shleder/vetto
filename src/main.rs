@@ -76,6 +76,7 @@ fn preprocess_cli_args(raw_args: &[String]) -> Result<Vec<String>> {
         "verify",
         "verify-ng",
         "run",
+        "exec",
         "wizard",
         "undo",
         "ephemeral",
