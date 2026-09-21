@@ -5,7 +5,7 @@
 [filesystem]
 # Project + temp: read-write. /dev/null is writable so shell redirections
 # like `>/dev/null` keep working (it is a pure sink, never a secret).
-allow_write = ["$PROJECT", "/tmp", "/dev/null"]
+allow_write = ["$PROJECT", "/tmp", "/var/tmp", "/dev/null"]
 
 # System + toolchains + dependency caches: read-only
 allow_read = [

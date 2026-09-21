@@ -13,6 +13,7 @@ pub struct ProjectAnalysis {
     pub detected_ecosystems: Vec<&'static str>,
     pub detected_agents: Vec<&'static str>,
     pub recommended_allow_read: Vec<String>,
+    pub recommended_allow_write: Vec<String>,
     pub recommended_network_domains: Vec<String>,
     pub detected_shims: Vec<String>,
 }
@@ -30,9 +31,26 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     // Detect binary shims for project
     analysis.detected_shims = ShimRegistry::detect_for_project(root);
 
+    // Base writable roots
+    analysis
+        .recommended_allow_write
+        .push("$PROJECT".to_string());
+    analysis
+        .recommended_allow_write
+        .push("/tmp".to_string());
+    analysis
+        .recommended_allow_write
+        .push("/var/tmp".to_string());
+    analysis
+        .recommended_allow_write
+        .push("/dev/null".to_string());
+
     // Rust
     if root.join("Cargo.toml").exists() {
         analysis.detected_ecosystems.push("Rust");
+        analysis
+            .recommended_allow_write
+            .push("$PROJECT/target".to_string());
         analysis
             .recommended_allow_read
             .push("$HOME/.cargo/registry".to_string());
@@ -63,6 +81,9 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
             analysis.detected_ecosystems.push("Node.js");
         }
         analysis
+            .recommended_allow_write
+            .push("$PROJECT/node_modules/.cache".to_string());
+        analysis
             .recommended_allow_read
             .push("$HOME/.npm".to_string());
         analysis
@@ -86,6 +107,15 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
         || root.join("setup.py").exists();
     if is_python {
         analysis.detected_ecosystems.push("Python");
+        analysis
+            .recommended_allow_write
+            .push("$PROJECT/.pytest_cache".to_string());
+        analysis
+            .recommended_allow_write
+            .push("$PROJECT/.mypy_cache".to_string());
+        analysis
+            .recommended_allow_write
+            .push("$PROJECT/.ruff_cache".to_string());
         analysis
             .recommended_allow_read
             .push("$HOME/.cache/pip".to_string());
@@ -185,6 +215,8 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
 
     analysis.recommended_allow_read.sort();
     analysis.recommended_allow_read.dedup();
+    analysis.recommended_allow_write.sort();
+    analysis.recommended_allow_write.dedup();
     analysis.recommended_network_domains.sort();
     analysis.recommended_network_domains.dedup();
 
@@ -223,13 +255,21 @@ extends = ["default"]
 [filesystem]
 # Project directory and scratch space are writable:
 allow_write = [
-  "$PROJECT",
-  "$PROJECT/target/",
-  "/tmp",
-  "/dev/null",
-]
+"#,
+        analysis.project_name, eco_str
+    );
 
-# Sensitive directories denied from write access:
+    if analysis.recommended_allow_write.is_empty() {
+        out.push_str("  \"$PROJECT\",\n  \"/tmp\",\n  \"/var/tmp\",\n  \"/dev/null\",\n");
+    } else {
+        for path in &analysis.recommended_allow_write {
+            out.push_str(&format!("  \"{path}\",\n"));
+        }
+    }
+    out.push_str("]\n\n");
+
+    out.push_str(
+        r#"# Sensitive directories denied from write access:
 # deny_write = [
 #   "$PROJECT/.git",
 # ]
@@ -485,13 +525,21 @@ mod tests {
         assert!(analysis
             .recommended_network_domains
             .contains(&"api.anthropic.com".to_string()));
-        assert!(analysis.detected_shims.contains(&"cargo".to_string()));
-        assert!(analysis.detected_shims.contains(&"node".to_string()));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"$PROJECT/target".to_string()));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"$PROJECT/node_modules/.cache".to_string()));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"/var/tmp".to_string()));
 
         let toml = generate_policy_toml(&analysis);
         assert!(toml.contains("Rust, Node.js (TypeScript)"));
         assert!(toml.contains("api.anthropic.com"));
         assert!(toml.contains("$HOME/.cargo/registry"));
+        assert!(toml.contains("$PROJECT/target"));
         assert!(toml.contains("$PROJECT/.env"));
         assert!(toml.contains("[metadata]"));
         assert!(toml.contains("[security]"));
@@ -500,6 +548,31 @@ mod tests {
         assert!(toml.contains("[environment]"));
         assert!(toml.contains("[network]"));
         assert!(toml.contains("[limits]"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_python_test_scratch_dirs() {
+        let dir = temp_test_dir("python-scratch");
+        let path = dir.as_path();
+
+        fs::write(path.join("pyproject.toml"), "[tool.pytest]").unwrap();
+
+        let analysis = analyze_project(path);
+        assert!(analysis.detected_ecosystems.contains(&"Python"));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"$PROJECT/.pytest_cache".to_string()));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"$PROJECT/.mypy_cache".to_string()));
+        assert!(analysis
+            .recommended_allow_write
+            .contains(&"$PROJECT/.ruff_cache".to_string()));
+
+        let toml = generate_policy_toml(&analysis);
+        assert!(toml.contains(".pytest_cache"));
 
         let _ = fs::remove_dir_all(&dir);
     }
