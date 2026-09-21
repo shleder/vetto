@@ -176,6 +176,8 @@ mod tests {
             ..Default::default()
         };
         let lines = format_session_recap(&input).expect("recap");
-        assert!(lines.iter().any(|l| l.contains("run `vetto allow --net ::1`")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("run `vetto allow --net ::1`")));
     }
 }
