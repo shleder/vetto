@@ -5,7 +5,7 @@
 # explicit in shell history and reports.
 
 [filesystem]
-allow_write = ["$PROJECT", "/tmp", "/var/tmp", "/dev/null"]
+allow_write = ["$PROJECT", "/tmp", "/dev/null"]
 
 allow_read = [
   "/usr", "/bin", "/sbin", "/lib", "/lib64",

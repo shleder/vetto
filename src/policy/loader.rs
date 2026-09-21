@@ -2023,7 +2023,7 @@ fn enumerate_tree(
 }
 
 fn is_temp_root(p: &Path) -> bool {
-    p == Path::new("/tmp") || p.starts_with("/dev/")
+    p == Path::new("/tmp") || p == Path::new("/var/tmp") || p.starts_with("/dev/")
 }
 
 #[cfg(test)]

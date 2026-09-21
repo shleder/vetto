@@ -227,7 +227,6 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                 allow_write: Some(RawStringList::Many(vec![
                     "$PROJECT".into(),
                     "/tmp".into(),
-                    "/var/tmp".into(),
                     "/dev/null".into(),
                 ])),
                 allow_read: Some(RawStringList::Many(vec!["$PROJECT".into()])),
@@ -267,7 +266,6 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     allow_write: Some(RawStringList::Many(vec![
                         "$PROJECT".into(),
                         "/tmp".into(),
-                        "/var/tmp".into(),
                         "/dev/null".into(),
                     ])),
                     allow_read: Some(RawStringList::Many(vec![
@@ -311,7 +309,6 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     allow_write: Some(RawStringList::Many(vec![
                         "$PROJECT".into(),
                         "/tmp".into(),
-                        "/var/tmp".into(),
                         "/dev/null".into(),
                         "$HOME".into(),
                     ])),

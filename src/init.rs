@@ -35,7 +35,6 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
     analysis.recommended_allow_write.extend([
         "$PROJECT".to_string(),
         "/tmp".to_string(),
-        "/var/tmp".to_string(),
         "/dev/null".to_string(),
     ]);
 
@@ -254,7 +253,7 @@ allow_write = [
     );
 
     if analysis.recommended_allow_write.is_empty() {
-        out.push_str("  \"$PROJECT\",\n  \"/tmp\",\n  \"/var/tmp\",\n  \"/dev/null\",\n");
+        out.push_str("  \"$PROJECT\",\n  \"/tmp\",\n  \"/dev/null\",\n");
     } else {
         for path in &analysis.recommended_allow_write {
             out.push_str(&format!("  \"{path}\",\n"));
@@ -526,7 +525,7 @@ mod tests {
             .contains(&"$PROJECT/node_modules/.cache".to_string()));
         assert!(analysis
             .recommended_allow_write
-            .contains(&"/var/tmp".to_string()));
+            .contains(&"/tmp".to_string()));
 
         let toml = generate_policy_toml(&analysis);
         assert!(toml.contains("Rust, Node.js (TypeScript)"));
