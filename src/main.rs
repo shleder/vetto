@@ -458,6 +458,7 @@ fn run() -> Result<()> {
             target,
             read_only,
             net,
+            cidr,
             preset,
             global,
         }) => vetto::policy::edit::run_allow(
@@ -465,6 +466,7 @@ fn run() -> Result<()> {
             preset.as_deref(),
             *read_only,
             *net,
+            *cidr,
             *global,
             args.policy.as_deref().map(Path::new),
         ),

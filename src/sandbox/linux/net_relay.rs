@@ -143,31 +143,35 @@ pub struct IpCidr {
 
 impl IpCidr {
     pub fn parse(s: &str) -> Result<Self, String> {
-        let (ip_str, prefix_str) = s
-            .trim()
-            .split_once('/')
-            .ok_or_else(|| format!("CIDR '{s}' must be in IP/prefix format"))?;
-        let ip: IpAddr = ip_str
-            .trim()
+        let s = s.trim();
+        let (ip_str, prefix_opt) = match s.split_once('/') {
+            Some((ip_part, prefix_part)) => {
+                let prefix: u8 = prefix_part
+                    .trim()
+                    .parse()
+                    .map_err(|e| format!("invalid prefix in CIDR '{s}': {e}"))?;
+                (ip_part.trim(), Some(prefix))
+            }
+            None => (s, None),
+        };
+
+        let ip_clean = ip_str.trim_start_matches('[').trim_end_matches(']');
+        let ip: IpAddr = ip_clean
             .parse()
             .map_err(|e| format!("invalid IP in CIDR '{s}': {e}"))?;
-        let prefix_len: u8 = prefix_str
-            .trim()
-            .parse()
-            .map_err(|e| format!("invalid prefix in CIDR '{s}': {e}"))?;
-        match ip {
-            IpAddr::V4(_) if prefix_len > 32 => {
-                return Err(format!(
-                    "IPv4 prefix length must be 0..=32, got {prefix_len}"
-                ));
+
+        let prefix_len = match (ip, prefix_opt) {
+            (IpAddr::V4(_), Some(pfx)) if pfx > 32 => {
+                return Err(format!("IPv4 prefix length must be 0..=32, got {pfx}"));
             }
-            IpAddr::V6(_) if prefix_len > 128 => {
-                return Err(format!(
-                    "IPv6 prefix length must be 0..=128, got {prefix_len}"
-                ));
+            (IpAddr::V6(_), Some(pfx)) if pfx > 128 => {
+                return Err(format!("IPv6 prefix length must be 0..=128, got {pfx}"));
             }
-            _ => {}
-        }
+            (IpAddr::V4(_), Some(pfx)) => pfx,
+            (IpAddr::V6(_), Some(pfx)) => pfx,
+            (IpAddr::V4(_), None) => 32,
+            (IpAddr::V6(_), None) => 128,
+        };
         Ok(Self {
             network: ip,
             prefix_len,
@@ -260,7 +264,8 @@ pub fn is_doh_or_dot(host: &str, port: u16, ip: Option<IpAddr>) -> bool {
     {
         return true;
     }
-    if let Ok(ip_addr) = host.parse::<IpAddr>() {
+    let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip_addr) = clean_ip.parse::<IpAddr>() {
         if DOH_DOT_DENY_IPS
             .iter()
             .any(|&denied| denied == ip_addr.to_string())
@@ -485,7 +490,8 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
     }
 
     // If host is an IP that matches an allowed CIDR
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = clean_ip.parse::<IpAddr>() {
         let cidrs: Vec<IpCidr> = config
             .allow_cidr
             .iter()
@@ -1872,6 +1878,23 @@ mod tests {
         let cidr_v6 = IpCidr::parse("2001:db8::/32").unwrap();
         assert!(cidr_v6.contains("2001:db8:1234::1".parse().unwrap()));
         assert!(!cidr_v6.contains("2001:db9::1".parse().unwrap()));
+
+        let bare_v4 = IpCidr::parse("10.0.0.5").unwrap();
+        assert_eq!(bare_v4.prefix_len, 32);
+        assert!(bare_v4.contains("10.0.0.5".parse().unwrap()));
+        assert!(!bare_v4.contains("10.0.0.6".parse().unwrap()));
+
+        let bare_v6 = IpCidr::parse("::1").unwrap();
+        assert_eq!(bare_v6.prefix_len, 128);
+        assert!(bare_v6.contains("::1".parse().unwrap()));
+
+        let bracketed_v6 = IpCidr::parse("[2001:db8::]/64").unwrap();
+        assert_eq!(bracketed_v6.prefix_len, 64);
+        assert!(bracketed_v6.contains("2001:db8::1".parse().unwrap()));
+
+        let bracketed_bare = IpCidr::parse("[::1]").unwrap();
+        assert_eq!(bracketed_bare.prefix_len, 128);
+        assert!(bracketed_bare.contains("::1".parse().unwrap()));
 
         assert!(IpCidr::parse("invalid").is_err());
         assert!(IpCidr::parse("10.0.0.1/33").is_err());

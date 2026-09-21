@@ -340,7 +340,44 @@ fn test_cli_allow_and_deny_operations() {
     let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
     assert!(content.contains("\"cargo\""));
 
-    // 6. Deny secret path
+    // 6. Allow CIDR via --net
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--net", "10.0.0.0/8"])
+        .output()
+        .expect("vetto allow --net 10.0.0.0/8");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"10.0.0.0/8\""));
+    assert!(content.contains("allow_cidr = ["));
+
+    // 7. Allow CIDR via --cidr
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--cidr", "192.168.0.0/16"])
+        .output()
+        .expect("vetto allow --cidr 192.168.0.0/16");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"192.168.0.0/16\""));
+
+    // 8. Allow bare IP via --net (auto-canonicalized to /32)
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--net", "172.16.1.50"])
+        .output()
+        .expect("vetto allow --net 172.16.1.50");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"172.16.1.50/32\""));
+
+    // 9. Deny secret path
     let output = vetto_cmd()
         .current_dir(&temp_dir)
         .env("HOME", &fake_home)
