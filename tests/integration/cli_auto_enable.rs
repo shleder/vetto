@@ -892,3 +892,125 @@ fn test_vetto_ci_env_defaults_to_no_tui() {
         "command output must be present: {text}"
     );
 }
+
+#[test]
+fn test_vetto_explicit_agent_flag_resolves_and_dry_runs() {
+    let project = TempProject::new("vetto-explicit-agent");
+    let proj_dir = project.path();
+
+    let home_dir = proj_dir.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create test home");
+
+    let bin_dir = proj_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+    let mock_codex = bin_dir.join("codex");
+    write_file(&mock_codex, "#!/bin/sh\necho \"codex v1.0.0\"\nexit 0\n");
+    #[cfg(windows)]
+    {
+        write_file(
+            &bin_dir.join("codex.cmd"),
+            "@echo off\r\necho codex v1.0.0\r\n",
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&mock_codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mock_codex, perms).unwrap();
+    }
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&original_path).collect::<Vec<_>>();
+    paths.insert(0, bin_dir.clone());
+    let custom_path = std::env::join_paths(paths).unwrap();
+
+    // 1. vetto --agent codex --dry-run
+    let out = Command::new(vetto_bin())
+        .args(["--dry-run", "--agent", "codex"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto --agent codex --dry-run");
+
+    assert!(
+        out.status.success(),
+        "vetto --agent codex --dry-run must succeed: stdout: {} stderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("profile 'codex'"),
+        "must resolve codex profile: {text}"
+    );
+
+    // 2. vetto -a codex --dry-run (short flag)
+    let out_short = Command::new(vetto_bin())
+        .args(["--dry-run", "-a", "codex"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto -a codex --dry-run");
+
+    assert!(
+        out_short.status.success(),
+        "vetto -a codex --dry-run must succeed: stdout: {} stderr: {}",
+        stdout(&out_short),
+        stderr(&out_short)
+    );
+    let text_short = stdout(&out_short);
+    assert!(
+        text_short.contains("profile 'codex'"),
+        "must resolve codex profile via short flag: {text_short}"
+    );
+
+    // 3. vetto --dry-run -a codex run
+    let out_run = Command::new(vetto_bin())
+        .args(["--dry-run", "-a", "codex", "run"])
+        .current_dir(proj_dir)
+        .env("PATH", &custom_path)
+        .env("HOME", &home_dir)
+        .env("USERPROFILE", &home_dir)
+        .output()
+        .expect("exec vetto --dry-run -a codex run");
+
+    assert!(
+        out_run.status.success(),
+        "vetto --dry-run -a codex run must succeed: stdout: {} stderr: {}",
+        stdout(&out_run),
+        stderr(&out_run)
+    );
+}
+
+#[test]
+fn test_vetto_explicit_agent_not_found_returns_clean_guidance() {
+    let project = TempProject::new("vetto-explicit-agent-missing");
+    let proj_dir = project.path();
+
+    // Empty PATH ensures the agent binary is not found
+    let out = Command::new(vetto_bin())
+        .args(["--agent", "codex"])
+        .current_dir(proj_dir)
+        .env("PATH", "")
+        .output()
+        .expect("exec vetto --agent codex with empty PATH");
+
+    assert!(
+        !out.status.success(),
+        "vetto with missing agent binary must fail"
+    );
+    let err_text = stderr(&out);
+    assert!(
+        err_text.contains("agent binary for 'codex' was not found in PATH"),
+        "must explain agent binary was not found: {err_text}"
+    );
+    assert!(
+        err_text.contains("Supported agents:"),
+        "must list supported agents: {err_text}"
+    );
+}
