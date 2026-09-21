@@ -4,8 +4,8 @@
 //! with `--global`), preserving comments and formatting via `toml_edit`.
 //! Created files get a short header so the layer stays self-documenting.
 
-use anyhow::{Context, Result};
-use std::path::PathBuf;
+use anyhow::{bail, Context, Result};
+use std::path::{Path, PathBuf};
 
 const PROJECT_HEADER: &str = r#"# vetto project policy.
 # This file is merged over the built-in profile and agent preset; CLI flags win.
@@ -21,6 +21,8 @@ pub enum Grant {
     FsRead,
     /// Append to `allow` under `[network]` and default the mode to allowlist.
     Net,
+    /// Append to `net_presets` under `[network]` and default the mode to allowlist.
+    NetPreset,
     /// Append to `paths` under `[display_only_deny]`.
     Deny,
 }
@@ -29,6 +31,7 @@ impl Grant {
     fn section_key(self, read_only: bool) -> (&'static str, &'static str) {
         match self {
             Grant::Net => ("network", "allow"),
+            Grant::NetPreset => ("network", "net_presets"),
             Grant::Deny => ("display_only_deny", "paths"),
             Grant::FsReadWrite => {
                 if read_only {
@@ -44,6 +47,7 @@ impl Grant {
     fn describe(self) -> &'static str {
         match self {
             Grant::Net => "network domain allowlist",
+            Grant::NetPreset => "network preset allowlist",
             Grant::Deny => "masked secrets (reads denied)",
             Grant::FsReadWrite => "read + write grant",
             Grant::FsRead => "read-only grant",
@@ -89,7 +93,7 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
         true
     };
 
-    if matches!(grant, Grant::Net) {
+    if matches!(grant, Grant::Net | Grant::NetPreset) {
         let inner = doc
             .as_table_mut()
             .get_mut("network")
@@ -113,7 +117,7 @@ pub fn edit_document(doc: &mut toml_edit::DocumentMut, grant: Grant, target: &st
     Ok(added)
 }
 
-fn resolve_target_file(global: bool) -> Result<PathBuf> {
+pub fn resolve_target_file(global: bool, custom_policy: Option<&Path>) -> Result<PathBuf> {
     if global {
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -121,12 +125,53 @@ fn resolve_target_file(global: bool) -> Result<PathBuf> {
             .context("neither HOME nor USERPROFILE is set")?;
         return Ok(home.join(".vetto").join("config.toml"));
     }
-    Ok(PathBuf::from("vetto.toml"))
+    if let Some(custom) = custom_policy {
+        return Ok(custom.to_path_buf());
+    }
+
+    let dot_vetto_policy = Path::new(".vetto").join("policy.toml");
+    let policy_toml = Path::new("policy.toml");
+    let vetto_toml = Path::new("vetto.toml");
+
+    if dot_vetto_policy.is_file() {
+        Ok(dot_vetto_policy)
+    } else if policy_toml.is_file() {
+        Ok(policy_toml.to_path_buf())
+    } else if vetto_toml.is_file() {
+        Ok(vetto_toml.to_path_buf())
+    } else if Path::new(".vetto").is_dir() {
+        Ok(dot_vetto_policy)
+    } else {
+        Ok(vetto_toml.to_path_buf())
+    }
+}
+
+/// Normalize network targets: strip protocol prefixes (http://, https://),
+/// trailing paths, queries, fragments, port numbers, trailing dots, and lowercase.
+pub fn normalize_net_target(raw: &str) -> String {
+    let mut s = raw.trim();
+    if let Some(rest) = s.strip_prefix("https://") {
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        s = rest;
+    }
+
+    if let Some(idx) = s.find(['/', '?', '#']) {
+        s = &s[..idx];
+    }
+
+    let s = crate::cred_broker::strip_domain_port(s);
+    s.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
 /// Apply a grant to the target policy file. Returns the file it wrote.
-fn apply(grant: Grant, target: &str, global: bool) -> Result<PathBuf> {
-    let path = resolve_target_file(global)?;
+fn apply(
+    grant: Grant,
+    target: &str,
+    global: bool,
+    custom_policy: Option<&Path>,
+) -> Result<PathBuf> {
+    let path = resolve_target_file(global, custom_policy)?;
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent)
@@ -147,17 +192,69 @@ fn apply(grant: Grant, target: &str, global: bool) -> Result<PathBuf> {
 }
 
 /// CLI entry point for `vetto allow`.
-pub fn run_allow(target: &str, read_only: bool, net: bool, global: bool) -> Result<()> {
-    let grant = if net {
-        Grant::Net
-    } else if read_only {
+pub fn run_allow(
+    target: Option<&str>,
+    preset: Option<&str>,
+    read_only: bool,
+    net: bool,
+    global: bool,
+    custom_policy: Option<&Path>,
+) -> Result<()> {
+    if let Some(p) = preset {
+        let preset_clean = p.trim().to_ascii_lowercase();
+        let domains = crate::policy::loader::expand_net_preset(&preset_clean)?;
+        let path = apply(Grant::NetPreset, &preset_clean, global, custom_policy)?;
+        println!(
+            "vetto: preset `{}` granted (network preset: {}), policy file: {}",
+            preset_clean,
+            domains.join(", "),
+            path.display()
+        );
+        println!("vetto: the grant applies to the next session");
+        return Ok(());
+    }
+
+    let raw_target = target
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .context("target path, domain, or --preset must be provided")?;
+
+    if net {
+        let candidate = raw_target.to_ascii_lowercase();
+        if let Ok(domains) = crate::policy::loader::expand_net_preset(&candidate) {
+            let path = apply(Grant::NetPreset, &candidate, global, custom_policy)?;
+            println!(
+                "vetto: preset `{}` granted (network preset: {}), policy file: {}",
+                candidate,
+                domains.join(", "),
+                path.display()
+            );
+            println!("vetto: the grant applies to the next session");
+            return Ok(());
+        }
+
+        let normalized = normalize_net_target(raw_target);
+        if normalized.is_empty() {
+            bail!("invalid network domain '{raw_target}'");
+        }
+        let path = apply(Grant::Net, &normalized, global, custom_policy)?;
+        println!(
+            "vetto: `{normalized}` granted ({}), policy file: {}",
+            Grant::Net.describe(),
+            path.display()
+        );
+        println!("vetto: the grant applies to the next session");
+        return Ok(());
+    }
+
+    let grant = if read_only {
         Grant::FsRead
     } else {
         Grant::FsReadWrite
     };
-    let path = apply(grant, target, global)?;
+    let path = apply(grant, raw_target, global, custom_policy)?;
     println!(
-        "vetto: `{target}` granted ({}), policy file: {}",
+        "vetto: `{raw_target}` granted ({}), policy file: {}",
         grant.describe(),
         path.display()
     );
@@ -166,9 +263,9 @@ pub fn run_allow(target: &str, read_only: bool, net: bool, global: bool) -> Resu
 }
 
 /// CLI entry point for `vetto deny`.
-pub fn run_deny(target: &str, global: bool) -> Result<()> {
+pub fn run_deny(target: &str, global: bool, custom_policy: Option<&Path>) -> Result<()> {
     let grant = Grant::Deny;
-    let path = apply(grant, target, global)?;
+    let path = apply(grant, target, global, custom_policy)?;
     println!(
         "vetto: `{target}` denied ({}), policy file: {}",
         grant.describe(),
@@ -241,6 +338,94 @@ mod tests {
         assert!(edit_document(&mut doc, Grant::FsReadWrite, "/opt/data").is_err());
         let mut doc2 = doc_with("network = \"off\"\n");
         assert!(edit_document(&mut doc2, Grant::Net, "example.com").is_err());
+    }
+
+    #[test]
+    fn net_preset_grant_defaults_mode_to_allowlist() {
+        let mut doc = doc_with(PROJECT_HEADER);
+        assert!(edit_document(&mut doc, Grant::NetPreset, "npm").expect("edit"));
+        let s = doc.to_string();
+        assert!(s.contains("mode = \"allowlist\""));
+        assert!(s.contains("\"npm\""));
+        assert!(s.contains("net_presets = ["));
+    }
+
+    #[test]
+    fn test_normalize_net_target() {
+        assert_eq!(
+            normalize_net_target("api.anthropic.com"),
+            "api.anthropic.com"
+        );
+        assert_eq!(
+            normalize_net_target("https://api.anthropic.com/v1/messages"),
+            "api.anthropic.com"
+        );
+        assert_eq!(
+            normalize_net_target("http://api.github.com:443/repos?query=1"),
+            "api.github.com"
+        );
+        assert_eq!(
+            normalize_net_target("*.githubusercontent.com:443"),
+            "*.githubusercontent.com"
+        );
+        assert_eq!(
+            normalize_net_target("REGISTRY.NPMJS.ORG."),
+            "registry.npmjs.org"
+        );
+    }
+
+    #[test]
+    fn test_resolve_target_file_hierarchy() {
+        let dir = std::env::temp_dir().join(format!("vetto-res-hierarchy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let custom = dir.join("custom.toml");
+        assert_eq!(resolve_target_file(false, Some(&custom)).unwrap(), custom);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_run_allow_with_net_preset_and_custom_policy() {
+        let dir = std::env::temp_dir().join(format!("vetto-run-allow-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let custom = dir.join("policy.toml");
+
+        // Allow preset npm
+        run_allow(Some("npm"), None, false, true, false, Some(&custom)).expect("allow preset");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("mode = \"allowlist\""));
+        assert!(content.contains("\"npm\""));
+
+        // Allow wildcard domain
+        run_allow(
+            Some("*.anthropic.com:443"),
+            None,
+            false,
+            true,
+            false,
+            Some(&custom),
+        )
+        .expect("allow wildcard");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("\"*.anthropic.com\""));
+
+        // Allow filesystem path
+        run_allow(
+            Some("/tmp/scratch"),
+            None,
+            false,
+            false,
+            false,
+            Some(&custom),
+        )
+        .expect("allow fs");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("\"/tmp/scratch\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

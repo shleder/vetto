@@ -69,7 +69,7 @@ pub fn filter_proxy_secrets(
     });
 }
 
-fn strip_domain_port(s: &str) -> &str {
+pub fn strip_domain_port(s: &str) -> &str {
     let s = s.trim().trim_end_matches('.');
     if let Some(rest) = s.strip_prefix('[') {
         if let Some(end_bracket) = rest.find(']') {

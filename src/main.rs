@@ -458,10 +458,18 @@ fn run() -> Result<()> {
             target,
             read_only,
             net,
+            preset,
             global,
-        }) => vetto::policy::edit::run_allow(target, *read_only, *net, *global),
+        }) => vetto::policy::edit::run_allow(
+            target.as_deref(),
+            preset.as_deref(),
+            *read_only,
+            *net,
+            *global,
+            args.policy.as_deref().map(Path::new),
+        ),
         Some(cli::Command::Deny { target, global }) => {
-            vetto::policy::edit::run_deny(target, *global)
+            vetto::policy::edit::run_deny(target, *global, args.policy.as_deref().map(Path::new))
         }
         Some(cli::Command::Multi {
             manifest,

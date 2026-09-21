@@ -174,7 +174,7 @@ pub fn explain_why(policy: &Policy, target_path: &Path, project: &Path) -> PathE
             "deny_write".to_string(),
             format!("subtractive deny_write rule overrides write access in root: {}", matching_write_root.unwrap_or_default()),
             format!(
-                "Path is read-only due to subtractive [filesystem.deny_write] override. To allow writing: remove \"{}\" from [filesystem.deny_write] in policy.toml.",
+                "Path is read-only due to subtractive [filesystem.deny_write] override. To allow writing: run `vetto allow {}` or remove from [filesystem.deny_write] in policy.toml.",
                 target_path.display()
             ),
         )
@@ -184,7 +184,7 @@ pub fn explain_why(policy: &Policy, target_path: &Path, project: &Path) -> PathE
             "allow_read".to_string(),
             format!("allow_read root: {}", matching_read_root.unwrap_or_default()),
             format!(
-                "Path is read-only. To allow writing: add \"{}\" or parent directory to [filesystem.allow_write] in policy.toml.",
+                "Path is read-only. To allow writing: run `vetto allow {}` (or add to [filesystem.allow_write] in policy.toml).",
                 target_path.display()
             ),
         )
@@ -194,7 +194,8 @@ pub fn explain_why(policy: &Policy, target_path: &Path, project: &Path) -> PathE
             "unmapped".to_string(),
             "isolated scope (not in any allowed read or write root)".to_string(),
             format!(
-                "Path is outside sandbox scope. To allow reading: add `allow_read = [\"{}\"]` to policy.toml. To allow writing: add to `allow_write`.",
+                "Path is outside sandbox scope. To allow reading: run `vetto allow --read-only {}`. To allow writing: run `vetto allow {}`.",
+                target_path.display(),
                 target_path.display()
             ),
         )

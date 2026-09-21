@@ -267,3 +267,121 @@ fn test_app_describe_actionable_remediation_hint() {
     let desc_net = vetto::tui::app::describe(&denied_net);
     assert!(desc_net.contains("to allow: run `vetto allow --net custom-api.internal`"));
 }
+
+#[test]
+fn test_cli_allow_and_deny_operations() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("vetto-cli-allow-deny-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let fake_home = temp_dir.join("home");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    // 1. Allow writable path
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "/opt/test_scratch"])
+        .output()
+        .expect("vetto allow /opt/test_scratch");
+    assert!(output.status.success());
+    let policy_path = temp_dir.join("vetto.toml");
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"/opt/test_scratch\""));
+
+    // 2. Allow read-only path
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--read-only", "/usr/local/share/data"])
+        .output()
+        .expect("vetto allow --read-only");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"/usr/local/share/data\""));
+
+    // 3. Allow wildcard network domain with port
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--net", "*.anthropic.com:443"])
+        .output()
+        .expect("vetto allow --net");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"*.anthropic.com\""));
+    assert!(content.contains("mode = \"allowlist\""));
+
+    // 4. Allow network preset via --net
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--net", "npm"])
+        .output()
+        .expect("vetto allow --net npm");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"npm\""));
+    assert!(content.contains("net_presets = ["));
+
+    // 5. Allow network preset via --preset
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "--preset", "cargo"])
+        .output()
+        .expect("vetto allow --preset cargo");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"cargo\""));
+
+    // 6. Deny secret path
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["deny", "$HOME/.ssh/id_rsa"])
+        .output()
+        .expect("vetto deny");
+    assert!(output.status.success());
+    let content = fs::read_to_string(&policy_path).expect("read vetto.toml");
+    assert!(content.contains("\"$HOME/.ssh/id_rsa\""));
+    assert!(content.contains("[display_only_deny]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_allow_respects_existing_dot_vetto_policy() {
+    let temp_dir = std::env::temp_dir().join(format!("vetto-dot-hierarchy-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    let dot_vetto = temp_dir.join(".vetto");
+    fs::create_dir_all(&dot_vetto).unwrap();
+    let dot_policy = dot_vetto.join("policy.toml");
+    fs::write(&dot_policy, "# existing dot-vetto policy\n").unwrap();
+    let fake_home = temp_dir.join("home");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    let output = vetto_cmd()
+        .current_dir(&temp_dir)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["allow", "/custom/path"])
+        .output()
+        .expect("vetto allow");
+    assert!(output.status.success());
+
+    // Verified: written to .vetto/policy.toml
+    let content = fs::read_to_string(&dot_policy).expect("read dot_policy");
+    assert!(content.contains("\"/custom/path\""));
+
+    // Verified: vetto.toml was NOT created
+    assert!(!temp_dir.join("vetto.toml").exists());
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
