@@ -328,6 +328,7 @@ pub enum Command {
         lint: bool,
     },
     /// Run an agent command under the Vetto sandbox supervisor
+    #[command(alias = "exec")]
     Run {
         /// Target agent binary or command
         #[arg(value_name = "COMMAND")]
