@@ -211,3 +211,122 @@ mod tests {
         assert!(svg.contains("#81c784"));
     }
 }
+
+pub fn render_syscall_distribution_svg(stats: &SessionStats) -> Option<String> {
+    let mut syscalls = std::collections::BTreeMap::new();
+    for b in &stats.blocked_attempts {
+        if b.source == "seccomp" || b.path.starts_with("syscall:") {
+            let label = if b.path.starts_with("syscall:") {
+                &b.path["syscall:".len()..]
+            } else {
+                &b.path
+            };
+            *syscalls.entry(label.to_string()).or_insert(0) += b.count;
+        }
+    }
+
+    if syscalls.is_empty() {
+        return None;
+    }
+
+    let mut syscall_items: Vec<_> = syscalls.into_iter().collect();
+    syscall_items.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let total_syscalls: u64 = syscall_items.iter().map(|(_, count)| *count).sum();
+
+    let width = 760;
+    let row_height = 26;
+    let header_height = 40;
+    let total_height = header_height + (syscall_items.len() * row_height) + 20;
+
+    let mut svg = format!(
+        r##"<svg viewBox="0 0 {width} {total_height}" width="100%" height="{total_height}" xmlns="http://www.w3.org/2000/svg" style="background:#141a20;border-radius:6px;border:1px solid #263238;font-family:ui-monospace,Menlo,Consolas,monospace; margin-top: 1rem;">
+<text x="16" y="26" fill="#80cbc4" font-size="14" font-weight="bold">Intercepted Syscalls</text>
+<text x="{}" y="26" fill="#78909c" font-size="12" text-anchor="end">total syscalls: {}</text>
+"##,
+        width - 16,
+        total_syscalls
+    );
+
+    let list_start_y = header_height;
+    let max_count = syscall_items.iter().map(|(_, count)| count).max().unwrap_or(&0).max(&1);
+    let bar_color = "#e57373";
+
+    for (i, (label, count)) in syscall_items.iter().enumerate() {
+        let y = list_start_y + (i * row_height);
+        let pct = if total_syscalls > 0 {
+            (*count as f64 / total_syscalls as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Category label
+        svg.push_str(&format!(
+            r##"<text x="16" y="{}" fill="#cfd8dc" font-size="12">{}</text>
+        "##,
+            y + 14,
+            label
+        ));
+
+        // Background track
+        let track_x = 180;
+        let track_w = width - track_x - 140;
+        svg.push_str(&format!(
+            r##"<rect x="{track_x}" y="{}" width="{track_w}" height="14" fill="#1c242c" rx="3"/>
+        "##,
+            y + 3
+        ));
+
+        // Active bar
+        if *count > 0 {
+            let bar_w = ((*count as f64 / *max_count as f64) * (track_w as f64)).max(2.0);
+            svg.push_str(&format!(
+                r#"<rect x="{track_x}" y="{}" width="{:.1}" height="14" fill="{}" rx="3"/>
+"#,
+                y + 3,
+                bar_w,
+                bar_color
+            ));
+        }
+
+        // Count and percentage text
+        svg.push_str(&format!(
+            r##"<text x="{}" y="{}" fill="#90a4ae" font-size="11" text-anchor="end">{:>6} ({:>5.1}%)</text>
+"##,
+            width - 16, y + 14, count, pct
+        ));
+    }
+
+    svg.push_str("</svg>\n");
+    Some(svg)
+}
+
+#[cfg(test)]
+mod syscall_tests {
+    use super::*;
+
+    #[test]
+    fn svg_syscall_handles_empty() {
+        let stats = SessionStats::default();
+        let svg = render_syscall_distribution_svg(&stats);
+        assert!(svg.is_none());
+    }
+
+    #[test]
+    fn svg_syscall_renders_distribution() {
+        let stats = SessionStats {
+            blocked_attempts: vec![super::super::stats::BlockedRecord {
+                path: "syscall:ptrace".into(),
+                comm: "cat".into(),
+                source: "seccomp".into(),
+                count: 5,
+            }],
+            ..SessionStats::default()
+        };
+
+        let svg = render_syscall_distribution_svg(&stats).unwrap();
+        assert!(svg.contains("Intercepted Syscalls"));
+        assert!(svg.contains("ptrace"));
+        assert!(svg.contains("100.0%"));
+    }
+}
