@@ -1223,17 +1223,18 @@ mod tests {
             "vetto",
             "policy",
             "import",
-            "--from",
-            "claude",
-            "-o",
+            "--claude",
+            "settings.json",
+            "--output",
             "my-policy.toml",
         ])
         .expect("policy import parsing");
         assert!(matches!(
             cli.command,
             Some(Command::Policy {
-                command: PolicyCommand::Import { ref from, ref output, .. }
-            }) if from == "claude" && output == &PathBuf::from("my-policy.toml")
+                command: PolicyCommand::Import { ref claude, ref output, .. }
+            }) if claude.as_deref() == Some(std::path::Path::new("settings.json"))
+                && output == &PathBuf::from("my-policy.toml")
         ));
     }
 
