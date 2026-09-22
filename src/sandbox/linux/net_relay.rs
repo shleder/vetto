@@ -663,7 +663,6 @@ fn get_upstream_proxy(host: &str, port: u16, config: &BrokerConfig) -> Option<St
     }
 }
 
-
 const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 fn encode_base64(input: &str) -> String {
     let bytes = input.as_bytes();
@@ -2322,8 +2321,14 @@ mod tests {
     #[test]
     fn test_encode_base64() {
         assert_eq!(super::encode_base64("user:pass"), "dXNlcjpwYXNz");
-        assert_eq!(super::encode_base64("admin:password123"), "YWRtaW46cGFzc3dvcmQxMjM=");
-        assert_eq!(super::encode_base64("Aladdin:open sesame"), "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        assert_eq!(
+            super::encode_base64("admin:password123"),
+            "YWRtaW46cGFzc3dvcmQxMjM="
+        );
+        assert_eq!(
+            super::encode_base64("Aladdin:open sesame"),
+            "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
     }
 
     #[test]
@@ -2356,6 +2361,9 @@ mod tests {
         assert_eq!(super::get_upstream_proxy("127.0.0.1", 443, &config), None);
         assert_eq!(super::get_upstream_proxy("api.local", 443, &config), None);
         assert_eq!(super::get_upstream_proxy("ignore.com", 80, &config), None);
-        assert_eq!(super::get_upstream_proxy("sub.ignore.com", 80, &config), None);
+        assert_eq!(
+            super::get_upstream_proxy("sub.ignore.com", 80, &config),
+            None
+        );
     }
 }
