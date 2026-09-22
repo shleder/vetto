@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.4.0] - 2026-09-22
+### Added
+- **Full LOCAL-100 Backlog Completion**: Completed all 100 enterprise and runtime hardening milestones.
+- **Enterprise Network Proxying (Tier 2)**: Added out-of-the-box corporate `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` upstream routing via the Landlock/broker bridge.
+- **DNS Security & Egress Hardening**: Native blocking of DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT) direct escapes; interactive `--net=ask` prompt with permanent rule persistence; full DNS and egress logging in session reports.
+- **Advanced Observability & Profiling (Tier 4)**: Added OpenTelemetry lifecycle span exports, syscall flamegraph generation in HTML reports, and CLI tool for A/B session diffing (`vetto diff-sessions`).
+- **Desktop & IDE Integration (Tier 4 & 7)**: Added native desktop notifications on policy violation attempts, official VS Code extension (`vscode/`), and one-liner plugins for Claude Code, OpenCode, Cursor, and Aider.
+- **Container & Cluster Runtime Support (Tier 7)**: Hybrid in-container mode (`--is-container`), Kubernetes DaemonSet and Operator CRD manifests, and background `vetto daemon` with management REST API.
+- **Frictionless Developer Experience (Tier 1 & 9)**: 3-question first-run wizard (`vetto init --interactive`), automatic history-based timeout heuristics, community policy registry verification (`vetto registry`), and Windows Sandbox opt-in backend.
+- **RFC 9116 Security Policy (Tier 8)**: Published standardized `security.txt` and `SECURITY.md` with SLA (<24h response) and formal vulnerability handling process.
+
+### Fixed
+- **Documentation & Localization**: Standardized clean English and Russian documentation (`README.md` and `docs/README.ru.md`) with zero third-party script leakage.
+- **Packaging Parity**: Synchronized version 0.4.0 across all packaging manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, Helm, VS Code extension).
+
 ## [0.3.13] - 2026-09-20
 ### Fixed
 - **Bun Runtime Compatibility for OpenCode & Cline CLI**: Configured filesystem read and write rules in `profiles/agents/opencode.toml` and `profiles/agents/cline.toml` to permit access to `$HOME/.bun`, `$HOME/.cache`, `/tmp`, and root system paths `/` alongside agent state directories (`$HOME/.opencode`, `$HOME/.cline`, VSCode global storage). This resolves SIGABRT (exit 134) and SIGTRAP (exit 133) aborts triggered by Bun engine caching, JIT, and module loading inside sandboxed environments.
