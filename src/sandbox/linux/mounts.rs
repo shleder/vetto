@@ -389,10 +389,7 @@ pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> Vetto
     Ok(())
 }
 
-/// Mask restricted and dangerous device nodes inside the mount namespace.
-/// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
-/// If `dev_allow` is None, default dangerous device nodes are masked.
-
+/// Dangerous raw character devices that must never be accessible inside sandboxes.
 pub const DANGEROUS_RAW_DEVICES: &[&str] = &["/dev/mem", "/dev/kmem", "/dev/port", "/dev/nvram"];
 
 pub fn mask_dangerous_devices() -> VettoResult<()> {
@@ -405,6 +402,9 @@ pub fn mask_dangerous_devices() -> VettoResult<()> {
     Ok(())
 }
 
+/// Mask restricted and dangerous device nodes inside the mount namespace.
+/// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
+/// If `dev_allow` is None, default dangerous device nodes are masked.
 pub fn mask_restricted_devices(dev_allow: Option<&[String]>) -> VettoResult<()> {
     let dev_dir = Path::new("/dev");
     if !dev_dir.exists() || !dev_dir.is_dir() {
