@@ -2121,11 +2121,15 @@ mod tests {
 
     #[test]
     fn test_policy_overrides_tmpfs_tmp() {
-        let mut merged = MergedPolicy::default();
-        merged.tmpfs_tmp = Some(false);
+        let mut merged = MergedPolicy {
+            tmpfs_tmp: Some(false),
+            ..Default::default()
+        };
 
-        let mut overrides = PolicyOverrides::default();
-        overrides.tmpfs_tmp = Some(true);
+        let overrides = PolicyOverrides {
+            tmpfs_tmp: Some(true),
+            ..Default::default()
+        };
 
         apply_overrides(&mut merged, &overrides).unwrap();
         assert_eq!(merged.tmpfs_tmp, Some(true));
