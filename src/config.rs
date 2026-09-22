@@ -188,6 +188,7 @@ pub struct RunConfig {
     pub tmpfs_tmp: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
+    pub block_doh: bool,
     pub windows_sandbox: bool,
     pub agent: Vec<String>,
 }
@@ -383,6 +384,14 @@ impl RunConfig {
             net_quota.insert(domain, bytes);
         }
 
+        let block_doh = if cli.no_block_doh {
+            false
+        } else if cli.block_doh {
+            true
+        } else {
+            matches!(net, NetMode::Allowlist(_) | NetMode::Strict(_))
+        };
+
         Ok(Self {
             profile,
             preset,
@@ -428,6 +437,7 @@ impl RunConfig {
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
+            block_doh,
             windows_sandbox: cli.windows_sandbox,
             agent: cli.agent.clone(),
         })
