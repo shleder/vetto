@@ -14,8 +14,9 @@ analysis.
 
 | Version | Supported | Notes |
 |---|---|---|
-| `0.2.x` | ✅ Yes | Current active release branch |
-| `< 0.2.0` | ❌ No | Early preview builds; please upgrade to `0.2.x` |
+| `0.4.x` | ✅ Yes | Current active release line |
+| `0.3.x` | ✅ Yes | Maintenance |
+| `< 0.3.0` | ❌ No | Deprecated; please upgrade to `0.4.x` |
 
 ## Reporting a vulnerability and response SLA
 

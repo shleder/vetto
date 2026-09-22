@@ -1,6 +1,6 @@
 # verify-ng — Adversarial Security Verification
 
-> Статус реализации (0.3.0, факт): Stage 2 correction — non-self-authorizing
+> Статус реализации (0.4.0, факт): Stage 2 correction — non-self-authorizing
 > challenge-response для `Aux`-pipeline сценариев на unix: host буферит
 > свежий 128-бит challenge в host-downlink pre-spawn и НИЧЕГО PASS-capable
 > в env не выдаёт; child обязан прочитать challenge и вернуть rotation

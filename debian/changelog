@@ -1,3 +1,13 @@
+vetto (0.4.0-1) unstable; urgency=medium
+
+  * Full LOCAL-100 completion (100/100): HTTP_PROXY/HTTPS_PROXY/NO_PROXY,
+    DoH/DoT blocking, interactive --net=ask with persistence, DNS/egress reports,
+    isolated /tmp tmpfs, OpenTelemetry spans, Flamegraph syscalls in HTML reports,
+    desktop notifications, VS Code extension, multi-agent plugins, Docker hybrid
+    and K8s operator, vetto daemon REST API, first-run wizard, RFC 9116 security.txt.
+
+ -- vetto contributors <noreply@github.com>  Tue, 22 Sep 2026 23:00:00 +0300
+
 vetto (0.3.0-1) unstable; urgency=medium
 
   * Canonical Security Contract Authority (Phase 1-5), proctree extinction,

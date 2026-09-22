@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Tue Sep 22 2026 vetto contributors - 0.4.0-1
+- Full LOCAL-100 completion: enterprise network proxying, DNS security, and multi-agent runtime.
+
 * Sun Sep 13 2026 vetto contributors - 0.2.23-1
 - Sync the source-only recipe with the published 0.2.23 release.
 

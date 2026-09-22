@@ -45,7 +45,7 @@ This merges the sandbox runner into `~/.config/opencode/config.json`:
   },
   "vetto": {
     "enabled": true,
-    "version": "0.3.0"
+    "version": "0.4.0"
   }
 }
 ```

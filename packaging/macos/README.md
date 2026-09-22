@@ -26,11 +26,11 @@ The packaging workflow consists of:
    ```
 3. **Building the `.pkg` installer** using `pkgbuild`:
    ```bash
-   ./packaging/macos/build_pkg.sh 0.3.0 aarch64-apple-darwin
+   ./packaging/macos/build_pkg.sh 0.4.0 aarch64-apple-darwin
    ```
 4. **Submitting for Notarization** via `xcrun notarytool`:
    ```bash
-   xcrun notarytool submit target/pkg_out/vetto-0.3.0-aarch64-apple-darwin.pkg \
+   xcrun notarytool submit target/pkg_out/vetto-0.4.0-aarch64-apple-darwin.pkg \
        --apple-id "developer@example.com" \
        --team-id "TEAM_ID" \
        --password "abcd-efgh-ijkl-mnop" \
@@ -38,11 +38,11 @@ The packaging workflow consists of:
    ```
 5. **Stapling the Ticket**:
    ```bash
-   xcrun stapler staple target/pkg_out/vetto-0.3.0-aarch64-apple-darwin.pkg
+   xcrun stapler staple target/pkg_out/vetto-0.4.0-aarch64-apple-darwin.pkg
    ```
 6. **Verifying with Gatekeeper**:
    ```bash
-   spctl --assess --type install --verbose target/pkg_out/vetto-0.3.0-aarch64-apple-darwin.pkg
+   spctl --assess --type install --verbose target/pkg_out/vetto-0.4.0-aarch64-apple-darwin.pkg
    ```
 
 ---
