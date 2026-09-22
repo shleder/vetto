@@ -419,7 +419,7 @@ pub enum Command {
         #[command(subcommand)]
         command: HookCommand,
     },
-    /// Manage agent integration plugins (Claude Code, OpenCode)
+    /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
     #[command(hide = true)]
     Plugin {
         #[command(subcommand)]
