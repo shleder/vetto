@@ -154,6 +154,7 @@ fn count_fs_mutations(session_id: &str, reports_dir: &Path) -> (u64, u64, u64) {
         }
     }
     }
+    }
     (writes, created, modified)
 }
 
