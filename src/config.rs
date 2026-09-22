@@ -163,6 +163,7 @@ pub struct RunConfig {
     pub git_ssh: bool,
     pub notify: bool,
     pub otel_endpoint: Option<String>,
+    pub otel: bool,
     pub session_timeout: Option<std::time::Duration>,
     pub auto_timeout_requested: bool,
     pub system_log: bool,
@@ -386,6 +387,7 @@ impl RunConfig {
             git_ssh,
             notify: cli.notify,
             otel_endpoint: cli.otel_endpoint.clone(),
+            otel: cli.otel,
             session_timeout,
             auto_timeout_requested,
             system_log: cli.system_log,
@@ -657,6 +659,14 @@ pub fn detect_agent_preset(command: &[String]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn run_config_parses_otel_flag() {
+        let cli = Cli::try_parse_from(&["vetto", "--otel", "--", "true"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert!(cfg.otel);
+    }
+
     use super::*;
     use crate::cli::Cli;
     use clap::Parser;

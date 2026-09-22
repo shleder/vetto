@@ -29,17 +29,22 @@ mod inner {
 
     impl TelemetrySession {
         pub fn start(
+            enabled: bool,
             endpoint: Option<&str>,
             session_id: &str,
             tier: &str,
             net: &str,
             profile: &str,
         ) -> Result<Self> {
+            if !enabled && endpoint.is_none() && std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_err() {
+                return Ok(Self { inner: None });
+            }
+
             let endpoint = match endpoint {
                 Some(ep) if !ep.trim().is_empty() => ep.trim().to_string(),
                 _ => match std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
                     Ok(ep) if !ep.trim().is_empty() => ep.trim().to_string(),
-                    _ => return Ok(Self { inner: None }),
+                    _ => "http://localhost:4317".to_string(),
                 },
             };
 
@@ -282,6 +287,7 @@ mod inner {
 
     impl TelemetrySession {
         pub fn start(
+            _enabled: bool,
             _endpoint: Option<&str>,
             _session_id: &str,
             _tier: &str,
@@ -328,8 +334,15 @@ mod tests {
     use crate::events::types::now;
 
     #[test]
+    fn telemetry_session_starts_when_enabled() {
+        let session = TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
+        // Since OTEL_EXPORTER_OTLP_ENDPOINT is not set, it defaults to localhost:4317 and returns a valid session.
+        assert!(session.inner.is_some());
+    }
+
+    #[test]
     fn telemetry_session_handles_events_without_panicking() {
-        let session = TelemetrySession::start(None, "test-session", "full", "off", "default")
+        let session = TelemetrySession::start(false, None, "test-session", "full", "off", "default")
             .expect("create telemetry session");
         session.record_event(&Event::SessionStarted {
             ts: now(),

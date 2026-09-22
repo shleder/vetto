@@ -1482,6 +1482,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
     let stats = report::stats::StatsCollector::spawn(&bus);
 
     let otel_session = std::sync::Arc::new(vetto::telemetry::TelemetrySession::start(
+        cfg.otel,
         cfg.otel_endpoint.as_deref(),
         &format!("session-{root_pid}"),
         tier_label(tier),
