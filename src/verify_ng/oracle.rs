@@ -70,6 +70,8 @@ pub fn judge(input: &OracleInput<'_>) -> Verdict {
     // binding (the violation proof is host-observed negative evidence and
     // needs no positive control to fail closed).
     if input.violation_observed {
+        // If we had shadow mode access here we would log [SHADOW VIOLATION],
+        // but oracle input doesn't have it directly. We assume verdict.rs handles actual enforcement.
         return Verdict::Fail;
     }
     // Evidence integrity: tampering with fact tiers or invalid control provenance fails closed.
