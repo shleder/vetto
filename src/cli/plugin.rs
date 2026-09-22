@@ -35,6 +35,8 @@ pub fn list_plugins() -> Result<()> {
     println!("  opencode      OpenCode sandbox execution runner in ~/.config/opencode/config.json");
     println!("  vscode        VS Code workspace sandboxing tasks and extension");
     println!("  jetbrains     JetBrains IDE sandbox plugin");
+    println!("  cursor        Cursor IDE wrapper in ~/.local/bin/cursor");
+    println!("  aider         Aider wrapper in ~/.local/bin/aider");
     Ok(())
 }
 
@@ -42,8 +44,10 @@ pub fn install_plugin(target: &str) -> Result<()> {
     match target.to_ascii_lowercase().as_str() {
         "claude-code" | "claude" => install_claude_code()?,
         "opencode" => install_opencode()?,
+        "cursor" => install_wrapper("cursor")?,
+        "aider" => install_wrapper("aider")?,
         other => {
-            bail!("unknown plugin target '{other}'. Available: claude-code, opencode");
+            bail!("unknown plugin target '{other}'. Available: claude-code, opencode, cursor, aider");
         }
     }
     Ok(())
@@ -178,6 +182,27 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
+    fn test_install_wrapper() {
+        let temp_home = std::env::temp_dir().join(format!("vetto-wrapper-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        
+        let bin_dir = temp_home.join(".local").join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        
+        std::env::set_var("HOME", &temp_home);
+        
+        install_wrapper("test_agent").expect("failed to install wrapper");
+        
+        let wrapper_path = bin_dir.join("test_agent");
+        assert!(wrapper_path.exists());
+        let content = fs::read_to_string(&wrapper_path).unwrap();
+        assert_eq!(content, "#!/bin/sh\nexec vetto test_agent \"\$@\"\n");
+        
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
     fn test_deep_merge_json_preserves_existing_keys() {
         let mut target = json!({
             "existing_key": "safe_value",
@@ -204,5 +229,36 @@ mod tests {
         assert_eq!(target["user_preferences"]["custom_prompt"], "hello");
         assert_eq!(target["user_preferences"]["theme"], "dark");
         assert_eq!(target["hooks"]["PreToolUse"]["command"], "vetto shim");
+    }
+}
+
+pub fn install_wrapper(target: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let home = get_home_dir()?;
+        let bin_dir = home.join(".local").join("bin");
+        fs::create_dir_all(&bin_dir)
+            .with_context(|| format!("failed to create directory {}", bin_dir.display()))?;
+        
+        let wrapper_path = bin_dir.join(target);
+        if let Some(bak) = backup_file(&wrapper_path)? {
+            println!("Backed up existing wrapper to {}", bak.display());
+        }
+        
+        let script = format!("#!/bin/sh\nexec vetto {} \"\$@\"\n", target);
+        fs::write(&wrapper_path, script.as_bytes())
+            .with_context(|| format!("failed to write {}", wrapper_path.display()))?;
+        
+        let mut perms = fs::metadata(&wrapper_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper_path, perms)?;
+        
+        println!("Successfully installed {} wrapper in {}", target, wrapper_path.display());
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        bail!("Wrappers are currently only supported on Unix systems");
     }
 }
