@@ -416,14 +416,13 @@ pub enum Command {
         #[command(subcommand)]
         command: HookCommand,
     },
-
     /// Manage community-registry policies
     #[command(hide = true)]
     Registry {
         #[command(subcommand)]
         command: registry::RegistryCommand,
     },
-    /// Manage agent integration plugins (Claude Code, OpenCode)
+    /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
     #[command(hide = true)]
     Plugin {
         #[command(subcommand)]
