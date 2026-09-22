@@ -2387,7 +2387,7 @@ mod tests {
 
     #[test]
     fn test_get_upstream_proxy_routing() {
-        let mut config = BrokerConfig {
+        let config = BrokerConfig {
             policy: BrokerPolicy::Allowlist(Vec::new()),
             debug_guard: None,
             mode: RelayMode::NetNs,
