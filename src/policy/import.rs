@@ -95,13 +95,13 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
                                 for (pkey, pval) in fs_map {
                                     match pkey.as_str() {
                                         "allowRead" | "allow_read" | "allow" | "allowed_paths" => {
-                                            extract_json_strings(&pval, &mut allow_read);
+                                            extract_json_strings(pval, &mut allow_read);
                                         }
                                         "allowWrite" | "allow_write" | "allowed_write_paths" => {
-                                            extract_json_strings(&pval, &mut allow_write);
+                                            extract_json_strings(pval, &mut allow_write);
                                         }
                                         "deny" | "denied_paths" | "deny_read" => {
-                                            extract_json_strings(&pval, &mut deny_read);
+                                            extract_json_strings(pval, &mut deny_read);
                                         }
                                         other => {
                                             eprintln!("vetto: import: ignoring unknown filesystem field '{other}'");
@@ -114,17 +114,17 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
                             for (pkey, pval) in &perms {
                                 match pkey.as_str() {
                                     "allow" | "allowed_paths" | "allow_read" | "allowRead" => {
-                                        extract_json_strings(&pval, &mut allow_read);
+                                        extract_json_strings(pval, &mut allow_read);
                                     }
                                     "allow_write" | "allowed_write_paths" | "allowWrite" => {
-                                        extract_json_strings(&pval, &mut allow_write);
+                                        extract_json_strings(pval, &mut allow_write);
                                     }
                                     "deny" | "denied_paths" | "deny_read" => {
-                                        extract_json_strings(&pval, &mut deny_read);
+                                        extract_json_strings(pval, &mut deny_read);
                                     }
                                     "network" | "allowed_domains" | "api_domains"
                                     | "allowedDomains" => {
-                                        extract_json_strings(&pval, &mut allow_network);
+                                        extract_json_strings(pval, &mut allow_network);
                                     }
                                     other => {
                                         eprintln!(
@@ -142,7 +142,7 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
                                         nkey.as_str(),
                                         "allowedDomains" | "allowed_domains" | "allow"
                                     ) {
-                                        extract_json_strings(&nval, &mut allow_network);
+                                        extract_json_strings(nval, &mut allow_network);
                                     }
                                 }
                             } else {
