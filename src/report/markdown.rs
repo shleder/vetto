@@ -92,6 +92,25 @@ pub fn render(stats: &SessionStats) -> String {
         out.push('\n');
     }
 
+    if !stats.domain_egress.is_empty() {
+        out.push_str("## Network traffic summary\n\n");
+        out.push_str("| Domain | Requests | TX | RX | Total |\n|---|---|---|---|---|\n");
+        let mut entries: Vec<_> = stats.domain_egress.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        for (domain, d) in entries {
+            let total = d.bytes_tx.saturating_add(d.bytes_rx);
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_cell(domain),
+                d.requests,
+                d.bytes_tx,
+                d.bytes_rx,
+                total
+            ));
+        }
+        out.push('\n');
+    }
+
     out.push_str("## Suspicious signals (best-effort)\n\n");
     if stats.suspicious_signals.is_empty() {
         out.push_str("None observed. This classifier is advisory and incomplete.\n\n");
@@ -184,5 +203,28 @@ mod tests {
         assert!(report.contains("| api.anthropic.com | 104.18.2.1, 104.18.3.1 |"));
         assert!(report.contains("## Egress traffic"));
         assert!(report.contains("| api.anthropic.com | 104.18.2.1 | 443 | 1200 | 8500 |"));
+    }
+
+    #[test]
+    fn network_traffic_summary_is_rendered_in_markdown() {
+        let mut domain_egress = std::collections::HashMap::new();
+        domain_egress.insert(
+            "api.anthropic.com".into(),
+            super::super::stats::DomainTransferStats {
+                requests: 2,
+                bytes_tx: 1200,
+                bytes_rx: 8500,
+            },
+        );
+        let stats = SessionStats {
+            domain_egress,
+            total_egress_bytes_tx: 1200,
+            total_egress_bytes_rx: 8500,
+            ..SessionStats::default()
+        };
+        let report = render(&stats);
+        assert!(report.contains("## Network traffic summary"));
+        assert!(report.contains("| Domain | Requests | TX | RX | Total |"));
+        assert!(report.contains("| api.anthropic.com | 2 | 1200 | 8500 | 9700 |"));
     }
 }
