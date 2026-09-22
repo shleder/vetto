@@ -197,7 +197,7 @@ mod tests {
         let wrapper_path = bin_dir.join("test_agent");
         assert!(wrapper_path.exists());
         let content = fs::read_to_string(&wrapper_path).unwrap();
-        assert_eq!(content, "#!/bin/sh\nexec vetto test_agent \"\$@\"\n");
+        assert_eq!(content, "#!/bin/sh\nexec vetto test_agent \"$@\"\n");
         
         let _ = fs::remove_dir_all(&temp_home);
     }
@@ -246,7 +246,7 @@ pub fn install_wrapper(target: &str) -> Result<()> {
             println!("Backed up existing wrapper to {}", bak.display());
         }
         
-        let script = format!("#!/bin/sh\nexec vetto {} \"\$@\"\n", target);
+        let script = format!("#!/bin/sh\nexec vetto {} \"$@\"\n", target);
         fs::write(&wrapper_path, script.as_bytes())
             .with_context(|| format!("failed to write {}", wrapper_path.display()))?;
         
