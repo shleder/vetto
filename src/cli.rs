@@ -169,6 +169,10 @@ pub struct Cli {
     #[arg(long, value_name = "URL")]
     pub otel_endpoint: Option<String>,
 
+    /// Enable OpenTelemetry spans for the session
+    #[arg(long)]
+    pub otel: bool,
+
     /// Kill the sandboxed session after DURATION without the agent finishing
     /// (e.g. 90s, 30m, 2h). Enforced with --tui=none (CI mode); other TUI
     /// modes warn and ignore it.
