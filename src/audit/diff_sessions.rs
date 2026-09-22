@@ -284,20 +284,22 @@ mod tests {
             remediation: "".into(),
         });
 
-        b.filesystem_denials.push(crate::audit::history::FilesystemDenial {
-            path: "/b".into(),
-            process: "".into(),
-            source: "".into(),
-            count: 1,
-            remediation: "".into(),
-        });
-        b.filesystem_denials.push(crate::audit::history::FilesystemDenial {
-            path: "/common".into(),
-            process: "".into(),
-            source: "".into(),
-            count: 1,
-            remediation: "".into(),
-        });
+        b.filesystem_denials
+            .push(crate::audit::history::FilesystemDenial {
+                path: "/b".into(),
+                process: "".into(),
+                source: "".into(),
+                count: 1,
+                remediation: "".into(),
+            });
+        b.filesystem_denials
+            .push(crate::audit::history::FilesystemDenial {
+                path: "/common".into(),
+                process: "".into(),
+                source: "".into(),
+                count: 1,
+                remediation: "".into(),
+            });
 
         let diff = calculate_blocks_diff(&a, &b);
         assert_eq!(diff.a_only_paths, vec!["/a"]);

@@ -542,7 +542,8 @@ fn run() -> Result<()> {
                 .as_ref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".vetto/reports"));
-            let diff = vetto::audit::diff_sessions::compare_sessions(session_a, session_b, &reports_dir)?;
+            let diff =
+                vetto::audit::diff_sessions::compare_sessions(session_a, session_b, &reports_dir)?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&diff)?);
             } else {
