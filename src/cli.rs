@@ -665,11 +665,11 @@ pub enum Command {
     #[command(name = "diff-sessions", hide = true)]
     DiffSessions {
         /// Base session JSON report or identifier
-        #[arg(value_name = "SESSION1")]
-        session1: PathBuf,
+        #[arg(value_name = "SESSION_A")]
+        session_a: String,
         /// Target session JSON report or identifier
-        #[arg(value_name = "SESSION2")]
-        session2: PathBuf,
+        #[arg(value_name = "SESSION_B")]
+        session_b: String,
         /// Emit machine-readable JSON diff
         #[arg(long)]
         json: bool,
@@ -1380,10 +1380,10 @@ mod tests {
         assert!(matches!(
             diff_cli.command,
             Some(Command::DiffSessions {
-                ref session1,
-                ref session2,
+                ref session_a,
+                ref session_b,
                 json: true,
-            }) if session1 == &PathBuf::from("s1.json") && session2 == &PathBuf::from("s2.json")
+            }) if session_a == "s1.json" && session_b == "s2.json"
         ));
 
         let replay_cli =
