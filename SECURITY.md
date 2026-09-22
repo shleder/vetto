@@ -19,11 +19,12 @@ analysis.
 
 ## Reporting a vulnerability and response SLA
 
-- **Reporting Channel**: Use GitHub's private vulnerability-reporting flow (Security → Report a vulnerability) or consult [.well-known/security.txt](.well-known/security.txt).
+- **Reporting Channel**: Use GitHub's private vulnerability-reporting flow (Security → Report a vulnerability) or email us directly. We support PGP encryption for sensitive vulnerability details (see `.well-known/security.txt` for the public key link and email).
+- **Coordinated Vulnerability Disclosure (CVD)**: We follow standard CVD practices. Please allow us time to release a patch before disclosing the vulnerability publicly.
 - **Response SLA**:
-  - **48 hours**: Initial acknowledgment of report receipt.
-  - **7 days**: Triage, reproduction, and initial severity / CVSS assessment.
-  - **30 days**: Coordinated disclosure window with patch release and CVE assignment.
+  - **<24h**: Initial acknowledgment of report receipt.
+  - **<7d**: Triage, reproduction, and initial severity / CVSS assessment.
+  - **<14d**: Patch release and CVE assignment.
 - Detailed procedures and severity guidelines are documented in [docs/security/cve-process.md](docs/security/cve-process.md).
 
 Include the vetto revision, OS/kernel, detected tier, policy, shortest safe
