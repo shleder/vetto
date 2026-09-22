@@ -480,20 +480,13 @@ pub fn run_deny(
     let clean_preset = preset.map(str::trim).filter(|s| !s.is_empty());
     let clean_target = target.map(str::trim).filter(|s| !s.is_empty());
 
-    let preset_name = if let Some(p) = clean_preset {
-        Some(p)
-    } else if let Some(t) = clean_target {
-        if !t.contains('/')
-            && !t.contains('\\')
-            && KNOWN_PRESETS.iter().any(|&p| p.eq_ignore_ascii_case(t))
-        {
-            Some(t)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let preset_name = clean_preset.or_else(|| {
+        clean_target.filter(|&t| {
+            !t.contains('/')
+                && !t.contains('\\')
+                && KNOWN_PRESETS.iter().any(|&p| p.eq_ignore_ascii_case(t))
+        })
+    });
 
     if let Some(preset_name) = preset_name {
         let paths = match resolve_preset(preset_name) {
