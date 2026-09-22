@@ -132,13 +132,8 @@ impl Event {
             Event::SecretMasked { .. } => "secret_masked",
             Event::Notice { .. } => "notice",
             Event::SessionTimeout { .. } => "session_timeout",
-            Event::FsMutation {
-        ts: DateTime<Utc>,
-        path: String,
-        mutation: String,
-        bytes: Option<u64>,
-    },
-    SessionEnded { .. } => "session_ended",
+            Event::FsMutation { .. } => "fs_mutation",
+            Event::SessionEnded { .. } => "session_ended",
         }
     }
 
@@ -150,7 +145,7 @@ impl Event {
         match self {
             Event::FileObserved { path, .. }
             | Event::BlockedAttempt { path, .. }
-            | Event::SecretMasked { path, .. } => Some(path),
+            | Event::SecretMasked { path, .. }
             | Event::FsMutation { path, .. } => Some(path),
             _ => None,
         }
