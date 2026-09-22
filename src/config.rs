@@ -180,6 +180,7 @@ pub struct RunConfig {
     pub ephemeral_force_discard: bool,
     pub auto_deny_secrets: bool,
     pub mask_secrets: bool,
+    pub net_quota: std::collections::HashMap<String, u64>,
     pub agent: Vec<String>,
 }
 
@@ -347,6 +348,21 @@ impl RunConfig {
         let ephemeral = cli.ephemeral;
         let snapshot = cli.snapshot || ephemeral;
 
+        let mut net_quota = std::collections::HashMap::new();
+        for item in &cli.net_quota {
+            let Some((domain, size_str)) = item.split_once('=') else {
+                bail!(
+                    "invalid --net-quota format '{item}': expected DOMAIN=SIZE (e.g. api.openai.com=100mb)"
+                );
+            };
+            let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+            if domain.is_empty() {
+                bail!("invalid --net-quota '{item}': domain cannot be empty");
+            }
+            let bytes = crate::policy::loader::parse_quota_bytes(size_str.trim())?;
+            net_quota.insert(domain, bytes);
+        }
+
         Ok(Self {
             profile,
             preset,
@@ -385,6 +401,7 @@ impl RunConfig {
             ephemeral_force_discard: false,
             auto_deny_secrets: cli.auto_deny_secrets,
             mask_secrets,
+            net_quota,
             agent: cli.agent.clone(),
         })
     }

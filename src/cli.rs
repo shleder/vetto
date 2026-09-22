@@ -242,6 +242,10 @@ pub struct Cli {
     #[arg(long = "no-mask-secrets")]
     pub no_mask_secrets: bool,
 
+    /// Per-domain network traffic quota (e.g. --net-quota api.openai.com=100mb, --net-quota github.com=1gb)
+    #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
+    pub net_quota: Vec<String>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -281,6 +285,9 @@ pub enum Command {
         /// Add a network preset (e.g. npm, git, pip, cargo, huggingface, go, maven, nuget)
         #[arg(long, value_name = "PRESET")]
         preset: Option<String>,
+        /// Set a network transfer quota for TARGET (e.g. --quota 100mb, --quota 1gb)
+        #[arg(long, value_name = "SIZE")]
+        quota: Option<String>,
         /// Edit ~/.vetto/config.toml instead of the project policy
         #[arg(long)]
         global: bool,
