@@ -351,15 +351,8 @@ mod tests {
 
     #[test]
     fn telemetry_session_starts_when_enabled() {
-        let session = TelemetrySession::start(
-            true,
-            None,
-            "test-session",
-            "full",
-            "off",
-            "default",
-        )
-        .unwrap();
+        let session =
+            TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
         let _ = session;
     }
 
