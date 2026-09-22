@@ -2691,6 +2691,7 @@ deny_unix_sockets = ["/var/run/custom-unix-explicit.sock"]
         let policy_path = root.join("policy.toml");
         let toml_content = r#"
 [filesystem]
+allow_write = ["."]
 shadow = true
 "#;
         std::fs::write(&policy_path, toml_content).unwrap();
