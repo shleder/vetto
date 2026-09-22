@@ -289,14 +289,7 @@ pub fn prepare_ruleset_for_abi(
     allow_read: &[std::path::PathBuf],
     strip_read_on_write: bool,
 ) -> PreparedRuleset {
-    prepare_ruleset_with_net_for_abi(
-        abi,
-        allow_write,
-        allow_read,
-        strip_read_on_write,
-        &[],
-        &[],
-    )
+    prepare_ruleset_with_net_for_abi(abi, allow_write, allow_read, strip_read_on_write, &[], &[])
 }
 
 /// Prepare filesystem and TCP network port rules using a caller-supplied ABI.
@@ -431,19 +424,12 @@ fn open_path_fd(path: &Path) -> VettoResult<OpenPath> {
 
 /// Create a Landlock ruleset with dynamic ABI negotiation and graceful degradation.
 /// Returns the ruleset descriptor, the negotiated ABI version, and whether network handling is active.
-fn create_ruleset_dynamic(
-    mut abi: u32,
-    mut has_net: bool,
-) -> VettoResult<(OwnedFd, u32, bool)> {
+fn create_ruleset_dynamic(mut abi: u32, mut has_net: bool) -> VettoResult<(OwnedFd, u32, bool)> {
     loop {
         let net_active = has_net && abi >= 4;
         let attr = LandlockRulesetAttr {
             handled_access_fs: handled_fs_mask(abi),
-            handled_access_net: if net_active {
-                handled_net_mask(abi)
-            } else {
-                0
-            },
+            handled_access_net: if net_active { handled_net_mask(abi) } else { 0 },
             handled_access_scope: handled_scope_mask(abi),
         };
         let size = ruleset_attr_size_for_abi(abi);
@@ -645,8 +631,7 @@ pub fn apply_policy_advanced(
     };
 
     let has_net = !bind_ports.is_empty() || !connect_ports.is_empty() || strict_net;
-    let (ruleset, effective_abi, net_active) =
-        create_ruleset_dynamic(detected_abi, has_net)?;
+    let (ruleset, effective_abi, net_active) = create_ruleset_dynamic(detected_abi, has_net)?;
     let prepared = prepare_ruleset_with_net_for_abi(
         effective_abi,
         allow_write,
