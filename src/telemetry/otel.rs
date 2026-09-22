@@ -36,7 +36,10 @@ mod inner {
             net: &str,
             profile: &str,
         ) -> Result<Self> {
-            if !enabled && endpoint.is_none() && std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_err() {
+            if !enabled
+                && endpoint.is_none()
+                && std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_err()
+            {
                 return Ok(Self { inner: None });
             }
 
@@ -337,14 +340,16 @@ mod tests {
     fn telemetry_session_starts_when_enabled() {
         let session =
             TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
-        // Since OTEL_EXPORTER_OTLP_ENDPOINT is not set, it defaults to localhost:4317 and returns a valid session.
+        #[cfg(feature = "telemetry")]
         assert!(session.inner.is_some());
+        let _ = session;
     }
 
     #[test]
     fn telemetry_session_handles_events_without_panicking() {
-        let session = TelemetrySession::start(false, None, "test-session", "full", "off", "default")
-            .expect("create telemetry session");
+        let session =
+            TelemetrySession::start(false, None, "test-session", "full", "off", "default")
+                .expect("create telemetry session");
         session.record_event(&Event::SessionStarted {
             ts: now(),
             pid: 100,
