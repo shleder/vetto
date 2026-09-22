@@ -234,6 +234,30 @@ pub fn prompt_confirmation_interactive<R: std::io::BufRead, W: std::io::Write>(
     allowed
 }
 
+struct TimeoutReader {
+    fd: std::os::unix::io::RawFd,
+    file: std::fs::File,
+    timeout_ms: libc::c_int,
+}
+
+impl std::io::Read for TimeoutReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut pfd = libc::pollfd {
+            fd: self.fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = unsafe { libc::poll(&mut pfd, 1, self.timeout_ms) };
+        if ret < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if ret == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout"));
+        }
+        std::io::Read::read(&mut self.file, buf)
+    }
+}
+
 fn ask_confirmation(host: &str, port: u16, policy_path: Option<&Path>) -> bool {
     let mut guard = ASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let cache = guard.get_or_insert_with(std::collections::HashMap::new);
@@ -242,14 +266,34 @@ fn ask_confirmation(host: &str, port: u16, policy_path: Option<&Path>) -> bool {
         return allowed;
     }
 
-    let allowed = prompt_confirmation_interactive(
-        host,
-        port,
-        policy_path,
-        is_stdin_tty(),
-        &mut std::io::stdin().lock(),
-        &mut std::io::stderr(),
-    );
+    let allowed = if let Ok(tty) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = tty.as_raw_fd();
+        let timeout_reader = TimeoutReader {
+            fd,
+            file: tty.try_clone().unwrap_or(tty),
+            timeout_ms: 30_000,
+        };
+        let mut buf_reader = std::io::BufReader::new(timeout_reader);
+        let mut writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/tty")
+            .unwrap_or_else(|_| std::fs::File::create("/dev/null").unwrap());
+        prompt_confirmation_interactive(host, port, policy_path, true, &mut buf_reader, &mut writer)
+    } else {
+        prompt_confirmation_interactive(
+            host,
+            port,
+            policy_path,
+            is_stdin_tty(),
+            &mut std::io::stdin().lock(),
+            &mut std::io::stderr(),
+        )
+    };
     cache.insert(key, allowed);
     allowed
 }

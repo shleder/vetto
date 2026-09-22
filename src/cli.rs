@@ -6,6 +6,7 @@ pub mod hook;
 pub mod kill;
 pub mod mask;
 pub mod plugin;
+pub mod registry;
 pub mod shell_env;
 pub mod status;
 pub mod undo;
@@ -102,6 +103,10 @@ pub struct Cli {
     #[arg(long)]
     pub tmpfs_tmp: bool,
 
+    /// Opt-in: send anonymous violation telemetry (hashed agent slug + category, no paths/secrets)
+    #[arg(long)]
+    pub anonymous_telemetry: bool,
+
     /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
     /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
     #[arg(long)]
@@ -169,6 +174,10 @@ pub struct Cli {
     /// modes warn and ignore it.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
+
+    /// Calculate and use an adaptive timeout based on past successful sessions
+    #[arg(long)]
+    pub adaptive_timeout: bool,
 
     /// Resource ceilings for the agent process, comma separated:
     /// cpu=SECONDS, as=BYTES, procs=N, nofile=N, fsize=BYTES. Merged
@@ -265,6 +274,10 @@ pub struct Cli {
     /// Disable DoH and DoT blocking.
     #[arg(long = "no-block-doh")]
     pub no_block_doh: bool,
+
+    /// Run execution inside disposable Windows Sandbox (VM) instead of AppContainer (Windows only)
+    #[arg(long = "windows-sandbox")]
+    pub windows_sandbox: bool,
 
     /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
     #[arg(long)]
@@ -427,6 +440,12 @@ pub enum Command {
         #[command(subcommand)]
         command: HookCommand,
     },
+    /// Manage community-registry policies
+    #[command(hide = true)]
+    Registry {
+        #[command(subcommand)]
+        command: registry::RegistryCommand,
+    },
     /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
     #[command(hide = true)]
     Plugin {
@@ -440,13 +459,11 @@ pub enum Command {
         command: Option<McpCommand>,
     },
     /// Manage background session multiplexer daemon and session registry
-    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: crate::daemon::DaemonCommand,
     },
     /// Run multiplexer daemon in foreground with SSH remote instructions
-    #[command(hide = true)]
     Serve {
         /// Loopback HTTP port for REST API (default: 54321)
         #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]

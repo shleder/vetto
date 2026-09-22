@@ -424,6 +424,7 @@ fn run() -> Result<()> {
         }
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
+        Some(cli::Command::Registry { command }) => cli::registry::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
         Some(cli::Command::Mcp { command }) => match command {
             None | Some(cli::McpCommand::Serve) => mcp::run_stdio_server(),
@@ -1001,6 +1002,33 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
     };
 
     let project = std::env::current_dir().context("getcwd")?;
+
+    #[cfg(windows)]
+    if cfg.windows_sandbox {
+        let command_str = agent_cmd.join(" ");
+        let spec = vetto::sandbox::windows::windows_sandbox::SandboxSpec {
+            command: command_str,
+            working_directory: Some(project.clone()),
+            networking: !matches!(cfg.net, NetMode::Off),
+            mapped_read_only: Vec::new(),
+            mapped_read_write: vec![(project.clone(), project.clone())],
+            memory_mb: None,
+        };
+        let temp_wsb = std::env::temp_dir().join(format!("vetto-{}.wsb", std::process::id()));
+        vetto::sandbox::windows::windows_sandbox::write_config(&temp_wsb, &spec)?;
+        println!(
+            "vetto: launching Windows Sandbox (disposable VM) with config: {}",
+            temp_wsb.display()
+        );
+        let mut child = vetto::sandbox::windows::windows_sandbox::launch_config(&temp_wsb, true)?;
+        let status = child.wait()?;
+        let _ = std::fs::remove_file(&temp_wsb);
+        std::process::exit(status.code().unwrap_or(0));
+    }
+    #[cfg(not(windows))]
+    if cfg.windows_sandbox {
+        bail!("--windows-sandbox is only supported on Windows");
+    }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
