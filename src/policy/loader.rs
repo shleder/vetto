@@ -181,6 +181,8 @@ pub struct RawFilesystem {
     pub tmpfs_tmp: Option<bool>,
     #[serde(default)]
     pub dev_allow: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_unix_sockets: Option<RawStringList>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -243,6 +245,8 @@ pub struct RawNetwork {
     pub allow_tcp_connect: Option<Vec<u16>>,
     #[serde(default)]
     pub allow_tcp_bind: Option<Vec<u16>>,
+    #[serde(default)]
+    pub deny_unix_sockets: Option<RawStringList>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -261,6 +265,8 @@ pub struct RawUnixSockets {
     pub allow: Option<RawStringList>,
     #[serde(default)]
     pub deny: Option<RawStringList>,
+    #[serde(default)]
+    pub deny_unix_sockets: Option<RawStringList>,
 }
 
 pub fn expand_net_preset(name: &str) -> Result<Vec<String>> {
@@ -500,6 +506,7 @@ pub struct MergedPolicy {
     pub net_bind_ports: Vec<u16>,
     pub net_connect_ports: Vec<u16>,
     pub allow_unix_sockets: Vec<String>,
+    pub deny_unix_sockets: Vec<String>,
     pub oslog: bool,
     pub lpac: bool,
     pub is_immutable: bool,
@@ -659,6 +666,9 @@ impl MergedPolicy {
             if let Some(dev_allow) = &filesystem.dev_allow {
                 self.dev_allow = Some(dev_allow.clone().into_vec());
             }
+            if let Some(deny_unix) = &filesystem.deny_unix_sockets {
+                self.deny_unix_sockets.extend(deny_unix.clone().into_vec());
+            }
         }
 
         if let Some(dev_allow) = &layer.dev_allow {
@@ -746,6 +756,9 @@ impl MergedPolicy {
             if let Some(bind) = &network.allow_tcp_bind {
                 self.net_bind_ports.extend(bind);
             }
+            if let Some(deny_unix) = &network.deny_unix_sockets {
+                self.deny_unix_sockets.extend(deny_unix.clone().into_vec());
+            }
         }
 
         if let Some(ports) = &layer.net_ports {
@@ -760,6 +773,12 @@ impl MergedPolicy {
         if let Some(unix_socks) = &layer.unix_sockets {
             if let Some(allow) = &unix_socks.allow {
                 self.allow_unix_sockets.extend(allow.clone().into_vec());
+            }
+            if let Some(deny) = &unix_socks.deny {
+                self.deny_unix_sockets.extend(deny.clone().into_vec());
+            }
+            if let Some(deny_unix) = &unix_socks.deny_unix_sockets {
+                self.deny_unix_sockets.extend(deny_unix.clone().into_vec());
             }
         }
 
@@ -824,6 +843,7 @@ impl MergedPolicy {
         deduplicate_strings(&mut self.network_allow);
         deduplicate_strings(&mut self.allow_cidr);
         deduplicate_strings(&mut self.allow_unix_sockets);
+        deduplicate_strings(&mut self.deny_unix_sockets);
         self.net_bind_ports.sort_unstable();
         self.net_bind_ports.dedup();
         self.net_connect_ports.sort_unstable();
@@ -855,6 +875,7 @@ pub struct PolicyOverrides {
     pub read_only_caches: Option<bool>,
     pub auto_deny_secrets: Option<bool>,
     pub net_quota: std::collections::HashMap<String, u64>,
+    pub deny_unix_sockets: Vec<String>,
 }
 
 /// Context for the 7-tier layered policy loader.
@@ -1481,6 +1502,10 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     merged.pass_through.extend(overrides.pass_through.clone());
     merged.deny_env.extend(overrides.deny_env.clone());
     merged.deny_network.extend(overrides.deny_network.clone());
+    merged
+        .deny_unix_sockets
+        .extend(overrides.deny_unix_sockets.clone());
+    deduplicate_strings(&mut merged.deny_unix_sockets);
 
     if let Some(true) = overrides.git_guard {
         merged.git_guard = true;
@@ -1558,12 +1583,13 @@ fn build_policy(
     let mut deny_resolved = Vec::new();
     let mut deny_set = BTreeSet::new();
 
-    // Accumulate all deny sources: deny_paths, deny_read, deny_write, deny_preset, deny_glob
+    // Accumulate all deny sources: deny_paths, deny_read, deny_write, deny_preset, deny_glob, deny_unix_sockets
     let mut all_deny_entries: Vec<String> = merged
         .deny_paths
         .iter()
         .chain(merged.deny_read.iter())
         .chain(merged.deny_write.iter())
+        .chain(merged.deny_unix_sockets.iter())
         .cloned()
         .collect();
 
@@ -1657,6 +1683,21 @@ fn build_policy(
         }
     }
 
+    if !merged.deny_unix_sockets.is_empty() {
+        if let Ok(denied_sock_paths) = resolve_list(&merged.deny_unix_sockets, &vars, agent) {
+            allow_write_resolved.retain(|allowed| {
+                !denied_sock_paths
+                    .iter()
+                    .any(|denied| allowed == denied || allowed.starts_with(denied))
+            });
+            allow_read_resolved.retain(|allowed| {
+                !denied_sock_paths
+                    .iter()
+                    .any(|denied| allowed == denied || allowed.starts_with(denied))
+            });
+        }
+    }
+
     allow_write_resolved.sort();
     allow_write_resolved.dedup();
     allow_read_resolved.sort();
@@ -1702,6 +1743,7 @@ fn build_policy(
         net_bind_ports: merged.net_bind_ports.clone(),
         net_connect_ports: merged.net_connect_ports.clone(),
         allow_unix_sockets: merged.allow_unix_sockets.clone(),
+        deny_unix_sockets: merged.deny_unix_sockets.clone(),
         seccomp_profile,
         seccomp_notify: merged.seccomp_notify.clone(),
         cgroup: merged.cgroup.clone(),
@@ -2578,5 +2620,54 @@ allow_read = ["/usr", "${PROJECT}"]
         assert_eq!(cg.pids_max.as_deref(), Some("50"));
         assert_eq!(cg.cpu_max.as_deref(), Some("50%"));
         assert_eq!(merged.cpu_max.as_deref(), Some("50%"));
+    }
+
+    #[test]
+    fn test_parse_deny_unix_sockets_in_policy_toml() {
+        let root =
+            std::env::temp_dir().join(format!("vetto-policy-deny-sock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let policy_path = root.join("policy.toml");
+        let toml_content = r#"
+[filesystem]
+allow_write = ["$PROJECT"]
+allow_read = ["/usr"]
+deny_unix_sockets = ["/var/run/custom-fs.sock"]
+
+[network]
+deny_unix_sockets = ["/var/run/custom-network.sock"]
+
+[unix_sockets]
+deny = ["$PROJECT/denied.sock", "/var/run/custom-unix.sock"]
+deny_unix_sockets = ["/var/run/custom-unix-explicit.sock"]
+"#;
+        std::fs::write(&policy_path, toml_content).unwrap();
+        let loaded = load(
+            "deny-sock-test",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+        )
+        .expect("policy with deny_unix_sockets should load");
+
+        assert!(loaded
+            .deny_unix_sockets
+            .contains(&"/var/run/custom-fs.sock".to_string()));
+        assert!(loaded
+            .deny_unix_sockets
+            .contains(&"/var/run/custom-network.sock".to_string()));
+        assert!(loaded
+            .deny_unix_sockets
+            .contains(&"$PROJECT/denied.sock".to_string()));
+        assert!(loaded
+            .deny_unix_sockets
+            .contains(&"/var/run/custom-unix.sock".to_string()));
+        assert!(loaded
+            .deny_unix_sockets
+            .contains(&"/var/run/custom-unix-explicit.sock".to_string()));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

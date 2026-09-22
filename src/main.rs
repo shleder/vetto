@@ -472,9 +472,16 @@ fn run() -> Result<()> {
             *global,
             args.policy.as_deref().map(Path::new),
         ),
-        Some(cli::Command::Deny { target, global }) => {
-            vetto::policy::edit::run_deny(target, *global, args.policy.as_deref().map(Path::new))
-        }
+        Some(cli::Command::Deny {
+            target,
+            preset,
+            global,
+        }) => vetto::policy::edit::run_deny(
+            target.as_deref(),
+            preset.as_deref(),
+            *global,
+            args.policy.as_deref().map(Path::new),
+        ),
         Some(cli::Command::Multi {
             manifest,
             agents,
