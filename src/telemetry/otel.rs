@@ -335,7 +335,8 @@ mod tests {
 
     #[test]
     fn telemetry_session_starts_when_enabled() {
-        let session = TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
+        let session =
+            TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
         // Since OTEL_EXPORTER_OTLP_ENDPOINT is not set, it defaults to localhost:4317 and returns a valid session.
         assert!(session.inner.is_some());
     }
