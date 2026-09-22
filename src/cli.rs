@@ -766,12 +766,18 @@ pub enum PolicyCommand {
     },
     /// Import permissions from external agent configurations (e.g. claude, codex)
     Import {
-        /// Source agent configuration format: claude | codex
+        /// Source agent configuration type (claude, codex)
         #[arg(long, value_name = "AGENT")]
-        from: String,
-        /// Path to source configuration file (defaults to ~/.claude/settings.json or ~/.codex/config.toml)
-        #[arg(long, value_name = "PATH")]
+        from: Option<String>,
+        /// Source file path when using --from
+        #[arg(long = "path", value_name = "PATH")]
         path: Option<PathBuf>,
+        /// Import from Claude settings.json
+        #[arg(long, value_name = "PATH")]
+        claude: Option<PathBuf>,
+        /// Import from Codex config.toml
+        #[arg(long, value_name = "PATH")]
+        codex: Option<PathBuf>,
         /// Output path for generated policy (default: ./policy.toml)
         #[arg(long, short = 'o', value_name = "PATH", default_value = "policy.toml")]
         output: PathBuf,
@@ -1225,17 +1231,18 @@ mod tests {
             "vetto",
             "policy",
             "import",
-            "--from",
-            "claude",
-            "-o",
+            "--claude",
+            "settings.json",
+            "--output",
             "my-policy.toml",
         ])
         .expect("policy import parsing");
         assert!(matches!(
             cli.command,
             Some(Command::Policy {
-                command: PolicyCommand::Import { ref from, ref output, .. }
-            }) if from == "claude" && output == &PathBuf::from("my-policy.toml")
+                command: PolicyCommand::Import { ref claude, ref output, .. }
+            }) if claude.as_deref() == Some(std::path::Path::new("settings.json"))
+                && output == &PathBuf::from("my-policy.toml")
         ));
     }
 
