@@ -264,8 +264,10 @@ fn ask_confirmation(host: &str, port: u16, policy_path: Option<&Path>) -> bool {
         return allowed;
     }
 
-    let allowed = if let Ok(tty) =
-        std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty")
+    let allowed = if let Ok(tty) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
     {
         use std::os::unix::io::AsRawFd;
         let fd = tty.as_raw_fd();
@@ -279,14 +281,7 @@ fn ask_confirmation(host: &str, port: u16, policy_path: Option<&Path>) -> bool {
             .write(true)
             .open("/dev/tty")
             .unwrap_or_else(|_| std::fs::File::create("/dev/null").unwrap());
-        prompt_confirmation_interactive(
-            host,
-            port,
-            policy_path,
-            true,
-            &mut buf_reader,
-            &mut writer,
-        )
+        prompt_confirmation_interactive(host, port, policy_path, true, &mut buf_reader, &mut writer)
     } else {
         prompt_confirmation_interactive(
             host,
