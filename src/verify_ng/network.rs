@@ -603,8 +603,9 @@ mod tests {
                 allow_write: vec![PathBuf::from("/tmp/ws")],
                 allow_execute: vec![],
                 mask_paths: vec![],
-                cow_overlay: false,
-                execution_root_ro: false,
+                cow_overlay: true,
+                execution_root_ro: true,
+                shadow: false,
             },
             network: NetworkContract {
                 mode,
