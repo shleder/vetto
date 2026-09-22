@@ -64,6 +64,7 @@ fn create_sealed_contract(name: &str) -> SecurityContract {
             mask_paths: vec![PathBuf::from("/home/user/.ssh")],
             cow_overlay: true,
             execution_root_ro: true,
+            shadow: false,
         },
         network: NetworkContract {
             mode: NetworkMode::Off,
