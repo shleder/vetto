@@ -99,7 +99,7 @@ fn get_session_log_path(session_id: &str, reports_dir: &Path) -> Option<std::pat
     if Path::new(session_id).exists()
         && Path::new(session_id)
             .extension()
-            .map_or(false, |e| e == "jsonl")
+            .is_some_and(|e| e == "jsonl")
     {
         return Some(Path::new(session_id).to_path_buf());
     }
@@ -141,7 +141,7 @@ fn count_fs_mutations(session_id: &str, reports_dir: &Path) -> (u64, u64, u64) {
     if let Some(path) = get_session_log_path(session_id, reports_dir) {
         if let Ok(file) = File::open(&path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if line.contains("\"fs_mutation\"") || line.contains("\"FsMutation\"") {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                         let mut is_mutation = false;
