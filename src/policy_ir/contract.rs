@@ -195,9 +195,14 @@ pub struct FilesystemContract {
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
     pub allow_execute: Vec<PathBuf>,
+    /// Secrets explicitly proxied by the host broker without agent exposure
     pub mask_paths: Vec<PathBuf>,
+    /// Optional copy-on-write scratchpad overlay for untrusted generation
     pub cow_overlay: bool,
+    /// Root execution directory mounts read-only
     pub execution_root_ro: bool,
+    /// Shadow mode (audit only, non-blocking)
+    pub shadow: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -270,6 +275,7 @@ mod contract_tests {
                 mask_paths: vec![PathBuf::from("/home/user/.ssh")],
                 cow_overlay: true,
                 execution_root_ro: true,
+                shadow: false,
             },
             network: NetworkContract {
                 mode: NetworkMode::Allowlist,
