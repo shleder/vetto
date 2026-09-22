@@ -873,6 +873,7 @@ pub struct PolicyOverrides {
     pub git_guard: Option<bool>,
     pub snapshot: Option<bool>,
     pub read_only_caches: Option<bool>,
+    pub tmpfs_tmp: Option<bool>,
     pub auto_deny_secrets: Option<bool>,
     pub net_quota: std::collections::HashMap<String, u64>,
     pub deny_unix_sockets: Vec<String>,
@@ -1519,6 +1520,9 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     if let Some(true) = overrides.read_only_caches {
         merged.read_only_caches = true;
     }
+    if let Some(tmpfs) = overrides.tmpfs_tmp {
+        merged.tmpfs_tmp = Some(tmpfs);
+    }
 
     for (domain, quota) in &overrides.net_quota {
         merged.net_quota.insert(domain.clone(), *quota);
@@ -2114,6 +2118,22 @@ fn is_temp_root(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_policy_overrides_tmpfs_tmp() {
+        let mut merged = MergedPolicy {
+            tmpfs_tmp: Some(false),
+            ..Default::default()
+        };
+
+        let overrides = PolicyOverrides {
+            tmpfs_tmp: Some(true),
+            ..Default::default()
+        };
+
+        apply_overrides(&mut merged, &overrides).unwrap();
+        assert_eq!(merged.tmpfs_tmp, Some(true));
+    }
 
     #[test]
     fn unknown_named_profile_fails_closed_without_a_custom_policy() {
