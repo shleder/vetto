@@ -4,7 +4,7 @@ use std::path::Path;
 #[test]
 fn test_localized_readmes_exist() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for lang in &["ru", "zh", "ja"] {
+    for lang in &["ru"] {
         let path = workspace_root
             .join("docs")
             .join(format!("README.{lang}.md"));

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vetto-agent-session
+  labels:
+    app: vetto-agent
+spec:
+  restartPolicy: Never
+  containers:
+    - name: agent
+      image: ubuntu:22.04
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          # The shim will intercept this if injected by the node runtime
+          vetto run -- claude
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  volumes:
+    - name: workspace
+      emptyDir: {}

@@ -1,0 +1,33 @@
+image:
+  repository: ghcr.io/shleder/vetto
+  pullPolicy: IfNotPresent
+  tag: ""
+
+daemonset:
+  enabled: true
+  hostPID: true
+  hostNetwork: true
+  securityContext:
+    privileged: true
+    capabilities:
+      add:
+        - CAP_SYS_ADMIN
+        - CAP_NET_ADMIN
+        - CAP_SETUID
+        - CAP_SETGID
+        - CAP_SYS_PTRACE
+
+serviceAccount:
+  create: true
+  name: "vetto-runner"
+
+rbac:
+  create: true
+
+resources:
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+  requests:
+    memory: "128Mi"
+    cpu: "100m"

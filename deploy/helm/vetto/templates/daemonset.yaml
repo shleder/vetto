@@ -1,0 +1,50 @@
+{{- if .Values.daemonset.enabled -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}-node-runtime
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    component: runtime
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        component: runtime
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      hostPID: {{ .Values.daemonset.hostPID }}
+      hostNetwork: {{ .Values.daemonset.hostNetwork }}
+      containers:
+        - name: vetto-runtime
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["vetto", "daemon"]
+          securityContext:
+            {{- toYaml .Values.daemonset.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+              readOnly: true
+            - name: run-vetto
+              mountPath: /var/run/vetto
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        - name: run-vetto
+          hostPath:
+            path: /var/run/vetto
+            type: DirectoryOrCreate
+{{- end }}
