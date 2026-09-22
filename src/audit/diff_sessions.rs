@@ -206,7 +206,10 @@ pub fn format_diff_text(diff: &SessionDiff) -> String {
             diff.policy_diff.profile_a, diff.policy_diff.profile_b
         ));
     } else {
-        out.push_str(&format!("Profile: {} (unchanged)\n", diff.policy_diff.profile_a));
+        out.push_str(&format!(
+            "Profile: {} (unchanged)\n",
+            diff.policy_diff.profile_a
+        ));
     }
     if diff.policy_diff.net_mode_a != diff.policy_diff.net_mode_b {
         out.push_str(&format!(
@@ -214,7 +217,10 @@ pub fn format_diff_text(diff: &SessionDiff) -> String {
             diff.policy_diff.net_mode_a, diff.policy_diff.net_mode_b
         ));
     } else {
-        out.push_str(&format!("Net Mode: {} (unchanged)\n", diff.policy_diff.net_mode_a));
+        out.push_str(&format!(
+            "Net Mode: {} (unchanged)\n",
+            diff.policy_diff.net_mode_a
+        ));
     }
 
     out.push_str("\n[Exit Code Diff]\n");
@@ -222,22 +228,46 @@ pub fn format_diff_text(diff: &SessionDiff) -> String {
     out.push_str(&format!("Session B: {}\n", diff.exit_code_diff.b));
 
     out.push_str("\n[I/O Diff]\n");
-    out.push_str(&format!("Writes: A={} B={}\n", diff.io_diff.writes_a, diff.io_diff.writes_b));
-    out.push_str(&format!("Created: A={} B={}\n", diff.io_diff.created_a, diff.io_diff.created_b));
+    out.push_str(&format!(
+        "Writes: A={} B={}\n",
+        diff.io_diff.writes_a, diff.io_diff.writes_b
+    ));
+    out.push_str(&format!(
+        "Created: A={} B={}\n",
+        diff.io_diff.created_a, diff.io_diff.created_b
+    ));
     out.push_str(&format!(
         "Modified: A={} B={}\n",
         diff.io_diff.modified_a, diff.io_diff.modified_b
     ));
 
     out.push_str("\n[Blocks Diff - Paths]\n");
-    out.push_str(&format!("A only: {}\n", diff.blocks_diff.a_only_paths.join(", ")));
-    out.push_str(&format!("B only: {}\n", diff.blocks_diff.b_only_paths.join(", ")));
-    out.push_str(&format!("Common: {}\n", diff.blocks_diff.common_paths.join(", ")));
+    out.push_str(&format!(
+        "A only: {}\n",
+        diff.blocks_diff.a_only_paths.join(", ")
+    ));
+    out.push_str(&format!(
+        "B only: {}\n",
+        diff.blocks_diff.b_only_paths.join(", ")
+    ));
+    out.push_str(&format!(
+        "Common: {}\n",
+        diff.blocks_diff.common_paths.join(", ")
+    ));
 
     out.push_str("\n[Blocks Diff - Domains]\n");
-    out.push_str(&format!("A only: {}\n", diff.blocks_diff.a_only_domains.join(", ")));
-    out.push_str(&format!("B only: {}\n", diff.blocks_diff.b_only_domains.join(", ")));
-    out.push_str(&format!("Common: {}\n", diff.blocks_diff.common_domains.join(", ")));
+    out.push_str(&format!(
+        "A only: {}\n",
+        diff.blocks_diff.a_only_domains.join(", ")
+    ));
+    out.push_str(&format!(
+        "B only: {}\n",
+        diff.blocks_diff.b_only_domains.join(", ")
+    ));
+    out.push_str(&format!(
+        "Common: {}\n",
+        diff.blocks_diff.common_domains.join(", ")
+    ));
 
     out
 }
