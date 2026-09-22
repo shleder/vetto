@@ -493,6 +493,8 @@ pub struct Policy {
     pub snapshot: bool,
     /// Read-only caches mounts
     pub read_only_caches: bool,
+    /// Shadow mode (audit only, non-blocking)
+    pub shadow: bool,
     /// Mount an isolated tmpfs over /tmp for the session.
     pub tmpfs_tmp: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
@@ -536,6 +538,7 @@ impl Default for Policy {
             git_guard: false,
             snapshot: false,
             read_only_caches: false,
+            shadow: false,
             tmpfs_tmp: true,
             warnings: Vec::new(),
         }
