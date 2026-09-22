@@ -581,14 +581,29 @@ pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     })
 }
 
-pub const DOH_ENDPOINTS: &[&str] = &["cloudflare-dns.com", "dns.google", "dns.quad9.net", "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"];
+pub const DOH_ENDPOINTS: &[&str] = &[
+    "cloudflare-dns.com",
+    "dns.google",
+    "dns.quad9.net",
+    "1.1.1.1",
+    "1.0.0.1",
+    "8.8.8.8",
+    "8.8.4.4",
+    "9.9.9.9",
+];
 
 pub(crate) fn is_loopback_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
     h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
 }
 
-fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerConfig, bus: &EventBus) -> bool {
+fn request_allowed(
+    host: &str,
+    port: u16,
+    token: Option<&str>,
+    config: &BrokerConfig,
+    bus: &EventBus,
+) -> bool {
     // Check loopback debug port guard
     if is_loopback_host(host) {
         if let Some(ref guard) = config.debug_guard {
