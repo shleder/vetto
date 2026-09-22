@@ -7,6 +7,8 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
+use crate::policy::presets::{resolve_preset, KNOWN_PRESETS};
+
 const PROJECT_HEADER: &str = r#"# vetto project policy.
 # This file is merged over the built-in profile and agent preset; CLI flags win.
 # Manage it with `vetto allow` / `vetto deny`, or by hand — every key is
@@ -469,16 +471,63 @@ pub fn run_allow(
 }
 
 /// CLI entry point for `vetto deny`.
-pub fn run_deny(target: &str, global: bool, custom_policy: Option<&Path>) -> Result<()> {
-    let grant = Grant::Deny;
-    let path = apply(grant, target, global, custom_policy)?;
-    println!(
-        "vetto: `{target}` denied ({}), policy file: {}",
-        grant.describe(),
-        path.display()
-    );
-    println!("vetto: the path is masked from the next session (reads denied)");
-    Ok(())
+pub fn run_deny(
+    target: Option<&str>,
+    preset: Option<&str>,
+    global: bool,
+    custom_policy: Option<&Path>,
+) -> Result<()> {
+    let clean_preset = preset.map(str::trim).filter(|s| !s.is_empty());
+    let clean_target = target.map(str::trim).filter(|s| !s.is_empty());
+
+    let preset_name = if let Some(p) = clean_preset {
+        Some(p)
+    } else if let Some(t) = clean_target {
+        if !t.contains('/')
+            && !t.contains('\\')
+            && KNOWN_PRESETS.iter().any(|&p| p.eq_ignore_ascii_case(t))
+        {
+            Some(t)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(preset_name) = preset_name {
+        let paths = match resolve_preset(preset_name) {
+            Some(paths) => paths,
+            None => bail!(
+                "unknown preset '{preset_name}' (known presets: {})",
+                KNOWN_PRESETS.join(", ")
+            ),
+        };
+        let mut path = PathBuf::new();
+        for &p in paths {
+            path = apply(Grant::Deny, p, global, custom_policy)?;
+        }
+        eprintln!(
+            "vetto: preset `{preset_name}` denied (masked secrets: {}), policy file: {}",
+            paths.join(", "),
+            path.display()
+        );
+        return Ok(());
+    }
+
+    if let Some(t) = clean_target {
+        let grant = Grant::Deny;
+        let path = apply(grant, t, global, custom_policy)?;
+        println!(
+            "vetto: `{t}` denied ({}), policy file: {}",
+            grant.describe(),
+            path.display()
+        );
+        println!("vetto: the path is masked from the next session (reads denied)");
+        return Ok(());
+    }
+
+    bail!("target path or --preset must be provided")
 }
 
 #[cfg(test)]
@@ -778,5 +827,71 @@ mod tests {
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(on_disk.contains("\"/opt/data\""));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_run_deny_presets() {
+        let dir = std::env::temp_dir().join(format!("vetto-run-deny-presets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let custom = dir.join("policy.toml");
+
+        // Test --preset ssh
+        run_deny(None, Some("ssh"), false, Some(&custom)).expect("deny ssh preset");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("[display_only_deny]"));
+        assert!(content.contains("\"$HOME/.ssh\""));
+
+        // Test --preset aws
+        run_deny(None, Some("aws"), false, Some(&custom)).expect("deny aws preset");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("\"$HOME/.aws\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_run_deny_positional_preset() {
+        let dir = std::env::temp_dir().join(format!("vetto-run-deny-pos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let custom = dir.join("policy.toml");
+
+        // Test positional call with preset name: target = Some("docker")
+        run_deny(Some("docker"), None, false, Some(&custom)).expect("deny docker positional");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("[display_only_deny]"));
+        assert!(content.contains("\"$HOME/.docker\""));
+        assert!(content.contains("\"$HOME/.docker/config.json\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_run_deny_unknown_preset_errors() {
+        let err = run_deny(None, Some("unknown_foobar"), false, None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown preset 'unknown_foobar'"));
+        assert!(msg.contains("known presets:"));
+    }
+
+    #[test]
+    fn test_run_deny_missing_target_and_preset_errors() {
+        let err = run_deny(None, None, false, None).unwrap_err();
+        assert!(err.to_string().contains("target path or --preset must be provided"));
+    }
+
+    #[test]
+    fn test_run_deny_regular_target() {
+        let dir = std::env::temp_dir().join(format!("vetto-run-deny-target-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let custom = dir.join("policy.toml");
+
+        run_deny(Some("~/.custom/secret.txt"), None, false, Some(&custom)).expect("deny path");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("\"~/.custom/secret.txt\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
