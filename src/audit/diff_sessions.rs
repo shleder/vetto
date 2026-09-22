@@ -292,6 +292,7 @@ pub fn format_diff_text(diff: &SessionDiff) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[test]
     fn test_calculate_blocks_diff() {
