@@ -393,12 +393,7 @@ pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> Vetto
 /// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
 /// If `dev_allow` is None, default dangerous device nodes are masked.
 
-pub const DANGEROUS_RAW_DEVICES: &[&str] = &[
-    "/dev/mem",
-    "/dev/kmem",
-    "/dev/port",
-    "/dev/nvram",
-];
+pub const DANGEROUS_RAW_DEVICES: &[&str] = &["/dev/mem", "/dev/kmem", "/dev/port", "/dev/nvram"];
 
 pub fn mask_dangerous_devices() -> VettoResult<()> {
     for &d in DANGEROUS_RAW_DEVICES {
