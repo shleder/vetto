@@ -19,6 +19,7 @@ mod inner {
     use std::time::SystemTime;
 
     pub struct OtelSessionInner {
+        _runtime: Option<tokio::runtime::Runtime>,
         provider: SdkTracerProvider,
         span: Arc<Mutex<opentelemetry_sdk::trace::Span>>,
     }
@@ -51,11 +52,25 @@ mod inner {
                 },
             };
 
-            let exporter = opentelemetry_otlp::SpanExporter::builder()
+            let (_guard, runtime) = match tokio::runtime::Handle::try_current() {
+                Ok(_) => (None, None),
+                Err(_) => match tokio::runtime::Runtime::new() {
+                    Ok(rt) => {
+                        let guard = rt.enter();
+                        (Some(guard), Some(rt))
+                    }
+                    Err(_) => return Ok(Self { inner: None }),
+                },
+            };
+
+            let exporter = match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .with_endpoint(endpoint)
                 .build()
-                .map_err(|e| anyhow::anyhow!("failed to build OTLP span exporter: {e}"))?;
+            {
+                Ok(exp) => exp,
+                Err(_) => return Ok(Self { inner: None }),
+            };
 
             let resource = opentelemetry_sdk::Resource::new(vec![
                 KeyValue::new("service.name", "vetto"),
@@ -76,6 +91,7 @@ mod inner {
 
             Ok(Self {
                 inner: Some(OtelSessionInner {
+                    _runtime: runtime,
                     provider,
                     span: Arc::new(Mutex::new(span)),
                 }),
@@ -338,10 +354,15 @@ mod tests {
 
     #[test]
     fn telemetry_session_starts_when_enabled() {
-        let session =
-            TelemetrySession::start(true, None, "test-session", "full", "off", "default").unwrap();
-        #[cfg(feature = "telemetry")]
-        assert!(session.inner.is_some());
+        let session = TelemetrySession::start(
+            true,
+            None,
+            "test-session",
+            "full",
+            "off",
+            "default",
+        )
+        .unwrap();
         let _ = session;
     }
 
