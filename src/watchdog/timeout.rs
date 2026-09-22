@@ -267,7 +267,7 @@ mod tests {
         let proj_root = temp.join("my-project");
         let policy_path = proj_root.join("vetto.toml");
 
-        let mut write_record = |duration_secs: u64, exit_code: i32, policy: Option<String>| {
+        let write_record = |duration_secs: u64, exit_code: i32, policy: Option<String>| {
             let r = AuditRecord {
                 ts: chrono::Utc::now(),
                 session_id: "test".into(),
