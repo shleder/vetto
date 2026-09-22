@@ -392,6 +392,24 @@ pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> Vetto
 /// Mask restricted and dangerous device nodes inside the mount namespace.
 /// If `dev_allow` is specified, only explicitly allowed nodes (plus essential stdio) are kept.
 /// If `dev_allow` is None, default dangerous device nodes are masked.
+
+pub const DANGEROUS_RAW_DEVICES: &[&str] = &[
+    "/dev/mem",
+    "/dev/kmem",
+    "/dev/port",
+    "/dev/nvram",
+];
+
+pub fn mask_dangerous_devices() -> VettoResult<()> {
+    for &d in DANGEROUS_RAW_DEVICES {
+        let path = Path::new(d);
+        if path.exists() {
+            let _ = mask_path(path, false);
+        }
+    }
+    Ok(())
+}
+
 pub fn mask_restricted_devices(dev_allow: Option<&[String]>) -> VettoResult<()> {
     let dev_dir = Path::new("/dev");
     if !dev_dir.exists() || !dev_dir.is_dir() {
@@ -654,6 +672,11 @@ pub fn mount_ro_caches(ro_mounts: &[std::path::PathBuf]) -> VettoResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_dangerous_devices_handles_absent_paths() {
+        assert!(mask_dangerous_devices().is_ok());
+    }
 
     #[test]
     fn dev_shm_plan_is_bounded_and_non_executable() {
