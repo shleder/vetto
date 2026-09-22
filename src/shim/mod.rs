@@ -211,6 +211,14 @@ pub fn is_destructive_git_command(args: &[String]) -> Option<&'static str> {
     match subcmd {
         "push" => {
             for arg in sub_args {
+                if arg == "main"
+                    || arg == "master"
+                    || arg == "refs/heads/main"
+                    || arg == "refs/heads/master"
+                    || arg == "origin/main"
+                {
+                    return Some("direct git push to main/master branch blocked by vetto git_guard (use a feature branch and pull request)");
+                }
                 if arg == "--force"
                     || arg == "-f"
                     || arg == "--force-with-lease"
@@ -430,6 +438,48 @@ pub fn run_cli(binary: Option<String>, args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Automatically creates and switches to a session branch if currently on main/master.
+pub fn ensure_session_branch(
+    project_dir: &std::path::Path,
+    session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let git_dir = project_dir.join(".git");
+    if !git_dir.exists() {
+        return Ok(None);
+    }
+
+    let output = std::process::Command::new("git")
+        .current_dir(project_dir)
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()?;
+
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch == "main" || branch == "master" {
+            let short_id = if session_id.len() > 8 {
+                &session_id[..8]
+            } else {
+                session_id
+            };
+            let session_branch = format!("vetto/session-{}", short_id);
+            let checkout_output = std::process::Command::new("git")
+                .current_dir(project_dir)
+                .args(["checkout", "-b", session_branch.as_str()])
+                .output()?;
+
+            if checkout_output.status.success() {
+                return Ok(Some(session_branch));
+            } else {
+                anyhow::bail!(
+                    "Failed to create session branch: {}",
+                    String::from_utf8_lossy(&checkout_output.stderr)
+                );
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn is_executable_file(p: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -558,8 +608,17 @@ mod tests {
             is_destructive_git_push(&["push".into(), "origin".into(), ":branch".into()]).is_some()
         );
         assert!(
-            is_destructive_git_push(&["push".into(), "origin".into(), "main".into()]).is_none()
+            is_destructive_git_push(&["push".into(), "origin".into(), "main".into()]).is_some()
         );
+        assert!(
+            is_destructive_git_push(&["push".into(), "origin".into(), "master".into()]).is_some()
+        );
+        assert!(is_destructive_git_push(&[
+            "push".into(),
+            "origin".into(),
+            "feat/my-feature".into()
+        ])
+        .is_none());
         assert!(is_destructive_git_push(&["status".into()]).is_none());
     }
 
@@ -605,6 +664,9 @@ mod tests {
         );
 
         // Destructive push
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_some()
+        );
         assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_some());
         assert!(is_destructive_git_command(&["push".into(), "-f".into()]).is_some());
         assert!(
@@ -670,9 +732,12 @@ mod tests {
                 .is_none()
         );
         assert!(is_destructive_git_command(&["checkout".into(), "main".into()]).is_none());
-        assert!(
-            is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_none()
-        );
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "feat/my-feature".into()
+        ])
+        .is_none());
         assert!(
             is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()])
                 .is_none()

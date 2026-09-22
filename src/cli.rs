@@ -222,6 +222,10 @@ pub struct Cli {
     #[arg(long = "git-guard")]
     pub git_guard: bool,
 
+    /// Automatically create and switch to a temporary session branch if on main/master.
+    #[arg(long = "auto-branch")]
+    pub auto_branch: bool,
+
     /// Take a project snapshot before session starts and enable rollback.
     #[arg(long = "snapshot")]
     pub snapshot: bool,
