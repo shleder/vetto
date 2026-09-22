@@ -1,5 +1,3 @@
-pub mod anonymous;
-
 //! Optional, privacy-preserving post-session telemetry.
 //!
 //! # Privacy Guarantees
@@ -9,6 +7,7 @@ pub mod anonymous;
 //! 4. NEVER transmits file paths, domain names, commands, arguments, secrets, environment variables,
 //!    IP addresses, hostnames, or user identifiers.
 
+pub mod anonymous;
 pub mod otel;
 pub use otel::{spawn_telemetry_subscriber, TelemetrySession};
 
