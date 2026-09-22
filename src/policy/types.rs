@@ -489,6 +489,8 @@ pub struct Policy {
     pub git_guard: bool,
     /// Create project snapshot at session start with rollback capability.
     pub snapshot: bool,
+    /// Read-only caches mounts
+    pub read_only_caches: bool,
     /// Mount an isolated tmpfs over /tmp for the session.
     pub tmpfs_tmp: bool,
     /// Non-fatal findings surfaced to doctor/statusline/reports.
@@ -530,6 +532,7 @@ impl Default for Policy {
             ro_mounts: Vec::new(),
             git_guard: false,
             snapshot: false,
+            read_only_caches: false,
             tmpfs_tmp: true,
             warnings: Vec::new(),
         }

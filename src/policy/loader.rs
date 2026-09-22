@@ -36,6 +36,20 @@ use crate::error::VettoError;
 /// Enumeration budget for FS-ONLY project masking (entries, not bytes).
 const FS_ONLY_ENUMERATION_BUDGET: usize = 20_000;
 
+pub const PACKAGE_CACHE_PATHS: &[&str] = &[
+    ".npm",
+    ".cache/pip",
+    ".cache/uv",
+    ".cache/yarn",
+    ".cargo/registry",
+    ".cargo/git",
+    "go/pkg/mod",
+];
+
+pub fn resolve_package_cache_paths(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    PACKAGE_CACHE_PATHS.iter().map(|p| home.join(p)).collect()
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RawLayer {
@@ -161,6 +175,8 @@ pub struct RawFilesystem {
     pub deny_glob: Option<RawStringList>,
     #[serde(default)]
     pub ro_mounts: Option<RawStringList>,
+    #[serde(default)]
+    pub read_only_caches: Option<bool>,
     #[serde(default)]
     pub tmpfs_tmp: Option<bool>,
     #[serde(default)]
@@ -491,6 +507,7 @@ pub struct MergedPolicy {
     pub auto_deny_secrets: bool,
     pub git_guard: bool,
     pub snapshot: bool,
+    pub read_only_caches: bool,
     pub tmpfs_tmp: Option<bool>,
     pub seccomp_profile: Option<String>,
     pub seccomp_notify: Option<SeccompNotifyConfig>,
@@ -632,6 +649,9 @@ impl MergedPolicy {
             }
             if let Some(ro_mounts) = &filesystem.ro_mounts {
                 self.ro_mounts.extend(ro_mounts.clone().into_vec());
+            }
+            if let Some(ro_caches) = filesystem.read_only_caches {
+                self.read_only_caches = ro_caches;
             }
             if let Some(tmpfs) = filesystem.tmpfs_tmp {
                 self.tmpfs_tmp = Some(tmpfs);
@@ -832,6 +852,7 @@ pub struct PolicyOverrides {
     pub limits: Option<ResourceLimits>,
     pub git_guard: Option<bool>,
     pub snapshot: Option<bool>,
+    pub read_only_caches: Option<bool>,
     pub auto_deny_secrets: Option<bool>,
     pub net_quota: std::collections::HashMap<String, u64>,
 }
@@ -1470,6 +1491,9 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     if let Some(true) = overrides.auto_deny_secrets {
         merged.auto_deny_secrets = true;
     }
+    if let Some(true) = overrides.read_only_caches {
+        merged.read_only_caches = true;
+    }
 
     for (domain, quota) in &overrides.net_quota {
         merged.net_quota.insert(domain.clone(), *quota);
@@ -1509,13 +1533,25 @@ fn build_policy(
 
     let mut allow_write_resolved = resolve_list(&merged.allow_write, &vars, agent)?;
     let mut allow_read_resolved = resolve_list(&merged.allow_read, &vars, agent)?;
-    let deny_write_resolved = resolve_list(&merged.deny_write, &vars, agent)?;
+    let mut deny_write_resolved = resolve_list(&merged.deny_write, &vars, agent)?;
     let deny_read_resolved = resolve_list(&merged.deny_read, &vars, agent)?;
     let ro_mounts_resolved = resolve_list(&merged.ro_mounts, &vars, agent)?;
 
     for ro in &ro_mounts_resolved {
         if !allow_read_resolved.contains(ro) {
             allow_read_resolved.push(ro.clone());
+        }
+    }
+
+    if merged.read_only_caches {
+        for cache_path in resolve_package_cache_paths(home) {
+            if !allow_read_resolved.contains(&cache_path) {
+                allow_read_resolved.push(cache_path.clone());
+            }
+            if !deny_write_resolved.contains(&cache_path) {
+                deny_write_resolved.push(cache_path.clone());
+            }
+            allow_write_resolved.retain(|p| p != &cache_path && !p.starts_with(&cache_path));
         }
     }
 
@@ -1681,6 +1717,7 @@ fn build_policy(
         ro_mounts: ro_mounts_resolved,
         git_guard: merged.git_guard,
         snapshot: merged.snapshot,
+        read_only_caches: merged.read_only_caches,
         tmpfs_tmp: merged.tmpfs_tmp.unwrap_or(true),
         warnings,
     };
@@ -2117,6 +2154,38 @@ deny = ["SECRET_*"]
         assert!(loaded.environment.deny.contains(&"SECRET_*".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_caches_read_only_mounts_are_resolved_correctly() {
+        let root = std::env::temp_dir().join(format!("vetto-caches-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+
+        let mut merged = MergedPolicy::default();
+        merged.allow_write.push("$HOME/.npm".to_string());
+        merged.read_only_caches = true;
+
+        let policy = build_policy(
+            "test-caches",
+            false,
+            &project,
+            &home,
+            Tier::Full,
+            &merged,
+            None,
+        )
+        .expect("build policy");
+
+        let npm_cache = home.join(".npm");
+        assert!(policy.allow_read.contains(&npm_cache), "should add cache to read allow");
+        assert!(policy.deny_write.contains(&npm_cache), "should add cache to write deny");
+        assert!(!policy.allow_write.contains(&npm_cache), "should strip cache from write allow");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
