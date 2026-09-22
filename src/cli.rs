@@ -6,6 +6,7 @@ pub mod hook;
 pub mod kill;
 pub mod mask;
 pub mod plugin;
+pub mod registry;
 pub mod shell_env;
 pub mod status;
 pub mod undo;
@@ -426,6 +427,12 @@ pub enum Command {
     Hook {
         #[command(subcommand)]
         command: HookCommand,
+    },
+    /// Manage community-registry policies
+    #[command(hide = true)]
+    Registry {
+        #[command(subcommand)]
+        command: registry::RegistryCommand,
     },
     /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
     #[command(hide = true)]
