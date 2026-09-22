@@ -269,20 +269,22 @@ mod tests {
         let mut b = a.clone();
         b.session_id = "B".into();
 
-        a.filesystem_denials.push(crate::audit::history::FilesystemDenial {
-            path: "/a".into(),
-            process: "".into(),
-            source: "".into(),
-            count: 1,
-            remediation: "".into(),
-        });
-        a.filesystem_denials.push(crate::audit::history::FilesystemDenial {
-            path: "/common".into(),
-            process: "".into(),
-            source: "".into(),
-            count: 1,
-            remediation: "".into(),
-        });
+        a.filesystem_denials
+            .push(crate::audit::history::FilesystemDenial {
+                path: "/a".into(),
+                process: "".into(),
+                source: "".into(),
+                count: 1,
+                remediation: "".into(),
+            });
+        a.filesystem_denials
+            .push(crate::audit::history::FilesystemDenial {
+                path: "/common".into(),
+                process: "".into(),
+                source: "".into(),
+                count: 1,
+                remediation: "".into(),
+            });
 
         b.filesystem_denials
             .push(crate::audit::history::FilesystemDenial {
