@@ -463,6 +463,7 @@ fn activate_pending(
                 allow_cidr: policy.allow_cidr.clone(),
                 quotas: policy.net_quota.clone(),
                 policy_path: spec.policy.as_ref().map(std::path::PathBuf::from),
+                block_doh: matches!(net, crate::config::NetMode::Allowlist(_) | crate::config::NetMode::Strict(_)),
             };
             crate::sandbox::linux::net_relay::spawn_broker(
                 fd.into_raw_fd(),

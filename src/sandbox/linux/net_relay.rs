@@ -57,6 +57,7 @@ pub struct BrokerConfig {
     pub allow_cidr: Vec<String>,
     pub quotas: std::collections::HashMap<String, u64>,
     pub policy_path: Option<PathBuf>,
+    pub block_doh: bool,
 }
 
 impl From<BrokerPolicy> for BrokerConfig {
@@ -68,6 +69,7 @@ impl From<BrokerPolicy> for BrokerConfig {
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
             policy_path: None,
+            block_doh: false,
         }
     }
 }
@@ -416,7 +418,7 @@ where
             let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
             // relay gone => loop (and thread) ends
             while let Some(req) = read_framed_request(&mut ctrl) {
-                if !request_allowed(&req.host, req.port, req.token.as_deref(), &config) {
+                if !request_allowed(&req.host, req.port, req.token.as_deref(), &config, &bus) {
                     bus.publish(Event::NetRequest {
                         ts: crate::events::types::now(),
                         host: req.host.clone(),
@@ -579,17 +581,14 @@ pub fn strict_allowed(host: &str, port: u16, rules: &[NetRule]) -> bool {
     })
 }
 
+pub const DOH_ENDPOINTS: &[&str] = &["cloudflare-dns.com", "dns.google", "dns.quad9.net", "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"];
+
 pub(crate) fn is_loopback_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
     h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
 }
 
-fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerConfig) -> bool {
-    // Check DoH/DoT block
-    if is_doh_or_dot(host, port, None) {
-        return false;
-    }
-
+fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerConfig, bus: &EventBus) -> bool {
     // Check loopback debug port guard
     if is_loopback_host(host) {
         if let Some(ref guard) = config.debug_guard {
@@ -608,6 +607,8 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
         }
     }
 
+    let mut is_explicitly_allowed = false;
+
     // If host is an IP that matches an allowed CIDR
     let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = clean_ip.parse::<IpAddr>() {
@@ -617,21 +618,44 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
             .filter_map(|c| IpCidr::parse(c).ok())
             .collect();
         if cidrs.iter().any(|c| c.contains(ip)) {
-            return true;
+            is_explicitly_allowed = true;
         }
     }
 
-    match &config.policy {
-        BrokerPolicy::Allowlist(domains) => domain_allowed(host, domains),
-        BrokerPolicy::Strict(rules) => strict_allowed(host, port, rules),
-        BrokerPolicy::Ask(allowlist) => {
-            if domain_allowed(host, allowlist) {
-                true
-            } else {
-                ask_confirmation(host, port, config.policy_path.as_deref())
+    if !is_explicitly_allowed {
+        is_explicitly_allowed = match &config.policy {
+            BrokerPolicy::Allowlist(domains) => domain_allowed(host, domains),
+            BrokerPolicy::Strict(rules) => strict_allowed(host, port, rules),
+            BrokerPolicy::Ask(allowlist) => {
+                if domain_allowed(host, allowlist) {
+                    true
+                } else {
+                    ask_confirmation(host, port, config.policy_path.as_deref())
+                }
+            }
+        };
+    }
+
+    // Check DoH/DoT block
+    if config.block_doh {
+        if port == 853 {
+            return false;
+        }
+
+        if !is_explicitly_allowed {
+            let host_lower = host.trim().trim_end_matches('.').to_ascii_lowercase();
+            let is_doh = DOH_ENDPOINTS.iter().any(|&d| d == host_lower || host_lower.ends_with(&format!(".{d}")));
+            if is_doh {
+                bus.publish(Event::Notice {
+                    ts: crate::events::types::now(),
+                    message: format!("blocked DoH/DoT bypass attempt to {host}:{port}"),
+                });
+                return false;
             }
         }
     }
+
+    is_explicitly_allowed
 }
 
 fn get_upstream_proxy(host: &str, port: u16) -> Option<String> {
@@ -1946,6 +1970,7 @@ mod tests {
 
     #[test]
     fn loopback_debug_guard_integration() {
+        let bus = crate::events::bus::EventBus::new();
         let guard = DebugPortGuard::new(DebugPortConfig::default());
         let config = BrokerConfig {
             policy: BrokerPolicy::Allowlist(vec!["127.0.0.1".into()]),
@@ -1954,21 +1979,22 @@ mod tests {
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
             policy_path: None,
+            block_doh: false,
         };
 
         // Blocked without token
-        assert!(!request_allowed("127.0.0.1", 9222, None, &config));
-        assert!(!request_allowed("127.0.0.1", 9229, None, &config));
-        assert!(!request_allowed("127.0.0.1", 5678, None, &config));
+        assert!(!request_allowed("127.0.0.1", 9222, None, &config, &bus));
+        assert!(!request_allowed("127.0.0.1", 9229, None, &config, &bus));
+        assert!(!request_allowed("127.0.0.1", 5678, None, &config, &bus));
 
         // Allowed with valid token
         let token = guard.session_token();
-        assert!(request_allowed("127.0.0.1", 9222, Some(token), &config));
-        assert!(request_allowed("127.0.0.1", 9229, Some(token), &config));
-        assert!(request_allowed("127.0.0.1", 5678, Some(token), &config));
+        assert!(request_allowed("127.0.0.1", 9222, Some(token), &config, &bus));
+        assert!(request_allowed("127.0.0.1", 9229, Some(token), &config, &bus));
+        assert!(request_allowed("127.0.0.1", 5678, Some(token), &config, &bus));
 
         // Allowed on other non-debug port
-        assert!(request_allowed("127.0.0.1", 8080, None, &config));
+        assert!(request_allowed("127.0.0.1", 8080, None, &config, &bus));
     }
 
     #[test]
@@ -2191,6 +2217,7 @@ mod tests {
 
     #[test]
     fn request_allowed_ask_preallowed_domain_does_not_prompt() {
+        let bus = crate::events::bus::EventBus::new();
         let config = BrokerConfig {
             policy: BrokerPolicy::Ask(vec!["preallowed.com".into()]),
             debug_guard: None,
@@ -2198,14 +2225,15 @@ mod tests {
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
             policy_path: None,
+            block_doh: false,
         };
 
         // Pre-allowed domain is permitted immediately without prompt
-        assert!(request_allowed("preallowed.com", 443, None, &config));
-        assert!(request_allowed("sub.preallowed.com", 443, None, &config));
+        assert!(request_allowed("preallowed.com", 443, None, &config, &bus));
+        assert!(request_allowed("sub.preallowed.com", 443, None, &config, &bus));
 
         // Non-preallowed domain goes to ask_confirmation; in non-tty test env it fails closed
-        assert!(!request_allowed("unknown.com", 443, None, &config));
+        assert!(!request_allowed("unknown.com", 443, None, &config, &bus));
     }
 
     #[test]
@@ -2228,6 +2256,7 @@ mod tests {
 
     #[test]
     fn test_hierarchical_quota_aggregation_and_enforcement() {
+        let bus = crate::events::bus::EventBus::new();
         reset_domain_transfer_stats();
 
         // Record traffic across different subdomains
@@ -2253,19 +2282,54 @@ mod tests {
             allow_cidr: Vec::new(),
             quotas,
             policy_path: None,
+            block_doh: false,
         };
 
         // 60MB used < 100MB limit -> allowed
-        assert!(request_allowed("gist.github.com", 443, None, &config));
+        assert!(request_allowed("gist.github.com", 443, None, &config, &bus));
 
         // Add more traffic that exceeds the 100MB parent limit
         add_domain_transfer("gist.github.com", 25 * 1024 * 1024, 25 * 1024 * 1024); // +50MB -> total 110MB
         assert_eq!(get_quota_bytes("github.com"), 110 * 1024 * 1024);
 
         // Now parent domain limit is exceeded: fail-closed on any github.com subdomain
-        assert!(!request_allowed("api.github.com", 443, None, &config));
-        assert!(!request_allowed("raw.github.com", 443, None, &config));
+        assert!(!request_allowed("api.github.com", 443, None, &config, &bus));
+        assert!(!request_allowed("raw.github.com", 443, None, &config, &bus));
 
         reset_domain_transfer_stats();
+    }
+
+    #[test]
+    fn test_doh_dot_blocking_flags() {
+        let bus = crate::events::bus::EventBus::new();
+        let mut config = BrokerConfig {
+            policy: BrokerPolicy::Allowlist(vec!["allowed.com".into()]),
+            debug_guard: None,
+            mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
+            policy_path: None,
+            block_doh: true, // test with block_doh = true
+        };
+
+        // Port 853 (DoT) should be blocked when block_doh is true
+        assert!(!request_allowed("anydomain.com", 853, None, &config, &bus));
+        assert!(!request_allowed("8.8.8.8", 853, None, &config, &bus));
+
+        // DoH endpoints should be blocked if not explicitly allowed
+        assert!(!request_allowed("cloudflare-dns.com", 443, None, &config, &bus));
+        assert!(!request_allowed("dns.google", 443, None, &config, &bus));
+        assert!(!request_allowed("8.8.8.8", 443, None, &config, &bus));
+
+        // But explicitly allowed DoH endpoint should be allowed
+        let mut config_allowed = config.clone();
+        config_allowed.policy = BrokerPolicy::Allowlist(vec!["cloudflare-dns.com".into()]);
+        assert!(request_allowed("cloudflare-dns.com", 443, None, &config_allowed, &bus));
+
+        // When block_doh is false, DoH and DoT should not be specifically blocked (unless policy denies it)
+        config.block_doh = false;
+        config.policy = BrokerPolicy::Allowlist(vec!["*".into()]); // Allow all for this test
+        assert!(request_allowed("anydomain.com", 853, None, &config, &bus));
+        assert!(request_allowed("cloudflare-dns.com", 443, None, &config, &bus));
     }
 }

@@ -254,6 +254,14 @@ pub struct Cli {
     #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
     pub net_quota: Vec<String>,
 
+    /// Block DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT) endpoints.
+    #[arg(long = "block-doh")]
+    pub block_doh: bool,
+
+    /// Disable DoH and DoT blocking.
+    #[arg(long = "no-block-doh")]
+    pub no_block_doh: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 

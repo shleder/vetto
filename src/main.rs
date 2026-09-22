@@ -1587,6 +1587,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
             broker_config.allow_cidr = pol.allow_cidr.clone();
             broker_config.quotas = pol.net_quota.clone();
             broker_config.policy_path = cfg.policy_path.clone();
+            broker_config.block_doh = cfg.block_doh;
             sandbox::linux::net_relay::spawn_broker(fd.into_raw_fd(), broker_config, bus.clone());
         }
         let _ = relay_port;

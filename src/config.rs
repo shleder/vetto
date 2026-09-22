@@ -183,6 +183,7 @@ pub struct RunConfig {
     pub read_only_caches: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
+    pub block_doh: bool,
     pub agent: Vec<String>,
 }
 
@@ -365,6 +366,14 @@ impl RunConfig {
             net_quota.insert(domain, bytes);
         }
 
+        let block_doh = if cli.no_block_doh {
+            false
+        } else if cli.block_doh {
+            true
+        } else {
+            matches!(net, NetMode::Allowlist(_) | NetMode::Strict(_))
+        };
+
         Ok(Self {
             profile,
             preset,
@@ -406,6 +415,7 @@ impl RunConfig {
             read_only_caches: cli.read_only_caches,
             mask_secrets,
             net_quota,
+            block_doh,
             agent: cli.agent.clone(),
         })
     }
