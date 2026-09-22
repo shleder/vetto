@@ -1200,10 +1200,30 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         }
     }
 
-    // Phase 3: mask ~/.ssh and .env
-    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
-        if let Err(e) = vfs_overlays::mask_ssh_and_env(&home, Some(&opts.cwd)) {
-            child_fail(err_w, 121, &format!("mask ssh/env: {e}"));
+    // Phase 3: mask secrets, dangerous unix sockets, and policy-denied sockets
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home_ref = home.as_deref().unwrap_or_else(|| std::path::Path::new("/nonexistent"));
+    if let Err(e) = vfs_overlays::mask_mandatory_secrets(home_ref, Some(&opts.cwd)) {
+        child_fail(err_w, 121, &format!("mask secrets: {e}"));
+    }
+
+    if !policy.deny_unix_sockets.is_empty() {
+        let home_str = home.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let cwd_str = opts.cwd.to_string_lossy().into_owned();
+        let mut custom_socks = Vec::new();
+        for sock in &policy.deny_unix_sockets {
+            let mut s = sock.clone();
+            s = s.replace("$PROJECT", &cwd_str);
+            if let Some(h) = &home_str {
+                s = s.replace("$HOME", h);
+                if s.starts_with("~/") {
+                    s = format!("{h}/{}", &s[2..]);
+                }
+            }
+            custom_socks.push(std::path::PathBuf::from(s));
+        }
+        if let Err(e) = vfs_overlays::mask_unix_sockets(&custom_socks) {
+            child_fail(err_w, 121, &format!("mask unix sockets: {e}"));
         }
     }
 
