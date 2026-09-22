@@ -468,6 +468,15 @@ fn activate_pending(
                     net,
                     crate::config::NetMode::Allowlist(_) | crate::config::NetMode::Strict(_)
                 ),
+                http_proxy: std::env::var("HTTP_PROXY")
+                    .or_else(|_| std::env::var("http_proxy"))
+                    .ok(),
+                https_proxy: std::env::var("HTTPS_PROXY")
+                    .or_else(|_| std::env::var("https_proxy"))
+                    .ok(),
+                no_proxy: std::env::var("NO_PROXY")
+                    .or_else(|_| std::env::var("no_proxy"))
+                    .ok(),
             };
             crate::sandbox::linux::net_relay::spawn_broker(
                 fd.into_raw_fd(),

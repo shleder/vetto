@@ -58,10 +58,27 @@ pub struct BrokerConfig {
     pub quotas: std::collections::HashMap<String, u64>,
     pub policy_path: Option<PathBuf>,
     pub block_doh: bool,
+    pub http_proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub no_proxy: Option<String>,
 }
 
 impl From<BrokerPolicy> for BrokerConfig {
     fn from(policy: BrokerPolicy) -> Self {
+        let http_proxy = std::env::var("HTTP_PROXY")
+            .or_else(|_| std::env::var("http_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok();
+        let https_proxy = std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("https_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok();
+        let no_proxy = std::env::var("NO_PROXY")
+            .or_else(|_| std::env::var("no_proxy"))
+            .ok();
+
         Self {
             policy,
             debug_guard: Some(DebugPortGuard::new(DebugPortConfig::default())),
@@ -70,6 +87,9 @@ impl From<BrokerPolicy> for BrokerConfig {
             quotas: std::collections::HashMap::new(),
             policy_path: None,
             block_doh: false,
+            http_proxy,
+            https_proxy,
+            no_proxy,
         }
     }
 }
@@ -474,7 +494,7 @@ where
                     }
                     continue;
                 }
-                match resolve_and_connect(&req.host, req.port, &config.allow_cidr, &bus) {
+                match resolve_and_connect(&req.host, req.port, &config, &bus) {
                     Ok((tcp, addr)) => {
                         bus.publish(Event::NetRequest {
                             ts: crate::events::types::now(),
@@ -719,29 +739,57 @@ fn request_allowed(
     is_explicitly_allowed
 }
 
-fn get_upstream_proxy(host: &str, port: u16) -> Option<String> {
-    if let Ok(no_proxy) = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")) {
+fn get_upstream_proxy(host: &str, port: u16, config: &BrokerConfig) -> Option<String> {
+    if let Some(no_proxy) = config.no_proxy.as_deref() {
         let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
         for item in no_proxy.split(',') {
-            let item = item.trim().trim_end_matches('.').to_ascii_lowercase();
+            let item = item
+                .trim()
+                .trim_start_matches('.')
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
             if !item.is_empty() && (item == "*" || h == item || h.ends_with(&format!(".{item}"))) {
                 return None;
             }
         }
     }
     if port == 443 {
-        std::env::var("HTTPS_PROXY")
-            .or_else(|_| std::env::var("https_proxy"))
-            .or_else(|_| std::env::var("ALL_PROXY"))
-            .or_else(|_| std::env::var("all_proxy"))
-            .ok()
+        config.https_proxy.clone()
     } else {
-        std::env::var("HTTP_PROXY")
-            .or_else(|_| std::env::var("http_proxy"))
-            .or_else(|_| std::env::var("ALL_PROXY"))
-            .or_else(|_| std::env::var("all_proxy"))
-            .ok()
+        config.http_proxy.clone()
     }
+}
+
+const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn encode_base64(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity((bytes.len() * 4 / 3) + 4);
+    let mut i = 0;
+    while i < bytes.len() {
+        let b0 = bytes[i];
+        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
+
+        let enc0 = b0 >> 2;
+        let enc1 = ((b0 & 3) << 4) | (b1 >> 4);
+        let enc2 = ((b1 & 15) << 2) | (b2 >> 6);
+        let enc3 = b2 & 63;
+
+        out.push(B64_CHARS[enc0 as usize] as char);
+        out.push(B64_CHARS[enc1 as usize] as char);
+        if i + 1 < bytes.len() {
+            out.push(B64_CHARS[enc2 as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if i + 2 < bytes.len() {
+            out.push(B64_CHARS[enc3 as usize] as char);
+        } else {
+            out.push('=');
+        }
+        i += 3;
+    }
+    out
 }
 
 fn connect_via_proxy(
@@ -763,8 +811,9 @@ fn connect_via_proxy(
     let mut req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     );
-    if let Some(_userinfo) = auth {
-        // basic auth if needed
+    if let Some(userinfo) = auth {
+        let b64 = encode_base64(userinfo);
+        req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", b64));
     }
     req.push_str("Proxy-Connection: Keep-Alive\r\n\r\n");
     tcp.write_all(req.as_bytes()).map_err(|_| ())?;
@@ -780,12 +829,11 @@ fn connect_via_proxy(
             break;
         }
     }
-    let status_line = String::from_utf8_lossy(&resp);
-    if status_line.starts_with("HTTP/1.1 200") || status_line.starts_with("HTTP/1.0 200") {
-        Ok(tcp)
-    } else {
-        Err(())
+    let resp_str = String::from_utf8_lossy(&resp);
+    if !resp_str.starts_with("HTTP/1.1 200") && !resp_str.starts_with("HTTP/1.0 200") {
+        return Err(());
     }
+    Ok(tcp)
 }
 
 /// Resolve and connect entirely in the broker, pinning the selected
@@ -793,7 +841,7 @@ fn connect_via_proxy(
 fn resolve_and_connect(
     host: &str,
     port: u16,
-    allow_cidrs: &[String],
+    config: &BrokerConfig,
     bus: &EventBus,
 ) -> Result<(TcpStream, SocketAddr), ()> {
     use std::net::ToSocketAddrs;
@@ -810,7 +858,7 @@ fn resolve_and_connect(
         return Err(());
     }
 
-    if let Some(proxy_url) = get_upstream_proxy(host, port) {
+    if let Some(proxy_url) = get_upstream_proxy(host, port, config) {
         if let Ok(stream) = connect_via_proxy(&proxy_url, host, port) {
             let dummy_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
             return Ok((stream, dummy_addr));
@@ -826,7 +874,8 @@ fn resolve_and_connect(
         return Err(());
     }
 
-    let cidrs: Vec<IpCidr> = allow_cidrs
+    let cidrs: Vec<IpCidr> = config
+        .allow_cidr
         .iter()
         .filter_map(|c| IpCidr::parse(c).ok())
         .collect();
@@ -2041,6 +2090,9 @@ mod tests {
             quotas: std::collections::HashMap::new(),
             policy_path: None,
             block_doh: false,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // Blocked without token
@@ -2305,6 +2357,9 @@ mod tests {
             quotas: std::collections::HashMap::new(),
             policy_path: None,
             block_doh: false,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // Pre-allowed domain is permitted immediately without prompt
@@ -2368,6 +2423,9 @@ mod tests {
             quotas,
             policy_path: None,
             block_doh: false,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // 60MB used < 100MB limit -> allowed
@@ -2394,7 +2452,10 @@ mod tests {
             allow_cidr: Vec::new(),
             quotas: std::collections::HashMap::new(),
             policy_path: None,
-            block_doh: true, // test with block_doh = true
+            block_doh: true,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // Port 853 (DoT) should be blocked when block_doh is true
@@ -2425,7 +2486,7 @@ mod tests {
 
         // When block_doh is false, DoH and DoT should not be specifically blocked (unless policy denies it)
         config.block_doh = false;
-        config.policy = BrokerPolicy::Allowlist(vec!["*".into()]); // Allow all for this test
+        config.policy = BrokerPolicy::Allowlist(vec!["*".into()]);
         assert!(request_allowed("anydomain.com", 853, None, &config, &bus));
         assert!(request_allowed(
             "cloudflare-dns.com",
@@ -2434,5 +2495,54 @@ mod tests {
             &config,
             &bus
         ));
+    }
+
+    #[test]
+    fn test_encode_base64() {
+        assert_eq!(super::encode_base64("user:pass"), "dXNlcjpwYXNz");
+        assert_eq!(
+            super::encode_base64("admin:password123"),
+            "YWRtaW46cGFzc3dvcmQxMjM="
+        );
+        assert_eq!(
+            super::encode_base64("Aladdin:open sesame"),
+            "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+    }
+
+    #[test]
+    fn test_get_upstream_proxy_routing() {
+        let config = BrokerConfig {
+            policy: BrokerPolicy::Allowlist(Vec::new()),
+            debug_guard: None,
+            mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
+            policy_path: None,
+            block_doh: false,
+            http_proxy: Some("http://proxy.corp:8080".into()),
+            https_proxy: Some("http://proxy.corp:8443".into()),
+            no_proxy: Some("localhost,127.0.0.1,.local,ignore.com".into()),
+        };
+
+        // Standard routing
+        assert_eq!(
+            super::get_upstream_proxy("example.com", 80, &config).as_deref(),
+            Some("http://proxy.corp:8080")
+        );
+        assert_eq!(
+            super::get_upstream_proxy("example.com", 443, &config).as_deref(),
+            Some("http://proxy.corp:8443")
+        );
+
+        // No-proxy routing
+        assert_eq!(super::get_upstream_proxy("localhost", 80, &config), None);
+        assert_eq!(super::get_upstream_proxy("127.0.0.1", 443, &config), None);
+        assert_eq!(super::get_upstream_proxy("api.local", 443, &config), None);
+        assert_eq!(super::get_upstream_proxy("ignore.com", 80, &config), None);
+        assert_eq!(
+            super::get_upstream_proxy("sub.ignore.com", 80, &config),
+            None
+        );
     }
 }
