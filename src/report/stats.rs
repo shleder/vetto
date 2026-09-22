@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::events::{Event, EventBus, FileAccess};
@@ -52,6 +52,13 @@ pub struct DomainStats {
     pub bytes_rx: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DomainTransferStats {
+    pub requests: u64,
+    pub bytes_tx: u64,
+    pub bytes_rx: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SuspiciousRecord {
     pub category: String,
@@ -84,6 +91,9 @@ pub struct SessionStats {
     pub dns_resolutions: Vec<DnsRecord>,
     pub egress_connections: Vec<EgressRecord>,
     pub network_summary: BTreeMap<String, DomainStats>,
+    pub total_egress_bytes_tx: u64,
+    pub total_egress_bytes_rx: u64,
+    pub domain_egress: std::collections::HashMap<String, DomainTransferStats>,
     /// Best-effort audit hints. These records never affect enforcement.
     pub suspicious_signals: Vec<SuspiciousRecord>,
     pub notices: Vec<String>,
@@ -283,6 +293,12 @@ fn ingest(inner: &mut Inner, ev: Event) {
             *st.op_counts
                 .entry(crate::classifier::Operation::Net.label().to_string())
                 .or_insert(0) += 1;
+            st.total_egress_bytes_tx += bytes_tx;
+            st.total_egress_bytes_rx += bytes_rx;
+            let domain_stat = st.domain_egress.entry(host.clone()).or_default();
+            domain_stat.requests += 1;
+            domain_stat.bytes_tx += bytes_tx;
+            domain_stat.bytes_rx += bytes_rx;
             let summary = st.network_summary.entry(host.clone()).or_default();
             summary.requests += 1;
             summary.bytes_tx += bytes_tx;
@@ -382,5 +398,100 @@ mod tests {
             );
         }
         assert_eq!(inner.suspicious.len(), MAX_DISTINCT_RECORDS);
+    }
+
+    #[test]
+    fn net_egress_aggregates_totals_and_per_domain_stats() {
+        let mut inner = Inner::default();
+
+        ingest(
+            &mut inner,
+            Event::NetEgress {
+                ts: now(),
+                host: "api.anthropic.com".into(),
+                ip: "104.18.2.1".into(),
+                port: 443,
+                bytes_tx: 100,
+                bytes_rx: 500,
+            },
+        );
+
+        ingest(
+            &mut inner,
+            Event::NetEgress {
+                ts: now(),
+                host: "api.anthropic.com".into(),
+                ip: "104.18.2.2".into(),
+                port: 443,
+                bytes_tx: 200,
+                bytes_rx: 700,
+            },
+        );
+
+        ingest(
+            &mut inner,
+            Event::NetEgress {
+                ts: now(),
+                host: "crates.io".into(),
+                ip: "151.101.1.6".into(),
+                port: 443,
+                bytes_tx: 50,
+                bytes_rx: 250,
+            },
+        );
+
+        let st = &inner.stats;
+        assert_eq!(st.total_egress_bytes_tx, 350);
+        assert_eq!(st.total_egress_bytes_rx, 1450);
+
+        assert_eq!(
+            st.domain_egress.get("api.anthropic.com"),
+            Some(&DomainTransferStats {
+                requests: 2,
+                bytes_tx: 300,
+                bytes_rx: 1200,
+            })
+        );
+
+        assert_eq!(
+            st.domain_egress.get("crates.io"),
+            Some(&DomainTransferStats {
+                requests: 1,
+                bytes_tx: 50,
+                bytes_rx: 250,
+            })
+        );
+    }
+
+    #[test]
+    fn stats_snapshot_preserves_net_egress_aggregation() {
+        let mut inner = Inner::default();
+        ingest(
+            &mut inner,
+            Event::NetEgress {
+                ts: now(),
+                host: "api.openai.com".into(),
+                ip: "104.18.6.1".into(),
+                port: 443,
+                bytes_tx: 400,
+                bytes_rx: 1600,
+            },
+        );
+
+        let collector = StatsCollector {
+            inner: Arc::new(Mutex::new(inner)),
+        };
+        let snap = collector.snapshot();
+
+        assert_eq!(snap.total_egress_bytes_tx, 400);
+        assert_eq!(snap.total_egress_bytes_rx, 1600);
+        assert_eq!(
+            snap.domain_egress.get("api.openai.com"),
+            Some(&DomainTransferStats {
+                requests: 1,
+                bytes_tx: 400,
+                bytes_rx: 1600,
+            })
+        );
     }
 }
