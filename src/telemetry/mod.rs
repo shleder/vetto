@@ -1,3 +1,5 @@
+pub mod anonymous;
+
 //! Optional, privacy-preserving post-session telemetry.
 //!
 //! # Privacy Guarantees
