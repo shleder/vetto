@@ -1,9 +1,9 @@
 //! Interactive sandbox configurator (`vetto wizard`).
 
-use std::io::{BufRead, IsTerminal, Write};
-use std::path::Path;
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use std::io::{BufRead, IsTerminal, Write};
+use std::path::Path;
 
 /// CLI arguments for `vetto wizard`.
 #[derive(Args, Debug, Clone)]
@@ -59,12 +59,24 @@ pub fn run_wizard_flow(
     let is_interactive = !args.yes && is_tty;
 
     let (agent_slug, net_mode, protect) = if is_interactive {
-        writeln!(writer, "╔════════════════════════════════════════════════════════════════╗")?;
-        writeln!(writer, "║                  Vetto Interactive Wizard                      ║")?;
-        writeln!(writer, "╚════════════════════════════════════════════════════════════════╝")?;
+        writeln!(
+            writer,
+            "╔════════════════════════════════════════════════════════════════╗"
+        )?;
+        writeln!(
+            writer,
+            "║                  Vetto Interactive Wizard                      ║"
+        )?;
+        writeln!(
+            writer,
+            "╚════════════════════════════════════════════════════════════════╝"
+        )?;
         writeln!(writer)?;
 
-        write!(writer, "1. Какой агент? (claude/cursor/aider/opencode) [claude]: ")?;
+        write!(
+            writer,
+            "1. Какой агент? (claude/cursor/aider/opencode) [claude]: "
+        )?;
         writer.flush()?;
         let mut agent = String::new();
         reader.read_line(&mut agent)?;
@@ -140,7 +152,11 @@ mode = "{}"
         target_policy_path.display().to_string()
     };
 
-    writeln!(writer, "✓ Vetto security policy generated at {}", display_path)?;
+    writeln!(
+        writer,
+        "✓ Vetto security policy generated at {}",
+        display_path
+    )?;
     Ok(())
 }
 
