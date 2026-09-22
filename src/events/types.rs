@@ -109,13 +109,8 @@ impl Event {
             | Event::SecretMasked { ts, .. }
             | Event::Notice { ts, .. }
             | Event::SessionTimeout { ts }
-            | Event::FsMutation {
-        ts: DateTime<Utc>,
-        path: String,
-        mutation: String,
-        bytes: Option<u64>,
-    },
-    SessionEnded { ts, .. } => *ts,
+            | Event::FsMutation { ts, .. }
+            | Event::SessionEnded { ts, .. } => *ts,
         }
     }
 
