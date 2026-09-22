@@ -87,7 +87,9 @@ pub fn get_dangerous_unix_sockets() -> Vec<PathBuf> {
         sockets.push(PathBuf::from(format!("/run/user/{uid}/docker.sock")));
         sockets.push(PathBuf::from(format!("/run/user/{uid}/podman/podman.sock")));
         sockets.push(PathBuf::from(format!("/run/user/{uid}/gnupg/S.gpg-agent")));
-        sockets.push(PathBuf::from(format!("/run/user/{uid}/gnupg/S.gpg-agent.ssh")));
+        sockets.push(PathBuf::from(format!(
+            "/run/user/{uid}/gnupg/S.gpg-agent.ssh"
+        )));
     }
 
     if let Ok(ssh_sock) = std::env::var("SSH_AUTH_SOCK") {

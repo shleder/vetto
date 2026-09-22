@@ -1481,7 +1481,9 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     merged.pass_through.extend(overrides.pass_through.clone());
     merged.deny_env.extend(overrides.deny_env.clone());
     merged.deny_network.extend(overrides.deny_network.clone());
-    merged.deny_unix_sockets.extend(overrides.deny_unix_sockets.clone());
+    merged
+        .deny_unix_sockets
+        .extend(overrides.deny_unix_sockets.clone());
     deduplicate_strings(&mut merged.deny_unix_sockets);
 
     if let Some(true) = overrides.git_guard {
@@ -2544,7 +2546,8 @@ allow_read = ["/usr", "${PROJECT}"]
 
     #[test]
     fn test_parse_deny_unix_sockets_in_policy_toml() {
-        let root = std::env::temp_dir().join(format!("vetto-policy-deny-sock-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("vetto-policy-deny-sock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let policy_path = root.join("policy.toml");
@@ -2562,8 +2565,14 @@ deny = ["$PROJECT/denied.sock", "/var/run/custom-unix.sock"]
 deny_unix_sockets = ["/var/run/custom-unix-explicit.sock"]
 "#;
         std::fs::write(&policy_path, toml_content).unwrap();
-        let loaded = load("deny-sock-test", Some(&policy_path), &root, &root, Tier::Full)
-            .expect("policy with deny_unix_sockets should load");
+        let loaded = load(
+            "deny-sock-test",
+            Some(&policy_path),
+            &root,
+            &root,
+            Tier::Full,
+        )
+        .expect("policy with deny_unix_sockets should load");
 
         assert!(loaded
             .deny_unix_sockets

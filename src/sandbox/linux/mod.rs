@@ -1202,7 +1202,9 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
 
     // Phase 3: mask secrets, dangerous unix sockets, and policy-denied sockets
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let home_ref = home.as_deref().unwrap_or_else(|| std::path::Path::new("/nonexistent"));
+    let home_ref = home
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("/nonexistent"));
     if let Err(e) = vfs_overlays::mask_mandatory_secrets(home_ref, Some(&opts.cwd)) {
         child_fail(err_w, 121, &format!("mask secrets: {e}"));
     }
