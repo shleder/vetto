@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vetto-node-runtime
+  namespace: default
+  labels:
+    app: vetto
+    component: runtime
+spec:
+  selector:
+    matchLabels:
+      app: vetto
+  template:
+    metadata:
+      labels:
+        app: vetto
+        component: runtime
+    spec:
+      serviceAccountName: vetto-runner
+      hostPID: true
+      hostNetwork: true
+      containers:
+        - name: vetto-runtime
+          image: ghcr.io/shleder/vetto:0.3.13
+          imagePullPolicy: IfNotPresent
+          command: ["vetto", "daemon"]
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - CAP_SYS_ADMIN
+                - CAP_NET_ADMIN
+                - CAP_SETUID
+                - CAP_SETGID
+                - CAP_SYS_PTRACE
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+              readOnly: true
+            - name: run-vetto
+              mountPath: /var/run/vetto
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        - name: run-vetto
+          hostPath:
+            path: /var/run/vetto
+            type: DirectoryOrCreate

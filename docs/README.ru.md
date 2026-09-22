@@ -8,6 +8,10 @@
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License"></a>
 </p>
 
+<p align="center">
+  <a href="../README.md">English</a> | <a href="README.ru.md">Русский</a>
+</p>
+
 Бесфоновый (daemon-less) и беcпривилегированный (rootless) runtime для изоляции на уровне ядра и контроля политик AI-агентов, пишущих код (**Claude Code**, **OpenAI Codex CLI**, **Cursor**, **Gemini**, **Aider**). Vetto внедряет неизменяемые границы безопасности напрямую между `fork()` и `execve()` с задержкой инициализации менее 4 мс.
 
 ---
