@@ -252,11 +252,16 @@ fn ingest(inner: &mut Inner, ev: Event) {
                     st.file_reads += 1;
                     st.read_ops += 1;
                     st.bytes_read += file_size;
+                    st.io_metrics.file_reads += 1;
+                    st.io_metrics.bytes_read += file_size;
                 }
                 FileAccess::Write => {
                     st.file_writes += 1;
                     st.write_ops += 1;
                     st.bytes_written += file_size;
+                    st.io_metrics.file_writes += 1;
+                    st.io_metrics.bytes_written += file_size;
+                    st.io_metrics.files_modified += 1;
                 }
                 FileAccess::Unknown => {}
             }
@@ -351,76 +356,44 @@ fn ingest(inner: &mut Inner, ev: Event) {
         // SessionTimeout is a session-level marker: it is counted into
         // events_total and counts["session_timeout"] above like every event;
         // it carries no per-operation data of its own.
-        Event::FsMutation {
-            mutation, bytes, ..
-        } => {
-            let io = &mut st.io_metrics;
-            if mutation == "read" {
-                io.file_reads += 1;
-                if let Some(b) = bytes {
-                    io.bytes_read += b;
-                }
-            } else {
-                io.file_writes += 1;
-                match mutation.as_str() {
-                    "create" => io.files_created += 1,
-                    "modify" => io.files_modified += 1,
-                    "delete" | "unlink" => io.files_deleted += 1,
-                    _ => {}
-                }
-                if let Some(b) = bytes {
-                    io.bytes_written += b;
-                }
-            }
-        }
         Event::ExecObserved { .. } | Event::SecretMasked { .. } | Event::SessionTimeout { .. } => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::events::types::{now, FileAccess};
 
     #[test]
-    fn fs_mutation_aggregates_io_metrics() {
+    fn file_observed_aggregates_io_metrics() {
         let mut inner = Inner::default();
         ingest(
             &mut inner,
-            Event::FsMutation {
+            Event::FileObserved {
                 ts: now(),
-                path: "/tmp/new".into(),
-                mutation: "create".into(),
-                bytes: Some(1024),
+                pid: 100,
+                comm: "node".into(),
+                path: "/dev/null".into(),
+                access: FileAccess::Read,
             },
         );
         ingest(
             &mut inner,
-            Event::FsMutation {
+            Event::FileObserved {
                 ts: now(),
-                path: "/tmp/mod".into(),
-                mutation: "modify".into(),
-                bytes: Some(512),
-            },
-        );
-        ingest(
-            &mut inner,
-            Event::FsMutation {
-                ts: now(),
-                path: "/tmp/del".into(),
-                mutation: "delete".into(),
-                bytes: None,
+                pid: 100,
+                comm: "node".into(),
+                path: "/dev/null".into(),
+                access: FileAccess::Write,
             },
         );
 
         let io = &inner.stats.io_metrics;
-        assert_eq!(io.files_created, 1);
+        assert_eq!(io.file_reads, 1);
+        assert_eq!(io.file_writes, 1);
         assert_eq!(io.files_modified, 1);
-        assert_eq!(io.files_deleted, 1);
-        assert_eq!(io.file_writes, 3);
-        assert_eq!(io.bytes_written, 1536);
     }
-
-    use super::*;
-    use crate::events::types::now;
 
     #[test]
     fn attacker_controlled_record_keys_are_bounded_but_repeats_aggregate() {
