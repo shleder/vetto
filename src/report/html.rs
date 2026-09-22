@@ -115,6 +115,8 @@ pub fn render(stats: &SessionStats) -> String {
 
     let histogram_svg = super::svg::render_category_histogram_svg(stats);
 
+    let syscall_svg = super::svg::render_syscall_distribution_svg(stats).unwrap_or_default();
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -151,6 +153,7 @@ pub fn render(stats: &SessionStats) -> String {
 
 <h2>Event category distribution</h2>
 {histogram}
+{syscalls}
 
 <h2>Event counts</h2>
 <table>
@@ -191,6 +194,7 @@ Secret sanitizer: BEST-EFFORT (false positives and misses are possible).
         exit = stats.exit_code,
         dur = stats.duration_secs,
         histogram = histogram_svg,
+        syscalls = syscall_svg,
         rows = rows,
         reads = stats.file_reads,
         writes = stats.file_writes,

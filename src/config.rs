@@ -111,6 +111,8 @@ pub struct GlobalConfig {
     pub shadow: Option<bool>,
     #[serde(default)]
     pub mask_secrets: Option<bool>,
+    #[serde(default)]
+    pub anonymous_telemetry: Option<bool>,
 }
 
 pub fn load_global_config_from_home(home: &Path) -> Option<GlobalConfig> {
@@ -181,6 +183,7 @@ pub struct RunConfig {
     pub ephemeral_force_discard: bool,
     pub auto_deny_secrets: bool,
     pub read_only_caches: bool,
+    pub anonymous_telemetry: bool,
     pub tmpfs_tmp: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
@@ -406,6 +409,8 @@ impl RunConfig {
             ephemeral_force_discard: false,
             auto_deny_secrets: cli.auto_deny_secrets,
             read_only_caches: cli.read_only_caches,
+            anonymous_telemetry: cli.anonymous_telemetry
+                || global.anonymous_telemetry.unwrap_or(false),
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
@@ -998,5 +1003,14 @@ mod tests {
 
         let agy_cmd = vec!["agy".to_string()];
         assert!(should_default_to_no_tui(Some("antigravity"), &agy_cmd));
+    }
+
+    #[test]
+    fn test_parse_net_mode_ask() {
+        assert_eq!(parse_net_mode("ask").unwrap(), NetMode::Ask);
+
+        let cli = Cli::try_parse_from(["vetto", "--net", "ask", "--", "claude"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.net, NetMode::Ask);
     }
 }
