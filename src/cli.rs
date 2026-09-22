@@ -6,6 +6,7 @@ pub mod hook;
 pub mod kill;
 pub mod mask;
 pub mod plugin;
+pub mod registry;
 pub mod shell_env;
 pub mod status;
 pub mod undo;
@@ -174,6 +175,10 @@ pub struct Cli {
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
 
+    /// Calculate and use an adaptive timeout based on past successful sessions
+    #[arg(long)]
+    pub adaptive_timeout: bool,
+
     /// Resource ceilings for the agent process, comma separated:
     /// cpu=SECONDS, as=BYTES, procs=N, nofile=N, fsize=BYTES. Merged
     /// strictest-wins with any limits from the policy layers.
@@ -261,6 +266,10 @@ pub struct Cli {
     /// Per-domain network traffic quota (e.g. --net-quota api.openai.com=100mb, --net-quota github.com=1gb)
     #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
     pub net_quota: Vec<String>,
+
+    /// Run execution inside disposable Windows Sandbox (VM) instead of AppContainer (Windows only)
+    #[arg(long = "windows-sandbox")]
+    pub windows_sandbox: bool,
 
     /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
     #[arg(long)]
@@ -423,6 +432,12 @@ pub enum Command {
         #[command(subcommand)]
         command: HookCommand,
     },
+    /// Manage community-registry policies
+    #[command(hide = true)]
+    Registry {
+        #[command(subcommand)]
+        command: registry::RegistryCommand,
+    },
     /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
     #[command(hide = true)]
     Plugin {
@@ -436,13 +451,11 @@ pub enum Command {
         command: Option<McpCommand>,
     },
     /// Manage background session multiplexer daemon and session registry
-    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: crate::daemon::DaemonCommand,
     },
     /// Run multiplexer daemon in foreground with SSH remote instructions
-    #[command(hide = true)]
     Serve {
         /// Loopback HTTP port for REST API (default: 54321)
         #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]

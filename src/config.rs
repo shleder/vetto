@@ -190,6 +190,7 @@ pub struct RunConfig {
     pub http_proxy: Option<String>,
     pub https_proxy: Option<String>,
     pub no_proxy: Option<String>,
+    pub windows_sandbox: bool,
     pub agent: Vec<String>,
 }
 
@@ -343,7 +344,19 @@ impl RunConfig {
                 crate::history::compute_auto_timeout(&proj, agent_name)
             }
             Some(raw) => Some(parse_session_timeout(raw)?),
-            None => None,
+            None => {
+                if cli.adaptive_timeout {
+                    let proj = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    let reports = report_dir.clone().unwrap_or_else(|| {
+                        crate::audit::history::default_history_path()
+                            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                            .unwrap_or_else(|| PathBuf::from("."))
+                    });
+                    crate::watchdog::timeout::recommend_timeout(&proj, &reports)
+                } else {
+                    None
+                }
+            }
         };
 
         let mask_secrets = if cli.no_mask_secrets {
@@ -431,6 +444,7 @@ impl RunConfig {
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
+            windows_sandbox: cli.windows_sandbox,
             agent: cli.agent.clone(),
             http_proxy,
             https_proxy,
