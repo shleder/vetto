@@ -111,6 +111,8 @@ pub struct GlobalConfig {
     pub shadow: Option<bool>,
     #[serde(default)]
     pub mask_secrets: Option<bool>,
+    #[serde(default)]
+    pub anonymous_telemetry: Option<bool>,
 }
 
 pub fn load_global_config_from_home(home: &Path) -> Option<GlobalConfig> {
@@ -181,6 +183,7 @@ pub struct RunConfig {
     pub ephemeral_force_discard: bool,
     pub auto_deny_secrets: bool,
     pub read_only_caches: bool,
+    pub anonymous_telemetry: bool,
     pub tmpfs_tmp: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
@@ -405,6 +408,8 @@ impl RunConfig {
             ephemeral_force_discard: false,
             auto_deny_secrets: cli.auto_deny_secrets,
             read_only_caches: cli.read_only_caches,
+            anonymous_telemetry: cli.anonymous_telemetry
+                || global.anonymous_telemetry.unwrap_or(false),
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
