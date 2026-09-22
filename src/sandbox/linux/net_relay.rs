@@ -715,10 +715,9 @@ fn connect_via_proxy(
     let mut req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     );
-        if let Some(userinfo) = auth {
+    if let Some(userinfo) = auth {
         let b64 = encode_base64(userinfo);
-        req.push_str(&format!("Proxy-Authorization: Basic {}
-", b64));
+        req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", b64));
     }
     req.push_str("Proxy-Connection: Keep-Alive\r\n\r\n");
     tcp.write_all(req.as_bytes()).map_err(|_| ())?;
@@ -734,12 +733,11 @@ fn connect_via_proxy(
             break;
         }
     }
-    let status_line = String::from_utf8_lossy(&resp);
-    if status_line.starts_with("HTTP/1.1 200") || status_line.starts_with("HTTP/1.0 200") {
-        Ok(tcp)
-    } else {
-        Err(())
+    let resp_str = String::from_utf8_lossy(&resp);
+    if !resp_str.starts_with("HTTP/1.1 200") && !resp_str.starts_with("HTTP/1.0 200") {
+        return Err(());
     }
+    Ok(tcp)
 }
 
 /// Resolve and connect entirely in the broker, pinning the selected
@@ -780,7 +778,8 @@ fn resolve_and_connect(
         return Err(());
     }
 
-    let cidrs: Vec<IpCidr> = allow_cidrs
+    let cidrs: Vec<IpCidr> = config
+        .allow_cidr
         .iter()
         .filter_map(|c| IpCidr::parse(c).ok())
         .collect();
@@ -2343,8 +2342,14 @@ mod tests {
         };
 
         // Standard routing
-        assert_eq!(super::get_upstream_proxy("example.com", 80, &config).as_deref(), Some("http://proxy.corp:8080"));
-        assert_eq!(super::get_upstream_proxy("example.com", 443, &config).as_deref(), Some("http://proxy.corp:8443"));
+        assert_eq!(
+            super::get_upstream_proxy("example.com", 80, &config).as_deref(),
+            Some("http://proxy.corp:8080")
+        );
+        assert_eq!(
+            super::get_upstream_proxy("example.com", 443, &config).as_deref(),
+            Some("http://proxy.corp:8443")
+        );
 
         // No-proxy routing
         assert_eq!(super::get_upstream_proxy("localhost", 80, &config), None);
