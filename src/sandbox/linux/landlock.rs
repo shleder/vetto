@@ -12,7 +12,7 @@
 //! - ABI 5 (Linux 6.10): character device ioctl (IOCTL_DEV)
 //! - ABI 6 (Linux 6.12): IPC and signal scoping (ABSTRACT_UNIX_SOCKET, SIGNAL)
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
@@ -96,11 +96,19 @@ pub struct PreparedRule {
     pub allowed_access: u64,
 }
 
+/// A TCP network port rule prepared for a Landlock ruleset (ABI >= 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedNetPortRule {
+    pub port: u16,
+    pub allowed_access: u64,
+}
+
 /// Data-only Landlock preparation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedRuleset {
     abi: u32,
     rules: Vec<PreparedRule>,
+    net_rules: Vec<PreparedNetPortRule>,
 }
 
 impl PreparedRuleset {
@@ -114,13 +122,18 @@ impl PreparedRuleset {
         &self.rules
     }
 
-    /// Number of concrete rules that would be added to the kernel.
+    /// Prepared TCP network port rules, in stable port order.
+    pub fn net_rules(&self) -> &[PreparedNetPortRule] {
+        &self.net_rules
+    }
+
+    /// Number of concrete path rules that would be added to the kernel.
     pub fn len(&self) -> usize {
         self.rules.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.rules.is_empty() && self.net_rules.is_empty()
     }
 }
 
@@ -238,6 +251,35 @@ pub fn write_rights(abi: u32) -> u64 {
     r
 }
 
+/// Prepare deterministic TCP network port rules for a given ABI version.
+///
+/// Port rules require ABI >= 4. If `abi < 4`, an empty rule list is returned,
+/// enabling graceful fallback for older kernels.
+/// Ports appearing in multiple lists or multiple times are deduplicated, with their
+/// access masks combined (e.g. `BIND_TCP | CONNECT_TCP`) to prevent kernel EEXIST errors.
+pub fn prepare_net_port_rules(
+    abi: u32,
+    bind_ports: &[u16],
+    connect_ports: &[u16],
+) -> Vec<PreparedNetPortRule> {
+    if abi < 4 {
+        return Vec::new();
+    }
+    let mut map: BTreeMap<u16, u64> = BTreeMap::new();
+    for &port in bind_ports {
+        *map.entry(port).or_default() |= LANDLOCK_ACCESS_NET_BIND_TCP;
+    }
+    for &port in connect_ports {
+        *map.entry(port).or_default() |= LANDLOCK_ACCESS_NET_CONNECT_TCP;
+    }
+    map.into_iter()
+        .map(|(port, allowed_access)| PreparedNetPortRule {
+            port,
+            allowed_access,
+        })
+        .collect()
+}
+
 /// Prepare path rules using a caller-supplied ABI, without touching the
 /// Landlock installation syscalls. This is useful for deterministic tests
 /// and measurements on hosts where Landlock is unavailable.
@@ -246,6 +288,18 @@ pub fn prepare_ruleset_for_abi(
     allow_write: &[std::path::PathBuf],
     allow_read: &[std::path::PathBuf],
     strip_read_on_write: bool,
+) -> PreparedRuleset {
+    prepare_ruleset_with_net_for_abi(abi, allow_write, allow_read, strip_read_on_write, &[], &[])
+}
+
+/// Prepare filesystem and TCP network port rules using a caller-supplied ABI.
+pub fn prepare_ruleset_with_net_for_abi(
+    abi: u32,
+    allow_write: &[std::path::PathBuf],
+    allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
+    bind_ports: &[u16],
+    connect_ports: &[u16],
 ) -> PreparedRuleset {
     // Collect rights per concrete path (read + write grants UNION — a path
     // in both lists keeps both), matching the policy used by apply_policy.
@@ -290,7 +344,14 @@ pub fn prepare_ruleset_for_abi(
         })
         .collect();
     rules.sort_by(|left, right| left.path.cmp(&right.path));
-    PreparedRuleset { abi, rules }
+
+    let net_rules = prepare_net_port_rules(abi, bind_ports, connect_ports);
+
+    PreparedRuleset {
+        abi,
+        rules,
+        net_rules,
+    }
 }
 
 /// Prepare rules after probing the running kernel's Landlock ABI.
@@ -303,16 +364,29 @@ pub fn prepare_ruleset(
     allow_read: &[std::path::PathBuf],
     strip_read_on_write: bool,
 ) -> VettoResult<PreparedRuleset> {
+    prepare_ruleset_with_net(allow_write, allow_read, strip_read_on_write, &[], &[])
+}
+
+/// Prepare filesystem and network port rules after probing the running kernel's Landlock ABI.
+pub fn prepare_ruleset_with_net(
+    allow_write: &[std::path::PathBuf],
+    allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
+    bind_ports: &[u16],
+    connect_ports: &[u16],
+) -> VettoResult<PreparedRuleset> {
     let Some(abi) = abi_version() else {
         return Err(VettoError::Landlock(
             "kernel does not support Landlock (needs >= 5.13)".into(),
         ));
     };
-    Ok(prepare_ruleset_for_abi(
+    Ok(prepare_ruleset_with_net_for_abi(
         abi,
         allow_write,
         allow_read,
         strip_read_on_write,
+        bind_ports,
+        connect_ports,
     ))
 }
 
@@ -349,15 +423,13 @@ fn open_path_fd(path: &Path) -> VettoResult<OpenPath> {
 }
 
 /// Create a Landlock ruleset with dynamic ABI negotiation and graceful degradation.
-fn create_ruleset_dynamic(mut abi: u32, has_net_ports: bool) -> VettoResult<(OwnedFd, u32)> {
+/// Returns the ruleset descriptor, the negotiated ABI version, and whether network handling is active.
+fn create_ruleset_dynamic(mut abi: u32, mut has_net: bool) -> VettoResult<(OwnedFd, u32, bool)> {
     loop {
+        let net_active = has_net && abi >= 4;
         let attr = LandlockRulesetAttr {
             handled_access_fs: handled_fs_mask(abi),
-            handled_access_net: if has_net_ports {
-                handled_net_mask(abi)
-            } else {
-                0
-            },
+            handled_access_net: if net_active { handled_net_mask(abi) } else { 0 },
             handled_access_scope: handled_scope_mask(abi),
         };
         let size = ruleset_attr_size_for_abi(abi);
@@ -373,16 +445,24 @@ fn create_ruleset_dynamic(mut abi: u32, has_net_ports: bool) -> VettoResult<(Own
         };
 
         if ruleset_fd >= 0 {
-            return Ok((unsafe { OwnedFd::from_raw_fd(ruleset_fd as i32) }, abi));
+            return Ok((
+                unsafe { OwnedFd::from_raw_fd(ruleset_fd as i32) },
+                abi,
+                net_active,
+            ));
         }
 
         let err = std::io::Error::last_os_error();
-        // If EINVAL or E2BIG occurred, degrade ABI version and retry
-        if (err.raw_os_error() == Some(libc::EINVAL) || err.raw_os_error() == Some(libc::E2BIG))
-            && abi > 1
-        {
-            abi -= 1;
-            continue;
+        // If EINVAL or E2BIG occurred, degrade network handling first, then ABI version and retry
+        if err.raw_os_error() == Some(libc::EINVAL) || err.raw_os_error() == Some(libc::E2BIG) {
+            if has_net && abi >= 4 {
+                has_net = false;
+                continue;
+            }
+            if abi > 1 {
+                abi -= 1;
+                continue;
+            }
         }
 
         return Err(VettoError::Landlock(format!("create_ruleset: {err}")));
@@ -455,10 +535,11 @@ pub fn apply_net_port_rules(
         return Ok(());
     }
 
-    for &port in bind_ports {
-        let rule = LandlockNetPortAttr {
-            allowed_access: LANDLOCK_ACCESS_NET_BIND_TCP,
-            port: port as u64,
+    let rules = prepare_net_port_rules(abi, bind_ports, connect_ports);
+    for rule in rules {
+        let attr = LandlockNetPortAttr {
+            allowed_access: rule.allowed_access,
+            port: rule.port as u64,
         };
         // SAFETY: valid pointer to LandlockNetPortAttr.
         let r = unsafe {
@@ -466,37 +547,21 @@ pub fn apply_net_port_rules(
                 SYS_LANDLOCK_ADD_RULE,
                 ruleset.as_raw_fd(),
                 LANDLOCK_RULE_NET_PORT,
-                &rule as *const LandlockNetPortAttr,
+                &attr as *const LandlockNetPortAttr,
                 0u32,
             )
         };
         if r < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EOPNOTSUPP)
+                || err.raw_os_error() == Some(libc::ENOPKG)
+            {
+                // Network rules not supported by kernel configuration; graceful fallback
+                return Ok(());
+            }
             return Err(VettoError::Landlock(format!(
-                "add_rule net_bind_port {port}: {}",
-                std::io::Error::last_os_error()
-            )));
-        }
-    }
-
-    for &port in connect_ports {
-        let rule = LandlockNetPortAttr {
-            allowed_access: LANDLOCK_ACCESS_NET_CONNECT_TCP,
-            port: port as u64,
-        };
-        // SAFETY: valid pointer to LandlockNetPortAttr.
-        let r = unsafe {
-            libc::syscall(
-                SYS_LANDLOCK_ADD_RULE,
-                ruleset.as_raw_fd(),
-                LANDLOCK_RULE_NET_PORT,
-                &rule as *const LandlockNetPortAttr,
-                0u32,
-            )
-        };
-        if r < 0 {
-            return Err(VettoError::Landlock(format!(
-                "add_rule net_connect_port {port}: {}",
-                std::io::Error::last_os_error()
+                "add_rule net_port {} (access {:#x}): {err}",
+                rule.port, rule.allowed_access
             )));
         }
     }
@@ -517,7 +582,14 @@ pub fn apply_policy(
     allow_read: &[std::path::PathBuf],
     strip_read_on_write: bool,
 ) -> VettoResult<()> {
-    apply_policy_with_net_ports(allow_write, allow_read, strip_read_on_write, &[], &[])
+    apply_policy_advanced(
+        allow_write,
+        allow_read,
+        strip_read_on_write,
+        &[],
+        &[],
+        false,
+    )
 }
 
 /// Apply filesystem allowlist and optional TCP network port rules.
@@ -528,16 +600,46 @@ pub fn apply_policy_with_net_ports(
     bind_ports: &[u16],
     connect_ports: &[u16],
 ) -> VettoResult<()> {
+    apply_policy_advanced(
+        allow_write,
+        allow_read,
+        strip_read_on_write,
+        bind_ports,
+        connect_ports,
+        false,
+    )
+}
+
+/// Apply filesystem allowlist and TCP network port rules with optional strict network enforcement.
+///
+/// If `strict_net` is true or if either `bind_ports` or `connect_ports` are non-empty,
+/// Landlock ABI >= 4 will handle `LANDLOCK_ACCESS_NET_BIND_TCP` and `LANDLOCK_ACCESS_NET_CONNECT_TCP`.
+/// When `strict_net` is true and port lists are empty, all TCP bind and connect operations
+/// are denied by the kernel Landlock LSM.
+pub fn apply_policy_advanced(
+    allow_write: &[std::path::PathBuf],
+    allow_read: &[std::path::PathBuf],
+    strip_read_on_write: bool,
+    bind_ports: &[u16],
+    connect_ports: &[u16],
+    strict_net: bool,
+) -> VettoResult<()> {
     let Some(detected_abi) = abi_version() else {
         return Err(VettoError::Landlock(
             "kernel does not support Landlock (needs >= 5.13)".into(),
         ));
     };
 
-    let has_net_ports = !bind_ports.is_empty() || !connect_ports.is_empty();
-    let (ruleset, effective_abi) = create_ruleset_dynamic(detected_abi, has_net_ports)?;
-    let prepared =
-        prepare_ruleset_for_abi(effective_abi, allow_write, allow_read, strip_read_on_write);
+    let has_net = !bind_ports.is_empty() || !connect_ports.is_empty() || strict_net;
+    let (ruleset, effective_abi, net_active) = create_ruleset_dynamic(detected_abi, has_net)?;
+    let prepared = prepare_ruleset_with_net_for_abi(
+        effective_abi,
+        allow_write,
+        allow_read,
+        strip_read_on_write,
+        bind_ports,
+        connect_ports,
+    );
 
     // Empirically verified against the kernel: on a NON-directory parent
     // only these rights are accepted — everything else (READ_DIR, REMOVE_*,
@@ -586,7 +688,7 @@ pub fn apply_policy_with_net_ports(
     let _ = add_pty_whitelist(&ruleset, effective_abi);
 
     // Add network port rules if requested and supported
-    if effective_abi >= 4 {
+    if net_active {
         apply_net_port_rules(&ruleset, effective_abi, bind_ports, connect_ports)?;
     }
 
@@ -734,5 +836,93 @@ mod tests {
         let hints_6 = abi_feature_hints(6);
         assert!(hints_6.iter().any(|h| h.contains("IPC and signal scoping")));
         assert!(hints_6.iter().any(|h| h.contains("IOCTL_DEV")));
+    }
+
+    #[test]
+    fn net_port_attr_layout_and_constants() {
+        assert_eq!(std::mem::size_of::<LandlockNetPortAttr>(), 16);
+        assert_eq!(std::mem::align_of::<LandlockNetPortAttr>(), 8);
+        assert_eq!(LANDLOCK_RULE_NET_PORT, 2);
+        assert_eq!(LANDLOCK_ACCESS_NET_BIND_TCP, 1 << 0);
+        assert_eq!(LANDLOCK_ACCESS_NET_CONNECT_TCP, 1 << 1);
+
+        let attr = LandlockNetPortAttr {
+            allowed_access: LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP,
+            port: 8080,
+        };
+        assert_eq!(attr.allowed_access, 3);
+        assert_eq!(attr.port, 8080);
+    }
+
+    #[test]
+    fn prepare_net_port_rules_abi_branching_and_dedup() {
+        // ABI < 4 must return empty vec for graceful fallback
+        for abi in 1..=3 {
+            let rules = prepare_net_port_rules(abi, &[80, 8080], &[443, 8080]);
+            assert!(rules.is_empty(), "ABI {abi} must produce 0 net rules");
+        }
+
+        // ABI >= 4 must build rules, deduplicate ports, combine masks and sort by port
+        for abi in [4, 5, 6] {
+            let rules = prepare_net_port_rules(abi, &[8080, 80, 8080], &[443, 8080]);
+            assert_eq!(rules.len(), 3);
+            // Sorted order: 80, 443, 8080
+            assert_eq!(rules[0].port, 80);
+            assert_eq!(rules[0].allowed_access, LANDLOCK_ACCESS_NET_BIND_TCP);
+
+            assert_eq!(rules[1].port, 443);
+            assert_eq!(rules[1].allowed_access, LANDLOCK_ACCESS_NET_CONNECT_TCP);
+
+            assert_eq!(rules[2].port, 8080);
+            assert_eq!(
+                rules[2].allowed_access,
+                LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_ruleset_with_net_port_rules() {
+        let temp = std::env::temp_dir();
+        let path = temp.join("vetto_landlock_net_test_dir");
+        let _ = std::fs::create_dir_all(&path);
+
+        // Under ABI 3 (no net support), net_rules must be empty
+        let prep_abi3 = prepare_ruleset_with_net_for_abi(
+            3,
+            std::slice::from_ref(&path),
+            &[],
+            false,
+            &[8080],
+            &[443],
+        );
+        assert_eq!(prep_abi3.abi(), 3);
+        assert!(!prep_abi3.rules().is_empty());
+        assert!(prep_abi3.net_rules().is_empty());
+
+        // Under ABI 4 (net support), net_rules must be populated
+        let prep_abi4 = prepare_ruleset_with_net_for_abi(
+            4,
+            std::slice::from_ref(&path),
+            &[],
+            false,
+            &[8080],
+            &[443],
+        );
+        assert_eq!(prep_abi4.abi(), 4);
+        assert!(!prep_abi4.rules().is_empty());
+        assert_eq!(prep_abi4.net_rules().len(), 2);
+        assert_eq!(prep_abi4.net_rules()[0].port, 443);
+        assert_eq!(
+            prep_abi4.net_rules()[0].allowed_access,
+            LANDLOCK_ACCESS_NET_CONNECT_TCP
+        );
+        assert_eq!(prep_abi4.net_rules()[1].port, 8080);
+        assert_eq!(
+            prep_abi4.net_rules()[1].allowed_access,
+            LANDLOCK_ACCESS_NET_BIND_TCP
+        );
+
+        let _ = std::fs::remove_dir(&path);
     }
 }
