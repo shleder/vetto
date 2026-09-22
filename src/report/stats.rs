@@ -68,6 +68,17 @@ pub struct SuspiciousRecord {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IoMetrics {
+    pub file_reads: u64,
+    pub file_writes: u64,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+    pub files_created: u64,
+    pub files_modified: u64,
+    pub files_deleted: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SessionStats {
     pub started_at: Option<DateTime<Utc>>,
@@ -78,6 +89,7 @@ pub struct SessionStats {
     pub net_mode: String,
     pub profile: String,
     pub events_total: u64,
+    pub io_metrics: IoMetrics,
     pub counts: BTreeMap<String, u64>,
     pub op_counts: BTreeMap<String, u64>,
     pub file_reads: u64,
@@ -240,11 +252,16 @@ fn ingest(inner: &mut Inner, ev: Event) {
                     st.file_reads += 1;
                     st.read_ops += 1;
                     st.bytes_read += file_size;
+                    st.io_metrics.file_reads += 1;
+                    st.io_metrics.bytes_read += file_size;
                 }
                 FileAccess::Write => {
                     st.file_writes += 1;
                     st.write_ops += 1;
                     st.bytes_written += file_size;
+                    st.io_metrics.file_writes += 1;
+                    st.io_metrics.bytes_written += file_size;
+                    st.io_metrics.files_modified += 1;
                 }
                 FileAccess::Unknown => {}
             }
@@ -346,7 +363,37 @@ fn ingest(inner: &mut Inner, ev: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::types::now;
+    use crate::events::types::{now, FileAccess};
+
+    #[test]
+    fn file_observed_aggregates_io_metrics() {
+        let mut inner = Inner::default();
+        ingest(
+            &mut inner,
+            Event::FileObserved {
+                ts: now(),
+                pid: 100,
+                comm: "node".into(),
+                path: "/dev/null".into(),
+                access: FileAccess::Read,
+            },
+        );
+        ingest(
+            &mut inner,
+            Event::FileObserved {
+                ts: now(),
+                pid: 100,
+                comm: "node".into(),
+                path: "/dev/null".into(),
+                access: FileAccess::Write,
+            },
+        );
+
+        let io = &inner.stats.io_metrics;
+        assert_eq!(io.file_reads, 1);
+        assert_eq!(io.file_writes, 1);
+        assert_eq!(io.files_modified, 1);
+    }
 
     #[test]
     fn attacker_controlled_record_keys_are_bounded_but_repeats_aggregate() {
