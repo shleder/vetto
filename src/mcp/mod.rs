@@ -420,7 +420,10 @@ mod tests {
         assert_eq!(resp["jsonrpc"], "2.0");
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["serverInfo"]["name"], "vetto");
-        assert_eq!(resp["result"]["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            resp["result"]["serverInfo"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]
