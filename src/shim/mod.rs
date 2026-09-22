@@ -457,7 +457,7 @@ pub fn ensure_session_branch(project_dir: &std::path::Path, session_id: &str) ->
             let session_branch = format!("vetto/session-{}", short_id);
             let checkout_output = std::process::Command::new("git")
                 .current_dir(project_dir)
-                .args(["checkout", "-b", &session_branch])
+                .args(["checkout", "-b", session_branch.as_str()])
                 .output()?;
             
             if checkout_output.status.success() {
