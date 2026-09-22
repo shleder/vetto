@@ -63,7 +63,11 @@ pub fn generate_digest(records: &[AuditRecord], window_label: &str) -> DigestSum
                                 Event::BlockedAttempt { path, .. } => {
                                     *path_counts.entry(path).or_insert(0) += 1;
                                 }
-                                Event::NetRequest { host, allowed: false, .. } => {
+                                Event::NetRequest {
+                                    host,
+                                    allowed: false,
+                                    ..
+                                } => {
                                     *domain_counts.entry(host).or_insert(0) += 1;
                                 }
                                 _ => {}
@@ -274,7 +278,8 @@ mod tests {
     #[test]
     fn digest_correctly_aggregates_blocked_paths_and_domains() {
         use std::io::Write;
-        let log_file = std::env::temp_dir().join(format!("vetto_test_digest_{}.jsonl", std::process::id()));
+        let log_file =
+            std::env::temp_dir().join(format!("vetto_test_digest_{}.jsonl", std::process::id()));
         let mut f = std::fs::File::create(&log_file).unwrap();
         let event1 = crate::events::Event::BlockedAttempt {
             ts: Utc::now(),
@@ -300,24 +305,22 @@ mod tests {
         writeln!(f, "{}", serde_json::to_string(&event2).unwrap()).unwrap();
         writeln!(f, "{}", serde_json::to_string(&event3).unwrap()).unwrap();
 
-        let records = vec![
-            AuditRecord {
-                ts: Utc::now(),
-                session_id: "s1".into(),
-                agent: "codex".into(),
-                command: Some("codex".into()),
-                profile: "default".into(),
-                policy_path: None,
-                exit_code: 0,
-                duration_secs: 60,
-                tier: "full".into(),
-                net_mode: "off".into(),
-                blocked_count: 3,
-                events_total: 20,
-                report_path: None,
-                log_path: Some(log_file.to_string_lossy().to_string()),
-            },
-        ];
+        let records = vec![AuditRecord {
+            ts: Utc::now(),
+            session_id: "s1".into(),
+            agent: "codex".into(),
+            command: Some("codex".into()),
+            profile: "default".into(),
+            policy_path: None,
+            exit_code: 0,
+            duration_secs: 60,
+            tier: "full".into(),
+            net_mode: "off".into(),
+            blocked_count: 3,
+            events_total: 20,
+            report_path: None,
+            log_path: Some(log_file.to_string_lossy().to_string()),
+        }];
 
         let digest = generate_digest(&records, "24h");
         assert_eq!(digest.top_blocked_paths[0], ("/etc/passwd".to_string(), 2));
