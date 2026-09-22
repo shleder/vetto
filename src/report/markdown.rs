@@ -26,6 +26,32 @@ pub fn render(stats: &SessionStats) -> String {
         stats.file_reads, stats.file_writes
     ));
 
+    if stats.io_metrics.file_writes > 0 || stats.io_metrics.file_reads > 0 {
+        out.push_str("## File I/O summary\n\n");
+        out.push_str("| Metric | Count | Bytes |\n|---|---|---|\n");
+        out.push_str(&format!(
+            "| Files Created | {} | - |\n",
+            stats.io_metrics.files_created
+        ));
+        out.push_str(&format!(
+            "| Files Modified | {} | - |\n",
+            stats.io_metrics.files_modified
+        ));
+        out.push_str(&format!(
+            "| Files Deleted | {} | - |\n",
+            stats.io_metrics.files_deleted
+        ));
+        out.push_str(&format!(
+            "| Total Writes | {} | {} |\n",
+            stats.io_metrics.file_writes, stats.io_metrics.bytes_written
+        ));
+        out.push_str(&format!(
+            "| Total Reads | {} | {} |\n",
+            stats.io_metrics.file_reads, stats.io_metrics.bytes_read
+        ));
+        out.push('\n');
+    }
+
     out.push_str("## Blocked attempts\n\n");
     if stats.blocked_attempts.is_empty() {
         out.push_str(
@@ -163,6 +189,21 @@ fn markdown_inline(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_io_summary_is_rendered_in_markdown() {
+        let mut stats = SessionStats::default();
+        stats.io_metrics.file_writes = 5;
+        stats.io_metrics.files_created = 2;
+        stats.io_metrics.files_modified = 2;
+        stats.io_metrics.files_deleted = 1;
+        stats.io_metrics.bytes_written = 2048;
+
+        let report = render(&stats);
+        assert!(report.contains("## File I/O summary"));
+        assert!(report.contains("| Files Created | 2 | - |"));
+        assert!(report.contains("| Total Writes | 5 | 2048 |"));
+    }
 
     #[test]
     fn user_strings_are_redacted_and_table_structure_is_escaped() {
