@@ -98,6 +98,10 @@ pub struct Cli {
     #[arg(long)]
     pub read_only_caches: bool,
 
+    /// Mount a 512MB tmpfs over /tmp (requires Linux)
+    #[arg(long)]
+    pub tmpfs_tmp: bool,
+
     /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
     /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
     #[arg(long)]
