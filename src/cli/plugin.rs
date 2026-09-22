@@ -47,7 +47,9 @@ pub fn install_plugin(target: &str) -> Result<()> {
         "cursor" => install_wrapper("cursor")?,
         "aider" => install_wrapper("aider")?,
         other => {
-            bail!("unknown plugin target '{other}'. Available: claude-code, opencode, cursor, aider");
+            bail!(
+                "unknown plugin target '{other}'. Available: claude-code, opencode, cursor, aider"
+            );
         }
     }
     Ok(())
@@ -208,6 +210,7 @@ pub fn install_wrapper(target: &str) -> Result<()> {
     }
     #[cfg(not(unix))]
     {
+        let _ = target;
         bail!("Wrappers are currently only supported on Unix systems");
     }
 }
