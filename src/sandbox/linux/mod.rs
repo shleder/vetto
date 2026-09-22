@@ -1206,6 +1206,11 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
     let home_ref = home
         .as_deref()
         .unwrap_or_else(|| std::path::Path::new("/nonexistent"));
+
+    if let Err(e) = mounts::mask_dangerous_devices() {
+        child_fail(err_w, 121, &format!("mask dangerous devices: {e}"));
+    }
+
     if let Err(e) = vfs_overlays::mask_mandatory_secrets(home_ref, Some(&opts.cwd)) {
         child_fail(err_w, 121, &format!("mask secrets: {e}"));
     }
