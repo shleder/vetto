@@ -349,6 +349,7 @@ impl PolicyCompiler {
                 mask_paths,
                 cow_overlay: true,
                 execution_root_ro: true,
+                shadow: false,
             },
             network: NetworkContract {
                 mode: network_mode,

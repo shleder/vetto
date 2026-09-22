@@ -426,6 +426,7 @@ fn activate_pending(
         tier: tier.map(|tier| tier.label()).unwrap_or("none").to_string(),
         net_mode: net.label(),
         profile: policy.name.clone(),
+        shadow: false,
     });
 
     #[cfg(target_os = "linux")]
