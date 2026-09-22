@@ -159,6 +159,49 @@ pub fn parse_timeout(s: &str) -> Result<Duration> {
     crate::config::parse_session_timeout(s)
 }
 
+/// Recommends a timeout based on the 95th percentile of past successful session durations.
+pub fn recommend_timeout(project_root: &std::path::Path, reports_dir: &std::path::Path) -> Option<Duration> {
+    let history_file = reports_dir.join("history.jsonl");
+    if !history_file.exists() {
+        return None;
+    }
+
+    let records = crate::audit::history::read_history(&history_file).ok()?;
+
+    let mut durations: Vec<u64> = records
+        .into_iter()
+        .filter(|r| r.exit_code == 0)
+        .filter(|r| {
+            if let Some(ref policy_path) = r.policy_path {
+                let pp = std::path::Path::new(policy_path);
+                pp.starts_with(project_root)
+            } else {
+                false
+            }
+        })
+        .map(|r| r.duration_secs)
+        .collect();
+
+    if durations.is_empty() {
+        return None;
+    }
+
+    durations.sort_unstable();
+
+    // 95th percentile calculation
+    let index = (durations.len() as f64 * 0.95).floor() as usize;
+    let index = index.min(durations.len().saturating_sub(1));
+
+    let p95 = durations[index];
+
+    // + 50% buffer
+    let recommended = p95 + (p95 / 2);
+
+    // Provide a minimum floor (e.g. at least 60 seconds) if needed?
+    // The prompt just says p95 + 50%.
+    Some(Duration::from_secs(recommended.max(1))) // Avoid 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +251,65 @@ mod tests {
         assert_eq!(parse_timeout("60").unwrap(), Duration::from_secs(60));
         assert!(parse_timeout("0s").is_err());
         assert!(parse_timeout("abc").is_err());
+    }
+    #[test]
+    fn test_recommend_timeout_logic() {
+        use crate::audit::history::AuditRecord;
+        use std::fs;
+        let temp = std::env::temp_dir().join(format!("vetto-timeout-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        
+        let history_file = temp.join("history.jsonl");
+        let proj_root = temp.join("my-project");
+        let policy_path = proj_root.join("vetto.toml");
+
+        let mut write_record = |duration_secs: u64, exit_code: i32, policy: Option<String>| {
+            let r = AuditRecord {
+                ts: chrono::Utc::now(),
+                session_id: "test".into(),
+                agent: "test".into(),
+                command: None,
+                profile: "test".into(),
+                policy_path: policy,
+                exit_code,
+                duration_secs,
+                tier: "test".into(),
+                net_mode: "off".into(),
+                blocked_count: 0,
+                events_total: 0,
+                report_path: None,
+                log_path: None,
+            };
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&history_file)
+                .unwrap();
+            use std::io::Write;
+            writeln!(file, "{}", serde_json::to_string(&r).unwrap()).unwrap();
+        };
+
+        // 1. Missing file
+        assert_eq!(recommend_timeout(&proj_root, &temp), None);
+
+        // 2. Empty or irrelevant records
+        write_record(100, 1, Some(policy_path.to_string_lossy().to_string())); // Failed
+        write_record(200, 0, Some("/other/project/vetto.toml".into())); // Other project
+        assert_eq!(recommend_timeout(&proj_root, &temp), None);
+
+        // 3. Valid records
+        // Let's add 10 successful records with durations 10..100
+        for d in 1..=10 {
+            write_record(d * 10, 0, Some(policy_path.to_string_lossy().to_string()));
+        }
+        
+        // durations: 10, 20, 30, 40, 50, 60, 70, 80, 90, 100
+        // len = 10. index = floor(10 * 0.95) = 9. durations[9] = 100.
+        // recommended = 100 + 50 = 150.
+        let rec = recommend_timeout(&proj_root, &temp).unwrap();
+        assert_eq!(rec, Duration::from_secs(150));
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

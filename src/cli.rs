@@ -170,6 +170,10 @@ pub struct Cli {
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
 
+    /// Calculate and use an adaptive timeout based on past successful sessions
+    #[arg(long)]
+    pub adaptive_timeout: bool,
+
     /// Resource ceilings for the agent process, comma separated:
     /// cpu=SECONDS, as=BYTES, procs=N, nofile=N, fsize=BYTES. Merged
     /// strictest-wins with any limits from the policy layers.
