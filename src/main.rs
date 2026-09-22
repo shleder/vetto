@@ -512,16 +512,23 @@ fn run() -> Result<()> {
             query,
             json,
             recap,
-        }) => vetto::audit::run_audit_command(
-            session_id.as_deref(),
-            *latest,
-            since.as_deref(),
-            agent.as_deref(),
-            *limit,
-            query.as_deref(),
-            *json,
-            *recap,
-        ),
+            digest,
+        }) => {
+            if *digest {
+                vetto::audit::run_digest(since.as_deref(), *json)
+            } else {
+                vetto::audit::run_audit_command(
+                    session_id.as_deref(),
+                    *latest,
+                    since.as_deref(),
+                    agent.as_deref(),
+                    *limit,
+                    query.as_deref(),
+                    *json,
+                    *recap,
+                )
+            }
+        }
         Some(cli::Command::Digest { since, json }) => vetto::audit::run_digest(Some(since), *json),
         Some(cli::Command::DiffSessions {
             session1,
