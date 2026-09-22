@@ -661,17 +661,16 @@ pub fn detect_agent_preset(command: &[String]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn run_config_parses_otel_flag() {
-        let cli = Cli::try_parse_from(&["vetto", "--otel", "--", "true"]).unwrap();
-        let cfg = RunConfig::from_cli(&cli).unwrap();
-        assert!(cfg.otel);
-    }
-
     use super::*;
     use crate::cli::Cli;
     use clap::Parser;
+
+    #[test]
+    fn run_config_parses_otel_flag() {
+        let cli = Cli::try_parse_from(["vetto", "--otel", "--", "true"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert!(cfg.otel);
+    }
 
     fn config(args: &[&str]) -> Result<RunConfig> {
         let mut argv = vec!["vetto"];
