@@ -191,6 +191,7 @@ pub struct RunConfig {
     pub http_proxy: Option<String>,
     pub https_proxy: Option<String>,
     pub no_proxy: Option<String>,
+    pub block_doh: bool,
     pub windows_sandbox: bool,
     pub agent: Vec<String>,
 }
@@ -399,6 +400,13 @@ impl RunConfig {
         let no_proxy = std::env::var("NO_PROXY")
             .or_else(|_| std::env::var("no_proxy"))
             .ok();
+        let block_doh = if cli.no_block_doh {
+            false
+        } else if cli.block_doh {
+            true
+        } else {
+            matches!(net, NetMode::Allowlist(_) | NetMode::Strict(_))
+        };
 
         Ok(Self {
             profile,
@@ -445,6 +453,7 @@ impl RunConfig {
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
+            block_doh,
             windows_sandbox: cli.windows_sandbox,
             agent: cli.agent.clone(),
             http_proxy,
