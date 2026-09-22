@@ -1,0 +1,86 @@
+--- src/audit/diff_sessions.rs
++++ src/audit/diff_sessions.rs
+@@ -98,3 +98,4 @@
+ fn get_session_log_path(session_id: &str, reports_dir: &Path) -> Option<std::path::PathBuf> {
+-    if Path::new(session_id).exists() && Path::new(session_id).extension().map_or(false, |e| e == "jsonl") {
++    if Path::new(session_id).exists()
++        && Path::new(session_id).extension().map_or(false, |e| e == "jsonl") {
+         return Some(Path::new(session_id).to_path_buf());
+@@ -101,3 +102,6 @@
+     }
+-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from) {
++    if let Some(home) = std::env::var_os("HOME")
++        .or_else(|| std::env::var_os("USERPROFILE"))
++        .map(std::path::PathBuf::from)
++    {
+         let p = home.join(".vetto").join("logs").join(format!("{}.jsonl", session_id));
+@@ -154,3 +158,7 @@
+ 
+-pub fn compare_sessions(session_a_id: &str, session_b_id: &str, reports_dir: &Path) -> Result<SessionDiff> {
++pub fn compare_sessions(
++    session_a_id: &str,
++    session_b_id: &str,
++    reports_dir: &Path,
++) -> Result<SessionDiff> {
+     let a = inspect_session(session_a_id).context("inspect session A")?;
+@@ -194,3 +202,6 @@
+     if diff.policy_diff.profile_a != diff.policy_diff.profile_b {
+-        out.push_str(&format!("Profile: {} -> {}\n", diff.policy_diff.profile_a, diff.policy_diff.profile_b));
++        out.push_str(&format!(
++            "Profile: {} -> {}\n",
++            diff.policy_diff.profile_a, diff.policy_diff.profile_b
++        ));
+     } else {
+@@ -199,3 +210,6 @@
+     if diff.policy_diff.net_mode_a != diff.policy_diff.net_mode_b {
+-        out.push_str(&format!("Net Mode: {} -> {}\n", diff.policy_diff.net_mode_a, diff.policy_diff.net_mode_b));
++        out.push_str(&format!(
++            "Net Mode: {} -> {}\n",
++            diff.policy_diff.net_mode_a, diff.policy_diff.net_mode_b
++        ));
+     } else {
+@@ -211,3 +225,6 @@
+     out.push_str(&format!("Created: A={} B={}\n", diff.io_diff.created_a, diff.io_diff.created_b));
+-    out.push_str(&format!("Modified: A={} B={}\n", diff.io_diff.modified_a, diff.io_diff.modified_b));
++    out.push_str(&format!(
++        "Modified: A={} B={}\n",
++        diff.io_diff.modified_a, diff.io_diff.modified_b
++    ));
+ 
+@@ -253,8 +270,32 @@
+ 
+-        a.filesystem_denials.push(crate::audit::history::FilesystemDenial { path: "/a".into(), process: "".into(), source: "".into(), count: 1, remediation: "".into() });
+-        a.filesystem_denials.push(crate::audit::history::FilesystemDenial { path: "/common".into(), process: "".into(), source: "".into(), count: 1, remediation: "".into() });
+-        
+-        b.filesystem_denials.push(crate::audit::history::FilesystemDenial { path: "/b".into(), process: "".into(), source: "".into(), count: 1, remediation: "".into() });
+-        b.filesystem_denials.push(crate::audit::history::FilesystemDenial { path: "/common".into(), process: "".into(), source: "".into(), count: 1, remediation: "".into() });
++        a.filesystem_denials.push(crate::audit::history::FilesystemDenial {
++            path: "/a".into(),
++            process: "".into(),
++            source: "".into(),
++            count: 1,
++            remediation: "".into(),
++        });
++        a.filesystem_denials.push(crate::audit::history::FilesystemDenial {
++            path: "/common".into(),
++            process: "".into(),
++            source: "".into(),
++            count: 1,
++            remediation: "".into(),
++        });
++
++        b.filesystem_denials.push(crate::audit::history::FilesystemDenial {
++            path: "/b".into(),
++            process: "".into(),
++            source: "".into(),
++            count: 1,
++            remediation: "".into(),
++        });
++        b.filesystem_denials.push(crate::audit::history::FilesystemDenial {
++            path: "/common".into(),
++            process: "".into(),
++            source: "".into(),
++            count: 1,
++            remediation: "".into(),
++        });
+ 

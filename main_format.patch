@@ -1,0 +1,15 @@
+--- src/main.rs
++++ src/main.rs
+@@ -531,4 +531,8 @@
+         }) => {
+-            let reports_dir = args.report_dir.as_ref().map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".vetto/reports"));
+-            let diff = vetto::audit::diff_sessions::compare_sessions(session_a, session_b, &reports_dir)?;
++            let reports_dir = args
++                .report_dir
++                .as_ref()
++                .map(PathBuf::from)
++                .unwrap_or_else(|| PathBuf::from(".vetto/reports"));
++            let diff = vetto::audit::diff_sessions::compare_sessions(
++                session_a, session_b, &reports_dir
++            )?;
+             if *json {
