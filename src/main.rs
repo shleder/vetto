@@ -263,7 +263,6 @@ fn run() -> Result<()> {
         }
     }
 
-
     if let Some(remote_url) = &args.remote {
         return remote::run_remote_client(
             remote_url,
