@@ -57,7 +57,7 @@ pub fn run_wizard_flow(
     }
 
     let is_interactive = !args.yes && is_tty;
-    
+
     let (agent_slug, net_mode, protect) = if is_interactive {
         writeln!(writer, "╔════════════════════════════════════════════════════════════════╗")?;
         writeln!(writer, "║                  Vetto Interactive Wizard                      ║")?;
@@ -69,22 +69,30 @@ pub fn run_wizard_flow(
         let mut agent = String::new();
         reader.read_line(&mut agent)?;
         let agent_trim = agent.trim();
-        let agent_slug = if agent_trim.is_empty() { "claude".to_string() } else { agent_trim.to_string() };
-        
+        let agent_slug = if agent_trim.is_empty() {
+            "claude".to_string()
+        } else {
+            agent_trim.to_string()
+        };
+
         write!(writer, "2. Сеть? (full/allowlist/off/ask) [allowlist]: ")?;
         writer.flush()?;
         let mut net = String::new();
         reader.read_line(&mut net)?;
         let net_trim = net.trim();
-        let net_mode = if net_trim.is_empty() { "allowlist".to_string() } else { net_trim.to_string() };
-        
+        let net_mode = if net_trim.is_empty() {
+            "allowlist".to_string()
+        } else {
+            net_trim.to_string()
+        };
+
         write!(writer, "3. Защита секретов? (yes/no) [yes]: ")?;
         writer.flush()?;
         let mut sec = String::new();
         reader.read_line(&mut sec)?;
         let sec_trim = sec.trim().to_lowercase();
         let protect = sec_trim.is_empty() || sec_trim == "y" || sec_trim == "yes";
-        
+
         (agent_slug, net_mode, protect)
     } else {
         let agent_slug = args.agent.clone().unwrap_or_else(|| "claude".to_string());
@@ -213,7 +221,7 @@ mod tests {
             preset: None,
             agent: None,
         };
-        
+
         let mut writer = Vec::new();
         let mut reader = Cursor::new(b"");
         assert!(run_wizard_flow(&args, false, &mut reader, &mut writer).is_ok());
@@ -221,7 +229,10 @@ mod tests {
         let err = run_wizard_flow(&args, false, &mut reader, &mut writer).unwrap_err();
         assert!(err.to_string().contains("already exists"));
 
-        let force_args = WizardArgs { force: true, ..args };
+        let force_args = WizardArgs {
+            force: true,
+            ..args
+        };
         assert!(run_wizard_flow(&force_args, false, &mut reader, &mut writer).is_ok());
 
         let _ = fs::remove_dir_all(&dir);
