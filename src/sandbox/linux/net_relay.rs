@@ -65,9 +65,19 @@ pub struct BrokerConfig {
 
 impl From<BrokerPolicy> for BrokerConfig {
     fn from(policy: BrokerPolicy) -> Self {
-        let http_proxy = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")).or_else(|_| std::env::var("ALL_PROXY")).or_else(|_| std::env::var("all_proxy")).ok();
-        let https_proxy = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")).or_else(|_| std::env::var("ALL_PROXY")).or_else(|_| std::env::var("all_proxy")).ok();
-        let no_proxy = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).ok();
+        let http_proxy = std::env::var("HTTP_PROXY")
+            .or_else(|_| std::env::var("http_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok();
+        let https_proxy = std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("https_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok();
+        let no_proxy = std::env::var("NO_PROXY")
+            .or_else(|_| std::env::var("no_proxy"))
+            .ok();
 
         Self {
             policy,
