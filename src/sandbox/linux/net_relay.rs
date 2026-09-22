@@ -704,7 +704,11 @@ fn get_upstream_proxy(host: &str, port: u16, config: &BrokerConfig) -> Option<St
     if let Some(no_proxy) = config.no_proxy.as_deref() {
         let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
         for item in no_proxy.split(',') {
-            let item = item.trim().trim_end_matches('.').to_ascii_lowercase();
+            let item = item
+                .trim()
+                .trim_start_matches('.')
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
             if !item.is_empty() && (item == "*" || h == item || h.ends_with(&format!(".{item}"))) {
                 return None;
             }
