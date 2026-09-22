@@ -27,12 +27,23 @@ fn test_k8s_manifests_syntax() {
                 }
 
                 // Simple validation for required fields
-                assert!(doc.contains("apiVersion:"), "Missing apiVersion in {}", path.display());
+                assert!(
+                    doc.contains("apiVersion:"),
+                    "Missing apiVersion in {}",
+                    path.display()
+                );
                 assert!(doc.contains("kind:"), "Missing kind in {}", path.display());
-                assert!(doc.contains("metadata:"), "Missing metadata in {}", path.display());
-                assert!(doc.contains("name:"), "Missing metadata.name in {}", path.display());
+                assert!(
+                    doc.contains("metadata:"),
+                    "Missing metadata in {}",
+                    path.display()
+                );
+                assert!(
+                    doc.contains("name:"),
+                    "Missing metadata.name in {}",
+                    path.display()
+                );
             }
         }
     }
 }
-
