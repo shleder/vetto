@@ -151,7 +151,7 @@ pub fn find_matching_quotas(
             matches.push((pat.clone(), limit));
         }
     }
-    matches.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    matches.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
     matches
 }
 

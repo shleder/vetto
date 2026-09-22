@@ -331,6 +331,7 @@ pub fn persist_net_target(
 }
 
 /// CLI entry point for `vetto allow`.
+#[allow(clippy::too_many_arguments)]
 pub fn run_allow(
     target: Option<&str>,
     preset: Option<&str>,
