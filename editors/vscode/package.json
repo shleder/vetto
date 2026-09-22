@@ -1,0 +1,70 @@
+{
+  "name": "vetto",
+  "displayName": "Vetto Agent Sandbox",
+  "description": "Daemon-less kernel-level sandbox and policy enforcement runtime for AI coding agents",
+  "publisher": "shleder",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Security",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vetto.runSandboxed",
+        "title": "Vetto: Run Sandboxed Task"
+      },
+      {
+        "command": "vetto.showStatus",
+        "title": "Vetto: Show Sandbox Status"
+      },
+      {
+        "command": "vetto.diffSessions",
+        "title": "Vetto: Diff Sessions"
+      },
+      {
+        "command": "vetto.openAudit",
+        "title": "Vetto: Open Audit Report"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Vetto Sandbox Configuration",
+      "properties": {
+        "vetto.path": {
+          "type": "string",
+          "default": "vetto",
+          "description": "Path to the vetto executable."
+        },
+        "vetto.defaultProfile": {
+          "type": "string",
+          "default": "default",
+          "description": "Default security profile to use (e.g., default, strict, audit)."
+        },
+        "vetto.enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable popup notifications for blocks and alerts."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "18.x",
+    "typescript": "^5.1.3"
+  }
+}
