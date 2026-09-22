@@ -258,6 +258,10 @@ pub struct Cli {
     #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
     pub net_quota: Vec<String>,
 
+    /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
+    #[arg(long)]
+    pub is_container: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -1509,5 +1513,18 @@ mod tests {
             Some(Command::Ephemeral(ref args))
                 if args.command == vec!["cursor"] && !args.discard && args.yes
         ));
+    }
+}
+
+#[cfg(test)]
+mod test_is_container {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_is_container_flag() {
+        let cli = Cli::try_parse_from(["vetto", "--is-container"]).unwrap();
+        assert!(cli.is_container);
+        assert!(!cli.quiet);
     }
 }

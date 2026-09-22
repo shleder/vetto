@@ -52,3 +52,29 @@ docker run --rm -it \
    ```bash
    vetto --net=allowlist:registry.hub.docker.com,ghcr.io,auth.docker.io -- skopeo copy ...
    ```
+
+---
+
+## 4. Container Detection & Scripts
+
+Vetto provides a built-in flag to reliably detect if it is executing inside a container (Docker, Podman, Devcontainers, Kubernetes, etc.) or natively on the host:
+
+```bash
+vetto --is-container
+```
+
+**Behavior**:
+- Prints `true` and exits with code `0` if running inside a container.
+- Prints `false` and exits with code `1` if running natively on the host.
+
+This is highly useful for bash scripts and CI/CD orchestration to dynamically adapt permissions, network boundaries, or avoid attempting redundant mounts that are only necessary on native hosts.
+
+**Example usage in a shell script**:
+```bash
+if vetto --is-container >/dev/null; then
+  echo "Running in Hybrid Docker Mode"
+  # Skip certain host-only mounting or setups
+else
+  echo "Running Native"
+fi
+```

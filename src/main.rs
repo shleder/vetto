@@ -252,6 +252,16 @@ fn run() -> Result<()> {
     let processed_args = preprocess_cli_args(&raw_args)?;
     let args = cli::Cli::parse_from(&processed_args);
     logger::init_flags(args.quiet, args.verbose);
+    if args.is_container {
+        let env_info = vetto::doctor::detect_environment();
+        if env_info.is_container {
+            println!("true");
+            std::process::exit(0);
+        } else {
+            println!("false");
+            std::process::exit(1);
+        }
+    }
 
     if let Some(remote_url) = &args.remote {
         return remote::run_remote_client(
