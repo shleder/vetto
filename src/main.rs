@@ -1052,6 +1052,13 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
+
+    if cfg.auto_branch || cfg.git_guard {
+        if let Ok(Some(branch)) = crate::shim::ensure_session_branch(&project, &session_id) {
+            eprintln!("vetto: git-guard: switched from main to session branch {branch} to protect default branch");
+        }
+    }
+
     if (pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty()) && !is_home_or_root
     {
         match rescue::snapshot::create_snapshot(
