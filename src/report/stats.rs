@@ -88,6 +88,7 @@ pub struct SessionStats {
     pub tier: String,
     pub net_mode: String,
     pub profile: String,
+    pub shadow: bool,
     pub events_total: u64,
     pub io_metrics: IoMetrics,
     pub counts: BTreeMap<String, u64>,
@@ -220,12 +221,14 @@ fn ingest(inner: &mut Inner, ev: Event) {
             tier,
             net_mode,
             profile,
+            shadow,
             ..
         } => {
             st.started_at = Some(ts);
             st.tier = tier;
             st.net_mode = net_mode;
             st.profile = profile;
+            st.shadow = shadow;
         }
         Event::SessionEnded {
             ts,

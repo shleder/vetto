@@ -107,8 +107,9 @@ impl PolicyCompiler {
                     .iter()
                     .map(|d| d.path.clone())
                     .collect(),
-                cow_overlay: false,
+                cow_overlay: policy.snapshot,
                 execution_root_ro: false,
+                shadow: policy.shadow,
             },
             network: NetworkContract {
                 mode,
