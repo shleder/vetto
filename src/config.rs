@@ -340,7 +340,7 @@ impl RunConfig {
             None => {
                 if cli.adaptive_timeout {
                     let proj = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                    let reports = reports_dir.clone().unwrap_or_else(|| {
+                    let reports = report_dir.clone().unwrap_or_else(|| {
                         crate::audit::history::default_history_path()
                             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                             .unwrap_or_else(|| PathBuf::from("."))
