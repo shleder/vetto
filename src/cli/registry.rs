@@ -29,10 +29,19 @@ pub fn run_cli(cmd: &RegistryCommand) -> Result<()> {
 // Minimal static list for the community registry until an official REST endpoint exists.
 fn get_registry_items() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("django-strict", "Strict lockdown for Django web applications"),
-        ("nextjs-vercel", "Standard permissions for Next.js deployments"),
+        (
+            "django-strict",
+            "Strict lockdown for Django web applications",
+        ),
+        (
+            "nextjs-vercel",
+            "Standard permissions for Next.js deployments",
+        ),
         ("rust-cli", "Minimal permissions for Rust CLI utilities"),
-        ("data-science", "Jupyter/Pandas environment with ML dataset access"),
+        (
+            "data-science",
+            "Jupyter/Pandas environment with ML dataset access",
+        ),
     ]
 }
 
@@ -120,12 +129,10 @@ mod tests {
     fn test_pull_policy_not_found() {
         let result = pull_policy("nonexistent-policy-123", false);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not found in the community registry")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not found in the community registry"));
     }
 
     #[test]
