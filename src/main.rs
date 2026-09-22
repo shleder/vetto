@@ -456,14 +456,16 @@ fn run() -> Result<()> {
         Some(cli::Command::WhySlow { session, json }) => cli::why_slow::run_cli(session, *json),
         Some(cli::Command::Allow {
             target,
+            preset,
+            quota,
             read_only,
             net,
             cidr,
-            preset,
             global,
         }) => vetto::policy::edit::run_allow(
             target.as_deref(),
             preset.as_deref(),
+            quota.as_deref(),
             *read_only,
             *net,
             *cidr,
@@ -958,6 +960,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         } else {
             None
         },
+        net_quota: cfg.net_quota.clone(),
         ..policy::loader::PolicyOverrides::default()
     };
     let policy_options = policy::loader::PolicyLoadOptions {
