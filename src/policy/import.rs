@@ -9,17 +9,23 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
-/// Import policy from an external agent config and write to `output_path`.
-pub fn import_policy(
-    from: &str,
-    input_path: Option<&Path>,
+/// Import policy from external agent configs and write to `output_path`.
+pub fn run_import(
+    claude: Option<&Path>,
+    codex: Option<&Path>,
     output_path: &Path,
     home: &Path,
 ) -> Result<String> {
-    let toml_content = match from.trim().to_ascii_lowercase().as_str() {
-        "claude" | "claude-code" => import_claude(input_path, home)?,
-        "codex" | "codex-cli" => import_codex(input_path, home)?,
-        other => bail!("unknown import source '{other}' (expected 'claude' or 'codex')"),
+    if claude.is_none() && codex.is_none() {
+        bail!("You must specify either --claude or --codex");
+    }
+
+    let toml_content = if let Some(p) = claude {
+        import_claude(Some(p), home)?
+    } else if let Some(p) = codex {
+        import_codex(Some(p), home)?
+    } else {
+        unreachable!()
     };
 
     if let Some(parent) = output_path.parent() {
@@ -84,25 +90,63 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
             match key.as_str() {
                 "permissions" => {
                     if let JsonValue::Object(perms) = val {
-                        for (pkey, pval) in perms {
-                            match pkey.as_str() {
-                                "allow" | "allowed_paths" | "allow_read" => {
-                                    extract_json_strings(&pval, &mut allow_read);
+                        if let Some(fs) = perms.get("filesystem") {
+                            if let JsonValue::Object(fs_map) = fs {
+                                for (pkey, pval) in fs_map {
+                                    match pkey.as_str() {
+                                        "allowRead" | "allow_read" | "allow" | "allowed_paths" => {
+                                            extract_json_strings(&pval, &mut allow_read);
+                                        }
+                                        "allowWrite" | "allow_write" | "allowed_write_paths" => {
+                                            extract_json_strings(&pval, &mut allow_write);
+                                        }
+                                        "deny" | "denied_paths" | "deny_read" => {
+                                            extract_json_strings(&pval, &mut deny_read);
+                                        }
+                                        other => {
+                                            eprintln!("vetto: import: ignoring unknown filesystem field '{other}'");
+                                        }
+                                    }
                                 }
-                                "allow_write" | "allowed_write_paths" => {
-                                    extract_json_strings(&pval, &mut allow_write);
+                            }
+                        } else {
+                            // Fallback for flat permissions format
+                            for (pkey, pval) in perms {
+                                match pkey.as_str() {
+                                    "allow" | "allowed_paths" | "allow_read" | "allowRead" => {
+                                        extract_json_strings(&pval, &mut allow_read);
+                                    }
+                                    "allow_write" | "allowed_write_paths" | "allowWrite" => {
+                                        extract_json_strings(&pval, &mut allow_write);
+                                    }
+                                    "deny" | "denied_paths" | "deny_read" => {
+                                        extract_json_strings(&pval, &mut deny_read);
+                                    }
+                                    "network" | "allowed_domains" | "api_domains"
+                                    | "allowedDomains" => {
+                                        extract_json_strings(&pval, &mut allow_network);
+                                    }
+                                    other => {
+                                        eprintln!(
+                                            "vetto: import: ignoring unknown permissions field '{other}'"
+                                        );
+                                    }
                                 }
-                                "deny" | "denied_paths" | "deny_read" => {
-                                    extract_json_strings(&pval, &mut deny_read);
+                            }
+                        }
+
+                        if let Some(net) = perms.get("network") {
+                            if let JsonValue::Object(net_map) = net {
+                                for (nkey, nval) in net_map {
+                                    if matches!(
+                                        nkey.as_str(),
+                                        "allowedDomains" | "allowed_domains" | "allow"
+                                    ) {
+                                        extract_json_strings(&nval, &mut allow_network);
+                                    }
                                 }
-                                "network" | "allowed_domains" | "api_domains" => {
-                                    extract_json_strings(&pval, &mut allow_network);
-                                }
-                                other => {
-                                    eprintln!(
-                                        "vetto: import: ignoring unknown permissions field '{other}'"
-                                    );
-                                }
+                            } else {
+                                extract_json_strings(net, &mut allow_network);
                             }
                         }
                     }
@@ -191,12 +235,43 @@ pub fn import_codex(input_path: Option<&Path>, home: &Path) -> Result<String> {
     let text = std::fs::read_to_string(&resolved_path)
         .with_context(|| format!("failed to read Codex config {}", resolved_path.display()))?;
 
-    let root: TomlValue = toml::from_str(&text).with_context(|| {
-        format!(
-            "failed to parse TOML from Codex config {}",
-            resolved_path.display()
-        )
-    })?;
+    let root: TomlValue = toml::from_str(&text).unwrap_or_else(|_| {
+        let j: JsonValue = serde_json::from_str(&text).unwrap_or(JsonValue::Null);
+        // Convert basic JSON map to TomlValue
+        if let JsonValue::Object(map) = j {
+            let mut toml_map = toml::map::Map::new();
+            for (k, v) in map {
+                if let JsonValue::Object(inner) = v {
+                    let mut inner_toml = toml::map::Map::new();
+                    for (ik, iv) in inner {
+                        if let JsonValue::Array(arr) = iv {
+                            let mut toml_arr = Vec::new();
+                            for item in arr {
+                                if let JsonValue::String(s) = item {
+                                    toml_arr.push(TomlValue::String(s));
+                                }
+                            }
+                            inner_toml.insert(ik, TomlValue::Array(toml_arr));
+                        } else if let JsonValue::String(s) = iv {
+                            inner_toml.insert(ik, TomlValue::String(s));
+                        }
+                    }
+                    toml_map.insert(k, TomlValue::Table(inner_toml));
+                } else if let JsonValue::Array(arr) = v {
+                    let mut toml_arr = Vec::new();
+                    for item in arr {
+                        if let JsonValue::String(s) = item {
+                            toml_arr.push(TomlValue::String(s));
+                        }
+                    }
+                    toml_map.insert(k, TomlValue::Array(toml_arr));
+                }
+            }
+            TomlValue::Table(toml_map)
+        } else {
+            TomlValue::Table(toml::map::Map::new())
+        }
+    });
 
     let mut allow_write = vec!["$PROJECT".to_string(), "/tmp".to_string()];
     let mut allow_read = vec!["$PROJECT".to_string()];
@@ -453,15 +528,19 @@ mod tests {
         let json = r#"{
             "unknownField": 123,
             "permissions": {
-                "allow": ["/var/data", "$PROJECT/src"],
-                "allow_write": ["$PROJECT/build"],
-                "network": ["api.anthropic.com", "cdn.anthropic.com"]
+                "filesystem": {
+                    "allowRead": ["/var/data", "$PROJECT/src"],
+                    "allowWrite": ["$PROJECT/build"]
+                },
+                "network": {
+                    "allowedDomains": ["api.anthropic.com", "cdn.anthropic.com"]
+                }
             }
         }"#;
         fs::write(&claude_path, json).unwrap();
 
         let out_path = dir.join("policy.toml");
-        let content = import_policy("claude", Some(&claude_path), &out_path, &dir).unwrap();
+        let content = run_import(Some(&claude_path), None, &out_path, &dir).unwrap();
         assert!(content.contains("name = \"imported-claude\""));
         assert!(content.contains("/var/data"));
         assert!(content.contains("$PROJECT/build"));
@@ -485,13 +564,38 @@ mod tests {
         fs::write(&codex_path, toml).unwrap();
 
         let out_path = dir.join("policy.toml");
-        let content = import_policy("codex", Some(&codex_path), &out_path, &dir).unwrap();
+        let content = run_import(None, Some(&codex_path), &out_path, &dir).unwrap();
         assert!(content.contains("name = \"imported-codex\""));
         assert!(content.contains("/opt/sdk"));
         assert!(content.contains("$PROJECT/dist"));
         assert!(content.contains("custom.endpoint.com"));
         assert!(out_path.exists());
 
-        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn imports_codex_config_json() {
+        let dir = temp_test_dir("codex_json");
+        let codex_path = dir.join("config.json");
+        let json = r#"{
+            "random_key": "ignore_me",
+            "sandbox": {
+                "allowed_paths": ["/opt/json_sdk", "$PROJECT"],
+                "writable_paths": ["$PROJECT/json_dist"],
+                "allowed_domains": ["api.openai.com", "custom.json.endpoint.com"]
+            }
+        }"#;
+        fs::write(&codex_path, json).unwrap();
+
+        let out_path = dir.join("policy.toml");
+        let content = run_import(None, Some(&codex_path), &out_path, &dir).unwrap();
+        assert!(content.contains("name = \"imported-codex\""));
+        assert!(content.contains("/opt/json_sdk"));
+        assert!(content.contains("$PROJECT/json_dist"));
+        assert!(content.contains("custom.json.endpoint.com"));
+        assert!(out_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

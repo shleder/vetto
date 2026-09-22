@@ -764,12 +764,12 @@ pub enum PolicyCommand {
     },
     /// Import permissions from external agent configurations (e.g. claude, codex)
     Import {
-        /// Source agent configuration format: claude | codex
-        #[arg(long, value_name = "AGENT")]
-        from: String,
-        /// Path to source configuration file (defaults to ~/.claude/settings.json or ~/.codex/config.toml)
+        /// Import from Claude settings.json
         #[arg(long, value_name = "PATH")]
-        path: Option<PathBuf>,
+        claude: Option<PathBuf>,
+        /// Import from Codex config.toml
+        #[arg(long, value_name = "PATH")]
+        codex: Option<PathBuf>,
         /// Output path for generated policy (default: ./policy.toml)
         #[arg(long, short = 'o', value_name = "PATH", default_value = "policy.toml")]
         output: PathBuf,
