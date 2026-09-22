@@ -974,6 +974,11 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         } else {
             None
         },
+        read_only_caches: if cfg.read_only_caches {
+            Some(true)
+        } else {
+            None
+        },
         net_quota: cfg.net_quota.clone(),
         ..policy::loader::PolicyOverrides::default()
     };
