@@ -100,7 +100,6 @@ pub fn isolate_dev_shm() -> VettoResult<()> {
 }
 
 /// Mount a private, bounded `tmpfs` over `/tmp` (64 MB, mode 1777, nosuid, nodev).
-
 pub const TMPFS_TMP_SIZE_BYTES: u64 = 512 * 1024 * 1024;
 pub const TMPFS_TMP_MOUNT_OPTIONS: &str = "size=536870912,mode=1777";
 

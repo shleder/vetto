@@ -42,7 +42,6 @@ pub mod visibility;
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::path::Path;
 
 use anyhow::{bail, Result};
 
