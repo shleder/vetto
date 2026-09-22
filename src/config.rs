@@ -385,7 +385,6 @@ impl RunConfig {
             net_quota.insert(domain, bytes);
         }
 
-        
         let http_proxy = std::env::var("HTTP_PROXY")
             .or_else(|_| std::env::var("http_proxy"))
             .or_else(|_| std::env::var("ALL_PROXY"))
