@@ -100,6 +100,37 @@ pub fn isolate_dev_shm() -> VettoResult<()> {
 }
 
 /// Mount a private, bounded `tmpfs` over `/tmp` (64 MB, mode 1777, nosuid, nodev).
+
+pub const TMPFS_TMP_SIZE_BYTES: u64 = 512 * 1024 * 1024;
+pub const TMPFS_TMP_MOUNT_OPTIONS: &str = "size=536870912,mode=1777";
+
+pub fn mount_tmpfs_tmp() -> VettoResult<()> {
+    let target = Path::new("/tmp");
+    if !target.exists() || !target.is_dir() {
+        return Ok(());
+    }
+    let dst = cstr(target)?;
+    let options = cstr(Path::new(TMPFS_TMP_MOUNT_OPTIONS))?;
+
+    // SAFETY: valid NUL-terminated mount arguments; flags are scalar.
+    let mount_res = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            dst.as_ptr(),
+            b"tmpfs\0".as_ptr() as *const libc::c_char,
+            MS_NOSUID | MS_NODEV,
+            options.as_ptr().cast(),
+        )
+    };
+    if mount_res != 0 {
+        return Err(VettoError::Mount(format!(
+            "mount tmpfs over /tmp: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
 pub fn isolate_tmp(preserve_paths: &[&Path]) -> VettoResult<()> {
     let target = Path::new("/tmp");
     if !target.exists() || !target.is_dir() {
@@ -666,6 +697,14 @@ pub fn mount_ro_caches(ro_mounts: &[std::path::PathBuf]) -> VettoResult<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mount_tmpfs_tmp_plan_is_correct() {
+        assert_eq!(TMPFS_TMP_SIZE_BYTES, 512 * 1024 * 1024);
+        assert!(TMPFS_TMP_MOUNT_OPTIONS.contains("size=536870912"));
+        assert!(TMPFS_TMP_MOUNT_OPTIONS.contains("mode=1777"));
+    }
+
     use super::*;
 
     #[test]
