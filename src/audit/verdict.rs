@@ -159,6 +159,18 @@ impl VerdictEngine {
         }
 
         if unauthorized_writes > 0 {
+            if contract.filesystem.shadow {
+                // Log shadow violation but do not fail the process
+                return FinalVerdict {
+                    status: VerdictStatus::Pass,
+                    strength,
+                    exit_code: agent_exit_code,
+                    reason: format!(
+                        "[SHADOW VIOLATION] VFS violation: {} writes outside authorized workspace",
+                        unauthorized_writes
+                    ),
+                };
+            }
             return FinalVerdict {
                 status: VerdictStatus::Fail,
                 strength,
@@ -330,6 +342,7 @@ mod tests {
                 mask_paths: vec![PathBuf::from("/home/user/.ssh")],
                 cow_overlay: true,
                 execution_root_ro: true,
+                shadow: false,
             },
             network: NetworkContract {
                 mode: NetworkMode::Off,
