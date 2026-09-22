@@ -57,7 +57,7 @@ pub fn generate_digest(records: &[AuditRecord], window_label: &str) -> DigestSum
             if let Some(log_path) = &r.log_path {
                 if let Ok(f) = File::open(log_path) {
                     let reader = BufReader::new(f);
-                    for line in reader.lines().flatten() {
+                    for line in reader.lines().map_while(Result::ok) {
                         if let Ok(event) = serde_json::from_str::<Event>(&line) {
                             match event {
                                 Event::BlockedAttempt { path, .. } => {
