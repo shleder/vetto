@@ -2230,7 +2230,13 @@ mod tests {
 
         // Pre-allowed domain is permitted immediately without prompt
         assert!(request_allowed("preallowed.com", 443, None, &config, &bus));
-        assert!(request_allowed("sub.preallowed.com", 443, None, &config, &bus));
+        assert!(request_allowed(
+            "sub.preallowed.com",
+            443,
+            None,
+            &config,
+            &bus
+        ));
 
         // Non-preallowed domain goes to ask_confirmation; in non-tty test env it fails closed
         assert!(!request_allowed("unknown.com", 443, None, &config, &bus));
@@ -2317,7 +2323,13 @@ mod tests {
         assert!(!request_allowed("8.8.8.8", 853, None, &config, &bus));
 
         // DoH endpoints should be blocked if not explicitly allowed
-        assert!(!request_allowed("cloudflare-dns.com", 443, None, &config, &bus));
+        assert!(!request_allowed(
+            "cloudflare-dns.com",
+            443,
+            None,
+            &config,
+            &bus
+        ));
         assert!(!request_allowed("dns.google", 443, None, &config, &bus));
         assert!(!request_allowed("8.8.8.8", 443, None, &config, &bus));
 
