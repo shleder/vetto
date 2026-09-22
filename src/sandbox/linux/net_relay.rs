@@ -1992,9 +1992,9 @@ mod tests {
             quotas: std::collections::HashMap::new(),
             policy_path: None,
             block_doh: false,
-            http_proxy,
-            https_proxy,
-            no_proxy,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // Blocked without token
@@ -2240,9 +2240,9 @@ mod tests {
             quotas: std::collections::HashMap::new(),
             policy_path: None,
             block_doh: false,
-            http_proxy,
-            https_proxy,
-            no_proxy,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // Pre-allowed domain is permitted immediately without prompt
@@ -2299,9 +2299,9 @@ mod tests {
             quotas,
             policy_path: None,
             block_doh: false,
-            http_proxy,
-            https_proxy,
-            no_proxy,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
         };
 
         // 60MB used < 100MB limit -> allowed
