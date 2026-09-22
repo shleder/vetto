@@ -1002,4 +1002,13 @@ mod tests {
         let agy_cmd = vec!["agy".to_string()];
         assert!(should_default_to_no_tui(Some("antigravity"), &agy_cmd));
     }
+
+    #[test]
+    fn test_parse_net_mode_ask() {
+        assert_eq!(parse_net_mode("ask").unwrap(), NetMode::Ask);
+
+        let cli = Cli::try_parse_from(["vetto", "--net", "ask", "--", "claude"]).unwrap();
+        let cfg = RunConfig::from_cli(&cli).unwrap();
+        assert_eq!(cfg.net, NetMode::Ask);
+    }
 }
