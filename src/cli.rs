@@ -94,6 +94,10 @@ pub struct Cli {
     #[arg(long)]
     pub observe_seccomp: bool,
 
+    /// Mount host package caches (npm, pip, cargo, etc.) read-only to prevent tampering.
+    #[arg(long)]
+    pub read_only_caches: bool,
+
     /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
     /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
     #[arg(long)]
