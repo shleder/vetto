@@ -222,6 +222,10 @@ pub struct Cli {
     #[arg(long = "git-guard")]
     pub git_guard: bool,
 
+    /// Automatically create and switch to a temporary session branch if on main/master.
+    #[arg(long = "auto-branch")]
+    pub auto_branch: bool,
+
     /// Take a project snapshot before session starts and enable rollback.
     #[arg(long = "snapshot")]
     pub snapshot: bool,
@@ -304,6 +308,9 @@ pub enum Command {
         /// Deny preset name (ssh, aws, gcp, kube, docker, antigravity, etc.)
         #[arg(long, value_name = "NAME")]
         preset: Option<String>,
+        /// Treat target as a glob pattern (e.g. **/*.pem) and add to deny_glob
+        #[arg(long = "glob")]
+        glob: bool,
         /// Edit ~/.vetto/config.toml instead of the project policy
         #[arg(long)]
         global: bool,
@@ -629,6 +636,8 @@ pub enum Command {
         /// Render the end-of-session security recap instead of the full detail
         #[arg(long)]
         recap: bool,
+        #[arg(long)]
+        digest: bool,
     },
     /// Generate an aggregated daily audit digest from session history.
     #[command(hide = true)]

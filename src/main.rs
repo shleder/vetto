@@ -475,10 +475,12 @@ fn run() -> Result<()> {
         Some(cli::Command::Deny {
             target,
             preset,
+            glob,
             global,
         }) => vetto::policy::edit::run_deny(
             target.as_deref(),
             preset.as_deref(),
+            *glob,
             *global,
             args.policy.as_deref().map(Path::new),
         ),
@@ -512,16 +514,23 @@ fn run() -> Result<()> {
             query,
             json,
             recap,
-        }) => vetto::audit::run_audit_command(
-            session_id.as_deref(),
-            *latest,
-            since.as_deref(),
-            agent.as_deref(),
-            *limit,
-            query.as_deref(),
-            *json,
-            *recap,
-        ),
+            digest,
+        }) => {
+            if *digest {
+                vetto::audit::run_digest(since.as_deref(), *json)
+            } else {
+                vetto::audit::run_audit_command(
+                    session_id.as_deref(),
+                    *latest,
+                    since.as_deref(),
+                    agent.as_deref(),
+                    *limit,
+                    query.as_deref(),
+                    *json,
+                    *recap,
+                )
+            }
+        }
         Some(cli::Command::Digest { since, json }) => vetto::audit::run_digest(Some(since), *json),
         Some(cli::Command::DiffSessions {
             session1,
@@ -1057,6 +1066,13 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
+
+    if cfg.auto_branch || cfg.git_guard {
+        if let Ok(Some(branch)) = crate::shim::ensure_session_branch(&project, &session_id) {
+            eprintln!("vetto: git-guard: switched from main to session branch {branch} to protect default branch");
+        }
+    }
+
     if (pol.snapshot || cfg.snapshot || cfg.ephemeral || !cfg.agent.is_empty()) && !is_home_or_root
     {
         match rescue::snapshot::create_snapshot(
