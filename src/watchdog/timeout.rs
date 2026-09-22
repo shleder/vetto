@@ -160,7 +160,10 @@ pub fn parse_timeout(s: &str) -> Result<Duration> {
 }
 
 /// Recommends a timeout based on the 95th percentile of past successful session durations.
-pub fn recommend_timeout(project_root: &std::path::Path, reports_dir: &std::path::Path) -> Option<Duration> {
+pub fn recommend_timeout(
+    project_root: &std::path::Path,
+    reports_dir: &std::path::Path,
+) -> Option<Duration> {
     let history_file = reports_dir.join("history.jsonl");
     if !history_file.exists() {
         return None;
@@ -259,7 +262,7 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("vetto-timeout-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
-        
+
         let history_file = temp.join("history.jsonl");
         let proj_root = temp.join("my-project");
         let policy_path = proj_root.join("vetto.toml");
@@ -303,7 +306,7 @@ mod tests {
         for d in 1..=10 {
             write_record(d * 10, 0, Some(policy_path.to_string_lossy().to_string()));
         }
-        
+
         // durations: 10, 20, 30, 40, 50, 60, 70, 80, 90, 100
         // len = 10. index = floor(10 * 0.95) = 9. durations[9] = 100.
         // recommended = 100 + 50 = 150.
