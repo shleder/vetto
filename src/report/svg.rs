@@ -249,7 +249,12 @@ pub fn render_syscall_distribution_svg(stats: &SessionStats) -> Option<String> {
     );
 
     let list_start_y = header_height;
-    let max_count = syscall_items.iter().map(|(_, count)| count).max().unwrap_or(&0).max(&1);
+    let max_count = syscall_items
+        .iter()
+        .map(|(_, count)| count)
+        .max()
+        .unwrap_or(&0)
+        .max(&1);
     let bar_color = "#e57373";
 
     for (i, (label, count)) in syscall_items.iter().enumerate() {
