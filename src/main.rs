@@ -533,10 +533,24 @@ fn run() -> Result<()> {
         }
         Some(cli::Command::Digest { since, json }) => vetto::audit::run_digest(Some(since), *json),
         Some(cli::Command::DiffSessions {
-            session1,
-            session2,
+            session_a,
+            session_b,
             json,
-        }) => report::run_diff_sessions(session1, session2, *json),
+        }) => {
+            let reports_dir = args
+                .report_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".vetto/reports"));
+            let diff =
+                vetto::audit::diff_sessions::compare_sessions(session_a, session_b, &reports_dir)?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&diff)?);
+            } else {
+                print!("{}", vetto::audit::diff_sessions::format_diff_text(&diff));
+            }
+            Ok(())
+        }
         Some(cli::Command::Replay {
             session,
             speed,
