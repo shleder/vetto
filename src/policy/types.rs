@@ -459,6 +459,8 @@ pub struct Policy {
     pub net_connect_ports: Vec<u16>,
     /// Allowed unix domain socket paths / patterns.
     pub allow_unix_sockets: Vec<String>,
+    /// Denied unix domain socket paths to mask with /dev/null.
+    pub deny_unix_sockets: Vec<String>,
     /// Seccomp syscall filtering profile ("default" or "agent-min").
     pub seccomp_profile: SeccompProfile,
     /// Optional seccomp user-notify supervisor configuration.
@@ -515,6 +517,7 @@ impl Default for Policy {
             net_bind_ports: Vec::new(),
             net_connect_ports: Vec::new(),
             allow_unix_sockets: Vec::new(),
+            deny_unix_sockets: Vec::new(),
             seccomp_profile: SeccompProfile::Default,
             seccomp_notify: None,
             cgroup: None,
