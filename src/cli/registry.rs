@@ -1,9 +1,9 @@
 //! Community registry of verified policies (vetto registry list/pull)
 
-use std::fs;
-use std::path::Path;
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use std::fs;
+use std::path::Path;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum RegistryCommand {
