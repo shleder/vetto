@@ -29,6 +29,8 @@ pub enum Grant {
     NetCidr,
     /// Append to `paths` under `[display_only_deny]`.
     Deny,
+    /// Append to `deny_glob` under `[filesystem]`.
+    DenyGlob,
 }
 
 impl Grant {
@@ -38,6 +40,7 @@ impl Grant {
             Grant::NetPreset => ("network", "net_presets"),
             Grant::NetCidr => ("network", "allow_cidr"),
             Grant::Deny => ("display_only_deny", "paths"),
+            Grant::DenyGlob => ("filesystem", "deny_glob"),
             Grant::FsReadWrite => {
                 if read_only {
                     ("filesystem", "allow_read")
@@ -55,6 +58,7 @@ impl Grant {
             Grant::NetPreset => "network preset allowlist",
             Grant::NetCidr => "network CIDR allowlist",
             Grant::Deny => "masked secrets (reads denied)",
+            Grant::DenyGlob => "deny glob pattern",
             Grant::FsReadWrite => "read + write grant",
             Grant::FsRead => "read-only grant",
         }
@@ -474,11 +478,30 @@ pub fn run_allow(
 pub fn run_deny(
     target: Option<&str>,
     preset: Option<&str>,
+    glob: bool,
     global: bool,
     custom_policy: Option<&Path>,
 ) -> Result<()> {
     let clean_preset = preset.map(str::trim).filter(|s| !s.is_empty());
     let clean_target = target.map(str::trim).filter(|s| !s.is_empty());
+
+    if glob {
+        if preset.is_some() {
+            bail!("--glob cannot be combined with --preset");
+        }
+        if let Some(t) = clean_target {
+            let grant = Grant::DenyGlob;
+            let path = apply(grant, t, global, custom_policy)?;
+            println!(
+                "vetto: `{t}` denied ({}), policy file: {}",
+                grant.describe(),
+                path.display()
+            );
+            println!("vetto: the glob pattern is masked from the next session (reads denied)");
+            return Ok(());
+        }
+        bail!("target pattern must be provided with --glob");
+    }
 
     let preset_name = clean_preset.or_else(|| {
         clean_target.filter(|&t| {
@@ -831,13 +854,13 @@ mod tests {
         let custom = dir.join("policy.toml");
 
         // Test --preset ssh
-        run_deny(None, Some("ssh"), false, Some(&custom)).expect("deny ssh preset");
+        run_deny(None, Some("ssh"), false, false, Some(&custom)).expect("deny ssh preset");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("[display_only_deny]"));
         assert!(content.contains("\"$HOME/.ssh\""));
 
         // Test --preset aws
-        run_deny(None, Some("aws"), false, Some(&custom)).expect("deny aws preset");
+        run_deny(None, Some("aws"), false, false, Some(&custom)).expect("deny aws preset");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("\"$HOME/.aws\""));
 
@@ -852,7 +875,8 @@ mod tests {
         let custom = dir.join("policy.toml");
 
         // Test positional call with preset name: target = Some("docker")
-        run_deny(Some("docker"), None, false, Some(&custom)).expect("deny docker positional");
+        run_deny(Some("docker"), None, false, false, Some(&custom))
+            .expect("deny docker positional");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("[display_only_deny]"));
         assert!(content.contains("\"$HOME/.docker\""));
@@ -863,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_run_deny_unknown_preset_errors() {
-        let err = run_deny(None, Some("unknown_foobar"), false, None).unwrap_err();
+        let err = run_deny(None, Some("unknown_foobar"), false, false, None).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("unknown preset 'unknown_foobar'"));
         assert!(msg.contains("known presets:"));
@@ -871,10 +895,29 @@ mod tests {
 
     #[test]
     fn test_run_deny_missing_target_and_preset_errors() {
-        let err = run_deny(None, None, false, None).unwrap_err();
+        let err = run_deny(None, None, false, false, None).unwrap_err();
         assert!(err
             .to_string()
             .contains("target path or --preset must be provided"));
+    }
+
+    #[test]
+    fn test_run_deny_glob() {
+        let dir = std::env::temp_dir().join(format!("vetto-run-deny-glob-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let custom = dir.join("policy.toml");
+
+        // Test --glob positional pattern
+        run_deny(Some("**/*.pem"), None, true, false, Some(&custom)).expect("deny glob");
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("[filesystem]"));
+        assert!(
+            content.contains("deny_glob = [\"**/*.pem\"]")
+                || content.contains("deny_glob = [\n    \"**/*.pem\",\n]")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -885,7 +928,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let custom = dir.join("policy.toml");
 
-        run_deny(Some("~/.custom/secret.txt"), None, false, Some(&custom)).expect("deny path");
+        run_deny(
+            Some("~/.custom/secret.txt"),
+            None,
+            false,
+            false,
+            Some(&custom),
+        )
+        .expect("deny path");
         let content = std::fs::read_to_string(&custom).unwrap();
         assert!(content.contains("\"~/.custom/secret.txt\""));
 
