@@ -831,7 +831,8 @@ mod tests {
 
     #[test]
     fn test_run_deny_presets() {
-        let dir = std::env::temp_dir().join(format!("vetto-run-deny-presets-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vetto-run-deny-presets-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let custom = dir.join("policy.toml");
@@ -878,12 +879,15 @@ mod tests {
     #[test]
     fn test_run_deny_missing_target_and_preset_errors() {
         let err = run_deny(None, None, false, None).unwrap_err();
-        assert!(err.to_string().contains("target path or --preset must be provided"));
+        assert!(err
+            .to_string()
+            .contains("target path or --preset must be provided"));
     }
 
     #[test]
     fn test_run_deny_regular_target() {
-        let dir = std::env::temp_dir().join(format!("vetto-run-deny-target-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vetto-run-deny-target-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let custom = dir.join("policy.toml");
