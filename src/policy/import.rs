@@ -111,7 +111,7 @@ pub fn import_claude(input_path: Option<&Path>, home: &Path) -> Result<String> {
                             }
                         } else {
                             // Fallback for flat permissions format
-                            for (pkey, pval) in perms {
+                            for (pkey, pval) in &perms {
                                 match pkey.as_str() {
                                     "allow" | "allowed_paths" | "allow_read" | "allowRead" => {
                                         extract_json_strings(&pval, &mut allow_read);
