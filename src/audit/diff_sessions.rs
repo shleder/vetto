@@ -1,10 +1,10 @@
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::audit::history::{inspect_session, SessionAuditDetail};
 
@@ -97,22 +97,39 @@ fn calculate_blocks_diff(a: &SessionAuditDetail, b: &SessionAuditDetail) -> Bloc
 
 fn get_session_log_path(session_id: &str, reports_dir: &Path) -> Option<std::path::PathBuf> {
     if Path::new(session_id).exists()
-        && Path::new(session_id).extension().map_or(false, |e| e == "jsonl") {
+        && Path::new(session_id)
+            .extension()
+            .map_or(false, |e| e == "jsonl")
+    {
         return Some(Path::new(session_id).to_path_buf());
     }
     if let Some(home) = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(std::path::PathBuf::from)
     {
-        let p = home.join(".vetto").join("logs").join(format!("{}.jsonl", session_id));
-        if p.exists() { return Some(p); }
-        let p2 = home.join(".vetto").join("logs").join(format!("session-{}.jsonl", session_id));
-        if p2.exists() { return Some(p2); }
+        let p = home
+            .join(".vetto")
+            .join("logs")
+            .join(format!("{}.jsonl", session_id));
+        if p.exists() {
+            return Some(p);
+        }
+        let p2 = home
+            .join(".vetto")
+            .join("logs")
+            .join(format!("session-{}.jsonl", session_id));
+        if p2.exists() {
+            return Some(p2);
+        }
     }
     let p = reports_dir.join(format!("{}.jsonl", session_id));
-    if p.exists() { return Some(p); }
+    if p.exists() {
+        return Some(p);
+    }
     let p2 = reports_dir.join(format!("session-{}.jsonl", session_id));
-    if p2.exists() { return Some(p2); }
+    if p2.exists() {
+        return Some(p2);
+    }
     None
 }
 
@@ -123,36 +140,37 @@ fn count_fs_mutations(session_id: &str, reports_dir: &Path) -> (u64, u64, u64) {
 
     if let Some(path) = get_session_log_path(session_id, reports_dir) {
         if let Ok(file) = File::open(&path) {
-        let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
-            if line.contains("\"fs_mutation\"") || line.contains("\"FsMutation\"") {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                    let mut is_mutation = false;
-                    if let Some(t) = val.get("type").and_then(|v| v.as_str()) {
-                        if t == "fs_mutation" {
+            let reader = BufReader::new(file);
+            for line in reader.lines().flatten() {
+                if line.contains("\"fs_mutation\"") || line.contains("\"FsMutation\"") {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                        let mut is_mutation = false;
+                        if let Some(t) = val.get("type").and_then(|v| v.as_str()) {
+                            if t == "fs_mutation" {
+                                is_mutation = true;
+                            }
+                        } else if val.get("FsMutation").is_some() {
                             is_mutation = true;
                         }
-                    } else if val.get("FsMutation").is_some() {
-                        is_mutation = true;
-                    }
 
-                    if is_mutation {
-                        writes += 1;
-                        let mutation_type = val.get("mutation_type")
-                            .or_else(|| val.pointer("/FsMutation/mutation_type"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        
-                        if mutation_type == "Created" {
-                            created += 1;
-                        } else if mutation_type == "Modified" {
-                            modified += 1;
+                        if is_mutation {
+                            writes += 1;
+                            let mutation_type = val
+                                .get("mutation_type")
+                                .or_else(|| val.pointer("/FsMutation/mutation_type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            if mutation_type == "Created" {
+                                created += 1;
+                            } else if mutation_type == "Modified" {
+                                modified += 1;
+                            }
                         }
                     }
                 }
             }
         }
-    }
     }
     (writes, created, modified)
 }
