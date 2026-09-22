@@ -2324,12 +2324,24 @@ mod tests {
         // But explicitly allowed DoH endpoint should be allowed
         let mut config_allowed = config.clone();
         config_allowed.policy = BrokerPolicy::Allowlist(vec!["cloudflare-dns.com".into()]);
-        assert!(request_allowed("cloudflare-dns.com", 443, None, &config_allowed, &bus));
+        assert!(request_allowed(
+            "cloudflare-dns.com",
+            443,
+            None,
+            &config_allowed,
+            &bus
+        ));
 
         // When block_doh is false, DoH and DoT should not be specifically blocked (unless policy denies it)
         config.block_doh = false;
         config.policy = BrokerPolicy::Allowlist(vec!["*".into()]); // Allow all for this test
         assert!(request_allowed("anydomain.com", 853, None, &config, &bus));
-        assert!(request_allowed("cloudflare-dns.com", 443, None, &config, &bus));
+        assert!(request_allowed(
+            "cloudflare-dns.com",
+            443,
+            None,
+            &config,
+            &bus
+        ));
     }
 }
