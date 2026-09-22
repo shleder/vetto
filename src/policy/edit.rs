@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn test_run_deny_missing_target_and_preset_errors() {
         let err = run_deny(None, None, false, false, None).unwrap_err();
-        assert!(err.to_string().contains("target pattern must be provided"));
+        assert!(err.to_string().contains("target path or --preset must be provided"));
     }
 
     #[test]
