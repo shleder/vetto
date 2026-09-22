@@ -2181,9 +2181,18 @@ deny = ["SECRET_*"]
         .expect("build policy");
 
         let npm_cache = home.join(".npm");
-        assert!(policy.allow_read.contains(&npm_cache), "should add cache to read allow");
-        assert!(policy.deny_write.contains(&npm_cache), "should add cache to write deny");
-        assert!(!policy.allow_write.contains(&npm_cache), "should strip cache from write allow");
+        assert!(
+            policy.allow_read.contains(&npm_cache),
+            "should add cache to read allow"
+        );
+        assert!(
+            policy.deny_write.contains(&npm_cache),
+            "should add cache to write deny"
+        );
+        assert!(
+            !policy.allow_write.contains(&npm_cache),
+            "should strip cache from write allow"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
