@@ -267,6 +267,10 @@ pub struct Cli {
     #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
     pub net_quota: Vec<String>,
 
+    /// Run execution inside disposable Windows Sandbox (VM) instead of AppContainer (Windows only)
+    #[arg(long = "windows-sandbox")]
+    pub windows_sandbox: bool,
+
     /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
     #[arg(long)]
     pub is_container: bool,

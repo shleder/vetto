@@ -187,6 +187,7 @@ pub struct RunConfig {
     pub tmpfs_tmp: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
+    pub windows_sandbox: bool,
     pub agent: Vec<String>,
 }
 
@@ -425,6 +426,7 @@ impl RunConfig {
             tmpfs_tmp: cli.tmpfs_tmp,
             mask_secrets,
             net_quota,
+            windows_sandbox: cli.windows_sandbox,
             agent: cli.agent.clone(),
         })
     }
