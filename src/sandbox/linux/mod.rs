@@ -880,12 +880,13 @@ fn child_b(
     // tree can fail with EACCES/EPERM even though the namespace stack itself
     // is available. B and every descendant inherit this ruleset, while the
     // relay (forked earlier and outside the PID namespace) remains outside it.
-    if let Err(error) = landlock::apply_policy_with_net_ports(
+    if let Err(error) = landlock::apply_policy_advanced(
         &policy.allow_write,
         &policy.allow_read,
         false,
         &policy.net_bind_ports,
         &policy.net_connect_ports,
+        policy.deny_network,
     ) {
         child_fail(err_w, 120, &format!("{error}"));
     }
@@ -1489,12 +1490,13 @@ unsafe fn child_fs_only(a: FsChildArgs<'_>) -> ! {
     // intra-project secrets were carved out by the loader's tree
     // enumeration; READ is stripped from write roots so the whole-tree
     // write rule cannot re-expose them (see landlock.rs).
-    if let Err(e) = landlock::apply_policy_with_net_ports(
+    if let Err(e) = landlock::apply_policy_advanced(
         &policy.allow_write,
         &policy.allow_read,
         true,
         &policy.net_bind_ports,
         &policy.net_connect_ports,
+        policy.deny_network,
     ) {
         child_fail(err_w, 120, &format!("{e}"));
     }
