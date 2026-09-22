@@ -1,6 +1,7 @@
 //! Audit history indexing, session security inspection, daily digest, and verdict evaluation.
 
 pub mod chain;
+pub mod diff_sessions;
 pub mod digest;
 pub mod history;
 pub mod recap;
