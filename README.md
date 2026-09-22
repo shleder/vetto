@@ -8,6 +8,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License"></a>
 </p>
 
+<p align="center">
+  <a href="README.md">English</a> | <a href="docs/README.ru.md">Русский</a> | <a href="docs/README.zh.md">中文</a> | <a href="docs/README.ja.md">日本語</a>
+</p>
+
 Daemon-less, rootless kernel-level sandbox and policy enforcement runtime for AI coding agents (**Claude Code**, **OpenAI Codex CLI**, **Cursor**, **Gemini**, **Aider**). Vetto injects immutable security boundaries directly between `fork()` and `execve()` with sub-4ms initialization latency.
 
 ---
