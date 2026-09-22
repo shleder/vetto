@@ -636,6 +636,8 @@ pub enum Command {
         /// Render the end-of-session security recap instead of the full detail
         #[arg(long)]
         recap: bool,
+        #[arg(long)]
+        digest: bool,
     },
     /// Generate an aggregated daily audit digest from session history.
     #[command(hide = true)]
