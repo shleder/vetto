@@ -296,7 +296,10 @@ pub enum Command {
     Deny {
         /// Filesystem path to mask, e.g. ~/.aws/credentials
         #[arg(value_name = "PATH")]
-        target: String,
+        target: Option<String>,
+        /// Deny preset name (ssh, aws, gcp, kube, docker, antigravity, etc.)
+        #[arg(long, value_name = "NAME")]
+        preset: Option<String>,
         /// Edit ~/.vetto/config.toml instead of the project policy
         #[arg(long)]
         global: bool,
