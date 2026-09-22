@@ -68,8 +68,6 @@ pub struct SuspiciousRecord {
     pub count: u64,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IoMetrics {
     pub file_reads: u64,
@@ -81,6 +79,7 @@ pub struct IoMetrics {
     pub files_deleted: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SessionStats {
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -352,8 +351,9 @@ fn ingest(inner: &mut Inner, ev: Event) {
         // SessionTimeout is a session-level marker: it is counted into
         // events_total and counts["session_timeout"] above like every event;
         // it carries no per-operation data of its own.
-        
-        Event::FsMutation { mutation, bytes, .. } => {
+        Event::FsMutation {
+            mutation, bytes, ..
+        } => {
             let io = &mut st.io_metrics;
             if mutation == "read" {
                 io.file_reads += 1;
@@ -410,7 +410,7 @@ mod tests {
                 bytes: None,
             },
         );
-        
+
         let io = &inner.stats.io_metrics;
         assert_eq!(io.files_created, 1);
         assert_eq!(io.files_modified, 1);
