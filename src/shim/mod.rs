@@ -453,7 +453,11 @@ pub fn ensure_session_branch(project_dir: &std::path::Path, session_id: &str) ->
     if output.status.success() {
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if branch == "main" || branch == "master" {
-            let short_id = if session_id.len() > 8 { &session_id[..8] } else { session_id };
+            let short_id = if session_id.len() > 8 {
+                &session_id[..8]
+            } else {
+                session_id
+            };
             let session_branch = format!("vetto/session-{}", short_id);
             let checkout_output = std::process::Command::new("git")
                 .current_dir(project_dir)
@@ -463,7 +467,10 @@ pub fn ensure_session_branch(project_dir: &std::path::Path, session_id: &str) ->
             if checkout_output.status.success() {
                 return Ok(Some(session_branch));
             } else {
-                anyhow::bail!("Failed to create session branch: {}", String::from_utf8_lossy(&checkout_output.stderr));
+                anyhow::bail!(
+                    "Failed to create session branch: {}",
+                    String::from_utf8_lossy(&checkout_output.stderr)
+                );
             }
         }
     }
@@ -603,9 +610,12 @@ mod tests {
         assert!(
             is_destructive_git_push(&["push".into(), "origin".into(), "master".into()]).is_some()
         );
-        assert!(
-            is_destructive_git_push(&["push".into(), "origin".into(), "feat/my-feature".into()]).is_none()
-        );
+        assert!(is_destructive_git_push(&[
+            "push".into(),
+            "origin".into(),
+            "feat/my-feature".into()
+        ])
+        .is_none());
         assert!(is_destructive_git_push(&["status".into()]).is_none());
     }
 
@@ -651,7 +661,9 @@ mod tests {
         );
 
         // Destructive push
-        assert!(is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_some());
+        assert!(
+            is_destructive_git_command(&["push".into(), "origin".into(), "main".into()]).is_some()
+        );
         assert!(is_destructive_git_command(&["push".into(), "--force".into()]).is_some());
         assert!(is_destructive_git_command(&["push".into(), "-f".into()]).is_some());
         assert!(
@@ -717,9 +729,12 @@ mod tests {
                 .is_none()
         );
         assert!(is_destructive_git_command(&["checkout".into(), "main".into()]).is_none());
-        assert!(
-            is_destructive_git_command(&["push".into(), "origin".into(), "feat/my-feature".into()]).is_none()
-        );
+        assert!(is_destructive_git_command(&[
+            "push".into(),
+            "origin".into(),
+            "feat/my-feature".into()
+        ])
+        .is_none());
         assert!(
             is_destructive_git_command(&["branch".into(), "-d".into(), "safe-delete".into()])
                 .is_none()
