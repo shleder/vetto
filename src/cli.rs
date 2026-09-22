@@ -428,13 +428,11 @@ pub enum Command {
         command: Option<McpCommand>,
     },
     /// Manage background session multiplexer daemon and session registry
-    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: crate::daemon::DaemonCommand,
     },
     /// Run multiplexer daemon in foreground with SSH remote instructions
-    #[command(hide = true)]
     Serve {
         /// Loopback HTTP port for REST API (default: 54321)
         #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
