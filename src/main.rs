@@ -619,14 +619,39 @@ fn run() -> Result<()> {
                 &args.profile,
                 args.policy.as_deref().map(PathBuf::from).as_deref(),
             ),
-            cli::PolicyCommand::Import { from, path, output } => {
+            cli::PolicyCommand::Import {
+                from,
+                path,
+                claude,
+                codex,
+                output,
+            } => {
                 let home = std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(PathBuf::from)
                     .context(
                         "neither HOME nor USERPROFILE is set; vetto needs it to resolve paths",
                     )?;
-                vetto::policy::import::import_policy(from, path.as_deref(), output, &home)?;
+                let effective_claude = claude.as_deref().or_else(|| {
+                    if from.as_deref() == Some("claude") {
+                        path.as_deref()
+                    } else {
+                        None
+                    }
+                });
+                let effective_codex = codex.as_deref().or_else(|| {
+                    if from.as_deref() == Some("codex") {
+                        path.as_deref()
+                    } else {
+                        None
+                    }
+                });
+                vetto::policy::import::run_import(
+                    effective_claude,
+                    effective_codex,
+                    output,
+                    &home,
+                )?;
                 println!("vetto: imported policy written to {}", output.display());
                 Ok(())
             }
