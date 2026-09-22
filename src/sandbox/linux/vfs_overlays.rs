@@ -3,6 +3,40 @@ use std::path::{Path, PathBuf};
 use super::mounts;
 use crate::error::{VettoError, VettoResult};
 
+pub const SENSITIVE_PROC_SYS_PATHS: &[&str] = &[
+    "/proc/sysrq-trigger",
+    "/proc/kcore",
+    "/proc/kallsyms",
+    "/proc/sched_debug",
+    "/proc/timer_list",
+    "/sys/firmware",
+    "/sys/kernel/debug",
+    "/sys/kernel/tracing",
+];
+
+pub fn mask_host_proc_sys() -> VettoResult<()> {
+    for path_str in SENSITIVE_PROC_SYS_PATHS {
+        let path = Path::new(path_str);
+        if path.exists() {
+            if let Err(e) = mounts::mask_path(path, path.is_dir()) {
+                if unsafe { libc::geteuid() } != 0
+                    && (e.to_string().contains("Operation not permitted")
+                        || e.to_string().contains("Permission denied")
+                        || e.to_string().contains("Read-only file system"))
+                {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "skipping sensitive proc/sys masking without privileges: {e}"
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Set up a Copy-on-Write overlay using overlayfs.
 pub fn setup_cow_overlay(
     lower: &Path,
@@ -171,6 +205,8 @@ pub fn mask_mandatory_secrets(home: &Path, project_root: Option<&Path>) -> Vetto
         }
     }
 
+    mask_host_proc_sys()?;
+
     Ok(())
 }
 
@@ -264,5 +300,16 @@ mod tests {
             PathBuf::from("/tmp/nonexistent-vetto-sock2.sock"),
         ];
         assert!(mask_unix_sockets(&absent).is_ok());
+    }
+
+    #[test]
+    fn test_sensitive_proc_sys_paths() {
+        for path_str in SENSITIVE_PROC_SYS_PATHS {
+            assert!(
+                path_str.starts_with("/proc/") || path_str.starts_with("/sys/"),
+                "sensitive path {} must be in /proc or /sys",
+                path_str
+            );
+        }
     }
 }
