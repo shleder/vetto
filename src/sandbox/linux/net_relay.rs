@@ -644,7 +644,9 @@ fn request_allowed(host: &str, port: u16, token: Option<&str>, config: &BrokerCo
 
         if !is_explicitly_allowed {
             let host_lower = host.trim().trim_end_matches('.').to_ascii_lowercase();
-            let is_doh = DOH_ENDPOINTS.iter().any(|&d| d == host_lower || host_lower.ends_with(&format!(".{d}")));
+            let is_doh = DOH_ENDPOINTS
+                .iter()
+                .any(|&d| d == host_lower || host_lower.ends_with(&format!(".{d}")));
             if is_doh {
                 bus.publish(Event::Notice {
                     ts: crate::events::types::now(),
@@ -1989,9 +1991,27 @@ mod tests {
 
         // Allowed with valid token
         let token = guard.session_token();
-        assert!(request_allowed("127.0.0.1", 9222, Some(token), &config, &bus));
-        assert!(request_allowed("127.0.0.1", 9229, Some(token), &config, &bus));
-        assert!(request_allowed("127.0.0.1", 5678, Some(token), &config, &bus));
+        assert!(request_allowed(
+            "127.0.0.1",
+            9222,
+            Some(token),
+            &config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            9229,
+            Some(token),
+            &config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            5678,
+            Some(token),
+            &config,
+            &bus
+        ));
 
         // Allowed on other non-debug port
         assert!(request_allowed("127.0.0.1", 8080, None, &config, &bus));
