@@ -16,6 +16,10 @@ pub fn render(stats: &SessionStats) -> String {
         stats.exit_code, stats.duration_secs
     ));
 
+    if stats.shadow {
+        out.push_str("Shadow Mode: ACTIVE (audit only, non-blocking)\n\n");
+    }
+
     out.push_str("## Event counts\n\n");
     out.push_str("| event | count |\n|---|---|\n");
     for (kind, count) in &stats.counts {
