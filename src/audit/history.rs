@@ -516,6 +516,7 @@ fn parse_jsonl_log(path: &Path, session_hint: &str) -> Result<SessionAuditDetail
                     tier: t,
                     net_mode: nm,
                     profile: p,
+                    ..
                 } => {
                     timestamp = ts;
                     if session_id.is_empty()
