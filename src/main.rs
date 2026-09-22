@@ -1009,8 +1009,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
             "vetto: launching Windows Sandbox (disposable VM) with config: {}",
             temp_wsb.display()
         );
-        let mut child =
-            vetto::sandbox::windows::windows_sandbox::launch_config(&temp_wsb, true)?;
+        let mut child = vetto::sandbox::windows::windows_sandbox::launch_config(&temp_wsb, true)?;
         let status = child.wait()?;
         let _ = std::fs::remove_file(&temp_wsb);
         std::process::exit(status.code().unwrap_or(0));
