@@ -13,6 +13,12 @@ fn security_txt_exists_and_conforms_to_rfc9116() {
     assert!(content.contains("Encryption: "), "Must contain Encryption");
     assert!(content.contains("Canonical: "), "Must contain Canonical");
     assert!(content.contains("Policy: "), "Must contain Policy");
-    assert!(content.contains("Preferred-Languages: en, ru"), "Must specify English and Russian languages");
-    assert!(content.contains("Acknowledgments: "), "Must contain Acknowledgments");
+    assert!(
+        content.contains("Preferred-Languages: en, ru"),
+        "Must specify English and Russian languages"
+    );
+    assert!(
+        content.contains("Acknowledgments: "),
+        "Must contain Acknowledgments"
+    );
 }
