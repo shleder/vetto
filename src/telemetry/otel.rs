@@ -52,24 +52,21 @@ mod inner {
                 },
             };
 
-            let (_guard, runtime) = match tokio::runtime::Handle::try_current() {
-                Ok(_) => (None, None),
-                Err(_) => match tokio::runtime::Runtime::new() {
-                    Ok(rt) => {
-                        let guard = rt.enter();
-                        (Some(guard), Some(rt))
-                    }
-                    Err(_) => return Ok(Self { inner: None }),
-                },
+            let runtime = match tokio::runtime::Handle::try_current() {
+                Ok(_) => None,
+                Err(_) => tokio::runtime::Runtime::new().ok(),
             };
 
-            let exporter = match opentelemetry_otlp::SpanExporter::builder()
-                .with_tonic()
-                .with_endpoint(endpoint)
-                .build()
-            {
-                Ok(exp) => exp,
-                Err(_) => return Ok(Self { inner: None }),
+            let exporter = {
+                let _guard = runtime.as_ref().map(|rt| rt.enter());
+                match opentelemetry_otlp::SpanExporter::builder()
+                    .with_tonic()
+                    .with_endpoint(endpoint)
+                    .build()
+                {
+                    Ok(exp) => exp,
+                    Err(_) => return Ok(Self { inner: None }),
+                }
             };
 
             let resource = opentelemetry_sdk::Resource::new(vec![
