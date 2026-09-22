@@ -74,6 +74,12 @@ pub enum Event {
     Notice { ts: DateTime<Utc>, message: String },
     /// The session exceeded `--timeout` and vetto tore the sandbox down.
     SessionTimeout { ts: DateTime<Utc> },
+    FsMutation {
+        ts: DateTime<Utc>,
+        path: String,
+        mutation: String,
+        bytes: Option<u64>,
+    },
     SessionEnded {
         ts: DateTime<Utc>,
         exit_code: i32,
@@ -103,7 +109,13 @@ impl Event {
             | Event::SecretMasked { ts, .. }
             | Event::Notice { ts, .. }
             | Event::SessionTimeout { ts }
-            | Event::SessionEnded { ts, .. } => *ts,
+            | Event::FsMutation {
+        ts: DateTime<Utc>,
+        path: String,
+        mutation: String,
+        bytes: Option<u64>,
+    },
+    SessionEnded { ts, .. } => *ts,
         }
     }
 
@@ -120,7 +132,13 @@ impl Event {
             Event::SecretMasked { .. } => "secret_masked",
             Event::Notice { .. } => "notice",
             Event::SessionTimeout { .. } => "session_timeout",
-            Event::SessionEnded { .. } => "session_ended",
+            Event::FsMutation {
+        ts: DateTime<Utc>,
+        path: String,
+        mutation: String,
+        bytes: Option<u64>,
+    },
+    SessionEnded { .. } => "session_ended",
         }
     }
 
@@ -133,6 +151,7 @@ impl Event {
             Event::FileObserved { path, .. }
             | Event::BlockedAttempt { path, .. }
             | Event::SecretMasked { path, .. } => Some(path),
+            | Event::FsMutation { path, .. } => Some(path),
             _ => None,
         }
     }

@@ -69,6 +69,18 @@ pub struct SuspiciousRecord {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IoMetrics {
+    pub file_reads: u64,
+    pub file_writes: u64,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+    pub files_created: u64,
+    pub files_modified: u64,
+    pub files_deleted: u64,
+}
+
 pub struct SessionStats {
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -78,6 +90,7 @@ pub struct SessionStats {
     pub net_mode: String,
     pub profile: String,
     pub events_total: u64,
+    pub io_metrics: IoMetrics,
     pub counts: BTreeMap<String, u64>,
     pub op_counts: BTreeMap<String, u64>,
     pub file_reads: u64,
@@ -339,12 +352,73 @@ fn ingest(inner: &mut Inner, ev: Event) {
         // SessionTimeout is a session-level marker: it is counted into
         // events_total and counts["session_timeout"] above like every event;
         // it carries no per-operation data of its own.
+        
+        Event::FsMutation { mutation, bytes, .. } => {
+            let io = &mut st.io_metrics;
+            if mutation == "read" {
+                io.file_reads += 1;
+                if let Some(b) = bytes {
+                    io.bytes_read += b;
+                }
+            } else {
+                io.file_writes += 1;
+                match mutation.as_str() {
+                    "create" => io.files_created += 1,
+                    "modify" => io.files_modified += 1,
+                    "delete" | "unlink" => io.files_deleted += 1,
+                    _ => {}
+                }
+                if let Some(b) = bytes {
+                    io.bytes_written += b;
+                }
+            }
+        }
         Event::ExecObserved { .. } | Event::SecretMasked { .. } | Event::SessionTimeout { .. } => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn fs_mutation_aggregates_io_metrics() {
+        let mut inner = Inner::default();
+        ingest(
+            &mut inner,
+            Event::FsMutation {
+                ts: now(),
+                path: "/tmp/new".into(),
+                mutation: "create".into(),
+                bytes: Some(1024),
+            },
+        );
+        ingest(
+            &mut inner,
+            Event::FsMutation {
+                ts: now(),
+                path: "/tmp/mod".into(),
+                mutation: "modify".into(),
+                bytes: Some(512),
+            },
+        );
+        ingest(
+            &mut inner,
+            Event::FsMutation {
+                ts: now(),
+                path: "/tmp/del".into(),
+                mutation: "delete".into(),
+                bytes: None,
+            },
+        );
+        
+        let io = &inner.stats.io_metrics;
+        assert_eq!(io.files_created, 1);
+        assert_eq!(io.files_modified, 1);
+        assert_eq!(io.files_deleted, 1);
+        assert_eq!(io.file_writes, 3);
+        assert_eq!(io.bytes_written, 1536);
+    }
+
     use super::*;
     use crate::events::types::now;
 
