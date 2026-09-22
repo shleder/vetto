@@ -414,6 +414,7 @@ fn run() -> Result<()> {
         }
         Some(cli::Command::Profiles) => profiles(),
         Some(cli::Command::Hook { command }) => cli::hook::run_cli(command),
+        Some(cli::Command::Registry { command }) => cli::registry::run_cli(command),
         Some(cli::Command::Plugin { command }) => cli::plugin::run_cli(command),
         Some(cli::Command::Mcp { command }) => match command {
             None | Some(cli::McpCommand::Serve) => mcp::run_stdio_server(),
