@@ -16,6 +16,7 @@ pub enum Event {
         tier: String,
         net_mode: String,
         profile: String,
+        shadow: bool,
     },
     /// An allowed file open observed via the /proc/<pid>/fd poller.
     FileObserved {

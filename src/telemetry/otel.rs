@@ -356,6 +356,7 @@ mod tests {
             tier: "full".into(),
             net_mode: "off".into(),
             profile: "default".into(),
+            shadow: false,
         });
         session.record_event(&Event::BlockedAttempt {
             ts: now(),
