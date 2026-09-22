@@ -300,6 +300,9 @@ pub enum Command {
         /// Deny preset name (ssh, aws, gcp, kube, docker, antigravity, etc.)
         #[arg(long, value_name = "NAME")]
         preset: Option<String>,
+        /// Treat target as a glob pattern (e.g. **/*.pem) and add to deny_glob
+        #[arg(long = "glob")]
+        glob: bool,
         /// Edit ~/.vetto/config.toml instead of the project policy
         #[arg(long)]
         global: bool,

@@ -51,7 +51,16 @@ pub fn resolve_entry(entry: &str, vars: &Vars) -> Vec<PathBuf> {
 
 /// Resolve one entry with an optional agent compatibility root.
 pub fn resolve_entry_with_agent(entry: &str, vars: &Vars, agent: Option<&Path>) -> Vec<PathBuf> {
-    let substituted = substitute_with_agent(entry, vars, agent);
+    let mut pattern_str = entry.to_string();
+    if pattern_str.chars().any(|c| GLOB_CHARS.contains(&c))
+        && !pattern_str.starts_with('/')
+        && !pattern_str.starts_with('~')
+        && !pattern_str.starts_with('$')
+    {
+        pattern_str = format!("$PROJECT/{}", pattern_str);
+    }
+
+    let substituted = substitute_with_agent(&pattern_str, vars, agent);
     if !has_glob(&substituted) {
         return vec![substituted];
     }
@@ -155,5 +164,28 @@ mod tests {
         };
         let root_paths = resolve_entry_with_agent("$PROJECT/**/*.pem", &root_vars, None);
         assert!(root_paths.is_empty());
+    }
+
+    #[test]
+    fn relative_glob_pattern_resolves_within_project() {
+        let tmp = std::env::temp_dir().join(format!("vetto_glob_resolve_{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        std::fs::write(tmp.join("sub/test.secret"), "shh").unwrap();
+
+        let vars = Vars {
+            project: &tmp,
+            home: Path::new("/home/user"),
+        };
+
+        let paths = resolve_entry_with_agent("**/*.secret", &vars, None);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0].canonicalize().unwrap_or(paths[0].clone()),
+            tmp.join("sub/test.secret")
+                .canonicalize()
+                .unwrap_or(tmp.join("sub/test.secret"))
+        );
+
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }

@@ -475,10 +475,12 @@ fn run() -> Result<()> {
         Some(cli::Command::Deny {
             target,
             preset,
+            glob,
             global,
         }) => vetto::policy::edit::run_deny(
             target.as_deref(),
             preset.as_deref(),
+            *glob,
             *global,
             args.policy.as_deref().map(Path::new),
         ),
