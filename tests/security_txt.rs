@@ -4,7 +4,10 @@ use std::path::Path;
 #[test]
 fn security_txt_exists_and_conforms_to_rfc9116() {
     let path = Path::new(".well-known/security.txt");
-    assert!(path.exists(), "security.txt must exist at .well-known/security.txt");
+    assert!(
+        path.exists(),
+        "security.txt must exist at .well-known/security.txt"
+    );
 
     let content = fs::read_to_string(path).expect("read security.txt");
 
