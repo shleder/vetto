@@ -1020,6 +1020,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         } else {
             None
         },
+        tmpfs_tmp: if cfg.tmpfs_tmp { Some(true) } else { None },
         net_quota: cfg.net_quota.clone(),
         ..policy::loader::PolicyOverrides::default()
     };
