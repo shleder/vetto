@@ -2695,14 +2695,8 @@ shadow = true
 "#;
         std::fs::write(&policy_path, toml_content).unwrap();
 
-        let loaded = load(
-            "shadow-test",
-            Some(&policy_path),
-            &root,
-            &root,
-            Tier::Full,
-        )
-        .expect("policy with shadow should load");
+        let loaded = load("shadow-test", Some(&policy_path), &root, &root, Tier::Full)
+            .expect("policy with shadow should load");
 
         assert!(loaded.shadow, "shadow field should be parsed as true");
         let _ = std::fs::remove_dir_all(root);

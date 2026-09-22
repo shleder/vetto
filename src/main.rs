@@ -974,11 +974,7 @@ fn supervise(mut cfg: RunConfig) -> Result<()> {
         } else {
             None
         },
-        shadow: if cfg.shadow {
-            Some(true)
-        } else {
-            None
-        },
+        shadow: if cfg.shadow { Some(true) } else { None },
         net_quota: cfg.net_quota.clone(),
         ..policy::loader::PolicyOverrides::default()
     };
