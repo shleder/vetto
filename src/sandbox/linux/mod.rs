@@ -42,7 +42,6 @@ pub mod visibility;
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::path::Path;
 
 use anyhow::{bail, Result};
 
@@ -1131,15 +1130,8 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         child_fail(err_w, 115, &format!("isolate /dev/shm: {e}"));
     }
     if policy.tmpfs_tmp {
-        let mut preserve: Vec<&Path> = Vec::new();
-        if !opts.cwd.as_os_str().is_empty() {
-            preserve.push(opts.cwd.as_path());
-        }
-        for p in &policy.allow_write {
-            preserve.push(p.as_path());
-        }
-        if let Err(e) = mounts::isolate_tmp(&preserve) {
-            child_fail(err_w, 115, &format!("isolate /tmp: {e}"));
+        if let Err(e) = mounts::mount_tmpfs_tmp() {
+            child_fail(err_w, 115, &format!("mount tmpfs over /tmp: {e}"));
         }
     }
     if let Err(e) = mounts::mount_devpts_newinstance() {

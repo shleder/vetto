@@ -178,6 +178,8 @@ pub struct RawFilesystem {
     #[serde(default)]
     pub read_only_caches: Option<bool>,
     #[serde(default)]
+    pub shadow: Option<bool>,
+    #[serde(default)]
     pub tmpfs_tmp: Option<bool>,
     #[serde(default)]
     pub dev_allow: Option<RawStringList>,
@@ -515,6 +517,7 @@ pub struct MergedPolicy {
     pub git_guard: bool,
     pub snapshot: bool,
     pub read_only_caches: bool,
+    pub shadow: bool,
     pub tmpfs_tmp: Option<bool>,
     pub seccomp_profile: Option<String>,
     pub seccomp_notify: Option<SeccompNotifyConfig>,
@@ -659,6 +662,9 @@ impl MergedPolicy {
             }
             if let Some(ro_caches) = filesystem.read_only_caches {
                 self.read_only_caches = ro_caches;
+            }
+            if let Some(shadow) = filesystem.shadow {
+                self.shadow = shadow;
             }
             if let Some(tmpfs) = filesystem.tmpfs_tmp {
                 self.tmpfs_tmp = Some(tmpfs);
@@ -873,6 +879,8 @@ pub struct PolicyOverrides {
     pub git_guard: Option<bool>,
     pub snapshot: Option<bool>,
     pub read_only_caches: Option<bool>,
+    pub shadow: Option<bool>,
+    pub tmpfs_tmp: Option<bool>,
     pub auto_deny_secrets: Option<bool>,
     pub net_quota: std::collections::HashMap<String, u64>,
     pub deny_unix_sockets: Vec<String>,
@@ -1519,6 +1527,12 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     if let Some(true) = overrides.read_only_caches {
         merged.read_only_caches = true;
     }
+    if let Some(true) = overrides.shadow {
+        merged.shadow = true;
+    }
+    if let Some(tmpfs) = overrides.tmpfs_tmp {
+        merged.tmpfs_tmp = Some(tmpfs);
+    }
 
     for (domain, quota) in &overrides.net_quota {
         merged.net_quota.insert(domain.clone(), *quota);
@@ -1760,6 +1774,7 @@ fn build_policy(
         git_guard: merged.git_guard,
         snapshot: merged.snapshot,
         read_only_caches: merged.read_only_caches,
+        shadow: merged.shadow,
         tmpfs_tmp: merged.tmpfs_tmp.unwrap_or(true),
         warnings,
     };
@@ -2114,6 +2129,22 @@ fn is_temp_root(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_policy_overrides_tmpfs_tmp() {
+        let mut merged = MergedPolicy {
+            tmpfs_tmp: Some(false),
+            ..Default::default()
+        };
+
+        let overrides = PolicyOverrides {
+            tmpfs_tmp: Some(true),
+            ..Default::default()
+        };
+
+        apply_overrides(&mut merged, &overrides).unwrap();
+        assert_eq!(merged.tmpfs_tmp, Some(true));
+    }
 
     #[test]
     fn unknown_named_profile_fails_closed_without_a_custom_policy() {
@@ -2668,6 +2699,27 @@ deny_unix_sockets = ["/var/run/custom-unix-explicit.sock"]
             .deny_unix_sockets
             .contains(&"/var/run/custom-unix-explicit.sock".to_string()));
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_shadow_mode_parsing() {
+        let root = std::env::temp_dir().join(format!("vetto-shadow-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let policy_path = root.join("policy.toml");
+        let toml_content = r#"
+[filesystem]
+allow_write = ["/tmp"]
+shadow = true
+"#;
+        std::fs::write(&policy_path, toml_content).unwrap();
+
+        let loaded = load("shadow-test", Some(&policy_path), &root, &root, Tier::Full)
+            .expect("policy with shadow should load");
+
+        assert!(loaded.shadow, "shadow field should be parsed as true");
         let _ = std::fs::remove_dir_all(root);
     }
 }

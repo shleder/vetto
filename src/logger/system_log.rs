@@ -31,6 +31,7 @@ pub fn format_event_for_system_log(event: &Event) -> String {
             tier,
             net_mode,
             profile,
+            ..
         } => {
             format!("VETTO_SESSION_START ts={ts} pid={pid} tier={tier} net={net_mode} profile={profile}")
         }
