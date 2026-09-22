@@ -278,8 +278,14 @@ mod tests {
     #[test]
     fn digest_correctly_aggregates_blocked_paths_and_domains() {
         use std::io::Write;
-        let log_file =
-            std::env::temp_dir().join(format!("vetto_test_digest_{}.jsonl", std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let log_file = std::env::temp_dir().join(format!(
+            "vetto_test_digest_{}_{}.jsonl",
+            std::process::id(),
+            id
+        ));
         let mut f = std::fs::File::create(&log_file).unwrap();
         let event1 = crate::events::Event::BlockedAttempt {
             ts: Utc::now(),
