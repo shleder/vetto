@@ -102,6 +102,10 @@ pub struct Cli {
     #[arg(long)]
     pub tmpfs_tmp: bool,
 
+    /// Opt-in: send anonymous violation telemetry (hashed agent slug + category, no paths/secrets)
+    #[arg(long)]
+    pub anonymous_telemetry: bool,
+
     /// Shadow mode: policy layer logs "would deny" instead of blocking in verification/preflight.
     /// Note: Kernel sandbox (Landlock/seccomp) cannot be shadowed; shadow mode applies to policy-layer verification.
     #[arg(long)]
@@ -261,6 +265,10 @@ pub struct Cli {
     /// Per-domain network traffic quota (e.g. --net-quota api.openai.com=100mb, --net-quota github.com=1gb)
     #[arg(long = "net-quota", value_name = "DOMAIN=SIZE", action = clap::ArgAction::Append)]
     pub net_quota: Vec<String>,
+
+    /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
+    #[arg(long)]
+    pub is_container: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -432,13 +440,11 @@ pub enum Command {
         command: Option<McpCommand>,
     },
     /// Manage background session multiplexer daemon and session registry
-    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: crate::daemon::DaemonCommand,
     },
     /// Run multiplexer daemon in foreground with SSH remote instructions
-    #[command(hide = true)]
     Serve {
         /// Loopback HTTP port for REST API (default: 54321)
         #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
@@ -1513,5 +1519,18 @@ mod tests {
             Some(Command::Ephemeral(ref args))
                 if args.command == vec!["cursor"] && !args.discard && args.yes
         ));
+    }
+}
+
+#[cfg(test)]
+mod test_is_container {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_is_container_flag() {
+        let cli = Cli::try_parse_from(["vetto", "--is-container"]).unwrap();
+        assert!(cli.is_container);
+        assert!(!cli.quiet);
     }
 }
