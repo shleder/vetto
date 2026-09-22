@@ -766,6 +766,12 @@ pub enum PolicyCommand {
     },
     /// Import permissions from external agent configurations (e.g. claude, codex)
     Import {
+        /// Source agent configuration type (claude, codex)
+        #[arg(long, value_name = "AGENT")]
+        from: Option<String>,
+        /// Source file path when using --from
+        #[arg(long = "path", value_name = "PATH")]
+        path: Option<PathBuf>,
         /// Import from Claude settings.json
         #[arg(long, value_name = "PATH")]
         claude: Option<PathBuf>,

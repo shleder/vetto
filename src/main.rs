@@ -606,6 +606,8 @@ fn run() -> Result<()> {
                 args.policy.as_deref().map(PathBuf::from).as_deref(),
             ),
             cli::PolicyCommand::Import {
+                from,
+                path,
                 claude,
                 codex,
                 output,
@@ -616,9 +618,23 @@ fn run() -> Result<()> {
                     .context(
                         "neither HOME nor USERPROFILE is set; vetto needs it to resolve paths",
                     )?;
+                let effective_claude = claude.as_deref().or_else(|| {
+                    if from.as_deref() == Some("claude") {
+                        path.as_deref()
+                    } else {
+                        None
+                    }
+                });
+                let effective_codex = codex.as_deref().or_else(|| {
+                    if from.as_deref() == Some("codex") {
+                        path.as_deref()
+                    } else {
+                        None
+                    }
+                });
                 vetto::policy::import::run_import(
-                    claude.as_deref(),
-                    codex.as_deref(),
+                    effective_claude,
+                    effective_codex,
                     output,
                     &home,
                 )?;
