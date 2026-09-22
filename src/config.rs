@@ -184,6 +184,9 @@ pub struct RunConfig {
     pub tmpfs_tmp: bool,
     pub mask_secrets: bool,
     pub net_quota: std::collections::HashMap<String, u64>,
+    pub http_proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub no_proxy: Option<String>,
     pub agent: Vec<String>,
 }
 
@@ -366,6 +369,11 @@ impl RunConfig {
             net_quota.insert(domain, bytes);
         }
 
+        
+        let http_proxy = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")).or_else(|_| std::env::var("ALL_PROXY")).or_else(|_| std::env::var("all_proxy")).ok();
+        let https_proxy = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")).or_else(|_| std::env::var("ALL_PROXY")).or_else(|_| std::env::var("all_proxy")).ok();
+        let no_proxy = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).ok();
+
         Ok(Self {
             profile,
             preset,
@@ -409,6 +417,9 @@ impl RunConfig {
             mask_secrets,
             net_quota,
             agent: cli.agent.clone(),
+            http_proxy,
+            https_proxy,
+            no_proxy,
         })
     }
 }
