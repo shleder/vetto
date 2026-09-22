@@ -1520,6 +1520,9 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     if let Some(true) = overrides.read_only_caches {
         merged.read_only_caches = true;
     }
+    if let Some(tmpfs) = overrides.tmpfs_tmp {
+        merged.tmpfs_tmp = Some(tmpfs);
+    }
 
     for (domain, quota) in &overrides.net_quota {
         merged.net_quota.insert(domain.clone(), *quota);
@@ -2127,7 +2130,6 @@ mod tests {
         apply_overrides(&mut merged, &overrides).unwrap();
         assert_eq!(merged.tmpfs_tmp, Some(true));
     }
-
 
     #[test]
     fn unknown_named_profile_fails_closed_without_a_custom_policy() {
