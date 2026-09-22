@@ -439,7 +439,10 @@ pub fn run_cli(binary: Option<String>, args: Vec<String>) -> Result<()> {
 }
 
 /// Automatically creates and switches to a session branch if currently on main/master.
-pub fn ensure_session_branch(project_dir: &std::path::Path, session_id: &str) -> anyhow::Result<Option<String>> {
+pub fn ensure_session_branch(
+    project_dir: &std::path::Path,
+    session_id: &str,
+) -> anyhow::Result<Option<String>> {
     let git_dir = project_dir.join(".git");
     if !git_dir.exists() {
         return Ok(None);
@@ -463,7 +466,7 @@ pub fn ensure_session_branch(project_dir: &std::path::Path, session_id: &str) ->
                 .current_dir(project_dir)
                 .args(["checkout", "-b", session_branch.as_str()])
                 .output()?;
-            
+
             if checkout_output.status.success() {
                 return Ok(Some(session_branch));
             } else {
