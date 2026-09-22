@@ -24,7 +24,7 @@ mod inner {
     }
 
     pub struct TelemetrySession {
-        inner: Option<OtelSessionInner>,
+        pub(crate) inner: Option<OtelSessionInner>,
     }
 
     impl TelemetrySession {
