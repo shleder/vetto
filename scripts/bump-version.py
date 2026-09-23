@@ -128,7 +128,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'/releases/tag/v{re.escape(current)}', f'/releases/tag/v{target}')
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'badge/version-{re.escape(current)}-blue', f'badge/version-{target}-blue')
     
-    desc = "OpenCode 2 GiB SQLite limit, Cline backend network allowlist (api.cline.bot, data.cline.bot), test isolation hardening"
+    desc = "Antigravity Google CDN allowlist, OpenCode full filesystem & dynamic custom provider support, safe loopback relay"
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 
