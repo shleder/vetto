@@ -63,3 +63,14 @@ vetto -- opencode
 # Paranoid preset (read-only workspace, zero network)
 vetto --preset paranoid -- opencode
 ```
+
+---
+
+## 4. Resource Ceilings & SQLite Database (`opencode.db`)
+
+OpenCode maintains local vector indices and execution metadata in an internal SQLite database (`~/.opencode/opencode.db`), which can grow beyond 1 GB. To prevent the Linux kernel from delivering `SIGXFSZ` (signal 153, file size limit exceeded) against the standard 100 MB sandbox ceiling, Vetto's OpenCode preset automatically sets `file_size_bytes = 2147483648` (2 GiB):
+
+```toml
+[limits]
+file_size_bytes = 2147483648 # 2 GiB ceiling for opencode.db SQLite storage
+```
