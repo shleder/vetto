@@ -31,3 +31,16 @@ paths = [
     "$AGENT/*.sock",
     "$AGENT/*.ipc",
 ]
+
+[limits]
+file_size_bytes = 2147483648
+
+[network]
+allow = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "openrouter.ai",
+    "opencode.ai",
+    "api.github.com",
+    "github.com",
+]

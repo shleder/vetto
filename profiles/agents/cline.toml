@@ -33,3 +33,14 @@ pass_through = [
 paths = [
     "$AGENT/*.sock",
 ]
+
+[network]
+allow = [
+    "api.anthropic.com",
+    "api.openai.com",
+    "openrouter.ai",
+    "otel.cline.bot",
+    "api.cline.bot",
+    "data.cline.bot",
+    "registry.npmjs.org",
+]

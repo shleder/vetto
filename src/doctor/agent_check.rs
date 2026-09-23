@@ -486,9 +486,8 @@ mod tests {
 
     #[test]
     fn test_index_based_path_shadowing_and_repair() {
-        use std::sync::Mutex;
-        static LOCK: Mutex<()> = Mutex::new(());
-        let _guard = LOCK.lock().unwrap();
+        use crate::cli::TEST_ENV_LOCK;
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
 
         let temp = std::env::temp_dir().join(format!("vetto-shadow-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);

@@ -267,4 +267,25 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn opencode_and_cline_preset_customizations_are_embedded() {
+        let opencode: toml::Value =
+            toml::from_str(OPENCODE_AGENT_TOML).expect("opencode preset must be TOML");
+        assert_eq!(
+            opencode["limits"]["file_size_bytes"].as_integer(),
+            Some(2147483648),
+            "opencode must embed 2 GiB limit"
+        );
+
+        let cline: toml::Value =
+            toml::from_str(CLINE_AGENT_TOML).expect("cline preset must be TOML");
+        let cline_net = cline["network"]["allow"]
+            .as_array()
+            .expect("cline allow array");
+        let cline_domains: Vec<&str> = cline_net.iter().filter_map(|v| v.as_str()).collect();
+        assert!(cline_domains.contains(&"api.cline.bot"));
+        assert!(cline_domains.contains(&"data.cline.bot"));
+        assert!(cline_domains.contains(&"otel.cline.bot"));
+    }
 }

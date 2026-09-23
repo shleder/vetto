@@ -98,12 +98,15 @@ allow_read = [
 ]
 
 [network]
-# Allow Cline to communicate with your chosen LLM provider and package registries
+# Allow Cline to communicate with your chosen LLM provider, official Cline backend, and package registries
 mode = "allowlist"
 allow = [
     "api.anthropic.com",
     "api.openai.com",
     "openrouter.ai",
+    "api.cline.bot",
+    "data.cline.bot",
+    "otel.cline.bot",
     "registry.npmjs.org",
     "crates.io"
 ]

@@ -16,6 +16,7 @@ pub struct ProjectAnalysis {
     pub recommended_allow_write: Vec<String>,
     pub recommended_network_domains: Vec<String>,
     pub detected_shims: Vec<String>,
+    pub recommended_file_size_bytes: Option<u64>,
 }
 
 pub fn analyze_project(root: &Path) -> ProjectAnalysis {
@@ -167,6 +168,7 @@ pub fn analyze_project(root: &Path) -> ProjectAnalysis {
         analysis
             .recommended_network_domains
             .extend(agent_network_allowlist("opencode"));
+        analysis.recommended_file_size_bytes = Some(2147483648);
     }
     if root.join(".cline").exists() || root.join(".clinerules").exists() {
         analysis.detected_agents.push("Cline");
@@ -331,10 +333,21 @@ allow = [
         }
     }
 
-    out.push_str(
-        r#"]
+    out.push_str("]\n\n");
 
-[limits]
+    if analysis.detected_agents.contains(&"OpenCode")
+        || analysis.recommended_file_size_bytes.is_some()
+    {
+        let limit = analysis.recommended_file_size_bytes.unwrap_or(2147483648);
+        out.push_str(&format!(
+            r#"[limits]
+# Resource ceilings for sandboxed processes (2 GiB for OpenCode SQLite opencode.db):
+file_size_bytes = {limit}
+"#
+        ));
+    } else {
+        out.push_str(
+            r#"[limits]
 # Optional resource ceilings for sandboxed processes:
 # cpu_seconds = 3600
 # address_space_bytes = 8589934592  # 8 GiB
@@ -342,7 +355,8 @@ allow = [
 # open_files = 4096
 # file_size_bytes = 1073741824      # 1 GiB
 "#,
-    );
+        );
+    }
 
     out
 }
@@ -394,7 +408,10 @@ pub fn run_wizard(
             "gemini" => "Google Gemini",
             "antigravity" => "Antigravity CLI",
             "aider" => "Aider",
-            "opencode" => "OpenCode",
+            "opencode" => {
+                analysis.recommended_file_size_bytes = Some(2147483648);
+                "OpenCode"
+            }
             "cursor" => "Cursor",
             "cline" => "Cline",
             "copilot" => "GitHub Copilot",
@@ -592,10 +609,20 @@ mod tests {
         assert!(analysis
             .recommended_network_domains
             .contains(&"otel.cline.bot".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"api.cline.bot".to_string()));
+        assert!(analysis
+            .recommended_network_domains
+            .contains(&"data.cline.bot".to_string()));
+        assert_eq!(analysis.recommended_file_size_bytes, Some(2147483648));
 
         let toml = generate_policy_toml(&analysis);
         assert!(toml.contains("opencode.ai"));
         assert!(toml.contains("otel.cline.bot"));
+        assert!(toml.contains("api.cline.bot"));
+        assert!(toml.contains("data.cline.bot"));
+        assert!(toml.contains("2147483648"));
 
         let _ = fs::remove_dir_all(&dir);
     }

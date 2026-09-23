@@ -222,6 +222,9 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_install_wrapper() {
+        use crate::cli::TEST_ENV_LOCK;
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let old_home = std::env::var_os("HOME");
         let temp_home = std::env::temp_dir().join(format!("vetto-wrapper-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_home);
 
@@ -237,6 +240,11 @@ mod tests {
         let content = fs::read_to_string(&wrapper_path).unwrap();
         assert_eq!(content, "#!/bin/sh\nexec vetto test_agent \"$@\"\n");
 
+        if let Some(h) = old_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
         let _ = fs::remove_dir_all(&temp_home);
     }
 

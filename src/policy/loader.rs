@@ -789,7 +789,20 @@ impl MergedPolicy {
         }
 
         if let Some(limits) = &layer.limits {
-            self.limits.merge_strictest(&limits.to_resource_limits());
+            let mut incoming = limits.to_resource_limits();
+            if source_kind == PolicySourceKind::AgentPreset
+                || source_kind == PolicySourceKind::Preset
+            {
+                if let Some(fsize) = incoming.file_size_bytes {
+                    self.limits.file_size_bytes = Some(
+                        self.limits
+                            .file_size_bytes
+                            .map_or(fsize, |curr| curr.max(fsize)),
+                    );
+                    incoming.file_size_bytes = None;
+                }
+            }
+            self.limits.merge_strictest(&incoming);
             if let Some(cg) = &limits.cgroup {
                 let incoming = CgroupConfig {
                     memory_max: cg.memory_max.as_ref().map(|m| m.to_string_repr()),
@@ -2592,6 +2605,50 @@ allow_read = ["/usr", "${PROJECT}"]
         assert!(deny_paths.contains(&&env_file));
         assert!(deny_paths.contains(&&claude_dir));
         assert!(!deny_paths.contains(&&gemini_dir));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opencode_agent_preset_policy_loading() {
+        let root = std::env::temp_dir().join(format!("vetto-opencode-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let options = PolicyLoadOptions {
+            agent: Some("opencode".to_string()),
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &root, &root, Tier::Full, &options)
+            .expect("opencode preset must load");
+
+        // OpenCode requires 2 GiB file size ceiling for opencode.db SQLite storage
+        assert_eq!(pol.limits.file_size_bytes, Some(2147483648));
+        assert!(pol.network_allow.contains(&"opencode.ai".to_string()));
+        assert!(pol.network_allow.contains(&"api.openai.com".to_string()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cline_agent_preset_policy_loading() {
+        let root = std::env::temp_dir().join(format!("vetto-cline-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let options = PolicyLoadOptions {
+            agent: Some("cline".to_string()),
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &root, &root, Tier::Full, &options)
+            .expect("cline preset must load");
+
+        // Cline network allowlist must contain api.cline.bot, data.cline.bot, otel.cline.bot
+        assert!(pol.network_allow.contains(&"api.cline.bot".to_string()));
+        assert!(pol.network_allow.contains(&"data.cline.bot".to_string()));
+        assert!(pol.network_allow.contains(&"otel.cline.bot".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
     }

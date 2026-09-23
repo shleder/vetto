@@ -142,3 +142,60 @@ fn test_aider_and_gemini_profile_credentials() {
         "gemini policy must pass through GEMINI_API_KEY"
     );
 }
+
+#[test]
+fn test_opencode_limits_and_cline_network_presets() {
+    let temp = TempProject::new("opencode-cline-presets");
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::create_dir_all(&home).expect("create home dir");
+
+    // 1. OpenCode: 2 GiB file size limit to prevent SIGXFSZ on 1.5 GB opencode.db
+    let opts_opencode = PolicyLoadOptions {
+        agent: Some("opencode".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_opencode =
+        load_with_options("default", None, &project, &home, Tier::Full, &opts_opencode)
+            .expect("load opencode policy");
+    assert_eq!(
+        pol_opencode.limits.file_size_bytes,
+        Some(2147483648),
+        "opencode must have 2 GiB (2147483648 bytes) file size ceiling"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"opencode.ai".to_string()),
+        "opencode must allow opencode.ai"
+    );
+
+    // 2. Cline: default allowlist includes api.cline.bot and data.cline.bot
+    let opts_cline = PolicyLoadOptions {
+        agent: Some("cline".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_cline = load_with_options("default", None, &project, &home, Tier::Full, &opts_cline)
+        .expect("load cline policy");
+    assert!(
+        pol_cline
+            .network_allow
+            .contains(&"api.cline.bot".to_string()),
+        "cline must allow api.cline.bot"
+    );
+    assert!(
+        pol_cline
+            .network_allow
+            .contains(&"data.cline.bot".to_string()),
+        "cline must allow data.cline.bot"
+    );
+    assert!(
+        pol_cline
+            .network_allow
+            .contains(&"otel.cline.bot".to_string()),
+        "cline must allow otel.cline.bot"
+    );
+}

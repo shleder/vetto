@@ -11,7 +11,9 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use super::loader::{RawDeny, RawFilesystem, RawLayer, RawMetadata, RawNetwork, RawStringList};
+use super::loader::{
+    RawDeny, RawFilesystem, RawLayer, RawLimits, RawMetadata, RawNetwork, RawStringList,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -124,6 +126,8 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.openai.com".into(),
             "openrouter.ai".into(),
             "otel.cline.bot".into(),
+            "api.cline.bot".into(),
+            "data.cline.bot".into(),
             "registry.npmjs.org".into(),
         ],
         "windsurf" => vec!["api.codeium.com".into(), "windsurf.codeium.com".into()],
@@ -174,6 +178,18 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.anthropic.com".into(),
         ],
         _ => Vec::new(),
+    }
+}
+
+/// Default resource limits for specific agents (e.g. OpenCode SQLite file size limit).
+pub fn agent_default_limits(agent: &str) -> Option<RawLimits> {
+    let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
+    match canon {
+        "opencode" => Some(RawLimits {
+            file_size_bytes: Some(2147483648), // 2 GiB ceiling to allow local SQLite opencode.db without SIGXFSZ
+            ..Default::default()
+        }),
+        _ => None,
     }
 }
 
@@ -283,6 +299,7 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     paths: Some(RawStringList::Many(deny_paths)),
                 }),
                 network: Some(net),
+                limits: agent.and_then(agent_default_limits),
                 ..Default::default()
             }
         }
@@ -320,6 +337,7 @@ pub fn preset_layer(preset: Preset, agent: Option<&str>) -> RawLayer {
                     paths: Some(RawStringList::Many(deny_paths)),
                 }),
                 network: net,
+                limits: agent.and_then(agent_default_limits),
                 ..Default::default()
             }
         }
@@ -532,6 +550,8 @@ mod tests {
                 "api.openai.com",
                 "openrouter.ai",
                 "otel.cline.bot",
+                "api.cline.bot",
+                "data.cline.bot",
                 "registry.npmjs.org",
             ]
         );
@@ -629,5 +649,12 @@ mod tests {
             resolve_preset("agy"),
             Some(&["$HOME/.gemini", "$HOME/.config/Antigravity"][..])
         );
+    }
+
+    #[test]
+    fn opencode_has_2gib_default_file_size_limit() {
+        let limits = agent_default_limits("opencode").expect("opencode default limits");
+        assert_eq!(limits.file_size_bytes, Some(2147483648));
+        assert!(agent_default_limits("claude").is_none());
     }
 }
