@@ -157,15 +157,18 @@ fn test_opencode_limits_and_cline_network_presets() {
         include_project_policy: false,
         ..Default::default()
     };
-    let pol_opencode = load_with_options("default", None, &project, &home, Tier::Full, &opts_opencode)
-        .expect("load opencode policy");
+    let pol_opencode =
+        load_with_options("default", None, &project, &home, Tier::Full, &opts_opencode)
+            .expect("load opencode policy");
     assert_eq!(
         pol_opencode.limits.file_size_bytes,
         Some(2147483648),
         "opencode must have 2 GiB (2147483648 bytes) file size ceiling"
     );
     assert!(
-        pol_opencode.network_allow.contains(&"opencode.ai".to_string()),
+        pol_opencode
+            .network_allow
+            .contains(&"opencode.ai".to_string()),
         "opencode must allow opencode.ai"
     );
 
@@ -175,18 +178,25 @@ fn test_opencode_limits_and_cline_network_presets() {
         include_project_policy: false,
         ..Default::default()
     };
-    let pol_cline = load_with_options("default", None, &project, &home, Tier::Full, &opts_cline)
-        .expect("load cline policy");
+    let pol_cline =
+        load_with_options("default", None, &project, &home, Tier::Full, &opts_cline)
+            .expect("load cline policy");
     assert!(
-        pol_cline.network_allow.contains(&"api.cline.bot".to_string()),
+        pol_cline
+            .network_allow
+            .contains(&"api.cline.bot".to_string()),
         "cline must allow api.cline.bot"
     );
     assert!(
-        pol_cline.network_allow.contains(&"data.cline.bot".to_string()),
+        pol_cline
+            .network_allow
+            .contains(&"data.cline.bot".to_string()),
         "cline must allow data.cline.bot"
     );
     assert!(
-        pol_cline.network_allow.contains(&"otel.cline.bot".to_string()),
+        pol_cline
+            .network_allow
+            .contains(&"otel.cline.bot".to_string()),
         "cline must allow otel.cline.bot"
     );
 }

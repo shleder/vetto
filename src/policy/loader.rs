@@ -794,8 +794,11 @@ impl MergedPolicy {
                 || source_kind == PolicySourceKind::Preset
             {
                 if let Some(fsize) = incoming.file_size_bytes {
-                    self.limits.file_size_bytes =
-                        Some(self.limits.file_size_bytes.map_or(fsize, |curr| curr.max(fsize)));
+                    self.limits.file_size_bytes = Some(
+                        self.limits
+                            .file_size_bytes
+                            .map_or(fsize, |curr| curr.max(fsize)),
+                    );
                     incoming.file_size_bytes = None;
                 }
             }
