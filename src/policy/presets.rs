@@ -121,7 +121,7 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             domains.sort();
             domains.dedup();
             domains
-        },
+        }
         "cursor" => vec![
             "api2.cursor.sh".into(),
             "api.cursor.sh".into(),

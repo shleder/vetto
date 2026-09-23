@@ -1178,10 +1178,11 @@ impl LayeredPolicyLoader {
                 PolicySourceKind::AgentPreset,
             )?;
             if defaults::canonical_agent_name(agent) == Some("opencode") {
-                let dynamic_providers = crate::policy::opencode::discover_opencode_providers_from_paths(
-                    Some(home),
-                    Some(project),
-                );
+                let dynamic_providers =
+                    crate::policy::opencode::discover_opencode_providers_from_paths(
+                        Some(home),
+                        Some(project),
+                    );
                 for provider in dynamic_providers {
                     if !merged.network_allow.contains(&provider) {
                         merged.network_allow.push(provider);
@@ -2641,13 +2642,17 @@ allow_read = ["/usr", "${PROJECT}"]
         assert_eq!(pol.limits.file_size_bytes, Some(2147483648));
         assert!(pol.network_allow.contains(&"opencode.ai".to_string()));
         assert!(pol.network_allow.contains(&"api.openai.com".to_string()));
-        assert!(pol.network_allow.contains(&"integrate.api.nvidia.com".to_string()));
+        assert!(pol
+            .network_allow
+            .contains(&"integrate.api.nvidia.com".to_string()));
         assert!(pol.network_allow.contains(&"agentrouter.org".to_string()));
         assert!(pol.network_allow.contains(&"localhost".to_string()));
         assert!(pol.network_allow.contains(&"127.0.0.1".to_string()));
 
         // OpenCode filesystem roots
-        assert!(pol.allow_write.contains(&root.join(".local/share/opencode")));
+        assert!(pol
+            .allow_write
+            .contains(&root.join(".local/share/opencode")));
         assert!(pol.allow_read.contains(&root.join(".local/share/opencode")));
         assert!(pol.allow_write.contains(&root.join(".config/opencode")));
         assert!(pol.allow_read.contains(&root.join(".config/opencode")));

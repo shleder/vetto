@@ -419,7 +419,8 @@ mod tests {
 
     #[test]
     fn test_discover_opencode_providers_from_temp_paths() {
-        let temp_dir = std::env::temp_dir().join(format!("vetto-opencode-disc-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("vetto-opencode-disc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let config_dir = temp_dir.join(".config/opencode");
         std::fs::create_dir_all(&config_dir).unwrap();

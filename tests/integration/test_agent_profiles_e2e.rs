@@ -228,7 +228,10 @@ fn test_opencode_limits_and_cline_network_presets() {
     );
     let auth_json = opencode_share.join("auth.json");
     assert!(
-        !pol_opencode.deny_resolved.iter().any(|d| d.path == auth_json),
+        !pol_opencode
+            .deny_resolved
+            .iter()
+            .any(|d| d.path == auth_json),
         "opencode auth.json must not be denied"
     );
 
