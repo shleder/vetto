@@ -28,7 +28,7 @@ Operators can verify the provenance and integrity of any downloaded binary asset
 
 ```bash
 # 1. Download binary asset and sha256 checksum from GitHub Releases
-gh release download v0.4.0 -p "vetto-linux-x86_64.tar.gz*"
+gh release download v0.4.1 -p "vetto-linux-x86_64.tar.gz*"
 
 # 2. Verify SLSA provenance attestation
 gh attestation verify vetto-linux-x86_64.tar.gz --owner shleder

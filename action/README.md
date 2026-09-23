@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Sandboxed Agent
-        uses: shleder/vetto/action@v0.4.0
+        uses: shleder/vetto/action@v0.4.1
         with:
           command: 'npx claude-code -p "Run linter and fix basic formatting"'
 ```
@@ -32,7 +32,7 @@ jobs:
 
 ```yaml
       - name: Run Python Agent with PyPI Egress
-        uses: shleder/vetto/action@v0.4.0
+        uses: shleder/vetto/action@v0.4.1
         with:
           policy: 'policies/community/python-dev.toml'
           net: 'allowlist:pypi.org,files.pythonhosted.org,github.com'
@@ -45,7 +45,7 @@ jobs:
 
 ```yaml
       - name: Strict Security Verification
-        uses: shleder/vetto/action@v0.4.0
+        uses: shleder/vetto/action@v0.4.1
         with:
           profile: 'strict'
           fail-on-block: '1' # Fails CI if agent attempts to read secrets or escape sandbox

@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-VERSION="${1:-0.4.0}"
+VERSION="${1:-0.4.1}"
 TARGET="${2:-aarch64-apple-darwin}"
 BUILD_DIR="${REPO_ROOT}/target/${TARGET}/release"
 BIN_SRC="${BUILD_DIR}/vetto"
