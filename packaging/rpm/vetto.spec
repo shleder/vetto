@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Wed Sep 23 2026 vetto contributors - 0.4.1-1
+- OpenCode 2 GiB SQLite ceiling, Cline network allowlist, test isolation hardening.
+
 * Tue Sep 22 2026 vetto contributors - 0.4.0-1
 - Full LOCAL-100 completion: enterprise network proxying, DNS security, and multi-agent runtime.
 
