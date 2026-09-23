@@ -235,7 +235,6 @@ fn test_opencode_limits_and_cline_network_presets() {
         "opencode auth.json must not be denied"
     );
 
-
     // 2. Cline: default allowlist includes api.cline.bot and data.cline.bot
     let opts_cline = PolicyLoadOptions {
         agent: Some("cline".to_string()),
