@@ -128,7 +128,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'/releases/tag/v{re.escape(current)}', f'/releases/tag/v{target}')
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'badge/version-{re.escape(current)}-blue', f'badge/version-{target}-blue')
     
-    desc = "Full LOCAL-100 completion (100/100): HTTP_PROXY, DoH/DoT blocking, desktop notify, flamegraph syscalls, VS Code & multi-agent plugins, Docker hybrid & K8s operator, daemon REST API, first-run wizard, RFC 9116 security.txt & SLA"
+    desc = "OpenCode 2 GiB SQLite limit, Cline backend network allowlist (api.cline.bot, data.cline.bot), test isolation hardening"
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
+## [0.4.1] - 2026-09-23
+### Fixed
+- **OpenCode 2 GiB SQLite Ceiling**: Expanded the default file size limit to 2 GiB (`file_size_bytes = 2147483648`) in `profiles/agents/opencode.toml` and enabled agent presets to override the base 100 MB ceiling. This prevents kernel `SIGXFSZ` (exit 153) fatal errors when long-running OpenCode sessions grow local `opencode.db` SQLite stores beyond 100 MB.
+- **Cline Backend Network Allowlist**: Added `api.cline.bot` and `data.cline.bot` to the default network egress allowlist in `profiles/agents/cline.toml` and `src/policy/presets.rs`, ensuring out-of-the-box telemetry and API compatibility without requiring manual `vetto allow --net`.
+- **Test Isolation & Parallel Lock Synchronization**: Synchronized test environments accessing `$HOME` across `src/doctor/agent_check.rs` and `src/cli/plugin.rs` using shared `TEST_ENV_LOCK`, completely eliminating test race conditions during concurrent test runs.
+- **Packaging Parity**: Synchronized version 0.4.1 across all package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
 
 ## [0.4.0] - 2026-09-22
 ### Added
