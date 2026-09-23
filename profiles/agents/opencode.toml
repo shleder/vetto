@@ -5,6 +5,8 @@ description = "Safe compatibility roots for OpenCode agent."
 [filesystem]
 allow_read = [
     "$AGENT",
+    "$HOME/.config/opencode",
+    "$HOME/.local/share/opencode",
     "$HOME/.opencode",
     "$HOME/.bun",
     "$HOME/.cache",
@@ -12,6 +14,8 @@ allow_read = [
 ]
 allow_write = [
     "$AGENT",
+    "$HOME/.config/opencode",
+    "$HOME/.local/share/opencode",
     "$HOME/.opencode",
     "$HOME/.bun",
     "$HOME/.cache",
@@ -22,8 +26,12 @@ allow_write = [
 pass_through = [
     "OPENCODE_*",
     "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
     "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
     "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+    "NVIDIA_API_KEY",
 ]
 
 [display_only_deny]
@@ -41,6 +49,10 @@ allow = [
     "api.anthropic.com",
     "openrouter.ai",
     "opencode.ai",
+    "integrate.api.nvidia.com",
+    "agentrouter.org",
     "api.github.com",
     "github.com",
+    "localhost",
+    "127.0.0.1",
 ]

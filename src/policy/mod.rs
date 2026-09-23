@@ -10,6 +10,7 @@ pub mod import;
 pub mod limits_spec;
 pub mod lint;
 pub mod loader;
+pub mod opencode;
 pub mod presets;
 pub mod secretscan;
 pub mod types;
