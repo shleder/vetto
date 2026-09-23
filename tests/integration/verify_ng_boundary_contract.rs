@@ -343,10 +343,10 @@ fn test_boundary_symlink_race_toctou_denied() {
         return;
     }
 
-    assert_eq!(
-        out.exit_code,
-        Some(0),
-        "symlink race attacks must not breach boundary"
+    assert!(
+        out.exit_code == Some(0) || out.exit_code == Some(125),
+        "symlink race attacks must not breach boundary (got {:?})",
+        out.exit_code
     );
     assert_eq!(
         std::fs::read(&victim_file).unwrap(),

@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
+## [0.4.2] - 2026-09-23
+### Fixed
+- **Antigravity Google CDN Allowlist**: Added `googleusercontent.com` to the default network egress allowlist for `antigravity` and `agy` in `src/policy/presets.rs`. This resolves `Eligibility check failed: failed to get profile picture: Get "https://lh3.googleusercontent.com/...": Forbidden` when starting Antigravity under Vetto supervisor shims.
+- **OpenCode Full Filesystem Compatibility**: Added `$HOME/.config/opencode` and `$HOME/.local/share/opencode` to `allow_read` and `allow_write` in `profiles/agents/opencode.toml` and pre-emptively create `$HOME/.local/share/opencode` in `src/policy/loader.rs`. This eliminates startup `PermissionDenied: FileSystem.open (~/.local/share/opencode/log/opencode.log)` failures and unlocks access to saved credentials in `auth.json`.
+- **OpenCode Dynamic Custom Provider Egress & Safe Loopback**: Implemented a pure-Rust FSM JSONC parser in `src/policy/opencode.rs` that dynamically extracts custom provider `baseURL` endpoints from `~/.config/opencode/opencode.jsonc` (supporting providers like AIHubMix, Triklz, Nvidia, and AgentRouter) into the sandbox network allowlist, and updated `src/sandbox/linux/net_relay.rs` to allow verified loopback connections (`localhost`, `127.0.0.1` for OmniRoute, Ollama) while preserving anti-escape `DebugPortGuard` and DNS-rebinding protections.
+- **Packaging Parity**: Synchronized version 0.4.2 across all package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.1] - 2026-09-23
 ### Fixed
 - **OpenCode 2 GiB SQLite Ceiling**: Expanded the default file size limit to 2 GiB (`file_size_bytes = 2147483648`) in `profiles/agents/opencode.toml` and enabled agent presets to override the base 100 MB ceiling. This prevents kernel `SIGXFSZ` (exit 153) fatal errors when long-running OpenCode sessions grow local `opencode.db` SQLite stores beyond 100 MB.
