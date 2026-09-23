@@ -110,16 +110,14 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
                 "api.anthropic.com".into(),
                 "openrouter.ai".into(),
                 "opencode.ai".into(),
-                "integrate.api.nvidia.com".into(),
-                "agentrouter.org".into(),
                 "api.github.com".into(),
                 "github.com".into(),
-                "localhost".into(),
-                "127.0.0.1".into(),
             ];
-            domains.extend(crate::policy::opencode::discover_opencode_providers());
-            domains.sort();
-            domains.dedup();
+            for d in crate::policy::opencode::discover_opencode_providers() {
+                if !domains.contains(&d) {
+                    domains.push(d);
+                }
+            }
             domains
         }
         "cursor" => vec![
@@ -533,12 +531,8 @@ mod tests {
             "api.anthropic.com",
             "openrouter.ai",
             "opencode.ai",
-            "integrate.api.nvidia.com",
-            "agentrouter.org",
             "api.github.com",
             "github.com",
-            "localhost",
-            "127.0.0.1",
         ] {
             assert!(
                 opencode_list.iter().any(|d| d == expected),
