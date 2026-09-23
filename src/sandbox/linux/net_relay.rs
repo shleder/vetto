@@ -884,9 +884,9 @@ fn resolve_and_connect(
         if is_doh_or_dot(host, port, Some(addr.ip())) {
             return true;
         }
-        if is_loopback_host(host) && addr.ip().is_loopback() {
-            false
-        } else if cidrs.iter().any(|c| c.contains(addr.ip())) {
+        if (is_loopback_host(host) && addr.ip().is_loopback())
+            || cidrs.iter().any(|c| c.contains(addr.ip()))
+        {
             false
         } else {
             forbidden_destination(addr.ip())
