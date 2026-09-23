@@ -104,14 +104,22 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.groq.com".into(),
             "generativelanguage.googleapis.com".into(),
         ],
-        "opencode" => vec![
-            "api.openai.com".into(),
-            "api.anthropic.com".into(),
-            "openrouter.ai".into(),
-            "opencode.ai".into(),
-            "api.github.com".into(),
-            "github.com".into(),
-        ],
+        "opencode" => {
+            let mut domains = vec![
+                "api.openai.com".into(),
+                "api.anthropic.com".into(),
+                "openrouter.ai".into(),
+                "opencode.ai".into(),
+                "api.github.com".into(),
+                "github.com".into(),
+            ];
+            for d in crate::policy::opencode::discover_opencode_providers() {
+                if !domains.contains(&d) {
+                    domains.push(d);
+                }
+            }
+            domains
+        }
         "cursor" => vec![
             "api2.cursor.sh".into(),
             "api.cursor.sh".into(),
@@ -517,17 +525,20 @@ mod tests {
                 "generativelanguage.googleapis.com"
             ]
         );
-        assert_eq!(
-            agent_network_allowlist("opencode"),
-            vec![
-                "api.openai.com",
-                "api.anthropic.com",
-                "openrouter.ai",
-                "opencode.ai",
-                "api.github.com",
-                "github.com",
-            ]
-        );
+        let opencode_list = agent_network_allowlist("opencode");
+        for expected in [
+            "api.openai.com",
+            "api.anthropic.com",
+            "openrouter.ai",
+            "opencode.ai",
+            "api.github.com",
+            "github.com",
+        ] {
+            assert!(
+                opencode_list.iter().any(|d| d == expected),
+                "opencode network allowlist must contain {expected}"
+            );
+        }
         assert_eq!(
             agent_network_allowlist("cursor"),
             vec![

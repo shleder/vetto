@@ -884,7 +884,9 @@ fn resolve_and_connect(
         if is_doh_or_dot(host, port, Some(addr.ip())) {
             return true;
         }
-        if cidrs.iter().any(|c| c.contains(addr.ip())) {
+        if (is_loopback_host(host) && addr.ip().is_loopback())
+            || cidrs.iter().any(|c| c.contains(addr.ip()))
+        {
             false
         } else {
             forbidden_destination(addr.ip())
@@ -2014,6 +2016,17 @@ mod tests {
         assert!(!forbidden_destination(IpAddr::V4(Ipv4Addr::new(
             93, 184, 216, 34,
         ))));
+    }
+
+    #[test]
+    fn test_loopback_host_verification() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("[::1]"));
+        assert!(!is_loopback_host("evil.com"));
+        assert!(!is_loopback_host("api.openai.com"));
+        assert!(!is_loopback_host("192.168.1.1"));
     }
 
     #[test]

@@ -45,6 +45,18 @@ fn test_all_agent_profiles_resolve_credentials_without_blocking() {
                 "claude .credentials.json must not be denied"
             );
         }
+        if agent == "opencode" {
+            let share_dir = home.join(".local/share/opencode");
+            assert!(
+                pol.allow_write.contains(&share_dir),
+                "opencode must have write access to ~/.local/share/opencode"
+            );
+            let auth_json = share_dir.join("auth.json");
+            assert!(
+                !pol.deny_resolved.iter().any(|d| d.path == auth_json),
+                "opencode auth.json must not be denied"
+            );
+        }
     }
 }
 
@@ -170,6 +182,57 @@ fn test_opencode_limits_and_cline_network_presets() {
             .network_allow
             .contains(&"opencode.ai".to_string()),
         "opencode must allow opencode.ai"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"integrate.api.nvidia.com".to_string()),
+        "opencode must allow integrate.api.nvidia.com"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"agentrouter.org".to_string()),
+        "opencode must allow agentrouter.org"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"localhost".to_string()),
+        "opencode must allow localhost"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"127.0.0.1".to_string()),
+        "opencode must allow 127.0.0.1"
+    );
+
+    let opencode_share = home.join(".local/share/opencode");
+    assert!(
+        pol_opencode.allow_write.contains(&opencode_share),
+        "opencode must have write access to ~/.local/share/opencode"
+    );
+    assert!(
+        pol_opencode.allow_read.contains(&opencode_share),
+        "opencode must have read access to ~/.local/share/opencode"
+    );
+    let opencode_config = home.join(".config/opencode");
+    assert!(
+        pol_opencode.allow_write.contains(&opencode_config),
+        "opencode must have write access to ~/.config/opencode"
+    );
+    assert!(
+        pol_opencode.allow_read.contains(&opencode_config),
+        "opencode must have read access to ~/.config/opencode"
+    );
+    let auth_json = opencode_share.join("auth.json");
+    assert!(
+        !pol_opencode
+            .deny_resolved
+            .iter()
+            .any(|d| d.path == auth_json),
+        "opencode auth.json must not be denied"
     );
 
     // 2. Cline: default allowlist includes api.cline.bot and data.cline.bot
