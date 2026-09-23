@@ -178,9 +178,8 @@ fn test_opencode_limits_and_cline_network_presets() {
         include_project_policy: false,
         ..Default::default()
     };
-    let pol_cline =
-        load_with_options("default", None, &project, &home, Tier::Full, &opts_cline)
-            .expect("load cline policy");
+    let pol_cline = load_with_options("default", None, &project, &home, Tier::Full, &opts_cline)
+        .expect("load cline policy");
     assert!(
         pol_cline
             .network_allow
