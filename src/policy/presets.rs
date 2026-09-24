@@ -57,11 +57,8 @@ impl std::fmt::Display for Preset {
 }
 
 /// Canonical package registries for dynamic MCP runtimes (npx, uvx, bunx).
-pub const CANONICAL_PACKAGE_REGISTRY_DOMAINS: &[&str] = &[
-    "registry.npmjs.org",
-    "pypi.org",
-    "files.pythonhosted.org",
-];
+pub const CANONICAL_PACKAGE_REGISTRY_DOMAINS: &[&str] =
+    &["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
 
 /// Auto-allowlist domains by agent name.
 pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
