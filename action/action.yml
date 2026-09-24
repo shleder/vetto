@@ -66,7 +66,7 @@ runs:
             aarch64|arm64) arch="aarch64" ;;
           esac
           ver="${{ inputs.version }}"
-          [ "${ver}" = "latest" ] && ver="0.4.4"
+          [ "${ver}" = "latest" ] && ver="0.4.5"
           ver="${ver#v}"
           bin_url="https://github.com/shleder/vetto/releases/download/v${ver}/vetto-${kernel}-${arch}.tar.gz"
           echo "Fetching native binary from ${bin_url}..."
