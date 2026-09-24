@@ -10,6 +10,8 @@ mod common;
 mod adv_isolation;
 mod cli_auto_enable;
 mod cli_reporting;
+#[cfg(target_os = "linux")]
+mod computer_use_plugins;
 mod doctor_parity;
 mod ecosystem_tier7;
 mod enable_wrapper;

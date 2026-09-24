@@ -3,12 +3,41 @@ name = "swe_agent"
 description = "Compatibility profile for SWE-Agent benchmark runner."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.swe-agent",
+    "$HOME/.swe-agent/plugins",
+    "$HOME/.swe-agent/skills",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.swe-agent",
+    "$HOME/.swe-agent/plugins",
+    "$HOME/.swe-agent/skills",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
 
 [environment]
 pass_through = [
     "SWE_AGENT_*",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]
