@@ -346,6 +346,7 @@ fn test_agent_profiles_unblock_sockets_and_ipc_for_mcp_plugins() {
         );
 
         // 2. Ensure /tmp is in allow_write for temporary socket creation and IPC
+        #[cfg(unix)]
         assert!(
             pol.allow_write
                 .iter()
