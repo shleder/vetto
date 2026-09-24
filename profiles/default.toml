@@ -5,7 +5,13 @@
 [filesystem]
 # Project + temp: read-write. /dev/null is writable so shell redirections
 # like `>/dev/null` keep working (it is a pure sink, never a secret).
-allow_write = ["$PROJECT", "/tmp", "/dev/null"]
+allow_write = [
+  "$PROJECT",
+  "/tmp",
+  "/dev/null",
+  "$HOME/.cache/ms-playwright",
+  "$HOME/.cache/puppeteer",
+]
 
 # System + toolchains + dependency caches: read-only
 allow_read = [
@@ -23,6 +29,17 @@ allow_read = [
   "$HOME/.gradle/caches", "$HOME/.m2/repository",
   "$HOME/.gitconfig",
   "/run/user",
+  "$HOME/.Xauthority",
+  "$XDG_RUNTIME_DIR",
+  "$HOME/.cache/ms-playwright",
+  "$HOME/.cache/puppeteer",
+]
+
+[unix_sockets]
+allow = [
+  "$XDG_RUNTIME_DIR/wayland-*",
+  "$XDG_RUNTIME_DIR/bus",
+  "$XDG_RUNTIME_DIR/pipewire-0",
 ]
 
 # Only these safe session variables reach the agent. Exact names are allowed;

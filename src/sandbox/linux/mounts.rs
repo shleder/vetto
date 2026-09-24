@@ -195,8 +195,12 @@ pub fn isolate_tmp(preserve_paths: &[&Path]) -> VettoResult<()> {
 
     // Restore preserved paths into the new tmpfs
     for (path, fd) in preserved {
-        let metadata = path.metadata();
-        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(true);
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        let is_dir = if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == 0 {
+            (unsafe { stat.assume_init() }.st_mode & libc::S_IFMT) == libc::S_IFDIR
+        } else {
+            true
+        };
         if is_dir {
             let _ = std::fs::create_dir_all(path);
         } else if let Some(parent) = path.parent() {

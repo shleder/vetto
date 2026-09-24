@@ -5,8 +5,15 @@ description = "Compatibility profile for OpenHands (OpenDevin) agent."
 [filesystem]
 allow_read = [
     "$AGENT",
+    "$HOME/.openhands/plugins",
+    "$HOME/.openhands/skills",
+    "$HOME/.config/openhands",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
     "$HOME/.npm",
     "$HOME/.npm/_npx",
     "$HOME/.cache/uv",
@@ -16,8 +23,13 @@ allow_read = [
 ]
 allow_write = [
     "$AGENT",
+    "$HOME/.openhands/plugins",
+    "$HOME/.openhands/skills",
+    "$HOME/.config/openhands",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
     "$HOME/.npm",
     "$HOME/.npm/_npx",
     "$HOME/.cache/uv",
@@ -31,4 +43,13 @@ pass_through = [
     "OPENHANDS_*",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]

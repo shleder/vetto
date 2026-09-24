@@ -6,10 +6,24 @@ description = "Compatibility profile for GitHub Copilot CLI."
 allow_read = [
     "$AGENT",
     "$HOME/.config/github-copilot",
+    "$HOME/.copilot/plugins",
+    "$HOME/.copilot/skills",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
 ]
 allow_write = [
     "$AGENT",
     "$HOME/.config/github-copilot",
+    "$HOME/.copilot/plugins",
+    "$HOME/.copilot/skills",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
 ]
 
 [environment]
@@ -17,4 +31,13 @@ pass_through = [
     "COPILOT_*",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]

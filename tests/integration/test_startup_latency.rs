@@ -211,6 +211,7 @@ fn test_home_glob_resolution_latency_under_5ms() {
     let vars = vetto::policy::glob_resolve::Vars {
         project: &home,
         home: &home,
+        runtime_dir: None,
     };
 
     // Warm-up call

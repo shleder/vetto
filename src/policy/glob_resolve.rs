@@ -12,6 +12,7 @@ const GLOB_CHARS: [char; 3] = ['*', '?', '['];
 pub struct Vars<'a> {
     pub project: &'a Path,
     pub home: &'a Path,
+    pub runtime_dir: Option<&'a Path>,
 }
 
 pub fn substitute(entry: &str, vars: &Vars) -> PathBuf {
@@ -28,6 +29,10 @@ pub fn substitute_with_agent(entry: &str, vars: &Vars, agent: Option<&Path>) -> 
         .replace("$HOME", &vars.home.to_string_lossy());
     let s = match agent {
         Some(agent) => s.replace("$AGENT", &agent.to_string_lossy()),
+        None => s,
+    };
+    let s = match vars.runtime_dir {
+        Some(runtime_dir) => s.replace("$XDG_RUNTIME_DIR", &runtime_dir.to_string_lossy()),
         None => s,
     };
     // Also tolerate a leading ~/ for user comfort.
@@ -138,6 +143,7 @@ mod tests {
         let vars = Vars {
             project: Path::new("/project"),
             home: Path::new("/home/user"),
+            runtime_dir: None,
         };
         assert_eq!(
             substitute_with_agent("$AGENT/cache", &vars, Some(Path::new("/home/user/.codex"))),
@@ -150,10 +156,33 @@ mod tests {
     }
 
     #[test]
+    fn runtime_dir_substitutes_when_present() {
+        let vars = Vars {
+            project: Path::new("/project"),
+            home: Path::new("/home/user"),
+            runtime_dir: Some(Path::new("/run/user/1000")),
+        };
+        assert_eq!(
+            substitute_with_agent("$XDG_RUNTIME_DIR/wayland-0", &vars, None),
+            PathBuf::from("/run/user/1000/wayland-0")
+        );
+        let vars_none = Vars {
+            project: Path::new("/project"),
+            home: Path::new("/home/user"),
+            runtime_dir: None,
+        };
+        assert_eq!(
+            substitute_with_agent("$XDG_RUNTIME_DIR/wayland-0", &vars_none, None),
+            PathBuf::from("$XDG_RUNTIME_DIR/wayland-0")
+        );
+    }
+
+    #[test]
     fn home_or_root_recursive_glob_bypasses_deep_walk() {
         let vars = Vars {
             project: Path::new("/home/user"),
             home: Path::new("/home/user"),
+            runtime_dir: None,
         };
         let paths = resolve_entry_with_agent("$PROJECT/**/*.env", &vars, None);
         assert!(paths.is_empty());
@@ -161,6 +190,7 @@ mod tests {
         let root_vars = Vars {
             project: Path::new("/"),
             home: Path::new("/home/user"),
+            runtime_dir: None,
         };
         let root_paths = resolve_entry_with_agent("$PROJECT/**/*.pem", &root_vars, None);
         assert!(root_paths.is_empty());
@@ -175,6 +205,7 @@ mod tests {
         let vars = Vars {
             project: &tmp,
             home: Path::new("/home/user"),
+            runtime_dir: None,
         };
 
         let paths = resolve_entry_with_agent("**/*.secret", &vars, None);

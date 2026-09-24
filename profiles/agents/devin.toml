@@ -5,8 +5,15 @@ description = "Compatibility profile for Devin CLI environment."
 [filesystem]
 allow_read = [
     "$AGENT",
+    "$HOME/.devin/plugins",
+    "$HOME/.devin/skills",
+    "$HOME/.config/devin",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
     "$HOME/.npm",
     "$HOME/.npm/_npx",
     "$HOME/.cache/uv",
@@ -16,8 +23,13 @@ allow_read = [
 ]
 allow_write = [
     "$AGENT",
+    "$HOME/.devin/plugins",
+    "$HOME/.devin/skills",
+    "$HOME/.config/devin",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
     "$HOME/.npm",
     "$HOME/.npm/_npx",
     "$HOME/.cache/uv",
@@ -29,4 +41,13 @@ allow_write = [
 [environment]
 pass_through = [
     "DEVIN_*",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]

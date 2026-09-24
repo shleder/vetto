@@ -1130,8 +1130,8 @@ unsafe fn child_full(a: FullChildArgs<'_>) -> ! {
         child_fail(err_w, 115, &format!("isolate /dev/shm: {e}"));
     }
     if policy.tmpfs_tmp {
-        if let Err(e) = mounts::mount_tmpfs_tmp() {
-            child_fail(err_w, 115, &format!("mount tmpfs over /tmp: {e}"));
+        if let Err(e) = mounts::isolate_tmp(&[]) {
+            child_fail(err_w, 115, &format!("isolate /tmp tmpfs: {e}"));
         }
     }
     if let Err(e) = mounts::mount_devpts_newinstance() {

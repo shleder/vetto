@@ -3,10 +3,36 @@ name = "custom"
 description = "Generic sandboxed execution profile for user-defined tools."
 
 [filesystem]
-allow_read = ["$PROJECT"]
-allow_write = ["$PROJECT", "/tmp"]
+allow_read = [
+    "$PROJECT",
+    "$HOME/.config/vetto/agents/custom/plugins",
+    "$HOME/.config/vetto/agents/custom/skills",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
+allow_write = [
+    "$PROJECT",
+    "/tmp",
+    "$HOME/.config/vetto/agents/custom/plugins",
+    "$HOME/.config/vetto/agents/custom/skills",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
 
 [environment]
 pass_through = [
     "PATH", "HOME", "USER", "SHELL", "LANG", "LC_*", "TERM",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]

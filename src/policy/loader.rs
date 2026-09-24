@@ -44,6 +44,8 @@ pub const PACKAGE_CACHE_PATHS: &[&str] = &[
     ".cargo/registry",
     ".cargo/git",
     "go/pkg/mod",
+    ".cache/ms-playwright",
+    ".cache/puppeteer",
 ];
 
 pub fn resolve_package_cache_paths(home: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -1149,19 +1151,47 @@ impl LayeredPolicyLoader {
         // -------------------------------------------------------------------
         // Tier 4: Agent Preset
         // -------------------------------------------------------------------
+        let _ = std::fs::create_dir_all(home.join(".cache/ms-playwright"));
+        let _ = std::fs::create_dir_all(home.join(".cache/puppeteer"));
+
         let agent_path = match options.agent.as_deref() {
             Some(agent) => {
                 let p = agent_root(home, agent)?;
                 let _ = std::fs::create_dir_all(&p);
-                if defaults::canonical_agent_name(agent) == Some("opencode") {
-                    let _ = std::fs::create_dir_all(home.join(".local/share/opencode/log"));
-                    let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
-                    let _ = std::fs::create_dir_all(home.join(".config/opencode"));
+                match defaults::canonical_agent_name(agent) {
+                    Some("codex") => {
+                        let _ = std::fs::create_dir_all(home.join(".config/codex"));
+                        let _ = std::fs::create_dir_all(home.join(".codex/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".codex/skills"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/codex"));
+                    }
+                    Some("claude") => {
+                        let _ = std::fs::create_dir_all(home.join(".claude/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".claude/skills"));
+                        let _ = std::fs::create_dir_all(home.join(".config/claude"));
+                        let _ = std::fs::create_dir_all(home.join(".config/claude-code"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/claude"));
+                    }
+                    Some("antigravity") => {
+                        let _ = std::fs::create_dir_all(home.join(".gemini/antigravity/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".gemini/config/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".gemini/config/skills"));
+                    }
+                    Some("opencode") => {
+                        let _ = std::fs::create_dir_all(home.join(".local/share/opencode/log"));
+                        let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
+                        let _ = std::fs::create_dir_all(home.join(".config/opencode"));
+                        let _ = std::fs::create_dir_all(home.join(".config/opencode/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/opencode/plugins"));
+                    }
+                    _ => {}
                 }
                 let _ = std::fs::create_dir_all(home.join(".npm/_npx"));
                 let _ = std::fs::create_dir_all(home.join(".cache/uv"));
                 let _ = std::fs::create_dir_all(home.join(".local/share/uv"));
                 let _ = std::fs::create_dir_all(home.join(".bun/install/cache"));
+                let _ = std::fs::create_dir_all(home.join(".cache/ms-playwright"));
+                let _ = std::fs::create_dir_all(home.join(".cache/puppeteer"));
                 Some(p)
             }
             None => None,
@@ -1592,6 +1622,23 @@ fn apply_overrides(merged: &mut MergedPolicy, overrides: &PolicyOverrides) -> Re
     Ok(())
 }
 
+fn resolve_runtime_dir() -> Option<PathBuf> {
+    if let Some(val) = std::env::var_os("XDG_RUNTIME_DIR") {
+        if !val.is_empty() {
+            return Some(PathBuf::from(val));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let uid = unsafe { libc::getuid() };
+        Some(PathBuf::from(format!("/run/user/{uid}")))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 fn build_policy(
     profile: &str,
     custom: bool,
@@ -1601,7 +1648,12 @@ fn build_policy(
     merged: &MergedPolicy,
     agent: Option<&Path>,
 ) -> Result<Policy> {
-    let vars = Vars { project, home };
+    let runtime_dir = resolve_runtime_dir();
+    let vars = Vars {
+        project,
+        home,
+        runtime_dir: runtime_dir.as_deref(),
+    };
     let mut warnings = Vec::new();
 
     let mut allow_write_resolved = resolve_list(&merged.allow_write, &vars, agent)?;

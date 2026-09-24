@@ -387,3 +387,247 @@ fn test_computer_use_debug_ports_unblocked_by_default() {
         "Python debugpy must remain isolated by default"
     );
 }
+
+#[test]
+fn test_all_agent_profiles_unblock_user_tool_binaries_and_browser_caches() {
+    let temp = TempProject::new("agent-tools-caches");
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::create_dir_all(&home).expect("create home dir");
+
+    let all_agents = [
+        "codex",
+        "claude",
+        "aider",
+        "antigravity",
+        "gemini",
+        "opencode",
+        "cursor",
+        "cline",
+        "windsurf",
+        "goose",
+        "devin",
+        "openhands",
+        "swe_agent",
+        "continue",
+        "copilot",
+        "mentat",
+        "plandex",
+        "crust",
+        "gpt_engineer",
+        "amp",
+        "custom",
+    ];
+
+    let local_bin = home.join(".local/bin");
+    let cargo_bin = home.join(".cargo/bin");
+    let playwright_cache = home.join(".cache/ms-playwright");
+    let puppeteer_cache = home.join(".cache/puppeteer");
+
+    let required_env_vars = [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_TYPE",
+        "XDG_SESSION_DESKTOP",
+        "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "BROWSER",
+        "XDG_RUNTIME_DIR",
+    ];
+
+    for agent in all_agents {
+        let opts = PolicyLoadOptions {
+            agent: Some(agent.to_string()),
+            include_project_policy: false,
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &project, &home, Tier::Full, &opts)
+            .unwrap_or_else(|e| panic!("Failed to load profile for agent {}: {:#}", agent, e));
+
+        // 1. Tool binaries in allow_read
+        assert!(
+            pol.allow_read.contains(&local_bin),
+            "Agent '{}' must have ~/.local/bin in allow_read",
+            agent
+        );
+        assert!(
+            pol.allow_read.contains(&cargo_bin),
+            "Agent '{}' must have ~/.cargo/bin in allow_read",
+            agent
+        );
+
+        // 2. Browser caches in allow_read and allow_write
+        assert!(
+            pol.allow_read.contains(&playwright_cache),
+            "Agent '{}' must have ~/.cache/ms-playwright in allow_read",
+            agent
+        );
+        assert!(
+            pol.allow_write.contains(&playwright_cache),
+            "Agent '{}' must have ~/.cache/ms-playwright in allow_write",
+            agent
+        );
+        assert!(
+            pol.allow_read.contains(&puppeteer_cache),
+            "Agent '{}' must have ~/.cache/puppeteer in allow_read",
+            agent
+        );
+        assert!(
+            pol.allow_write.contains(&puppeteer_cache),
+            "Agent '{}' must have ~/.cache/puppeteer in allow_write",
+            agent
+        );
+
+        // 3. Desktop environment passthrough
+        for env_var in required_env_vars {
+            assert!(
+                pol.environment.pass_through.iter().any(|v| v == env_var),
+                "Agent '{}' must pass through desktop environment variable '{}'",
+                agent,
+                env_var
+            );
+        }
+    }
+}
+
+#[test]
+fn test_agent_plugin_directories_unblocked() {
+    let temp = TempProject::new("agent-plugins-dirs");
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::create_dir_all(&home).expect("create home dir");
+
+    let all_dirs = [
+        home.join(".config/codex"),
+        home.join(".codex/plugins"),
+        home.join(".codex/skills"),
+        home.join(".local/share/codex"),
+        home.join(".claude/plugins"),
+        home.join(".claude/skills"),
+        home.join(".config/claude"),
+        home.join(".config/claude-code"),
+        home.join(".local/share/claude"),
+        home.join(".gemini/antigravity/plugins"),
+        home.join(".gemini/config/plugins"),
+        home.join(".gemini/config/skills"),
+        home.join(".config/opencode/plugins"),
+        home.join(".local/share/opencode/plugins"),
+    ];
+    for dir in &all_dirs {
+        std::fs::create_dir_all(dir).expect("create test plugin dir");
+    }
+
+    // 1. Codex plugins & skills
+    let opts_codex = PolicyLoadOptions {
+        agent: Some("codex".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_codex = load_with_options("default", None, &project, &home, Tier::Full, &opts_codex)
+        .expect("load codex policy");
+    for path in [
+        home.join(".config/codex"),
+        home.join(".codex/plugins"),
+        home.join(".codex/skills"),
+        home.join(".local/share/codex"),
+    ] {
+        assert!(
+            pol_codex.allow_read.contains(&path),
+            "codex must allow read on {:?}",
+            path
+        );
+        assert!(
+            pol_codex.allow_write.contains(&path),
+            "codex must allow write on {:?}",
+            path
+        );
+    }
+
+    // 2. Claude plugins & skills
+    let opts_claude = PolicyLoadOptions {
+        agent: Some("claude".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_claude = load_with_options("default", None, &project, &home, Tier::Full, &opts_claude)
+        .expect("load claude policy");
+    for path in [
+        home.join(".claude/plugins"),
+        home.join(".claude/skills"),
+        home.join(".config/claude"),
+        home.join(".config/claude-code"),
+        home.join(".local/share/claude"),
+    ] {
+        assert!(
+            pol_claude.allow_read.contains(&path),
+            "claude must allow read on {:?}",
+            path
+        );
+        assert!(
+            pol_claude.allow_write.contains(&path),
+            "claude must allow write on {:?}",
+            path
+        );
+    }
+
+    // 3. Antigravity plugins & skills
+    let opts_antigravity = PolicyLoadOptions {
+        agent: Some("antigravity".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_antigravity = load_with_options(
+        "default",
+        None,
+        &project,
+        &home,
+        Tier::Full,
+        &opts_antigravity,
+    )
+    .expect("load antigravity policy");
+    for path in [
+        home.join(".gemini/antigravity/plugins"),
+        home.join(".gemini/config/plugins"),
+        home.join(".gemini/config/skills"),
+    ] {
+        assert!(
+            pol_antigravity.allow_read.contains(&path),
+            "antigravity must allow read on {:?}",
+            path
+        );
+        assert!(
+            pol_antigravity.allow_write.contains(&path),
+            "antigravity must allow write on {:?}",
+            path
+        );
+    }
+
+    // 4. OpenCode plugins
+    let opts_opencode = PolicyLoadOptions {
+        agent: Some("opencode".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+    let pol_opencode =
+        load_with_options("default", None, &project, &home, Tier::Full, &opts_opencode)
+            .expect("load opencode policy");
+    for path in [
+        home.join(".config/opencode/plugins"),
+        home.join(".local/share/opencode/plugins"),
+    ] {
+        assert!(
+            pol_opencode.allow_read.contains(&path),
+            "opencode must allow read on {:?}",
+            path
+        );
+        assert!(
+            pol_opencode.allow_write.contains(&path),
+            "opencode must allow write on {:?}",
+            path
+        );
+    }
+}

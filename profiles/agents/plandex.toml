@@ -3,11 +3,40 @@ name = "plandex"
 description = "Compatibility profile for Plandex AI pair programmer."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "$HOME/.plandex",
+    "$HOME/.plandex/plugins",
+    "$HOME/.plandex/skills",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.plandex",
+    "$HOME/.plandex/plugins",
+    "$HOME/.plandex/skills",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+]
 
 [environment]
 pass_through = [
     "PLANDEX_*",
     "OPENAI_API_KEY",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
 ]
