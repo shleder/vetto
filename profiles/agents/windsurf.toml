@@ -6,19 +6,18 @@ description = "Compatibility profile for Windsurf (Codeium) editor agent."
 allow_read = [
     "$AGENT",
     "$HOME/.codeium",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_write = [
     "$AGENT",
     "$HOME/.codeium",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
 pass_through = [
     "WINDSURF_*",
     "CODEIUM_*",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
 ]

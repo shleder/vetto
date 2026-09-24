@@ -8,11 +8,15 @@ allow_read = [
     "$HOME/.gemini",
     "$AGENT",
     "/run/user",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_write = [
     "$HOME/.config/Antigravity",
     "$HOME/.gemini",
     "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
@@ -29,10 +33,4 @@ pass_through = [
     "XAUTHORITY",
     "DBUS_SESSION_BUS_ADDRESS",
     "BROWSER",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
 ]

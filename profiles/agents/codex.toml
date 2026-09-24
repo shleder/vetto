@@ -3,19 +3,22 @@ name = "codex"
 description = "Hardened compatibility roots for OpenAI Codex CLI."
 
 [filesystem]
-allow_write = ["$AGENT"]
-allow_read = ["$AGENT"]
+allow_write = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
+allow_read = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
 
 [environment]
 pass_through = [
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "CODEX_*",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/app_server.sock",
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
 ]

@@ -26,8 +26,8 @@ const MS_NOEXEC: libc::c_ulong = 0x8;
 /// The FULL tier's private shared-memory surface. The size is deliberately
 /// bounded so an agent cannot turn `/dev/shm` into an unaccounted host-memory
 /// sink, while the tmpfs mount remains useful for ordinary runtime code.
-pub const DEV_SHM_SIZE_BYTES: u64 = 64 * 1024 * 1024;
-pub const DEV_SHM_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
+pub const DEV_SHM_SIZE_BYTES: u64 = 512 * 1024 * 1024;
+pub const DEV_SHM_MOUNT_OPTIONS: &str = "size=536870912,mode=1777";
 pub const TMP_SIZE_BYTES: u64 = 64 * 1024 * 1024;
 pub const TMP_MOUNT_OPTIONS: &str = "size=67108864,mode=1777";
 pub const PROC_HIDE_PID_OPTIONS: &str = "hidepid=2";
@@ -713,8 +713,8 @@ mod tests {
 
     #[test]
     fn dev_shm_plan_is_bounded_and_non_executable() {
-        assert_eq!(DEV_SHM_SIZE_BYTES, 64 * 1024 * 1024);
-        assert!(DEV_SHM_MOUNT_OPTIONS.contains("size=67108864"));
+        assert_eq!(DEV_SHM_SIZE_BYTES, 512 * 1024 * 1024);
+        assert!(DEV_SHM_MOUNT_OPTIONS.contains("size=536870912"));
         assert!(DEV_SHM_MOUNT_OPTIONS.contains("mode=1777"));
         assert_ne!(MS_NOSUID | MS_NODEV | MS_NOEXEC, 0);
     }

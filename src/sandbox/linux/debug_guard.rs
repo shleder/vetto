@@ -27,7 +27,7 @@ pub const DEBUG_AUTH_HEADER: &str = "X-Vetto-Debug-Token";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugPortConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub isolate_devtools: bool,
     #[serde(default = "default_true")]
     pub isolate_node_inspect: bool,
@@ -41,10 +41,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 impl Default for DebugPortConfig {
     fn default() -> Self {
         Self {
-            isolate_devtools: true,
+            isolate_devtools: false,
             isolate_node_inspect: true,
             isolate_debugpy: true,
             allowed_ports: Vec::new(),
@@ -190,15 +194,10 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn default_blocks_sensitive_ports_without_token() {
+    fn default_allows_devtools_and_blocks_process_debuggers() {
         let guard = DebugPortGuard::new(DebugPortConfig::default());
-        assert_eq!(
-            guard.check_access(9222, None),
-            DebugPortVerdict::Blocked {
-                port: 9222,
-                service: "Chrome DevTools",
-            }
-        );
+        assert_eq!(guard.check_access(9222, None), DebugPortVerdict::Allowed);
+        assert_eq!(guard.check_access(9223, None), DebugPortVerdict::Allowed);
         assert_eq!(
             guard.check_access(9229, None),
             DebugPortVerdict::Blocked {
@@ -219,7 +218,11 @@ pub mod tests {
 
     #[test]
     fn valid_session_token_allows_access() {
-        let guard = DebugPortGuard::new(DebugPortConfig::default());
+        let config = DebugPortConfig {
+            isolate_devtools: true,
+            ..DebugPortConfig::default()
+        };
+        let guard = DebugPortGuard::new(config);
         let token = guard.session_token().to_string();
         assert_eq!(
             guard.check_access(9222, Some(&token)),
