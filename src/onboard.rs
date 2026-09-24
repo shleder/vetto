@@ -320,7 +320,7 @@ mod tests {
         let net = layer.network.unwrap();
         assert_eq!(
             net.mode.unwrap(),
-            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
     }
 

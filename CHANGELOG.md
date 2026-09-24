@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.4.4] - 2026-09-24
+### Added
+- **Dynamic MCP Package Manager Runtimes (`npx`, `uvx`, `bunx`)**: Added package manager cache and download paths (`$HOME/.npm`, `$HOME/.npm/_npx`, `$HOME/.cache/uv`, `$HOME/.local/share/uv`, `$HOME/.bun`, `$HOME/.bun/install/cache`, `/tmp`, `$HOME/.cache`) across all 12 agent profiles (`profiles/agents/*.toml`), unlocking frictionless on-demand MCP tool installation and execution.
+- **Pre-emptive Landlock Directory Creation**: Added pre-emptive directory creation in `src/policy/loader.rs` for dynamic package manager cache targets before Landlock ruleset compilation, preventing fail-closed `EACCES` errors on pristine systems.
+- **Canonical Package Registry Network Allowlists**: Added `registry.npmjs.org`, `pypi.org`, and `files.pythonhosted.org` to the default network allowlist in `src/policy/presets.rs` and agent profiles, enabling zero-config on-demand package downloading without manual per-host CLI flags.
+- **VS Code Extension Parity & Packaging**: Unified canonical VS Code extension under `editors/vscode/` with complete manifest metadata, `@vscode/vsce` packaging script, `EventProvider` real-time session event tree view, tasks runner, and interactive audit/diff session commands.
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.4.4 across all 24 package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.3] - 2026-09-24
 ### Added
 - **Computer Use & Headless Chromium CDP (Chrome DevTools Protocol)**: Ports 9222 and 9223 are now opened by default without requiring the `X-Vetto-Debug-Token` header, while preserving strict isolation on language debugger ports (Node.js 9229/9230 and debugpy 5678).

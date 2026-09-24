@@ -56,10 +56,14 @@ impl std::fmt::Display for Preset {
     }
 }
 
+/// Canonical package registries for dynamic MCP runtimes (npx, uvx, bunx).
+pub const CANONICAL_PACKAGE_REGISTRY_DOMAINS: &[&str] =
+    &["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
+
 /// Auto-allowlist domains by agent name.
 pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
     let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
-    match canon {
+    let mut domains: Vec<String> = match canon {
         "claude" => vec![
             "api.anthropic.com".into(),
             "auth.anthropic.com".into(),
@@ -192,7 +196,18 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.anthropic.com".into(),
         ],
         _ => Vec::new(),
+    };
+
+    if !domains.is_empty() {
+        for &reg in CANONICAL_PACKAGE_REGISTRY_DOMAINS {
+            let s = reg.to_string();
+            if !domains.contains(&s) {
+                domains.push(s);
+            }
+        }
     }
+
+    domains
 }
 
 /// Default resource limits for specific agents (e.g. OpenCode SQLite file size limit).
@@ -420,6 +435,9 @@ mod tests {
                 "claude.ai",
                 "statsig.anthropic.com",
                 "platform.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -430,6 +448,9 @@ mod tests {
                 "claude.ai",
                 "statsig.anthropic.com",
                 "platform.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -441,6 +462,9 @@ mod tests {
                 "cdn.oaistatic.com",
                 "chat.openai.com",
                 "platform.openai.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -452,6 +476,9 @@ mod tests {
                 "cdn.oaistatic.com",
                 "chat.openai.com",
                 "platform.openai.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -459,7 +486,10 @@ mod tests {
             vec![
                 "generativelanguage.googleapis.com",
                 "oauth2.googleapis.com",
-                "accounts.google.com"
+                "accounts.google.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -467,7 +497,10 @@ mod tests {
             vec![
                 "generativelanguage.googleapis.com",
                 "oauth2.googleapis.com",
-                "accounts.google.com"
+                "accounts.google.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -487,6 +520,9 @@ mod tests {
                 "aiplatform.googleapis.com",
                 "play.googleapis.com",
                 "googleusercontent.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -506,6 +542,9 @@ mod tests {
                 "aiplatform.googleapis.com",
                 "play.googleapis.com",
                 "googleusercontent.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -516,7 +555,10 @@ mod tests {
                 "openrouter.ai",
                 "api.deepseek.com",
                 "api.groq.com",
-                "generativelanguage.googleapis.com"
+                "generativelanguage.googleapis.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -527,7 +569,10 @@ mod tests {
                 "openrouter.ai",
                 "api.deepseek.com",
                 "api.groq.com",
-                "generativelanguage.googleapis.com"
+                "generativelanguage.googleapis.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         let opencode_list = agent_network_allowlist("opencode");
@@ -538,6 +583,9 @@ mod tests {
             "opencode.ai",
             "api.github.com",
             "github.com",
+            "registry.npmjs.org",
+            "pypi.org",
+            "files.pythonhosted.org",
         ] {
             assert!(
                 opencode_list.iter().any(|d| d == expected),
@@ -551,6 +599,9 @@ mod tests {
                 "api.cursor.sh",
                 "auth.cursor.sh",
                 "repo.cursor.sh",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -560,6 +611,9 @@ mod tests {
                 "api.cursor.sh",
                 "auth.cursor.sh",
                 "repo.cursor.sh",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
@@ -572,59 +626,148 @@ mod tests {
                 "api.cline.bot",
                 "data.cline.bot",
                 "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
             ]
         );
         assert_eq!(
             agent_network_allowlist("copilot"),
-            vec!["api.github.com", "copilot-proxy.githubusercontent.com"]
+            vec![
+                "api.github.com",
+                "copilot-proxy.githubusercontent.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("github-copilot-cli"),
-            vec!["api.github.com", "copilot-proxy.githubusercontent.com"]
+            vec![
+                "api.github.com",
+                "copilot-proxy.githubusercontent.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("windsurf"),
-            vec!["api.codeium.com", "windsurf.codeium.com"]
+            vec![
+                "api.codeium.com",
+                "windsurf.codeium.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("continue"),
-            vec!["api.continue.dev", "api.openai.com", "api.anthropic.com"]
+            vec![
+                "api.continue.dev",
+                "api.openai.com",
+                "api.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("goose"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("openhands"),
-            vec!["api.all-hands.dev", "api.openai.com", "api.anthropic.com"]
+            vec![
+                "api.all-hands.dev",
+                "api.openai.com",
+                "api.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("swe_agent"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("plandex"),
-            vec!["api.plandex.ai", "api.openai.com", "api.anthropic.com"]
+            vec![
+                "api.plandex.ai",
+                "api.openai.com",
+                "api.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("mentat"),
-            vec!["api.mentat.ai", "api.openai.com", "api.anthropic.com"]
+            vec![
+                "api.mentat.ai",
+                "api.openai.com",
+                "api.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("gpt_engineer"),
-            vec!["api.openai.com", "api.anthropic.com", "openrouter.ai"]
+            vec![
+                "api.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("devin"),
-            vec!["api.devin.ai", "cognition.ai", "api.openai.com"]
+            vec![
+                "api.devin.ai",
+                "cognition.ai",
+                "api.openai.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("crust"),
-            vec!["api.crustdata.com", "api.openai.com"]
+            vec![
+                "api.crustdata.com",
+                "api.openai.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert_eq!(
             agent_network_allowlist("amp"),
-            vec!["api.amp.dev", "api.openai.com", "api.anthropic.com"]
+            vec![
+                "api.amp.dev",
+                "api.openai.com",
+                "api.anthropic.com",
+                "registry.npmjs.org",
+                "pypi.org",
+                "files.pythonhosted.org",
+            ]
         );
         assert!(agent_network_allowlist("custom").is_empty());
         assert!(agent_network_allowlist("unknown").is_empty());

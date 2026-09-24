@@ -3,13 +3,21 @@
   "displayName": "Vetto Agent Sandbox",
   "description": "Daemon-less kernel-level sandbox and policy enforcement runtime for AI coding agents",
   "publisher": "shleder",
-  "version": "0.4.3",
+  "version": "0.4.4",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shleder/vetto.git",
+    "directory": "editors/vscode"
+  },
+  "icon": "resources/shield.svg",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
     "Security",
-    "Programming Languages"
+    "Programming Languages",
+    "Other"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -32,8 +40,49 @@
       {
         "command": "vetto.openAudit",
         "title": "Vetto: Open Audit Report"
+      },
+      {
+        "command": "vetto.runTaskSandboxed",
+        "title": "Vetto: Run Task Sandboxed"
+      },
+      {
+        "command": "vetto.doctor",
+        "title": "Vetto: Doctor"
+      },
+      {
+        "command": "vetto.hookInstall",
+        "title": "Vetto: Install Shell & Git Hooks"
+      },
+      {
+        "command": "vetto.rescue",
+        "title": "Vetto: Rescue Agent Session"
+      },
+      {
+        "command": "vetto.refreshEvents",
+        "title": "Vetto: Refresh Events"
+      },
+      {
+        "command": "vetto.openLastReport",
+        "title": "Vetto: Open Last Report"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vetto",
+          "title": "Vetto",
+          "icon": "resources/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "vetto": [
+        {
+          "id": "vetto.events",
+          "name": "Session Events"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "Vetto Sandbox Configuration",
@@ -48,6 +97,26 @@
           "default": "default",
           "description": "Default security profile to use (e.g., default, strict, audit)."
         },
+        "vetto.defaultNet": {
+          "type": "string",
+          "default": "off",
+          "description": "Default network policy (off, strict:domain, allowlist)."
+        },
+        "vetto.tui": {
+          "type": "string",
+          "enum": [
+            "statusline",
+            "full",
+            "none"
+          ],
+          "default": "statusline",
+          "description": "TUI mode for sandboxed sessions."
+        },
+        "vetto.reportFormats": {
+          "type": "string",
+          "default": "html,json",
+          "description": "Comma-separated post-session report formats."
+        },
         "vetto.enableNotifications": {
           "type": "boolean",
           "default": true,
@@ -59,12 +128,13 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
-    "@types/node": "18.x",
-    "typescript": "^5.1.3"
+    "typescript": "^5.7.2",
+    "@vscode/vsce": "^2.24.0"
   }
 }
