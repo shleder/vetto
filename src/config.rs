@@ -979,13 +979,13 @@ mod tests {
             "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com"
         );
 
-        // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,api.github.com,github.com
+        // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1
         let cli = Cli::try_parse_from(["vetto", "--", "opencode"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("opencode"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,api.github.com,github.com"
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1"
         );
 
         // Cursor defaults to api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh
