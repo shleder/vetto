@@ -2157,10 +2157,34 @@ mod tests {
             https_proxy: None,
             no_proxy: None,
         };
-        assert!(request_allowed("127.0.0.1", 9222, None, &default_config, &bus));
-        assert!(request_allowed("127.0.0.1", 9223, None, &default_config, &bus));
-        assert!(request_allowed("localhost", 3000, None, &default_config, &bus));
-        assert!(request_allowed("127.0.0.1", 5173, None, &default_config, &bus));
+        assert!(request_allowed(
+            "127.0.0.1",
+            9222,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            9223,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "localhost",
+            3000,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            5173,
+            None,
+            &default_config,
+            &bus
+        ));
         // Host debuggers still blocked by default
         assert!(!request_allowed("127.0.0.1", 9229, None, &default_config, &bus));
         assert!(!request_allowed("127.0.0.1", 5678, None, &default_config, &bus));

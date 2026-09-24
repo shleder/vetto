@@ -59,7 +59,7 @@ impl std::fmt::Display for Preset {
 /// Auto-allowlist domains by agent name.
 pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
     let canon = crate::policy::defaults::canonical_agent_name(agent).unwrap_or(agent);
-    let mut domains: Vec<String> = match canon {
+    match canon {
         "claude" => vec![
             "api.anthropic.com".into(),
             "auth.anthropic.com".into(),
@@ -192,16 +192,7 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.anthropic.com".into(),
         ],
         _ => Vec::new(),
-    };
-    if !domains.is_empty() {
-        if !domains.contains(&"localhost".to_string()) {
-            domains.push("localhost".into());
-        }
-        if !domains.contains(&"127.0.0.1".to_string()) {
-            domains.push("127.0.0.1".into());
-        }
     }
-    domains
 }
 
 /// Default resource limits for specific agents (e.g. OpenCode SQLite file size limit).

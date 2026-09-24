@@ -347,7 +347,9 @@ fn test_agent_profiles_unblock_sockets_and_ipc_for_mcp_plugins() {
 
         // 2. Ensure /tmp is in allow_write for temporary socket creation and IPC
         assert!(
-            pol.allow_write.iter().any(|p| p == &std::path::PathBuf::from("/tmp")),
+            pol.allow_write
+                .iter()
+                .any(|p| p == &std::path::PathBuf::from("/tmp")),
             "Agent '{}' must have write access to /tmp for sockets and MCP communication",
             agent
         );
@@ -355,35 +357,16 @@ fn test_agent_profiles_unblock_sockets_and_ipc_for_mcp_plugins() {
 }
 
 #[test]
-fn test_agent_network_allowlist_includes_loopback_for_all_agents() {
-    let target_agents = [
-        "codex",
-        "claude",
-        "opencode",
-        "cursor",
-        "cline",
-        "aider",
-        "gemini",
-        "antigravity",
-        "goose",
-        "windsurf",
-        "openhands",
-        "devin",
-    ];
+fn test_loopback_hosts_recognized_for_agent_dev_servers() {
+    assert!(vetto::verify_ng::network::eval_is_loopback_host("localhost"));
+    assert!(vetto::verify_ng::network::eval_is_loopback_host("127.0.0.1"));
+    assert!(vetto::verify_ng::network::eval_is_loopback_host("::1"));
+    assert!(vetto::verify_ng::network::eval_is_loopback_host("[::1]"));
+    assert!(!vetto::verify_ng::network::eval_is_loopback_host("evil.com"));
 
-    for agent in target_agents {
-        let list = vetto::policy::presets::agent_network_allowlist(agent);
-        assert!(
-            list.contains(&"localhost".to_string()),
-            "Agent '{}' network allowlist must contain 'localhost' for local dev servers",
-            agent
-        );
-        assert!(
-            list.contains(&"127.0.0.1".to_string()),
-            "Agent '{}' network allowlist must contain '127.0.0.1' for local dev servers",
-            agent
-        );
-    }
+    let opencode_list = vetto::policy::presets::agent_network_allowlist("opencode");
+    assert!(opencode_list.contains(&"localhost".to_string()));
+    assert!(opencode_list.contains(&"127.0.0.1".to_string()));
 }
 
 #[test]
