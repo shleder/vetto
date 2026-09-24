@@ -6,10 +6,14 @@ description = "Hardened compatibility roots for Claude Code CLI."
 allow_write = [
     "$HOME/.claude.json",
     "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_read = [
     "$HOME/.claude.json",
     "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
@@ -17,10 +21,6 @@ pass_through = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "CLAUDE_*",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
 ]

@@ -301,3 +301,89 @@ fn test_opencode_limits_and_cline_network_presets() {
         "cline must allow otel.cline.bot"
     );
 }
+
+#[test]
+fn test_agent_profiles_unblock_sockets_and_ipc_for_mcp_plugins() {
+    let temp = TempProject::new("agent-sockets-unblocked");
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::create_dir_all(&home).expect("create home dir");
+
+    let agents = [
+        "codex",
+        "claude",
+        "opencode",
+        "cursor",
+        "cline",
+        "aider",
+        "antigravity",
+        "gemini",
+        "goose",
+        "windsurf",
+        "openhands",
+        "devin",
+    ];
+
+    for agent in agents {
+        let opts = PolicyLoadOptions {
+            agent: Some(agent.to_string()),
+            include_project_policy: false,
+            ..Default::default()
+        };
+
+        let pol = load_with_options("default", None, &project, &home, Tier::Full, &opts)
+            .unwrap_or_else(|e| panic!("Failed to load profile for agent {}: {:#}", agent, e));
+
+        // 1. Ensure sockets and IPC files are NOT denied in deny_resolved
+        assert!(
+            !pol.deny_resolved.iter().any(|d| {
+                let s = d.path.to_string_lossy();
+                s.ends_with(".sock") || s.ends_with(".ipc")
+            }),
+            "Agent '{}' must NOT deny .sock or .ipc files in deny_resolved",
+            agent
+        );
+
+        // 2. Ensure /tmp is in allow_write for temporary socket creation and IPC
+        #[cfg(unix)]
+        assert!(
+            pol.allow_write
+                .iter()
+                .any(|p| p == &std::path::PathBuf::from("/tmp")),
+            "Agent '{}' must have write access to /tmp for sockets and MCP communication",
+            agent
+        );
+    }
+}
+
+#[test]
+fn test_loopback_hosts_recognized_for_agent_dev_servers() {
+    use vetto::verify_ng::network::eval_is_loopback_host;
+    assert!(eval_is_loopback_host("localhost"));
+    assert!(eval_is_loopback_host("127.0.0.1"));
+    assert!(eval_is_loopback_host("::1"));
+    assert!(eval_is_loopback_host("[::1]"));
+    assert!(!eval_is_loopback_host("evil.com"));
+
+    let opencode_list = vetto::policy::presets::agent_network_allowlist("opencode");
+    assert!(opencode_list.contains(&"localhost".to_string()));
+    assert!(opencode_list.contains(&"127.0.0.1".to_string()));
+}
+
+#[test]
+fn test_computer_use_debug_ports_unblocked_by_default() {
+    let config = vetto::multi::DebugPortConfig::default();
+    assert!(
+        !config.isolate_devtools,
+        "isolate_devtools must be false by default to enable Computer Use and Chrome CDP"
+    );
+    assert!(
+        config.isolate_node_inspect,
+        "Node.js inspector must remain isolated by default"
+    );
+    assert!(
+        config.isolate_debugpy,
+        "Python debugpy must remain isolated by default"
+    );
+}

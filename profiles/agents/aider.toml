@@ -7,10 +7,14 @@ allow_read = [
     "$HOME/.aider.conf.yml",
     "$AGENT",
     "$PROJECT/.aider.chat.history.md",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_write = [
     "$AGENT",
     "$PROJECT/.aider.chat.history.md",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
@@ -25,10 +29,4 @@ pass_through = [
     "GEMINI_API_KEY",
     "DEEPSEEK_API_KEY",
     "GROQ_API_KEY",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
 ]

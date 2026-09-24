@@ -7,10 +7,14 @@ allow_read = [
     "$AGENT",
     "$HOME/.config/Cursor",
     "/run/user",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_write = [
     "$AGENT",
     "$HOME/.config/Cursor",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
@@ -24,10 +28,4 @@ pass_through = [
     "XAUTHORITY",
     "DBUS_SESSION_BUS_ADDRESS",
     "BROWSER",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
 ]

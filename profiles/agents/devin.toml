@@ -3,15 +3,18 @@ name = "devin"
 description = "Compatibility profile for Devin CLI environment."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
+allow_write = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
 
 [environment]
 pass_through = [
     "DEVIN_*",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
 ]

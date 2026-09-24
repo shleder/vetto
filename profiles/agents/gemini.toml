@@ -3,18 +3,20 @@ name = "gemini"
 description = "Safe compatibility roots for Gemini CLI."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
+allow_write = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
 
 [environment]
 pass_through = [
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "GEMINI_*",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
 ]

@@ -686,7 +686,7 @@ fn request_allowed(
         }
     }
 
-    let mut is_explicitly_allowed = false;
+    let mut is_explicitly_allowed = is_loopback_host(host);
 
     // If host is an IP that matches an allowed CIDR
     let clean_ip = host.trim_start_matches('[').trim_end_matches(']');
@@ -2094,7 +2094,10 @@ mod tests {
     #[test]
     fn loopback_debug_guard_integration() {
         let bus = crate::events::bus::EventBus::new();
-        let guard = DebugPortGuard::new(DebugPortConfig::default());
+        let guard = DebugPortGuard::new(DebugPortConfig {
+            isolate_devtools: true,
+            ..DebugPortConfig::default()
+        });
         let config = BrokerConfig {
             policy: BrokerPolicy::Allowlist(vec!["127.0.0.1".into()]),
             debug_guard: Some(guard.clone()),
@@ -2108,7 +2111,7 @@ mod tests {
             no_proxy: None,
         };
 
-        // Blocked without token
+        // Blocked without token when isolate_devtools is true
         assert!(!request_allowed("127.0.0.1", 9222, None, &config, &bus));
         assert!(!request_allowed("127.0.0.1", 9229, None, &config, &bus));
         assert!(!request_allowed("127.0.0.1", 5678, None, &config, &bus));
@@ -2139,6 +2142,64 @@ mod tests {
 
         // Allowed on other non-debug port
         assert!(request_allowed("127.0.0.1", 8080, None, &config, &bus));
+
+        // With default DebugPortConfig: Computer Use (port 9222/9223) and localhost dev servers are allowed
+        let default_guard = DebugPortGuard::new(DebugPortConfig::default());
+        let default_config = BrokerConfig {
+            policy: BrokerPolicy::Allowlist(Vec::new()),
+            debug_guard: Some(default_guard),
+            mode: RelayMode::NetNs,
+            allow_cidr: Vec::new(),
+            quotas: std::collections::HashMap::new(),
+            policy_path: None,
+            block_doh: false,
+            http_proxy: None,
+            https_proxy: None,
+            no_proxy: None,
+        };
+        assert!(request_allowed(
+            "127.0.0.1",
+            9222,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            9223,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "localhost",
+            3000,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(request_allowed(
+            "127.0.0.1",
+            5173,
+            None,
+            &default_config,
+            &bus
+        ));
+        // Host debuggers still blocked by default
+        assert!(!request_allowed(
+            "127.0.0.1",
+            9229,
+            None,
+            &default_config,
+            &bus
+        ));
+        assert!(!request_allowed(
+            "127.0.0.1",
+            5678,
+            None,
+            &default_config,
+            &bus
+        ));
     }
 
     #[test]

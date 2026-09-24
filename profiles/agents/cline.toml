@@ -29,11 +29,6 @@ pass_through = [
     "OPENROUTER_API_KEY",
 ]
 
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-]
-
 [network]
 allow = [
     "api.anthropic.com",

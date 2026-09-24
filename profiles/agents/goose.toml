@@ -6,10 +6,14 @@ description = "Compatibility profile for Block Goose agent."
 allow_read = [
     "$AGENT",
     "$HOME/.config/goose",
+    "/tmp",
+    "$HOME/.cache",
 ]
 allow_write = [
     "$AGENT",
     "$HOME/.config/goose",
+    "/tmp",
+    "$HOME/.cache",
 ]
 
 [environment]
@@ -17,9 +21,4 @@ pass_through = [
     "GOOSE_*",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
 ]

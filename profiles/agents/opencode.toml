@@ -50,12 +50,6 @@ pass_through = [
     "BUN_*",
 ]
 
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
-    "$AGENT/*.ipc",
-]
-
 [limits]
 file_size_bytes = 2147483648
 

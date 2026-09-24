@@ -40,7 +40,7 @@ const MAX_ARG_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugPortConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub isolate_devtools: bool,
     #[serde(default = "default_true")]
     pub isolate_node_inspect: bool,
@@ -54,10 +54,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 impl Default for DebugPortConfig {
     fn default() -> Self {
         Self {
-            isolate_devtools: true,
+            isolate_devtools: false,
             isolate_node_inspect: true,
             isolate_debugpy: true,
             allowed_ports: Vec::new(),

@@ -3,17 +3,20 @@ name = "openhands"
 description = "Compatibility profile for OpenHands (OpenDevin) agent."
 
 [filesystem]
-allow_read = ["$AGENT"]
-allow_write = ["$AGENT"]
+allow_read = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
+allow_write = [
+    "$AGENT",
+    "/tmp",
+    "$HOME/.cache",
+]
 
 [environment]
 pass_through = [
     "OPENHANDS_*",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
-]
-
-[display_only_deny]
-paths = [
-    "$AGENT/*.sock",
 ]
