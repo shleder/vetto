@@ -39,7 +39,7 @@ echo "  1. Create repository 'homebrew-vetto' on GitHub under your account (shle
 echo "  2. cd ${TAP_DIR}"
 echo "  3. git init"
 echo "  4. git add ."
-echo "  5. git commit -m 'feat: initial vetto formula v0.4.2'"
+echo "  5. git commit -m 'feat: initial vetto formula v0.4.3'"
 echo "  6. git remote add origin ${REPO_URL}"
 echo "  7. git push -u origin main"
 echo
