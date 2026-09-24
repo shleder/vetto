@@ -73,6 +73,7 @@ fi
     let out = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "claude",
             "--",
@@ -137,6 +138,7 @@ fn test_agent_plugins_discovery() {
     let out_claude = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "claude",
             "--",
@@ -164,6 +166,7 @@ fn test_agent_plugins_discovery() {
     let out_codex = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "codex",
             "--",
@@ -191,6 +194,7 @@ fn test_agent_plugins_discovery() {
     let out_cli = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "claude",
             "--",
@@ -218,6 +222,7 @@ fn test_agent_plugins_discovery() {
     let out_cli_codex = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "codex",
             "--",
@@ -288,6 +293,7 @@ echo "=== ENV CONTENT END ==="
     let out = Command::new(vetto_bin())
         .args([
             "--tui=none",
+            "--net=off",
             "--agent",
             "claude",
             "--",

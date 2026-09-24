@@ -501,6 +501,26 @@ fn test_agent_plugin_directories_unblocked() {
     std::fs::create_dir_all(&project).expect("create project dir");
     std::fs::create_dir_all(&home).expect("create home dir");
 
+    let all_dirs = [
+        home.join(".config/codex"),
+        home.join(".codex/plugins"),
+        home.join(".codex/skills"),
+        home.join(".local/share/codex"),
+        home.join(".claude/plugins"),
+        home.join(".claude/skills"),
+        home.join(".config/claude"),
+        home.join(".config/claude-code"),
+        home.join(".local/share/claude"),
+        home.join(".gemini/antigravity/plugins"),
+        home.join(".gemini/config/plugins"),
+        home.join(".gemini/config/skills"),
+        home.join(".config/opencode/plugins"),
+        home.join(".local/share/opencode/plugins"),
+    ];
+    for dir in &all_dirs {
+        std::fs::create_dir_all(dir).expect("create test plugin dir");
+    }
+
     // 1. Codex plugins & skills
     let opts_codex = PolicyLoadOptions {
         agent: Some("codex".to_string()),

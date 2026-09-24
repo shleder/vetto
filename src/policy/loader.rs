@@ -1158,10 +1158,33 @@ impl LayeredPolicyLoader {
             Some(agent) => {
                 let p = agent_root(home, agent)?;
                 let _ = std::fs::create_dir_all(&p);
-                if defaults::canonical_agent_name(agent) == Some("opencode") {
-                    let _ = std::fs::create_dir_all(home.join(".local/share/opencode/log"));
-                    let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
-                    let _ = std::fs::create_dir_all(home.join(".config/opencode"));
+                match defaults::canonical_agent_name(agent) {
+                    Some("codex") => {
+                        let _ = std::fs::create_dir_all(home.join(".config/codex"));
+                        let _ = std::fs::create_dir_all(home.join(".codex/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".codex/skills"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/codex"));
+                    }
+                    Some("claude") => {
+                        let _ = std::fs::create_dir_all(home.join(".claude/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".claude/skills"));
+                        let _ = std::fs::create_dir_all(home.join(".config/claude"));
+                        let _ = std::fs::create_dir_all(home.join(".config/claude-code"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/claude"));
+                    }
+                    Some("antigravity") => {
+                        let _ = std::fs::create_dir_all(home.join(".gemini/antigravity/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".gemini/config/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".gemini/config/skills"));
+                    }
+                    Some("opencode") => {
+                        let _ = std::fs::create_dir_all(home.join(".local/share/opencode/log"));
+                        let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
+                        let _ = std::fs::create_dir_all(home.join(".config/opencode"));
+                        let _ = std::fs::create_dir_all(home.join(".config/opencode/plugins"));
+                        let _ = std::fs::create_dir_all(home.join(".local/share/opencode/plugins"));
+                    }
+                    _ => {}
                 }
                 let _ = std::fs::create_dir_all(home.join(".npm/_npx"));
                 let _ = std::fs::create_dir_all(home.join(".cache/uv"));
