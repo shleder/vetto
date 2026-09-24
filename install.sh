@@ -53,7 +53,7 @@ Usage:
 Options:
   -d, --dir DIR          Install binary into custom directory DIR
   -s, --system           Install system-wide to /usr/local/bin
-  -v, --version VERSION  Install specific Vetto version (e.g. 0.4.1)
+  -v, --version VERSION  Install specific Vetto version (e.g. 0.4.2)
   -h, --help             Show this help message
 
 Environment Variables:
