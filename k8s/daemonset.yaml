@@ -18,7 +18,7 @@ spec:
       hostNetwork: false
       containers:
         - name: vetto-server
-          image: ghcr.io/shleder/vetto:0.4.4
+          image: ghcr.io/shleder/vetto:0.4.5
           command: ["vetto", "daemon", "start", "--socket", "/var/run/vetto/vetto.sock", "--foreground"]
           securityContext:
             allowPrivilegeEscalation: false

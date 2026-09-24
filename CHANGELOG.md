@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.4.5] - 2026-09-24
+### Added
+- **Linux Computer Use & Desktop IPC (Display Sockets)**: Automatic expansion and resolution of `$XDG_RUNTIME_DIR` in `src/policy/glob_resolve.rs` and `src/policy/loader.rs` with Linux fallback to `/run/user/<uid>`. Preserved `/tmp/.X11-unix` and display server sockets through tmpfs isolation overlays (`src/sandbox/linux/mounts.rs`), and added Playwright (`~/.cache/ms-playwright`) and Puppeteer (`~/.cache/puppeteer`) browser cache paths to `PACKAGE_CACHE_PATHS`.
+- **Custom Agent Plugins, Skills & Extensions Unblock**: Expanded all 21 agent compatibility profiles (`profiles/agents/*.toml`) with read and write access to agent plugin and extension directories (`~/.codex/plugins`, `~/.claude/plugins`, `~/.gemini/antigravity/plugins`, `~/.config/opencode/plugins`), user CLI tool binaries (`~/.local/bin`, `~/.cargo/bin`), and desktop environment variables (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `XAUTHORITY`).
+- **Comprehensive Computer Use & Plugin Integration Test Suite**: Implemented `tests/integration/computer_use_plugins.rs` containing unmocked integration tests verifying display socket binding, custom plugin execution across agents, and negative regression testing proving INV-08 secret isolation (`~/.ssh`, `~/.aws`, `.env`) in `mode=0000` tmpfs overlays.
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.4.5 across all 24 package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.4] - 2026-09-24
 ### Added
 - **Dynamic MCP Package Manager Runtimes (`npx`, `uvx`, `bunx`)**: Added package manager cache and download paths (`$HOME/.npm`, `$HOME/.npm/_npx`, `$HOME/.cache/uv`, `$HOME/.local/share/uv`, `$HOME/.bun`, `$HOME/.bun/install/cache`, `/tmp`, `$HOME/.cache`) across all 12 agent profiles (`profiles/agents/*.toml`), unlocking frictionless on-demand MCP tool installation and execution.

@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions"><img src="https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://github.com/shleder/vetto/releases/tag/v0.4.4"><img src="https://img.shields.io/badge/version-0.4.4-blue?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/shleder/vetto/releases/tag/v0.4.5"><img src="https://img.shields.io/badge/version-0.4.5-blue?style=flat-square" alt="Version"></a>
   <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square" alt="npm"></a>
   <a href="https://crates.io/crates/vetto"><img src="https://img.shields.io/crates/v/vetto?logo=rust&style=flat-square&cacheSeconds=60" alt="crates.io"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License"></a>
