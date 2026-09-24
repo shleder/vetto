@@ -152,6 +152,7 @@ def main():
     update_file(os.path.join(REPO_ROOT, "assets", "demo.svg"), rf'\[installed v{re.escape(current)}\]', f'[installed v{target}]')
     update_file(os.path.join(REPO_ROOT, "vscode", "package.json"), r'"version":\s*"[^"]+"', f'"version": "{target}"')
     update_file(os.path.join(REPO_ROOT, "plugins", "vscode", "package.json"), r'"version":\s*"[^"]+"', f'"version": "{target}"')
+    update_file(os.path.join(REPO_ROOT, "editors", "vscode", "package.json"), r'"version":\s*"[^"]+"', f'"version": "{target}"')
     update_file(os.path.join(REPO_ROOT, "flake.nix"), r'version\s*=\s*"[^"]+"', f'version = "{target}"')
     update_file(os.path.join(REPO_ROOT, "scripts", "gen-sbom.sh"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"')
     update_file(os.path.join(REPO_ROOT, "npm", "README.md"), rf'Prebuilt targets in `{re.escape(current)}`:', f'Prebuilt targets in `{target}`:')

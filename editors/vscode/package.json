@@ -3,7 +3,7 @@
   "displayName": "Vetto Agent Sandbox",
   "description": "Daemon-less kernel-level sandbox and policy enforcement runtime for AI coding agents",
   "publisher": "shleder",
-  "version": "0.1.0",
+  "version": "0.4.3",
   "engines": {
     "vscode": "^1.80.0"
   },

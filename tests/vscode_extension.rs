@@ -21,7 +21,7 @@ fn test_vscode_package_json_valid() {
         serde_json::from_str(&content).expect("failed to parse package.json");
 
     assert_eq!(parsed["name"], "vetto");
-    assert_eq!(parsed["version"], "0.1.0");
+    assert_eq!(parsed["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(parsed["publisher"], "shleder");
 
     let commands = parsed["contributes"]["commands"]
