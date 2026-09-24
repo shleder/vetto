@@ -250,15 +250,27 @@ fn test_opencode_limits_and_cline_network_presets() {
         "opencode must allow aihubmix.com"
     );
     assert!(
-        pol_opencode.environment.iter().any(|v| v == "AIHUBMIX_API_KEY"),
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "AIHUBMIX_API_KEY"),
         "opencode must pass through AIHUBMIX_API_KEY"
     );
     assert!(
-        pol_opencode.environment.iter().any(|v| v == "BUN_*"),
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "BUN_*"),
         "opencode must pass through BUN_*"
     );
     assert!(
-        pol_opencode.environment.iter().any(|v| v == "XDG_DATA_HOME"),
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "XDG_DATA_HOME"),
         "opencode must pass through XDG_DATA_HOME"
     );
 
