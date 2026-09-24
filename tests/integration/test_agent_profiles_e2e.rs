@@ -226,6 +226,15 @@ fn test_opencode_limits_and_cline_network_presets() {
         pol_opencode.allow_read.contains(&opencode_config),
         "opencode must have read access to ~/.config/opencode"
     );
+    let opencode_state = home.join(".local/state/opencode");
+    assert!(
+        pol_opencode.allow_write.contains(&opencode_state),
+        "opencode must have write access to ~/.local/state/opencode"
+    );
+    assert!(
+        pol_opencode.allow_read.contains(&opencode_state),
+        "opencode must have read access to ~/.local/state/opencode"
+    );
     let auth_json = opencode_share.join("auth.json");
     assert!(
         !pol_opencode
@@ -233,6 +242,36 @@ fn test_opencode_limits_and_cline_network_presets() {
             .iter()
             .any(|d| d.path == auth_json),
         "opencode auth.json must not be denied"
+    );
+    assert!(
+        pol_opencode
+            .network_allow
+            .contains(&"aihubmix.com".to_string()),
+        "opencode must allow aihubmix.com"
+    );
+    assert!(
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "AIHUBMIX_API_KEY"),
+        "opencode must pass through AIHUBMIX_API_KEY"
+    );
+    assert!(
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "BUN_*"),
+        "opencode must pass through BUN_*"
+    );
+    assert!(
+        pol_opencode
+            .environment
+            .pass_through
+            .iter()
+            .any(|v| v == "XDG_DATA_HOME"),
+        "opencode must pass through XDG_DATA_HOME"
     );
 
     // 2. Cline: default allowlist includes api.cline.bot and data.cline.bot

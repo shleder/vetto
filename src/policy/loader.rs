@@ -1154,7 +1154,9 @@ impl LayeredPolicyLoader {
                 let p = agent_root(home, agent)?;
                 let _ = std::fs::create_dir_all(&p);
                 if defaults::canonical_agent_name(agent) == Some("opencode") {
-                    let _ = std::fs::create_dir_all(home.join(".local/share/opencode"));
+                    let _ = std::fs::create_dir_all(home.join(".local/share/opencode/log"));
+                    let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
+                    let _ = std::fs::create_dir_all(home.join(".config/opencode"));
                 }
                 Some(p)
             }
