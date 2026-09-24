@@ -301,6 +301,9 @@ pub fn discover_opencode_providers_from_paths(
         "OPENROUTER_BASE_URL",
         "OPENCODE_BASE_URL",
         "AIHUBMIX_BASE_URL",
+        "AGENTROUTER_BASE_URL",
+        "OPEASI_BASE_URL",
+        "NVIDIA_BASE_URL",
     ];
     for var in env_vars {
         if let Ok(val) = std::env::var(var) {
