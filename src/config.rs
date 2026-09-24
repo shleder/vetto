@@ -925,76 +925,76 @@ mod tests {
 
     #[test]
     fn agent_preset_defaults_network_to_allowlist_when_net_omitted() {
-        // Claude defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com
+        // Claude defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "claude", "-p", "hello"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Claude-code alias defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com
+        // Claude-code alias defaults to api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "claude-code"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com
+        // Codex defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "codex", "exec"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com"
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Codex-cli alias defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com
+        // Codex-cli alias defaults to api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "codex-cli"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("codex"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com"
+            "allowlist:api.openai.com,chatgpt.com,auth.openai.com,cdn.oaistatic.com,chat.openai.com,platform.openai.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Gemini defaults to generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com
+        // Gemini defaults to generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "gemini"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("gemini"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com"
+            "allowlist:generativelanguage.googleapis.com,oauth2.googleapis.com,accounts.google.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Aider defaults to api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com
+        // Aider defaults to api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "aider"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("aider"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com"
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,api.deepseek.com,api.groq.com,generativelanguage.googleapis.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1
+        // OpenCode defaults to api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "opencode"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("opencode"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1"
+            "allowlist:api.openai.com,api.anthropic.com,openrouter.ai,opencode.ai,integrate.api.nvidia.com,agentrouter.org,aihubmix.com,api.github.com,github.com,localhost,127.0.0.1,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
-        // Cursor defaults to api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh
+        // Cursor defaults to api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh,registry.npmjs.org,pypi.org,files.pythonhosted.org
         let cli = Cli::try_parse_from(["vetto", "--", "cursor-server"]).unwrap();
         let cfg = RunConfig::from_cli(&cli).unwrap();
         assert_eq!(cfg.agent_preset.as_deref(), Some("cursor"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh"
+            "allowlist:api2.cursor.sh,api.cursor.sh,auth.cursor.sh,repo.cursor.sh,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
         // Explicit --agent flag with alias also defaults to agent allowlist
@@ -1011,7 +1011,7 @@ mod tests {
         assert_eq!(cfg.agent_preset.as_deref(), Some("claude"));
         assert_eq!(
             cfg.net.label(),
-            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com"
+            "allowlist:api.anthropic.com,auth.anthropic.com,claude.ai,statsig.anthropic.com,platform.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org"
         );
 
         // Non-agent commands default to NetMode::Off
