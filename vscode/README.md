@@ -1,5 +1,7 @@
 # Vetto VS Code Extension
 
+> **Note**: Active development and official packaging have unified into [`editors/vscode`](../editors/vscode).
+
 Run any VS Code workspace task or terminal command inside the kernel-enforced **Vetto Sandbox** with a single keystroke.
 
 ---
@@ -36,9 +38,9 @@ npm install -g @vscode/vsce
 cd vscode
 npx @vscode/vsce package
 ```
-This produces `vetto-vscode-0.4.3.vsix`.
+This produces `vetto-vscode-0.4.4.vsix`.
 
 ### 3. Install in VS Code
 ```bash
-code --install-extension vetto-vscode-0.4.3.vsix
+code --install-extension vetto-vscode-0.4.4.vsix
 ```

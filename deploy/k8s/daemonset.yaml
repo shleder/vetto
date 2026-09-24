@@ -21,7 +21,7 @@ spec:
       hostNetwork: true
       containers:
         - name: vetto-runtime
-          image: ghcr.io/shleder/vetto:0.4.3
+          image: ghcr.io/shleder/vetto:0.4.4
           imagePullPolicy: IfNotPresent
           command: ["vetto", "daemon"]
           securityContext:

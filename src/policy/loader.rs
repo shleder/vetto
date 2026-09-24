@@ -1158,6 +1158,10 @@ impl LayeredPolicyLoader {
                     let _ = std::fs::create_dir_all(home.join(".local/state/opencode"));
                     let _ = std::fs::create_dir_all(home.join(".config/opencode"));
                 }
+                let _ = std::fs::create_dir_all(home.join(".npm/_npx"));
+                let _ = std::fs::create_dir_all(home.join(".cache/uv"));
+                let _ = std::fs::create_dir_all(home.join(".local/share/uv"));
+                let _ = std::fs::create_dir_all(home.join(".bun/install/cache"));
                 Some(p)
             }
             None => None,

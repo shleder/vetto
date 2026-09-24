@@ -1,6 +1,6 @@
 # Threat model
 
-> Статус модели угроз (0.4.3, факт): Enforced across Tier 1 (Linux/WSL2), Tier 2 (macOS Seatbelt), and Tier 3 (Windows AppContainer/Job Objects).
+> Статус модели угроз (0.4.4, факт): Enforced across Tier 1 (Linux/WSL2), Tier 2 (macOS Seatbelt), and Tier 3 (Windows AppContainer/Job Objects).
 
 ## Assets
 - Developer secrets: `~/.ssh`, `~/.aws`, `~/.gnupg`, credential files,

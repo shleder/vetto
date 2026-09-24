@@ -1,5 +1,7 @@
 # vetto for VS Code
 
+> **Note**: Active development and official packaging have unified into [`editors/vscode`](../../editors/vscode).
+
 This extension launches an agent in VS Code's integrated terminal through the
 locally installed `vetto` binary. Session JSONL and reports are stored in the
 extension's private global-storage directory rather than the writable project

@@ -9,7 +9,12 @@ allow_read = [
     "$HOME/.config/Code",
     "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
     "$HOME/.bun",
+    "$HOME/.bun/install/cache",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
     "/",
 ]
 allow_write = [
@@ -18,7 +23,12 @@ allow_write = [
     "$HOME/.config/Code",
     "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev",
     "$HOME/.bun",
+    "$HOME/.bun/install/cache",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
     "/tmp",
 ]
 
@@ -38,4 +48,6 @@ allow = [
     "api.cline.bot",
     "data.cline.bot",
     "registry.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org",
 ]

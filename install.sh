@@ -11,7 +11,7 @@ GITHUB_REPO="shleder/vetto"
 # Last version verified published on ALL channels (GitHub tag + npm + crates.io).
 # Bump only after the release-train publish + registry verification for the new
 # version succeed (see pages/ops/release-process.md). Verified 2026-09-06.
-DEFAULT_FALLBACK_VERSION="0.4.3"
+DEFAULT_FALLBACK_VERSION="0.4.4"
 
 # Initialize colors if stdout is connected to a terminal
 if [ -t 1 ]; then
@@ -53,7 +53,7 @@ Usage:
 Options:
   -d, --dir DIR          Install binary into custom directory DIR
   -s, --system           Install system-wide to /usr/local/bin
-  -v, --version VERSION  Install specific Vetto version (e.g. 0.4.3)
+  -v, --version VERSION  Install specific Vetto version (e.g. 0.4.4)
   -h, --help             Show this help message
 
 Environment Variables:

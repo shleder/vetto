@@ -9,12 +9,24 @@ allow_read = [
     "/run/user",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
+    "$HOME/.bun",
+    "$HOME/.bun/install/cache",
 ]
 allow_write = [
     "$AGENT",
     "$HOME/.config/Cursor",
     "/tmp",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
+    "$HOME/.bun",
+    "$HOME/.bun/install/cache",
 ]
 
 [environment]

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: agent
-          image: ghcr.io/shleder/vetto-agent:0.4.3
+          image: ghcr.io/shleder/vetto-agent:0.4.4
           command: ["vetto", "daemon", "start", "--port", "54321", "--foreground"]
           ports:
             - containerPort: 54321

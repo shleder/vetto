@@ -10,7 +10,12 @@ allow_read = [
     "$HOME/.local/state/opencode",
     "$HOME/.opencode",
     "$HOME/.bun",
+    "$HOME/.bun/install/cache",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
     "/",
 ]
 allow_write = [
@@ -20,7 +25,12 @@ allow_write = [
     "$HOME/.local/state/opencode",
     "$HOME/.opencode",
     "$HOME/.bun",
+    "$HOME/.bun/install/cache",
     "$HOME/.cache",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
     "/tmp",
 ]
 
@@ -66,4 +76,7 @@ allow = [
     "github.com",
     "localhost",
     "127.0.0.1",
+    "registry.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org",
 ]
