@@ -1,3 +1,10 @@
+vetto (0.4.2-1) unstable; urgency=medium
+
+  * Antigravity Google CDN allowlist, OpenCode full filesystem & dynamic
+    custom provider support, safe loopback relay.
+
+ -- vetto contributors <noreply@github.com>  Wed, 23 Sep 2026 21:00:00 +0300
+
 vetto (0.4.1-1) unstable; urgency=medium
 
   * OpenCode 2 GiB SQLite ceiling expansion, Cline network allowlist,

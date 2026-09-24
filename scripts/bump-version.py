@@ -91,6 +91,40 @@ def update_versions_md(new_ver, next_ver, desc="Automated bump"):
             f.write(new_content)
         print("Updated VERSIONS.md")
 
+def update_debian_changelog(new_ver, desc="Bug fixes and improvements"):
+    debian_changelog = os.path.join(REPO_ROOT, "debian", "changelog")
+    if not os.path.exists(debian_changelog):
+        return
+    with open(debian_changelog, "r") as f:
+        content = f.read()
+    date_str = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime())
+    entry = f"""vetto ({new_ver}-1) unstable; urgency=medium
+
+  * {desc}.
+
+ -- vetto contributors <noreply@github.com>  {date_str}
+
+"""
+    with open(debian_changelog, "w") as f:
+        f.write(entry + content)
+    print("Updated debian/changelog")
+
+def update_rpm_spec_changelog(new_ver, desc="Bug fixes and improvements"):
+    if not os.path.exists(SPEC):
+        return
+    with open(SPEC, "r") as f:
+        content = f.read()
+    date_str = time.strftime("%a %b %d %Y", time.gmtime())
+    entry = f"""* {date_str} vetto contributors - {new_ver}-1
+- {desc}.
+
+"""
+    if "%changelog\n" in content:
+        new_content = content.replace("%changelog\n", f"%changelog\n{entry}", 1)
+        with open(SPEC, "w") as f:
+            f.write(new_content)
+        print("Updated packaging/rpm/vetto.spec changelog")
+
 def main():
     current = get_current_version()
     if len(sys.argv) > 1:
@@ -128,7 +162,50 @@ def main():
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'/releases/tag/v{re.escape(current)}', f'/releases/tag/v{target}')
     update_file(os.path.join(REPO_ROOT, "docs", "README.ru.md"), rf'badge/version-{re.escape(current)}-blue', f'badge/version-{target}-blue')
     
-    desc = "Antigravity Google CDN allowlist, OpenCode full filesystem & dynamic custom provider support, safe loopback relay"
+    # GitHub Actions
+    update_file(os.path.join(REPO_ROOT, "action.yml"), r'\(e\.g\. "' + re.escape(current) + r'" or "latest"\)', f'(e.g. "{target}" or "latest")')
+    update_file(os.path.join(REPO_ROOT, "action.yml"), rf'RESOLVED_TAG="v{re.escape(current)}"', f'RESOLVED_TAG="v{target}"')
+    update_file(os.path.join(REPO_ROOT, "action", "action.yml"), r'\[ "\${ver}" = "latest" \] && ver="' + re.escape(current) + '"', f'[ "${{ver}}" = "latest" ] && ver="{target}"')
+    update_file(os.path.join(REPO_ROOT, "action", "README.md"), rf'shleder/vetto/action@v{re.escape(current)}', f'shleder/vetto/action@v{target}', count=0)
+
+    # Kubernetes manifests
+    update_file(os.path.join(REPO_ROOT, "k8s", "daemonset.yaml"), rf'image:\s*ghcr\.io/shleder/vetto:{re.escape(current)}', f'image: ghcr.io/shleder/vetto:{target}')
+    update_file(os.path.join(REPO_ROOT, "k8s", "vetto-sidecar.yaml"), rf'image:\s*ghcr\.io/shleder/vetto:{re.escape(current)}', f'image: ghcr.io/shleder/vetto:{target}')
+    update_file(os.path.join(REPO_ROOT, "k8s", "deployment.yaml"), rf'image:\s*ghcr\.io/shleder/vetto-agent:{re.escape(current)}', f'image: ghcr.io/shleder/vetto-agent:{target}')
+
+    # Packaging
+    update_file(os.path.join(REPO_ROOT, "packaging", "macos", "build_pkg.sh"), r'VERSION="\${1:-' + re.escape(current) + r'}"', f'VERSION="${{1:-{target}}}"')
+    update_file(os.path.join(REPO_ROOT, "packaging", "macos", "README.md"), rf'build_pkg\.sh {re.escape(current)}', f'build_pkg.sh {target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "macos", "README.md"), rf'vetto-{re.escape(current)}-', f'vetto-{target}-', count=0)
+    update_file(os.path.join(REPO_ROOT, "packaging", "homebrew", "create-tap.sh"), rf'formula v{re.escape(current)}', f'formula v{target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "homebrew", "README.md"), rf'release v{re.escape(current)}', f'release v{target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "aur", "vetto-git", "README.md"), rf'update vetto v{re.escape(current)}', f'update vetto v{target}')
+    update_file(os.path.join(REPO_ROOT, "packaging", "aur", "vetto", ".SRCINFO"), rf'/v{re.escape(current)}\.tar\.gz', f'/v{target}.tar.gz')
+
+    # VS Code
+    update_file(os.path.join(REPO_ROOT, "plugins", "vscode", "package-lock.json"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"', count=0)
+    update_file(os.path.join(REPO_ROOT, "vscode", "README.md"), rf'vetto-vscode-{re.escape(current)}\.vsix', f'vetto-vscode-{target}.vsix', count=0)
+
+    # Documentation & Tutorials
+    update_file(os.path.join(REPO_ROOT, "docs", "tutorials", "installing.md"), rf'@shledery/vetto@{re.escape(current)}', f'@shledery/vetto@{target}')
+    update_file(os.path.join(REPO_ROOT, "docs", "SBOM.md"), rf'/tag/v{re.escape(current)}', f'/tag/v{target}')
+    update_file(os.path.join(REPO_ROOT, "docs", "SBOM.md"), rf'release `v{re.escape(current)}`', f'release `v{target}`')
+    update_file(os.path.join(REPO_ROOT, "docs", "security", "slsa-provenance.md"), rf'download v{re.escape(current)}', f'download v{target}')
+    update_file(os.path.join(REPO_ROOT, "docs", "integrations", "opencode.md"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"')
+    update_file(os.path.join(REPO_ROOT, "docs", "integrations", "claude-code.md"), rf'"version":\s*"{re.escape(current)}"', f'"version": "{target}"')
+    update_file(os.path.join(REPO_ROOT, "docs", "field-testing.md"), rf'current `{re.escape(current)}` package', f'current `{target}` package')
+    update_file(os.path.join(REPO_ROOT, "docs", "architecture", "verify-ng.md"), r'Статус реализации \(' + re.escape(current) + r', факт\)', f'Статус реализации ({target}, факт)')
+    update_file(os.path.join(REPO_ROOT, "docs", "threat-model.md"), r'Статус модели угроз \(' + re.escape(current) + r', факт\)', f'Статус модели угроз ({target}, факт)')
+    update_file(os.path.join(REPO_ROOT, "docs", "telemetry.md"), rf'"vetto_version":\s*"{re.escape(current)}"', f'"vetto_version": "{target}"')
+    update_file(os.path.join(REPO_ROOT, "docs", "telemetry.md"), r'\(e\.g\. `' + re.escape(current) + r'`\)', f'(e.g. `{target}`)')
+
+    # Install scripts help
+    update_file(os.path.join(REPO_ROOT, "install.sh"), r'\(e\.g\. ' + re.escape(current) + r'\)', f'(e.g. {target})')
+    update_file(os.path.join(REPO_ROOT, "scripts", "install.sh"), r'\(e\.g\. ' + re.escape(current) + r'\)', f'(e.g. {target})')
+
+    desc = sys.argv[2] if len(sys.argv) > 2 else "Maintenance and synchronization"
+    update_debian_changelog(target, desc)
+    update_rpm_spec_changelog(target, desc)
     update_versions_md(target, next_after, desc)
     print(f"\nVersion bump to {target} completed successfully across all manifests!")
 

@@ -28,7 +28,7 @@ spec:
 
     # 2. Vetto Sandboxed Execution Sidecar
     - name: vetto-sidecar
-      image: ghcr.io/shleder/vetto:0.4.1
+      image: ghcr.io/shleder/vetto:0.4.2
       command: ["vetto", "daemon", "start", "--socket", "/var/run/vetto/vetto.sock", "--foreground"]
       securityContext:
         allowPrivilegeEscalation: false

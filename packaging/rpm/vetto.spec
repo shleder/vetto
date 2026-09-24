@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Wed Sep 23 2026 vetto contributors - 0.4.2-1
+- Antigravity Google CDN allowlist, OpenCode full filesystem & dynamic custom provider support, safe loopback relay.
+
 * Wed Sep 23 2026 vetto contributors - 0.4.1-1
 - OpenCode 2 GiB SQLite ceiling, Cline network allowlist, test isolation hardening.
 
