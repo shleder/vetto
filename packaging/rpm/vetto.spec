@@ -1,5 +1,5 @@
 Name:           vetto
-Version: 0.4.2
+Version: 0.4.3
 Release:        1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Thu Sep 24 2026 vetto contributors - 0.4.3-1
+- Unblock Computer Use CDP, MCP sockets, and loopback dev servers.
+
 * Wed Sep 23 2026 vetto contributors - 0.4.2-1
 - Antigravity Google CDN allowlist, OpenCode full filesystem & dynamic custom provider support, safe loopback relay.
 

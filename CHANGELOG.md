@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
+
+## [0.4.3] - 2026-09-24
+### Added
+- **Computer Use & Headless Chromium CDP (Chrome DevTools Protocol)**: Ports 9222 and 9223 are now opened by default without requiring the `X-Vetto-Debug-Token` header, while preserving strict isolation on language debugger ports (Node.js 9229/9230 and debugpy 5678).
+- **Expanded `/dev/shm` tmpfs Allocation**: Increased `/dev/shm` from 64 MB to 512 MB in `src/sandbox/linux/mounts.rs`, eliminating Chromium renderer `SIGBUS` crashes during complex DOM tree evaluations.
+- **Model Context Protocol (MCP) UNIX Socket Support**: Removed restrictive `*.sock` and `*.ipc` deny rules across all 12 agent profiles, and added `/tmp` and `$HOME/.cache` to allowed read/write paths for transparent agent-plugin IPC.
+- **Transparent Local Dev Server Loopback Relay**: Network relay in `src/sandbox/linux/net_relay.rs` now seamlessly forwards traffic to `127.0.0.1`, `localhost`, and `::1`, enabling agents to start and verify local dev servers (Vite, Next.js, FastAPI, Flask).
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.4.3 across all package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.2] - 2026-09-23
 ### Fixed
 - **Antigravity Google CDN Allowlist**: Added `googleusercontent.com` to the default network egress allowlist for `antigravity` and `agy` in `src/policy/presets.rs`. This resolves `Eligibility check failed: failed to get profile picture: Get "https://lh3.googleusercontent.com/...": Forbidden` when starting Antigravity under Vetto supervisor shims.

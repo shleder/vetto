@@ -19,7 +19,7 @@ This directory contains the formula and tap setup instructions for macOS and Lin
 2. **Push to GitHub**:
    ```bash
    cd ~/homebrew-vetto
-   git init && git add . && git commit -m "feat: release v0.4.2"
+   git init && git add . && git commit -m "feat: release v0.4.3"
    git remote add origin git@github.com:shleder/homebrew-vetto.git
    git branch -M main
    git push -u origin main
