@@ -1,5 +1,5 @@
 Name:           vetto
-Version: 0.4.6
+Version: 0.4.7
 Release:        1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Fri Sep 25 2026 vetto contributors - 0.4.7-1
+- Diagnostic preflight verification (vetto doctor --preflight), container restriction probe, structured JSON report.
+
 * Fri Sep 25 2026 vetto contributors - 0.4.6-1
 - Maintenance and synchronization.
 

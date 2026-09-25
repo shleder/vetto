@@ -1,3 +1,9 @@
+vetto (0.4.7-1) unstable; urgency=medium
+
+  * Diagnostic preflight verification (vetto doctor --preflight), container restriction probe, structured JSON report.
+
+ -- vetto contributors <noreply@github.com>  Fri, 25 Sep 2026 19:36:09 +0000
+
 vetto (0.4.6-1) unstable; urgency=medium
 
   * Maintenance and synchronization.

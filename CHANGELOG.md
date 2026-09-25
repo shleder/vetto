@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.4.7] - 2026-09-25
+### Added
+- **Diagnostic Preflight Verification (`vetto doctor --preflight` & `--json`)**: Comprehensive host kernel and sandbox capability auditing (`src/doctor/preflight.rs`). Detects Landlock LSM ABI versions (v1–v6), runs a two-stage unprivileged user namespace probe with root-cause error classification (sysctl `kernel.unprivileged_userns_clone=0` vs AppArmor profile restrictions vs Seccomp container boundaries), validates single-directory tmpfs mounting with binary visibility, audits Cgroups v2 controllers (`memory`, `pids`, `cgroup.kill`), verifies Seccomp-BPF filter installation, and audits active PATH-shims and secret masking (`mode=0000` tmpfs overlays for `~/.ssh`, `~/.aws`, `~/.gnupg`, `.env`). Fully supports machine-readable structured JSON output (`--json`) with deterministic exit codes.
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.4.7 across all 24 package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.6] - 2026-09-25
 ### Added
 - **`vetto eval` Subcommand for Safe Tool Execution**: Implemented sub-millisecond isolated code and tool-calling execution directly from CLI (`vetto eval -- <cmd>` or `vetto eval -s <script>`) with monotonic supervisor timeout, unconditional kernel SIGKILL process tree extinction, cgroups v2 memory ceiling, ephemeral disposable sandbox, and optional JSON output (`--json`).
