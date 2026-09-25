@@ -358,7 +358,19 @@ fn run() -> Result<()> {
             probe,
             check_agent,
             fix,
-        }) => doctor(*probe, check_agent.as_deref(), *fix),
+            preflight,
+            json,
+        }) => {
+            if *preflight || *json {
+                let report = vetto::doctor::preflight::run_preflight(*json)?;
+                if report.verdict == vetto::doctor::preflight::PreflightVerdict::Fail {
+                    std::process::exit(vetto::exit_codes::EXIT_FAIL_CLOSED);
+                }
+                Ok(())
+            } else {
+                doctor(*probe, check_agent.as_deref(), *fix)
+            }
+        }
         Some(cli::Command::Wizard(args)) => cli::wizard::run_wizard_cli(args),
         Some(cli::Command::Undo(undo_args)) => cli::undo::run_undo(undo_args),
         Some(cli::Command::Ephemeral(ephemeral_args)) => {
