@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versioning follows SemVer.
 
+## [0.4.6] - 2026-09-25
+### Added
+- **`vetto eval` Subcommand for Safe Tool Execution**: Implemented sub-millisecond isolated code and tool-calling execution directly from CLI (`vetto eval -- <cmd>` or `vetto eval -s <script>`) with monotonic supervisor timeout, unconditional kernel SIGKILL process tree extinction, cgroups v2 memory ceiling, ephemeral disposable sandbox, and optional JSON output (`--json`).
+- **Hugging Face `smolagents` Compatibility Profile**: Added dedicated profile `profiles/agents/smolagents.toml` with Landlock LSM VFS allowlist, automatic pre-creation of dynamic caches (`~/.cache/huggingface`, `~/.cache/transformers`, `~/.cache/torch`) in `src/policy/loader.rs`, package manager caches for uv/pip, and default network preset for Hugging Face Hub (`huggingface.co`, `hf.co`).
+
+### Fixed
+- **Packaging Parity**: Synchronized version 0.4.6 across all 24 package manifests (Cargo, npm, Homebrew, Chocolatey, RPM, AUR, Nix, VS Code extension, Helm, K8s).
+
 ## [0.4.5] - 2026-09-24
 ### Added
 - **Linux Computer Use & Desktop IPC (Display Sockets)**: Automatic expansion and resolution of `$XDG_RUNTIME_DIR` in `src/policy/glob_resolve.rs` and `src/policy/loader.rs` with Linux fallback to `/run/user/<uid>`. Preserved `/tmp/.X11-unix` and display server sockets through tmpfs isolation overlays (`src/sandbox/linux/mounts.rs`), and added Playwright (`~/.cache/ms-playwright`) and Puppeteer (`~/.cache/puppeteer`) browser cache paths to `PACKAGE_CACHE_PATHS`.
