@@ -671,7 +671,7 @@ pub fn probe_stage1_user_namespace() -> Stage1UserNamespaceDiagnostic {
                 unsafe { libc::_exit(0) };
             } else {
                 let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                let err_bytes = (err as i32).to_le_bytes();
+                let err_bytes = err.to_le_bytes();
                 let mut payload = [0u8; 5];
                 payload[0] = 0;
                 payload[1..5].copy_from_slice(&err_bytes);
