@@ -46,6 +46,9 @@ pub const PACKAGE_CACHE_PATHS: &[&str] = &[
     "go/pkg/mod",
     ".cache/ms-playwright",
     ".cache/puppeteer",
+    ".cache/huggingface",
+    ".cache/transformers",
+    ".cache/torch",
 ];
 
 pub fn resolve_package_cache_paths(home: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -1184,6 +1187,11 @@ impl LayeredPolicyLoader {
                         let _ = std::fs::create_dir_all(home.join(".config/opencode/plugins"));
                         let _ = std::fs::create_dir_all(home.join(".local/share/opencode/plugins"));
                     }
+                    Some("smolagents") => {
+                        let _ = std::fs::create_dir_all(home.join(".cache/huggingface"));
+                        let _ = std::fs::create_dir_all(home.join(".cache/transformers"));
+                        let _ = std::fs::create_dir_all(home.join(".cache/torch"));
+                    }
                     _ => {}
                 }
                 let _ = std::fs::create_dir_all(home.join(".npm/_npx"));
@@ -1935,6 +1943,7 @@ fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
         "devin" => PathBuf::from(".devin"),
         "crust" => PathBuf::from(".crust"),
         "amp" => PathBuf::from(".amp"),
+        "smolagents" => PathBuf::from(".cache/smolagents"),
         "custom" => PathBuf::from(".config/vetto/agents/custom"),
         _ => bail!(
             "unknown agent '{}'; known agents: {}",

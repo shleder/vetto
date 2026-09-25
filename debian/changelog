@@ -1,3 +1,9 @@
+vetto (0.4.6-1) unstable; urgency=medium
+
+  * Maintenance and synchronization.
+
+ -- vetto contributors <noreply@github.com>  Fri, 25 Sep 2026 12:47:54 +0000
+
 vetto (0.4.5-1) unstable; urgency=medium
 
   * feat(release): v0.4.5 - unblock Computer Use, display sockets, agent plugins, and browser caches.

@@ -3,4 +3,4 @@ name: vetto
 description: Daemon-less, rootless kernel-level sandbox and policy enforcement runtime
 type: application
 version: 0.1.0
-appVersion: "0.4.5"
+appVersion: "0.4.6"

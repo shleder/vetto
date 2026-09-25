@@ -3,7 +3,7 @@
   "displayName": "Vetto Agent Sandbox",
   "description": "Daemon-less kernel-level sandbox and policy enforcement runtime for AI coding agents",
   "publisher": "shleder",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

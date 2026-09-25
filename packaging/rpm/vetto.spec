@@ -1,5 +1,5 @@
 Name:           vetto
-Version: 0.4.5
+Version: 0.4.6
 Release:        1%{?dist}
 Summary:        Daemon-less sandbox and audit layer for AI coding agents
 License:        Apache-2.0
@@ -34,6 +34,9 @@ cp -a profiles/. %{buildroot}%{_datadir}/vetto/profiles/
 %{_datadir}/vetto/profiles
 
 %changelog
+* Fri Sep 25 2026 vetto contributors - 0.4.6-1
+- Maintenance and synchronization.
+
 * Thu Sep 24 2026 vetto contributors - 0.4.5-1
 - feat(release): v0.4.5 - unblock Computer Use, display sockets, agent plugins, and browser caches.
 

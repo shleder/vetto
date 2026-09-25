@@ -631,3 +631,62 @@ fn test_agent_plugin_directories_unblocked() {
         );
     }
 }
+
+#[test]
+fn test_smolagents_profile_caches_and_secret_masking() {
+    let temp = TempProject::new("smolagents-e2e");
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::create_dir_all(&home).expect("create home dir");
+    std::fs::write(project.join(".env"), "HF_TOKEN=secret_token\n").expect("create project .env");
+    for dir in [
+        ".cache/huggingface",
+        ".cache/transformers",
+        ".cache/torch",
+        ".cache/uv",
+    ] {
+        std::fs::create_dir_all(home.join(dir)).expect("create smolagents cache dir");
+    }
+
+    let opts = PolicyLoadOptions {
+        agent: Some("smolagents".to_string()),
+        include_project_policy: false,
+        ..Default::default()
+    };
+
+    let pol = load_with_options("default", None, &project, &home, Tier::Full, &opts)
+        .expect("load smolagents policy");
+
+    // 1. Verify Hugging Face and PyTorch cache directories are writable
+    for cache_path in [
+        home.join(".cache/huggingface"),
+        home.join(".cache/transformers"),
+        home.join(".cache/torch"),
+        home.join(".cache/uv"),
+    ] {
+        assert!(
+            pol.allow_write.contains(&cache_path),
+            "smolagents must have write access to {:?}",
+            cache_path
+        );
+        assert!(
+            pol.allow_read.contains(&cache_path),
+            "smolagents must have read access to {:?}",
+            cache_path
+        );
+    }
+
+    // 2. Verify network domains contain Hugging Face endpoints
+    let allowed = &pol.network_allow;
+    assert!(allowed.iter().any(|d| d == "huggingface.co"));
+    assert!(allowed.iter().any(|d| d == "hf.co"));
+    assert!(allowed.iter().any(|d| d == "api.openai.com"));
+
+    // 3. Verify secret masking for .env remains strictly enforced
+    let dot_env = project.join(".env");
+    assert!(
+        pol.deny_resolved.iter().any(|d| d.path == dot_env),
+        "smolagents must strictly deny project .env"
+    );
+}

@@ -20,7 +20,7 @@ not run an install script, download code at install time, or require a Rust
 toolchain. The small launcher runs on the Node.js installation that provides
 npm.
 
-Prebuilt targets in `0.4.5`:
+Prebuilt targets in `0.4.6`:
 
 | Platform | Architecture | Native path |
 | --- | --- | --- |

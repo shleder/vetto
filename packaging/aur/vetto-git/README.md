@@ -32,7 +32,7 @@ This directory contains the `PKGBUILD` recipe and `.SRCINFO` manifest for Arch L
 4. **Commit and push**:
    ```bash
    git add PKGBUILD .SRCINFO
-   git commit -m "feat: update vetto v0.4.5"
+   git commit -m "feat: update vetto v0.4.6"
    git push origin master
    ```
 
