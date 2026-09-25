@@ -173,7 +173,10 @@ pub fn format_preflight_text(report: &PreflightReport) -> String {
         report.landlock.max_supported_abi
     ));
     out.push_str(&format!("  Status:           {}\n", report.landlock.status));
-    out.push_str(&format!("  Message:          {}\n", report.landlock.message));
+    out.push_str(&format!(
+        "  Message:          {}\n",
+        report.landlock.message
+    ));
     if !report.landlock.feature_hints.is_empty() {
         out.push_str("  Feature Hints:\n");
         for hint in &report.landlock.feature_hints {
@@ -480,8 +483,10 @@ pub fn probe_runtime_paths() -> RuntimePathsDiagnostic {
     };
     let is_bundled_runtime = !is_standard_bin;
 
-    let parent_dir_in_allowances =
-        exe_path.parent().map(|p| fs::metadata(p).is_ok()).unwrap_or(false);
+    let parent_dir_in_allowances = exe_path
+        .parent()
+        .map(|p| fs::metadata(p).is_ok())
+        .unwrap_or(false);
 
     let (shims_checked, shims_valid) = {
         if let Ok(shims_dir) = crate::cli::hook::get_shims_dir(crate::cli::hook::HookScope::Global)
@@ -576,9 +581,7 @@ pub fn probe_landlock() -> LandlockDiagnostic {
             hints.push("File truncation rights (TRUNCATE)".to_string());
         }
         if abi >= 4 {
-            hints.push(
-                "Network TCP port binding and connection control (NET_PORT)".to_string(),
-            );
+            hints.push("Network TCP port binding and connection control (NET_PORT)".to_string());
         }
         if abi >= 5 {
             hints.push("Character device ioctl restriction (IOCTL_DEV)".to_string());
@@ -605,7 +608,8 @@ pub fn probe_landlock() -> LandlockDiagnostic {
             ),
             Some(libc::EOPNOTSUPP) => (
                 "disabled",
-                "Landlock LSM compiled in kernel but disabled via boot parameter (lsm=)".to_string(),
+                "Landlock LSM compiled in kernel but disabled via boot parameter (lsm=)"
+                    .to_string(),
             ),
             Some(libc::EPERM) => (
                 "blocked",
@@ -688,7 +692,8 @@ pub fn probe_stage1_user_namespace() -> Stage1UserNamespaceDiagnostic {
             loop {
                 let r = unsafe { libc::waitpid(child_pid, &mut status, 0) };
                 if r == child_pid
-                    || (r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
+                    || (r < 0
+                        && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
                 {
                     break;
                 }
@@ -900,7 +905,8 @@ pub fn probe_stage2_tmpfs_mount(stage1_supported: bool) -> Stage2TmpfsMountDiagn
             loop {
                 let r = unsafe { libc::waitpid(child_pid, &mut status, 0) };
                 if r == child_pid
-                    || (r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
+                    || (r < 0
+                        && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
                 {
                     break;
                 }

@@ -87,7 +87,10 @@ fn test_doctor_preflight_json_output_and_all_keys_present() {
     assert!(v.get("namespaces").is_some(), "missing key: namespaces");
     assert!(v.get("cgroups_v2").is_some(), "missing key: cgroups_v2");
     assert!(v.get("seccomp").is_some(), "missing key: seccomp");
-    assert!(v.get("runtime_paths").is_some(), "missing key: runtime_paths");
+    assert!(
+        v.get("runtime_paths").is_some(),
+        "missing key: runtime_paths"
+    );
 
     // 2. landlock schema validation
     let landlock = v.get("landlock").unwrap();
@@ -176,9 +179,8 @@ fn test_doctor_json_flag_alone_triggers_preflight_json() {
         .expect("execute vetto doctor --json");
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let v: serde_json::Value = serde_json::from_str(&stdout_str).unwrap_or_else(|e| {
-        panic!("failed to parse doctor --json: {e}\nstdout: {stdout_str}")
-    });
+    let v: serde_json::Value = serde_json::from_str(&stdout_str)
+        .unwrap_or_else(|e| panic!("failed to parse doctor --json: {e}\nstdout: {stdout_str}"));
 
     assert!(v.get("verdict").is_some());
     assert!(v.get("landlock").is_some());
@@ -193,8 +195,7 @@ fn test_stage1_eperm_disambiguation_logic() {
     use vetto::doctor::preflight::classify_userns_eperm;
 
     // 1. Success case: raw_errno == 0
-    let (cause, status, msg) =
-        classify_userns_eperm(0, None, None, None, None, false, "disabled");
+    let (cause, status, msg) = classify_userns_eperm(0, None, None, None, None, false, "disabled");
     assert_eq!(cause, "none");
     assert_eq!(status, "available");
     assert!(msg.contains("supported"));
@@ -214,8 +215,15 @@ fn test_stage1_eperm_disambiguation_logic() {
     assert!(msg.contains("max_user_namespaces=0"));
 
     // 4. AppArmor knob restricted: kernel.apparmor_restrict_unprivileged_userns == "1"
-    let (cause, status, msg) =
-        classify_userns_eperm(1, Some("1"), Some("15000"), Some("1"), None, false, "disabled");
+    let (cause, status, msg) = classify_userns_eperm(
+        1,
+        Some("1"),
+        Some("15000"),
+        Some("1"),
+        None,
+        false,
+        "disabled",
+    );
     assert_eq!(cause, "apparmor_restricted");
     assert_eq!(status, "apparmor_restricted");
     assert!(msg.contains("apparmor_restrict_unprivileged_userns=1"));
@@ -263,8 +271,7 @@ fn test_stage1_eperm_disambiguation_logic() {
     assert!(msg.contains("returned EPERM (1)"));
 
     // 8. Non-EPERM errno (e.g. ENOSYS 38)
-    let (cause, status, msg) =
-        classify_userns_eperm(38, None, None, None, None, false, "disabled");
+    let (cause, status, msg) = classify_userns_eperm(38, None, None, None, None, false, "disabled");
     assert_eq!(cause, "other");
     assert_eq!(status, "failed");
     assert!(msg.contains("errno 38"));
