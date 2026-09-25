@@ -1938,6 +1938,7 @@ fn agent_root(home: &Path, agent: &str) -> Result<PathBuf> {
         "devin" => PathBuf::from(".devin"),
         "crust" => PathBuf::from(".crust"),
         "amp" => PathBuf::from(".amp"),
+        "smolagents" => PathBuf::from(".cache/smolagents"),
         "custom" => PathBuf::from(".config/vetto/agents/custom"),
         _ => bail!(
             "unknown agent '{}'; known agents: {}",
