@@ -1,6 +1,7 @@
 //! Integration tests for `vetto eval` subcommand.
 
 use std::path::PathBuf;
+use clap::Parser;
 use vetto::cli::eval::{build_eval_argv, configure_eval_run, EvalArgs, EvalJsonResult};
 use vetto::cli::Cli;
 
@@ -29,7 +30,7 @@ fn test_eval_argv_script_file() {
         timeout: 10,
         memory_mb: 512,
         json: true,
-        args: vec!["--param", "value"],
+        args: vec!["--param".to_string(), "value".to_string()],
     };
 
     let argv = build_eval_argv(&args).expect("build argv");

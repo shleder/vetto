@@ -669,7 +669,7 @@ fn test_smolagents_profile_caches_and_secret_masking() {
     }
 
     // 2. Verify network domains contain Hugging Face endpoints
-    let allowed = &pol.network.allow;
+    let allowed = &pol.network_allow;
     assert!(allowed.iter().any(|d| d == "huggingface.co"));
     assert!(allowed.iter().any(|d| d == "hf.co"));
     assert!(allowed.iter().any(|d| d == "api.openai.com"));

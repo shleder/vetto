@@ -78,7 +78,9 @@ pub fn build_eval_argv(args: &EvalArgs) -> Result<Vec<String>> {
             .read_to_string(&mut stdin_buf)
             .context("failed to read code snippet from stdin")?;
         if stdin_buf.trim().is_empty() {
-            bail!("no code snippet provided; pass `-c \"<code>\"`, a script file, or pipe via stdin");
+            bail!(
+                "no code snippet provided; pass `-c \"<code>\"`, a script file, or pipe via stdin"
+            );
         }
         stdin_buf
     };
