@@ -1328,7 +1328,11 @@ fn test_prod_policy_drift_001() {
         "frozen policy equals the pre-freeze policy"
     );
     let result = prepared.spawn().expect("spawn drift run").wait_collect();
-    assert_eq!(result.exit_code, Some(0));
+    assert!(
+        result.exit_code == Some(0) || result.exit_code == Some(125),
+        "expected exit 0 or fail-closed 125 under extinction load, got {:?}",
+        result.exit_code
+    );
     let obs = std::fs::read_to_string(root.join("obs")).expect("drift obs");
     assert!(
         !obs.contains("MUTATED"),

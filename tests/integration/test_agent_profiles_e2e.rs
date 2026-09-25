@@ -639,6 +639,7 @@ fn test_smolagents_profile_caches_and_secret_masking() {
     let home = temp.path().join("home");
     std::fs::create_dir_all(&project).expect("create project dir");
     std::fs::create_dir_all(&home).expect("create home dir");
+    std::fs::write(project.join(".env"), "HF_TOKEN=secret_token\n").expect("create project .env");
     for dir in [
         ".cache/huggingface",
         ".cache/transformers",
