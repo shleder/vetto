@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/shleder/vetto/actions"><img src="https://img.shields.io/github/actions/workflow/status/shleder/vetto/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://github.com/shleder/vetto/releases/tag/v0.4.5"><img src="https://img.shields.io/badge/version-0.4.5-blue?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/shleder/vetto/releases/tag/v0.4.6"><img src="https://img.shields.io/badge/version-0.4.6-blue?style=flat-square" alt="Version"></a>
   <a href="https://www.npmjs.com/package/@shledery/vetto"><img src="https://img.shields.io/npm/v/%40shledery%2Fvetto?logo=npm&style=flat-square" alt="npm"></a>
   <a href="https://crates.io/crates/vetto"><img src="https://img.shields.io/crates/v/vetto?logo=rust&style=flat-square&cacheSeconds=60" alt="crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License"></a>
@@ -69,6 +69,9 @@ Execute standalone scripts under strict default isolation:
 ```bash
 vetto run -- python script.py
 vetto -- npm test
+
+# Safely evaluate code snippets with cgroups v2 memory ceiling & hard timeout:
+vetto eval --python -c "print(1 + 1)" --timeout 5 --memory 256
 ```
 
 Quarantine a Model Context Protocol (MCP) server binary with isolated paths and disabled network egress:

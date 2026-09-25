@@ -2,7 +2,7 @@
   "name": "vetto-vscode",
   "displayName": "Vetto Sandbox for VS Code",
   "description": "Run VS Code tasks and AI agent commands inside the kernel-enforced Vetto sandbox",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "publisher": "shleder",
   "engines": {
     "vscode": "^1.80.0"

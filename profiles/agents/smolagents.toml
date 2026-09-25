@@ -1,0 +1,69 @@
+[metadata]
+name = "smolagents"
+description = "Compatibility profile for Hugging Face smolagents code execution runtime."
+
+[filesystem]
+allow_read = [
+    "$AGENT",
+    "$HOME/.cache/huggingface",
+    "$HOME/.cache/transformers",
+    "$HOME/.cache/torch",
+    "$HOME/.local/bin",
+    "$HOME/.cargo/bin",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
+    "$HOME/.bun",
+    "$HOME/.bun/install/cache",
+]
+allow_write = [
+    "$AGENT",
+    "$HOME/.cache/huggingface",
+    "$HOME/.cache/transformers",
+    "$HOME/.cache/torch",
+    "/tmp",
+    "$HOME/.cache",
+    "$HOME/.cache/ms-playwright",
+    "$HOME/.cache/puppeteer",
+    "$HOME/.npm",
+    "$HOME/.npm/_npx",
+    "$HOME/.cache/uv",
+    "$HOME/.local/share/uv",
+    "$HOME/.bun",
+    "$HOME/.bun/install/cache",
+]
+
+[environment]
+pass_through = [
+    "HUGGINGFACE_*",
+    "HF_*",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "BROWSER",
+    "XDG_RUNTIME_DIR",
+]
+
+[network]
+allow = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "openrouter.ai",
+    "huggingface.co",
+    "hf.co",
+    "cas.huggingface.co",
+    "registry.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org",
+]

@@ -27,9 +27,10 @@ pub const GPT_ENGINEER_AGENT_TOML: &str = include_str!("../../profiles/agents/gp
 pub const DEVIN_AGENT_TOML: &str = include_str!("../../profiles/agents/devin.toml");
 pub const CRUST_AGENT_TOML: &str = include_str!("../../profiles/agents/crust.toml");
 pub const AMP_AGENT_TOML: &str = include_str!("../../profiles/agents/amp.toml");
+pub const SMOLAGENTS_AGENT_TOML: &str = include_str!("../../profiles/agents/smolagents.toml");
 pub const CUSTOM_AGENT_TOML: &str = include_str!("../../profiles/agents/custom.toml");
 
-pub const AGENT_PROFILE_NAMES: [&str; 21] = [
+pub const AGENT_PROFILE_NAMES: [&str; 22] = [
     "codex",
     "claude",
     "gemini",
@@ -50,6 +51,7 @@ pub const AGENT_PROFILE_NAMES: [&str; 21] = [
     "devin",
     "crust",
     "amp",
+    "smolagents",
     "custom",
 ];
 
@@ -146,6 +148,7 @@ pub fn canonical_agent_name(name: &str) -> Option<&'static str> {
         "devin" | "devin-cli" => Some("devin"),
         "crust" | "crust-cli" => Some("crust"),
         "amp" | "amp-cli" => Some("amp"),
+        "smolagents" | "smol-agents" | "smolagent" => Some("smolagents"),
         "custom" => Some("custom"),
         _ => None,
     }
@@ -173,6 +176,7 @@ pub fn agent_builtin(name: &str) -> Option<&'static str> {
         "devin" => Some(DEVIN_AGENT_TOML),
         "crust" => Some(CRUST_AGENT_TOML),
         "amp" => Some(AMP_AGENT_TOML),
+        "smolagents" => Some(SMOLAGENTS_AGENT_TOML),
         "custom" => Some(CUSTOM_AGENT_TOML),
         _ => None,
     }

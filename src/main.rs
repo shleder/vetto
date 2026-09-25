@@ -405,6 +405,10 @@ fn run() -> Result<()> {
             }
             supervise(cfg)
         }
+        Some(cli::Command::Eval(eval_args)) => {
+            let cfg = cli::eval::configure_eval_run(eval_args, &args)?;
+            supervise(cfg)
+        }
         Some(cli::Command::Diff(args)) => cli::diff::run_diff(args),
         Some(cli::Command::Pack(args)) => cli::bundle::run_pack(args),
         Some(cli::Command::Unpack(args)) => cli::bundle::run_unpack(args),

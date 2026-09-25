@@ -12,6 +12,7 @@ pub mod status;
 pub mod undo;
 pub mod why_slow;
 pub mod wizard;
+pub mod eval;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -20,6 +21,7 @@ pub use crate::watchdog::WatchdogArgs;
 pub use bundle::{PackArgs, UnpackArgs};
 pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
+pub use eval::EvalArgs;
 pub use hook::{HookCommand, HookScope, ShellType};
 pub use kill::KillArgs;
 pub use mask::MaskArgs;
@@ -416,6 +418,8 @@ pub enum Command {
     Undo(undo::UndoArgs),
     /// Run an agent in a disposable ephemeral sandbox with instant rollback on cancel/failure
     Ephemeral(EphemeralArgs),
+    /// Safely evaluate code in a disposable, kernel-isolated sandbox (cgroups v2, timeout, secret masking)
+    Eval(eval::EvalArgs),
     /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
     Diff(diff::DiffArgs),
     /// Export a session into a portable repro bundle (.vetto-pack) with snapshot, logs,

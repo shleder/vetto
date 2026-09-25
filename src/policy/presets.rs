@@ -195,6 +195,14 @@ pub fn agent_network_allowlist(agent: &str) -> Vec<String> {
             "api.openai.com".into(),
             "api.anthropic.com".into(),
         ],
+        "smolagents" => vec![
+            "api.openai.com".into(),
+            "api.anthropic.com".into(),
+            "openrouter.ai".into(),
+            "huggingface.co".into(),
+            "hf.co".into(),
+            "cas.huggingface.co".into(),
+        ],
         _ => Vec::new(),
     };
 

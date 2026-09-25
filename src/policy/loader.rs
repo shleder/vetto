@@ -46,6 +46,9 @@ pub const PACKAGE_CACHE_PATHS: &[&str] = &[
     "go/pkg/mod",
     ".cache/ms-playwright",
     ".cache/puppeteer",
+    ".cache/huggingface",
+    ".cache/transformers",
+    ".cache/torch",
 ];
 
 pub fn resolve_package_cache_paths(home: &std::path::Path) -> Vec<std::path::PathBuf> {

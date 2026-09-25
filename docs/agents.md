@@ -15,6 +15,7 @@ unproven rather than assumed.
 | Cline | user-configured CLI/extension command | unknown | full | `cline` | Do not infer endpoints from the preset | not in CI |
 | OpenCode | `opencode` | permission model is not treated as an OS boundary | statusline | `opencode` | Provider-specific | not in CI |
 | GitHub Copilot CLI | `copilot` | implementation/version dependent | statusline | `copilot` | GitHub endpoints only when needed | not in CI |
+| Hugging Face smolagents | `smolagents`, `vetto eval` | No OS isolation (threads) | none / full | `smolagents` | Hugging Face Hub + model providers | covered in CI |
 | Custom process | any executable | unknown | statusline or none | `custom` | Default remains `off` | process contract covered |
 
 ## Compatibility rules
