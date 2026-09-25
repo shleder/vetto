@@ -1,6 +1,7 @@
 pub mod bundle;
 pub mod diff;
 pub mod enable;
+pub mod eval;
 pub mod git_hook;
 pub mod hook;
 pub mod kill;
@@ -12,7 +13,6 @@ pub mod status;
 pub mod undo;
 pub mod why_slow;
 pub mod wizard;
-pub mod eval;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

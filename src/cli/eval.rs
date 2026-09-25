@@ -108,7 +108,6 @@ pub fn configure_eval_run(eval_args: &EvalArgs, cli: &Cli) -> Result<RunConfig> 
     if cli.net.is_none() {
         cfg.net = NetMode::Off;
     }
-    cfg.quiet = eval_args.json;
     cfg.mask_secrets = true;
 
     Ok(cfg)
@@ -145,7 +144,10 @@ mod tests {
             args: vec!["--trace-warnings".into()],
         };
         let argv = build_eval_argv(&args).unwrap();
-        assert_eq!(argv, vec!["node", "-e", "console.log(42)", "--trace-warnings"]);
+        assert_eq!(
+            argv,
+            vec!["node", "-e", "console.log(42)", "--trace-warnings"]
+        );
     }
 
     #[test]

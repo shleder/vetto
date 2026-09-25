@@ -33,7 +33,10 @@ fn test_eval_argv_script_file() {
     };
 
     let argv = build_eval_argv(&args).expect("build argv");
-    assert_eq!(argv, vec!["python3", "/workspace/eval.py", "--param", "value"]);
+    assert_eq!(
+        argv,
+        vec!["python3", "/workspace/eval.py", "--param", "value"]
+    );
 }
 
 #[test]
@@ -72,7 +75,6 @@ fn test_eval_configure_run_config() {
     assert_eq!(cfg.limits_spec, Some("memory=512mb".to_string()));
     assert!(cfg.ephemeral);
     assert!(cfg.ci);
-    assert!(cfg.quiet);
     assert!(cfg.mask_secrets);
 }
 

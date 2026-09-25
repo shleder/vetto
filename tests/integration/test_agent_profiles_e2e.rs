@@ -681,4 +681,3 @@ fn test_smolagents_profile_caches_and_secret_masking() {
         "smolagents must strictly deny project .env"
     );
 }
-
