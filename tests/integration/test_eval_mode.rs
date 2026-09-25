@@ -1,7 +1,7 @@
 //! Integration tests for `vetto eval` subcommand.
 
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 use vetto::cli::eval::{build_eval_argv, configure_eval_run, EvalArgs, EvalJsonResult};
 use vetto::cli::Cli;
 
