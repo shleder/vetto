@@ -1187,6 +1187,11 @@ impl LayeredPolicyLoader {
                         let _ = std::fs::create_dir_all(home.join(".config/opencode/plugins"));
                         let _ = std::fs::create_dir_all(home.join(".local/share/opencode/plugins"));
                     }
+                    Some("smolagents") => {
+                        let _ = std::fs::create_dir_all(home.join(".cache/huggingface"));
+                        let _ = std::fs::create_dir_all(home.join(".cache/transformers"));
+                        let _ = std::fs::create_dir_all(home.join(".cache/torch"));
+                    }
                     _ => {}
                 }
                 let _ = std::fs::create_dir_all(home.join(".npm/_npx"));

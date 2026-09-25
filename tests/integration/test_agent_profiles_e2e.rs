@@ -639,6 +639,14 @@ fn test_smolagents_profile_caches_and_secret_masking() {
     let home = temp.path().join("home");
     std::fs::create_dir_all(&project).expect("create project dir");
     std::fs::create_dir_all(&home).expect("create home dir");
+    for dir in [
+        ".cache/huggingface",
+        ".cache/transformers",
+        ".cache/torch",
+        ".cache/uv",
+    ] {
+        std::fs::create_dir_all(home.join(dir)).expect("create smolagents cache dir");
+    }
 
     let opts = PolicyLoadOptions {
         agent: Some("smolagents".to_string()),
