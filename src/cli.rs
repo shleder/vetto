@@ -362,6 +362,12 @@ pub enum Command {
         /// Show concrete remediation commands and steps for missing sandbox primitives.
         #[arg(long)]
         fix: bool,
+        /// Run comprehensive diagnostic preflight verification
+        #[arg(long)]
+        preflight: bool,
+        /// Emit machine-readable diagnostic JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Interactive 5-step onboarding walkthrough
     Tour {
@@ -1209,6 +1215,42 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Doctor { fix: true, .. })
+        ));
+    }
+
+    #[test]
+    fn doctor_preflight_and_json_flags_parse() {
+        let cli_preflight = Cli::try_parse_from(["vetto", "doctor", "--preflight"])
+            .expect("doctor preflight parsing");
+        assert!(matches!(
+            cli_preflight.command,
+            Some(Command::Doctor {
+                preflight: true,
+                json: false,
+                ..
+            })
+        ));
+
+        let cli_json =
+            Cli::try_parse_from(["vetto", "doctor", "--json"]).expect("doctor json parsing");
+        assert!(matches!(
+            cli_json.command,
+            Some(Command::Doctor {
+                preflight: false,
+                json: true,
+                ..
+            })
+        ));
+
+        let cli_both = Cli::try_parse_from(["vetto", "doctor", "--preflight", "--json"])
+            .expect("doctor preflight json parsing");
+        assert!(matches!(
+            cli_both.command,
+            Some(Command::Doctor {
+                preflight: true,
+                json: true,
+                ..
+            })
         ));
     }
 
