@@ -1,13 +1,12 @@
 //! Mission Control Ratatui UI Renderer (Arasaka Cyber-Red & Cyber Circuit).
 
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, Tabs, Wrap};
 use ratatui::Frame;
 
 use super::state::{DashboardState, MissionTab};
-use super::theme::Theme;
 
 const ASCII_LOGO_CIRCUIT: &[&str] = &[
     r"██╗   ██╗███████╗████████╗████████╗ ██████╗ ",
@@ -84,14 +83,18 @@ fn render_header(f: &mut Frame, state: &DashboardState, area: Rect, full_logo: b
                 ),
                 Span::styled(
                     format!("v{}", env!("CARGO_PKG_VERSION")),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
                 Span::styled("KERNEL ISOLATION: ", Style::default().fg(theme.muted)),
                 Span::styled(
                     "FULL [Landlock + Namespaces + Cgroups v2 + Seccomp]",
-                    Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.success)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -107,7 +110,11 @@ fn render_header(f: &mut Frame, state: &DashboardState, area: Rect, full_logo: b
                 Span::styled(
                     format!(
                         "{} / {} agents protected",
-                        state.installed_agents.iter().filter(|a| a.is_shim_active).count(),
+                        state
+                            .installed_agents
+                            .iter()
+                            .filter(|a| a.is_shim_active)
+                            .count(),
                         state.installed_agents.len()
                     ),
                     Style::default().fg(theme.accent),
@@ -152,7 +159,10 @@ fn render_tabs(f: &mut Frame, state: &DashboardState, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.border))
-                .title(Span::styled(" FLEET NAVIGATION ", Style::default().fg(theme.muted))),
+                .title(Span::styled(
+                    " FLEET NAVIGATION ",
+                    Style::default().fg(theme.muted),
+                )),
         )
         .select(state.active_tab.index())
         .style(Style::default().fg(theme.muted))
@@ -180,7 +190,9 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
             Line::from(""),
             Line::styled(
                 " No AI coding agents detected in PATH outside Vetto.",
-                Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
             ),
             Line::from(""),
             Line::styled(
@@ -219,7 +231,12 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
                 let is_selected = idx == state.selected_agent;
 
                 let shim_cell = if agent.is_shim_active {
-                    Span::styled("[SHIM]", Style::default().fg(theme.success).add_modifier(Modifier::BOLD))
+                    Span::styled(
+                        "[SHIM]",
+                        Style::default()
+                            .fg(theme.success)
+                            .add_modifier(Modifier::BOLD),
+                    )
                 } else {
                     Span::styled("[DIRECT]", Style::default().fg(theme.muted))
                 };
@@ -227,7 +244,9 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
                 let name_cell = Span::styled(
                     agent.name,
                     if is_selected {
-                        Style::default().fg(theme.selection_fg).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(theme.selection_fg)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.text)
                     },
@@ -236,7 +255,9 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
                 let status_cell = if agent.is_running {
                     Span::styled(
                         format!("● RUNNING ({})", agent.active_pids.len()),
-                        Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.success)
+                            .add_modifier(Modifier::BOLD),
                     )
                 } else {
                     Span::styled("○ IDLE", Style::default().fg(theme.muted))
@@ -264,8 +285,11 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
             ],
         )
         .header(
-            Row::new(vec!["STATUS", "AGENT", "PROCESS"])
-                .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)),
+            Row::new(vec!["STATUS", "AGENT", "PROCESS"]).style(
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
         )
         .block(
             Block::default()
@@ -307,7 +331,7 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
             agent.network_allowlist.join(", ")
         };
 
-        let mut lines = vec![
+        let lines = vec![
             Line::from(vec![
                 Span::styled("REAL BINARY PATH: ", Style::default().fg(theme.muted)),
                 Span::styled(
@@ -392,13 +416,24 @@ fn render_tab_agents(f: &mut Frame, state: &DashboardState, area: Rect) {
             ]),
         ];
 
-        f.render_widget(Paragraph::new(lines).block(inspector_block).wrap(Wrap { trim: true }), cols[1]);
+        f.render_widget(
+            Paragraph::new(lines)
+                .block(inspector_block)
+                .wrap(Wrap { trim: true }),
+            cols[1],
+        );
     } else {
         let empty_inspector = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.border))
-            .title(Span::styled(" AGENT INSPECTOR ", Style::default().fg(theme.logo)));
-        f.render_widget(Paragraph::new("No agent selected").block(empty_inspector), cols[1]);
+            .title(Span::styled(
+                " AGENT INSPECTOR ",
+                Style::default().fg(theme.logo),
+            ));
+        f.render_widget(
+            Paragraph::new("No agent selected").block(empty_inspector),
+            cols[1],
+        );
     }
 }
 
@@ -417,46 +452,111 @@ fn render_tab_sandbox(f: &mut Frame, state: &DashboardState, area: Rect) {
         ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("1. Landlock LSM: ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled("Unprivileged in-kernel path access rules (ABI 1-6).", Style::default().fg(theme.text)),
+            Span::styled(
+                "1. Landlock LSM: ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Unprivileged in-kernel path access rules (ABI 1-6).",
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled("   Fail-closed execution (Exit 125, INV-01) on sandbox violation.", Style::default().fg(theme.muted)),
+        Line::styled(
+            "   Fail-closed execution (Exit 125, INV-01) on sandbox violation.",
+            Style::default().fg(theme.muted),
+        ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("2. Linux Namespaces: ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled("CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET", Style::default().fg(theme.text)),
+            Span::styled(
+                "2. Linux Namespaces: ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET",
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled("   Zero background daemons; sub-4ms cold start between fork() and execve().", Style::default().fg(theme.muted)),
+        Line::styled(
+            "   Zero background daemons; sub-4ms cold start between fork() and execve().",
+            Style::default().fg(theme.muted),
+        ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("3. CoW Tmpfs Overlays: ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled("Copy-on-write overlay over system rootfs.", Style::default().fg(theme.text)),
+            Span::styled(
+                "3. CoW Tmpfs Overlays: ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Copy-on-write overlay over system rootfs.",
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled("   Any destructive writes outside the project directory vanish upon exit.", Style::default().fg(theme.muted)),
+        Line::styled(
+            "   Any destructive writes outside the project directory vanish upon exit.",
+            Style::default().fg(theme.muted),
+        ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("4. Seccomp-BPF Syscall Filter: ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled("Pure-Rust compiled BPF filter.", Style::default().fg(theme.text)),
+            Span::styled(
+                "4. Seccomp-BPF Syscall Filter: ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Pure-Rust compiled BPF filter.",
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled("   Blocks unshare, mount, ptrace, io_uring, and raw AF_INET socket creation.", Style::default().fg(theme.muted)),
+        Line::styled(
+            "   Blocks unshare, mount, ptrace, io_uring, and raw AF_INET socket creation.",
+            Style::default().fg(theme.muted),
+        ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("5. Process Extinction: ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled("Cgroups v2 cgroup.kill + pidfd pinning.", Style::default().fg(theme.text)),
+            Span::styled(
+                "5. Process Extinction: ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Cgroups v2 cgroup.kill + pidfd pinning.",
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled("   Mathematically eliminates runaway background daemons and orphan processes.", Style::default().fg(theme.muted)),
+        Line::styled(
+            "   Mathematically eliminates runaway background daemons and orphan processes.",
+            Style::default().fg(theme.muted),
+        ),
     ];
 
     let left_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(" ARCHITECTURAL INVARIANTS ", Style::default().fg(theme.logo)));
-    f.render_widget(Paragraph::new(left_lines).block(left_block).wrap(Wrap { trim: true }), cols[0]);
+        .title(Span::styled(
+            " ARCHITECTURAL INVARIANTS ",
+            Style::default().fg(theme.logo),
+        ));
+    f.render_widget(
+        Paragraph::new(left_lines)
+            .block(left_block)
+            .wrap(Wrap { trim: true }),
+        cols[0],
+    );
 
     let right_lines = vec![
         Line::styled(
             "INODE-LEVEL SECRET MASKING MATRIX (INV-08)",
-            Style::default().fg(theme.danger).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.danger)
+                .add_modifier(Modifier::BOLD),
         ),
         Line::from(""),
         Line::styled(
@@ -465,33 +565,83 @@ fn render_tab_sandbox(f: &mut Frame, state: &DashboardState, area: Rect) {
         ),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ~/.ssh/id_*          ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ~/.ssh/id_*          ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("  ~/.aws/credentials   ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ~/.aws/credentials   ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("  .env, .env.*         ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  .env, .env.*         ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("  ~/.gnupg/secring.*   ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ~/.gnupg/secring.*   ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("  ~/.kube/config       ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ~/.kube/config       ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("  ~/.docker/config.json", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::styled("-> [MASKED 0000 EACCES]", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ~/.docker/config.json",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "-> [MASKED 0000 EACCES]",
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::styled(
             "L7 NETWORK SEMANTIC RELAY & DNS BROKER:",
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Line::styled(
             "Direct network calls are intercepted via unix-fd socket bridge with SNI inspection.",
@@ -506,8 +656,16 @@ fn render_tab_sandbox(f: &mut Frame, state: &DashboardState, area: Rect) {
     let right_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(" SECRET MASKING & EGRESS ", Style::default().fg(theme.logo)));
-    f.render_widget(Paragraph::new(right_lines).block(right_block).wrap(Wrap { trim: true }), cols[1]);
+        .title(Span::styled(
+            " SECRET MASKING & EGRESS ",
+            Style::default().fg(theme.logo),
+        ));
+    f.render_widget(
+        Paragraph::new(right_lines)
+            .block(right_block)
+            .wrap(Wrap { trim: true }),
+        cols[1],
+    );
 }
 
 fn render_tab_doctor(f: &mut Frame, state: &DashboardState, area: Rect) {
@@ -518,7 +676,10 @@ fn render_tab_doctor(f: &mut Frame, state: &DashboardState, area: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.border))
             .title(" KERNEL PREFLIGHT DOCTOR ");
-        f.render_widget(Paragraph::new("Executing preflight diagnostics...").block(block), area);
+        f.render_widget(
+            Paragraph::new("Executing preflight diagnostics...").block(block),
+            area,
+        );
         return;
     };
 
@@ -528,17 +689,37 @@ fn render_tab_doctor(f: &mut Frame, state: &DashboardState, area: Rect) {
         .split(area);
 
     let (verdict_str, verdict_color) = match report.verdict {
-        crate::doctor::preflight::PreflightVerdict::Pass => ("PASS (Fully Supported)", theme.success),
-        crate::doctor::preflight::PreflightVerdict::Degraded => ("DEGRADED (Partial Isolation)", theme.warning),
-        crate::doctor::preflight::PreflightVerdict::Fail => ("FAIL (Unsupported Environment)", theme.danger),
+        crate::doctor::preflight::PreflightVerdict::Pass => {
+            ("PASS (Fully Supported)", theme.success)
+        }
+        crate::doctor::preflight::PreflightVerdict::Degraded => {
+            ("DEGRADED (Partial Isolation)", theme.warning)
+        }
+        crate::doctor::preflight::PreflightVerdict::Fail => {
+            ("FAIL (Unsupported Environment)", theme.danger)
+        }
     };
 
     let verdict_line = Line::from(vec![
-        Span::styled("OVERALL KERNEL VERDICT: ", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-        Span::styled(verdict_str, Style::default().fg(verdict_color).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  (Exit Code: {})", report.exit_code), Style::default().fg(theme.muted)),
+        Span::styled(
+            "OVERALL KERNEL VERDICT: ",
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            verdict_str,
+            Style::default()
+                .fg(verdict_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  (Exit Code: {})", report.exit_code),
+            Style::default().fg(theme.muted),
+        ),
         Span::raw("   |   "),
-        Span::styled("Press [r] to re-run preflight probe", Style::default().fg(theme.accent)),
+        Span::styled(
+            "Press [r] to re-run preflight probe",
+            Style::default().fg(theme.accent),
+        ),
     ]);
 
     let top_block = Block::default()
@@ -552,66 +733,161 @@ fn render_tab_doctor(f: &mut Frame, state: &DashboardState, area: Rect) {
         .split(chunks[1]);
 
     let left_items = vec![
-        Line::styled("1. LANDLOCK LSM CAPABILITY", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "1. LANDLOCK LSM CAPABILITY",
+            Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+        ),
         Line::from(vec![
             Span::styled("   Supported: ", Style::default().fg(theme.muted)),
             Span::styled(
-                if report.landlock.supported { "Yes" } else { "No" },
-                Style::default().fg(if report.landlock.supported { theme.success } else { theme.danger }).add_modifier(Modifier::BOLD),
+                if report.landlock.supported {
+                    "Yes"
+                } else {
+                    "No"
+                },
+                Style::default()
+                    .fg(if report.landlock.supported {
+                        theme.success
+                    } else {
+                        theme.danger
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" (ABI Version: {:?})", report.landlock.abi_version), Style::default().fg(theme.text)),
+            Span::styled(
+                format!(" (ABI Version: {:?})", report.landlock.abi_version),
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled(format!("   Status:    {}", report.landlock.status), Style::default().fg(theme.muted)),
-        Line::styled(format!("   Message:   {}", report.landlock.message), Style::default().fg(theme.text)),
+        Line::styled(
+            format!("   Status:    {}", report.landlock.status),
+            Style::default().fg(theme.muted),
+        ),
+        Line::styled(
+            format!("   Message:   {}", report.landlock.message),
+            Style::default().fg(theme.text),
+        ),
         Line::from(""),
-        Line::styled("2. LINUX NAMESPACES (CLONE_NEWUSER)", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "2. LINUX NAMESPACES (CLONE_NEWUSER)",
+            Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+        ),
         Line::from(vec![
             Span::styled("   Stage 1 User NS: ", Style::default().fg(theme.muted)),
             Span::styled(
                 &report.namespaces.stage1_user_namespace.status,
-                Style::default().fg(if report.namespaces.stage1_user_namespace.supported { theme.success } else { theme.warning }),
+                Style::default().fg(if report.namespaces.stage1_user_namespace.supported {
+                    theme.success
+                } else {
+                    theme.warning
+                }),
             ),
         ]),
-        Line::styled(format!("   Stage 2 Tmpfs:   {}", report.namespaces.stage2_tmpfs_mount.status), Style::default().fg(theme.muted)),
-        Line::styled(format!("   Overall Status:  {}", report.namespaces.overall_status), Style::default().fg(theme.text)),
+        Line::styled(
+            format!(
+                "   Stage 2 Tmpfs:   {}",
+                report.namespaces.stage2_tmpfs_mount.status
+            ),
+            Style::default().fg(theme.muted),
+        ),
+        Line::styled(
+            format!("   Overall Status:  {}", report.namespaces.overall_status),
+            Style::default().fg(theme.text),
+        ),
     ];
 
     let right_items = vec![
-        Line::styled("3. CGROUPS V2 & PROCESS EXTINCTION", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "3. CGROUPS V2 & PROCESS EXTINCTION",
+            Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+        ),
         Line::from(vec![
             Span::styled("   Available:   ", Style::default().fg(theme.muted)),
             Span::styled(
-                if report.cgroups_v2.available { "Yes" } else { "No" },
-                Style::default().fg(if report.cgroups_v2.available { theme.success } else { theme.danger }),
+                if report.cgroups_v2.available {
+                    "Yes"
+                } else {
+                    "No"
+                },
+                Style::default().fg(if report.cgroups_v2.available {
+                    theme.success
+                } else {
+                    theme.danger
+                }),
             ),
-            Span::styled(format!(" (cgroup.kill: {})", report.cgroups_v2.cgroup_kill), Style::default().fg(theme.text)),
+            Span::styled(
+                format!(" (cgroup.kill: {})", report.cgroups_v2.cgroup_kill),
+                Style::default().fg(theme.text),
+            ),
         ]),
-        Line::styled(format!("   Controllers: {}", report.cgroups_v2.controllers.join(", ")), Style::default().fg(theme.muted)),
-        Line::styled(format!("   Message:     {}", report.cgroups_v2.message), Style::default().fg(theme.text)),
+        Line::styled(
+            format!(
+                "   Controllers: {}",
+                report.cgroups_v2.controllers.join(", ")
+            ),
+            Style::default().fg(theme.muted),
+        ),
+        Line::styled(
+            format!("   Message:     {}", report.cgroups_v2.message),
+            Style::default().fg(theme.text),
+        ),
         Line::from(""),
-        Line::styled("4. SECCOMP-BPF FILTER STATUS", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "4. SECCOMP-BPF FILTER STATUS",
+            Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+        ),
         Line::from(vec![
             Span::styled("   Filter Active: ", Style::default().fg(theme.muted)),
             Span::styled(
-                if report.seccomp.filter_available { "Available" } else { "Unavailable" },
-                Style::default().fg(if report.seccomp.filter_available { theme.success } else { theme.warning }),
+                if report.seccomp.filter_available {
+                    "Available"
+                } else {
+                    "Unavailable"
+                },
+                Style::default().fg(if report.seccomp.filter_available {
+                    theme.success
+                } else {
+                    theme.warning
+                }),
             ),
         ]),
-        Line::styled(format!("   Mode:          {}", report.seccomp.current_mode), Style::default().fg(theme.muted)),
-        Line::styled(format!("   Container:     {}", if report.seccomp.container_restricted { "Restricted" } else { "Unrestricted" }), Style::default().fg(theme.text)),
+        Line::styled(
+            format!("   Mode:          {}", report.seccomp.current_mode),
+            Style::default().fg(theme.muted),
+        ),
+        Line::styled(
+            format!(
+                "   Container:     {}",
+                if report.seccomp.container_restricted {
+                    "Restricted"
+                } else {
+                    "Unrestricted"
+                }
+            ),
+            Style::default().fg(theme.text),
+        ),
     ];
 
     let left_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
         .title(" LANDLOCK & NAMESPACES ");
-    f.render_widget(Paragraph::new(left_items).block(left_block).wrap(Wrap { trim: true }), grid[0]);
+    f.render_widget(
+        Paragraph::new(left_items)
+            .block(left_block)
+            .wrap(Wrap { trim: true }),
+        grid[0],
+    );
 
     let right_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
         .title(" CGROUPS V2 & SECCOMP ");
-    f.render_widget(Paragraph::new(right_items).block(right_block).wrap(Wrap { trim: true }), grid[1]);
+    f.render_widget(
+        Paragraph::new(right_items)
+            .block(right_block)
+            .wrap(Wrap { trim: true }),
+        grid[1],
+    );
 }
 
 fn render_tab_sessions(f: &mut Frame, state: &DashboardState, area: Rect) {
@@ -640,18 +916,36 @@ fn render_tab_sessions(f: &mut Frame, state: &DashboardState, area: Rect) {
             let id_span = Span::styled(
                 snap.session_id.as_str(),
                 if is_selected {
-                    Style::default().fg(theme.selection_fg).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(theme.selection_fg)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(theme.text)
                 },
             );
 
-            let created_span = Span::styled(snap.created_at.as_str(), Style::default().fg(theme.muted));
-            let files_span = Span::styled(format!("{}", snap.file_count), Style::default().fg(theme.text));
-            let size_span = Span::styled(format_bytes(snap.total_size_bytes), Style::default().fg(theme.accent));
-            let proj_span = Span::styled(snap.project_dir.display().to_string(), Style::default().fg(theme.text));
+            let created_span =
+                Span::styled(snap.created_at.as_str(), Style::default().fg(theme.muted));
+            let files_span = Span::styled(
+                format!("{}", snap.file_count),
+                Style::default().fg(theme.text),
+            );
+            let size_span = Span::styled(
+                format_bytes(snap.total_size_bytes),
+                Style::default().fg(theme.accent),
+            );
+            let proj_span = Span::styled(
+                snap.project_dir.display().to_string(),
+                Style::default().fg(theme.text),
+            );
 
-            let row = Row::new(vec![id_span, created_span, files_span, size_span, proj_span]);
+            let row = Row::new(vec![
+                id_span,
+                created_span,
+                files_span,
+                size_span,
+                proj_span,
+            ]);
             if is_selected {
                 row.style(
                     Style::default()
@@ -675,8 +969,18 @@ fn render_tab_sessions(f: &mut Frame, state: &DashboardState, area: Rect) {
             ],
         )
         .header(
-            Row::new(vec!["SESSION ID", "CREATED AT", "FILES", "SIZE", "PROJECT DIR"])
-                .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)),
+            Row::new(vec![
+                "SESSION ID",
+                "CREATED AT",
+                "FILES",
+                "SIZE",
+                "PROJECT DIR",
+            ])
+            .style(
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
         )
         .block(
             Block::default()
@@ -695,7 +999,10 @@ fn render_tab_sessions(f: &mut Frame, state: &DashboardState, area: Rect) {
     let detail_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(" INSTANT ROLLBACK (VETTO UNDO) ", Style::default().fg(theme.logo)));
+        .title(Span::styled(
+            " INSTANT ROLLBACK (VETTO UNDO) ",
+            Style::default().fg(theme.logo),
+        ));
 
     if let Some(snap) = state.snapshots.get(state.selected_snapshot) {
         let lines = vec![
@@ -722,7 +1029,11 @@ fn render_tab_sessions(f: &mut Frame, state: &DashboardState, area: Rect) {
         ];
         f.render_widget(Paragraph::new(lines).block(detail_block), chunks[1]);
     } else {
-        f.render_widget(Paragraph::new("Select a session snapshot above to preview restore.").block(detail_block), chunks[1]);
+        f.render_widget(
+            Paragraph::new("Select a session snapshot above to preview restore.")
+                .block(detail_block),
+            chunks[1],
+        );
     }
 }
 
@@ -736,24 +1047,51 @@ fn render_footer(f: &mut Frame, state: &DashboardState, area: Rect) {
     let lines = vec![
         Line::from(vec![
             Span::styled("STATUS: ", Style::default().fg(theme.muted)),
-            Span::styled(status_text, Style::default().fg(theme.info).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                status_text,
+                Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("[1-4]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[1-4]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Tabs  ", Style::default().fg(theme.text)),
-            Span::styled("[↑↓/jk]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[↑↓/jk]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Select  ", Style::default().fg(theme.text)),
-            Span::styled("[Space]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Space]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Toggle Shim  ", Style::default().fg(theme.text)),
-            Span::styled("[Enter]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Enter]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Launch  ", Style::default().fg(theme.text)),
-            Span::styled("[t]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[t]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Theme  ", Style::default().fg(theme.text)),
-            Span::styled("[r]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[r]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Refresh  ", Style::default().fg(theme.text)),
-            Span::styled("[u]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[u]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Undo  ", Style::default().fg(theme.text)),
-            Span::styled("[q/Esc]", Style::default().fg(theme.logo).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q/Esc]",
+                Style::default().fg(theme.logo).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" Quit", Style::default().fg(theme.text)),
         ]),
     ];

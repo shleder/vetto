@@ -219,7 +219,10 @@ pub fn run_dashboard(theme_override: Option<&str>) -> Result<()> {
                 .arg("--")
                 .arg(&agent_name)
                 .exec();
-            return Err(anyhow::anyhow!("failed to exec agent '{}': {err}", agent_name));
+            return Err(anyhow::anyhow!(
+                "failed to exec agent '{}': {err}",
+                agent_name
+            ));
         }
         #[cfg(not(unix))]
         {
