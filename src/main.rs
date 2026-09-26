@@ -780,6 +780,14 @@ fn run() -> Result<()> {
             }
         }
         None => {
+            #[cfg(unix)]
+            {
+                use std::io::IsTerminal;
+                if std::env::args().len() == 1 && std::io::stdout().is_terminal() {
+                    return vetto::tui::mission_control::run_dashboard(None);
+                }
+            }
+
             let mut cfg = RunConfig::from_cli(&args)?;
             let mut profile_loaded = false;
             if cfg.agent.is_empty() && args.profile != "default" {
