@@ -115,7 +115,7 @@ pub struct SandboxHandle {
     pub root_pid: u32,
     pub strategy: Option<KillStrategy>,
     #[cfg(target_os = "linux")]
-    pub _cgroup: Option<crate::sandbox::linux::cgroup::CgroupHandle>,
+    pub cgroup: Option<crate::sandbox::linux::cgroup::CgroupHandle>,
     #[cfg(target_os = "linux")]
     pub pidfd: Option<OwnedFd>,
     #[cfg(target_os = "linux")]
@@ -286,9 +286,12 @@ impl SandboxHandle {
     }
 
     /// Kill everything inside the sandbox. Safe to call multiple times.
-    pub fn terminate(&mut self) {
+    pub fn terminate(&mut self) -> Result<(), std::io::Error> {
         #[cfg(target_os = "linux")]
         {
+            if let Some(ref cg) = self.cgroup {
+                cg.kill_all()?;
+            }
             const SYS_PIDFD_SEND_SIGNAL: libc::c_long = 424;
             if let Some(ref pfd) = self.pidfd {
                 // Pin the process and deliver SIGKILL directly to the pidfd
@@ -341,17 +344,18 @@ impl SandboxHandle {
         }
         #[cfg(target_os = "linux")]
         {
-            if let Some(cg) = self._cgroup.as_ref() {
+            if let Some(cg) = self.cgroup.as_ref() {
                 cg.cleanup();
             }
         }
         self.reclaim_terminal_control();
+        Ok(())
     }
 }
 
 impl Drop for SandboxHandle {
     fn drop(&mut self) {
-        self.terminate();
+        let _ = self.terminate();
         unregister_active_root(self.root_pid);
     }
 }

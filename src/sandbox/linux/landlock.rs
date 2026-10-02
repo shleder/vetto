@@ -723,9 +723,10 @@ pub fn apply_policy_advanced(
         let owned = match open_landlock_path_fd(&rule.path) {
             Ok(fd) => fd,
             Err(err) if err.raw_os_error() == Some(libc::ELOOP) => {
-                // Reject symlink or magiclink traversal: never attach Landlock rules
-                // through a symlink, while allowing real paths in the ruleset to proceed.
-                continue;
+                return Err(VettoError::Landlock(format!(
+                    "cyclic symlink or symlink traversal detected in policy path '{}' (fail-closed exit 125)",
+                    rule_path.display()
+                )));
             }
             Err(err) => {
                 return Err(VettoError::Landlock(format!(

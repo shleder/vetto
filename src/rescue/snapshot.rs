@@ -363,11 +363,7 @@ pub fn rollback_snapshot(
         }
 
         let out_path = dest.join(clean_path);
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        std::fs::write(&out_path, &data)?;
+        super::rollback::atomic_commit_bytes(&out_path, &data)?;
         files_restored += 1;
         bytes_restored += size;
     }

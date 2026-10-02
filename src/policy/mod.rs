@@ -14,6 +14,7 @@ pub mod opencode;
 pub mod presets;
 pub mod secretscan;
 pub mod types;
+pub mod units;
 
 pub use conditions::{ConditionContext, RawConditions};
 pub use loader::{
@@ -24,4 +25,8 @@ pub use types::{
     analyze_deny_overlap, CgroupConfig, DenyEntry, DenyOverlapReport, EnvironmentPolicy, NetMode,
     NetRule, Policy, PolicyMetadata, PolicySourceKind, ResourceLimits, SeccompNotifyConfig,
     SeccompProfile, SubtractiveRules, Tier,
+};
+pub use units::{
+    format_bytes as format_bytes_typed, parse_bytes, parse_cgroup_memory, ParseBytesError,
+    UnitStandard,
 };

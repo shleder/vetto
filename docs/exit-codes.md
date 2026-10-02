@@ -49,12 +49,10 @@ prints one `vetto: recap:` line with exactly one next action:
 |---|---|
 | `124` / timeout | larger `--timeout` or splitting the task |
 | `126` | `vetto audit --latest` + `vetto allow` / `vetto deny` |
-| `125` | `vetto doctor`, then `vetto pack --bug` |
+| `125` | `vetto doctor`, or `vetto audit --latest` |
 | `127` | `vetto enable <agent>` or PATH check |
-| other non-zero | `vetto pack --bug -o bug.vetto-pack` |
+| other non-zero | `vetto audit --latest` |
 | `0` with denials | `vetto audit --latest` |
 
-`vetto pack --bug` attaches `bug-report.json` to the bundle: vetto version,
-OS/arch, session id, denial counts plus denied paths (capped at 50 entries).
-No file contents, no environment values. Attach the bundle to your issue —
-`vetto unpack --info` shows whether a report is inside.
+`vetto audit --latest` inspects session events, denials, and kernel violations
+from the most recent run without leaking sensitive file contents or tokens.

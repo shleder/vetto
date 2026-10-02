@@ -159,32 +159,6 @@ fn test_feature_95_workspace_profiles() {
 }
 
 #[test]
-fn test_feature_96_why_slow() {
-    let temp_file = std::env::temp_dir().join(format!("vetto-slow-{}.json", std::process::id()));
-    let report_content = r#"{
-        "tier": "fs-only",
-        "duration_secs": 15,
-        "setup_ms": 40,
-        "teardown_ms": 10,
-        "events_total": 100
-    }"#;
-    fs::write(&temp_file, report_content).unwrap();
-
-    let output = vetto_cmd()
-        .args(["why-slow", temp_file.to_str().unwrap(), "--json"])
-        .output()
-        .expect("vetto why-slow --json");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
-    assert_eq!(json["tier"], "fs-only");
-    assert_eq!(json["setup_ms"], 40);
-
-    let _ = fs::remove_file(&temp_file);
-}
-
-#[test]
 fn test_feature_97_gen_sbom_script() {
     let script = Path::new("scripts/gen-sbom.sh");
     assert!(script.exists(), "scripts/gen-sbom.sh exists");

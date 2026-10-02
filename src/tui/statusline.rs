@@ -7,7 +7,8 @@
 //! screen will visually cover the status row for the duration; the row comes
 //! back when the agent leaves the alternate screen. Bytes are never modified.
 
-use std::io::{self, Write};
+use std::collections::VecDeque;
+use std::io;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,197 @@ use super::input;
 const REPAINT_INTERVAL: Duration = Duration::from_millis(200); // ~5 fps cap
 const TICK: Duration = Duration::from_millis(20);
 const REPLAY_CAP: usize = 1024 * 1024;
+
+/// Non-blocking buffered writer for stdout in statusline mode (INV-25).
+/// Prevents stdout pipe/terminal congestion from stalling PTY reads or freezing
+/// the event loop. Ephemeral statusline frames are dropped if stdout is congested;
+/// agent output is bounded-buffered and drained non-blocking.
+pub struct NonblockingStdout {
+    raw_fd: RawFd,
+    orig_flags: Option<libc::c_int>,
+    buffer: VecDeque<u8>,
+    max_capacity: usize,
+    pub overflow_count: usize,
+}
+
+impl NonblockingStdout {
+    pub fn new(max_capacity: usize) -> Self {
+        let raw_fd = libc::STDOUT_FILENO;
+        let orig_flags = unsafe {
+            let flags = libc::fcntl(raw_fd, libc::F_GETFL);
+            if flags >= 0 {
+                libc::fcntl(raw_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                Some(flags)
+            } else {
+                None
+            }
+        };
+        Self {
+            raw_fd,
+            orig_flags,
+            buffer: VecDeque::with_capacity(32 * 1024),
+            max_capacity,
+            overflow_count: 0,
+        }
+    }
+
+    /// Append agent output to the buffer, strictly bounded by max_capacity.
+    pub fn write_agent_output(&mut self, data: &[u8]) {
+        if data.len() >= self.max_capacity {
+            self.buffer.clear();
+            let slice = &data[data.len() - self.max_capacity..];
+            self.buffer.extend(slice);
+            self.overflow_count += 1;
+        } else {
+            if self.buffer.len() + data.len() > self.max_capacity {
+                let overflow = (self.buffer.len() + data.len()) - self.max_capacity;
+                self.buffer.drain(..overflow);
+                self.overflow_count += 1;
+            }
+            self.buffer.extend(data);
+        }
+        self.flush_nonblocking();
+    }
+
+    /// Attempt to draw a status line frame. If stdout is congested, the frame
+    /// is discarded immediately (ephemeral UI discard).
+    pub fn write_status_frame(&mut self, frame: &[u8]) {
+        // If buffer already has backpressure (> 16KB), drop ephemeral status frame
+        if self.buffer.len() > 16 * 1024 || !self.is_writable() {
+            return;
+        }
+        self.buffer.extend(frame);
+        self.flush_nonblocking();
+    }
+
+    /// Check if stdout fd is currently writable using poll(POLLOUT, timeout=0).
+    pub fn is_writable(&self) -> bool {
+        let mut pfd = libc::pollfd {
+            fd: self.raw_fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let r = unsafe { libc::poll(&mut pfd, 1, 0) };
+        r > 0
+            && (pfd.revents & libc::POLLOUT != 0)
+            && (pfd.revents & (libc::POLLERR | libc::POLLNVAL)) == 0
+    }
+
+    /// Drain as many bytes as possible to stdout without blocking.
+    pub fn flush_nonblocking(&mut self) {
+        while !self.buffer.is_empty() {
+            if !self.is_writable() {
+                break;
+            }
+            let (first, _) = self.buffer.as_slices();
+            if first.is_empty() {
+                break;
+            }
+            let n =
+                unsafe { libc::write(self.raw_fd, first.as_ptr().cast(), first.len().min(8192)) };
+            if n > 0 {
+                self.buffer.drain(..n as usize);
+            } else if n < 0 {
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(e) if e == libc::EAGAIN || e == libc::EWOULDBLOCK => break,
+                    Some(libc::EPIPE) => {
+                        self.buffer.clear();
+                        break;
+                    }
+                    _ => break,
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Final bounded flush on exit (wait up to budget without busy looping).
+    pub fn flush_bounded(&mut self, budget: Duration) {
+        let start = Instant::now();
+        while !self.buffer.is_empty() {
+            let elapsed = start.elapsed();
+            if elapsed >= budget {
+                break;
+            }
+            let remaining = budget - elapsed;
+            let timeout_ms = remaining.as_millis().clamp(1, 50) as libc::c_int;
+
+            let mut pfd = libc::pollfd {
+                fd: self.raw_fd,
+                events: libc::POLLOUT,
+                revents: 0,
+            };
+            let r = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            if r < 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if r == 0 {
+                continue;
+            }
+            if pfd.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                self.buffer.clear();
+                break;
+            }
+            if pfd.revents & libc::POLLOUT != 0 {
+                let (first, _) = self.buffer.as_slices();
+                if first.is_empty() {
+                    break;
+                }
+                let n = unsafe {
+                    libc::write(self.raw_fd, first.as_ptr().cast(), first.len().min(8192))
+                };
+                if n > 0 {
+                    self.buffer.drain(..n as usize);
+                } else if n < 0 {
+                    let err = io::Error::last_os_error();
+                    match err.raw_os_error() {
+                        Some(libc::EINTR) => continue,
+                        Some(e) if e == libc::EAGAIN || e == libc::EWOULDBLOCK => continue,
+                        Some(libc::EPIPE) => {
+                            self.buffer.clear();
+                            break;
+                        }
+                        _ => break,
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// DECSTBM 1..bottom: the agent's output scrolls above the reserved row.
+    pub fn set_scroll_region(&mut self, bottom: u16) {
+        let seq = format!("\x1b[1;{bottom}r");
+        self.buffer.extend(seq.as_bytes());
+        self.flush_nonblocking();
+    }
+
+    /// Restore terminal scrolling and clean up.
+    pub fn restore_terminal(&mut self, rows_total: u16) {
+        let seq = format!("\x1b[1;{rows_total}r\x1b[0m");
+        self.buffer.extend(seq.as_bytes());
+        self.flush_bounded(Duration::from_millis(100));
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
+impl Drop for NonblockingStdout {
+    fn drop(&mut self) {
+        if let Some(orig) = self.orig_flags {
+            unsafe {
+                libc::fcntl(self.raw_fd, libc::F_SETFL, orig);
+            }
+        }
+    }
+}
 
 /// Run the session in statusline mode; returns the agent's exit code.
 ///
@@ -51,8 +243,9 @@ pub fn run(
     let _ = pty::sigwinch::install();
     let fwd = input::Forwarder::spawn(master);
 
+    let mut stdout_writer = NonblockingStdout::new(256 * 1024);
     let mut outer = terminal::size().unwrap_or((24, 80));
-    set_scroll_region(outer.0.saturating_sub(1).max(1));
+    stdout_writer.set_scroll_region(outer.0.saturating_sub(1).max(1));
 
     let mut last_paint = Instant::now() - REPAINT_INTERVAL;
     let mut painted_generation = u64::MAX;
@@ -63,7 +256,7 @@ pub fn run(
     let exit_code = loop {
         if let Some(dl) = deadline {
             if Instant::now() >= dl {
-                handle.terminate();
+                let _ = handle.terminate();
                 let drain_start = Instant::now();
                 while drain_start.elapsed() < Duration::from_millis(200) {
                     if handle.try_wait().is_some() {
@@ -71,7 +264,8 @@ pub fn run(
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                restore_terminal(outer.0);
+                stdout_writer.flush_bounded(Duration::from_millis(100));
+                stdout_writer.restore_terminal(outer.0);
                 return (crate::exit_codes::EXIT_TIMEOUT, true);
             }
         }
@@ -79,7 +273,7 @@ pub fn run(
         // agent's foreground group on the pty; we do not signal manually).
         if let Some((rows, cols)) = pty::resizer::sync_to_outer(master) {
             outer = (rows + 1, cols);
-            set_scroll_region(rows);
+            stdout_writer.set_scroll_region(rows);
         }
 
         // Ctrl+] -> scrollable event overlay.
@@ -88,11 +282,9 @@ pub fn run(
             run_overlay(&mut app_state, &mut rx, handle, master, &mut replay);
             fwd.resume();
             let _ = terminal::enable_raw_mode();
-            set_scroll_region(outer.0.saturating_sub(1).max(1));
+            stdout_writer.set_scroll_region(outer.0.saturating_sub(1).max(1));
             if !replay.is_empty() {
-                let mut out = io::stdout();
-                let _ = out.write_all(&replay);
-                let _ = out.flush();
+                stdout_writer.write_agent_output(&replay);
                 replay.clear();
             }
             last_paint = Instant::now() - REPAINT_INTERVAL;
@@ -103,9 +295,7 @@ pub fn run(
         let n = pty::read_ready(master, &mut buf);
         if n > 0 {
             let redacted = redactor.redact_chunk(&buf[..n]);
-            let mut out = io::stdout();
-            let _ = out.write_all(&redacted);
-            let _ = out.flush();
+            stdout_writer.write_agent_output(&redacted);
         }
 
         if let Some(code) = handle.try_wait() {
@@ -116,28 +306,27 @@ pub fn run(
                     break;
                 }
                 let redacted = redactor.redact_chunk(&buf[..n]);
-                let mut out = io::stdout();
-                let _ = out.write_all(&redacted);
+                stdout_writer.write_agent_output(&redacted);
             }
             let flushed = redactor.flush();
             if !flushed.is_empty() {
-                let mut out = io::stdout();
-                let _ = out.write_all(&flushed);
+                stdout_writer.write_agent_output(&flushed);
             }
-            let _ = io::stdout().flush();
+            stdout_writer.flush_bounded(Duration::from_millis(100));
             break code;
         }
 
         app_state.drain(&mut rx);
         if app_state.generation != painted_generation && last_paint.elapsed() >= REPAINT_INTERVAL {
-            draw_status(outer.0, &app_state.status_text(outer.1));
+            draw_status_buffered(&mut stdout_writer, outer.0, &app_state.status_text(outer.1));
             painted_generation = app_state.generation;
             last_paint = Instant::now();
         }
+        stdout_writer.flush_nonblocking();
         std::thread::sleep(TICK);
     };
 
-    restore_terminal(outer.0);
+    stdout_writer.restore_terminal(outer.0);
     (exit_code, false)
 }
 
@@ -421,29 +610,47 @@ fn centered_rect(
         .split(vertical[1])[1]
 }
 
-fn draw_status(rows_total: u16, text: &str) {
+fn draw_status_buffered(writer: &mut NonblockingStdout, rows_total: u16, text: &str) {
     let mut out: Vec<u8> = Vec::with_capacity(text.len() + 32);
     out.extend_from_slice(b"\x1b7"); // save cursor
     out.extend_from_slice(format!("\x1b[{rows_total};1H").as_bytes());
     out.extend_from_slice(b"\x1b[2K\x1b[7m"); // erase line + reverse video
     out.extend_from_slice(text.as_bytes());
     out.extend_from_slice(b"\x1b[0m\x1b8"); // attrs off + restore cursor
-    let mut so = io::stdout();
-    let _ = so.write_all(&out);
-    let _ = so.flush();
+    writer.write_status_frame(&out);
 }
 
-/// DECSTBM 1..bottom: the agent's output scrolls above the reserved row.
-fn set_scroll_region(bottom: u16) {
-    let mut out = io::stdout();
-    let _ = out.write_all(format!("\x1b[1;{bottom}r").as_bytes());
-    let _ = out.flush();
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn restore_terminal(rows_total: u16) {
-    let mut out = io::stdout();
-    let _ = out.write_all(format!("\x1b[1;{rows_total}r").as_bytes());
-    let _ = out.write_all(b"\x1b[0m");
-    let _ = out.flush();
-    let _ = terminal::disable_raw_mode();
+    #[test]
+    fn test_nonblocking_stdout_capacity_bounds() {
+        let mut writer = NonblockingStdout::new(64);
+        assert_eq!(writer.max_capacity, 64);
+        assert_eq!(writer.overflow_count, 0);
+
+        // Within bounds
+        let small = b"hello world";
+        writer.write_agent_output(small);
+        assert!(writer.buffer.len() <= 64);
+        assert_eq!(writer.overflow_count, 0);
+
+        // Exceeding capacity in a single chunk
+        let huge = vec![b'x'; 128];
+        writer.write_agent_output(&huge);
+        assert!(writer.buffer.len() <= 64);
+        assert_eq!(writer.overflow_count, 1);
+    }
+
+    #[test]
+    fn test_nonblocking_stdout_flag_restoration() {
+        let flags_before = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_GETFL) };
+        {
+            let writer = NonblockingStdout::new(1024);
+            assert!(writer.orig_flags.is_some());
+        }
+        let flags_after = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_GETFL) };
+        assert_eq!(flags_before, flags_after);
+    }
 }

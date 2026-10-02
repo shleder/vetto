@@ -137,12 +137,8 @@ pub fn pick_tier(probe: &Probe) -> Result<Tier> {
         _ => {}
     }
     if probe.landlock_abi.is_none() {
-        if probe.seccomp_filter_available {
-            return Ok(Tier::Seccomp);
-        }
         bail!(
-            "missing Landlock and seccomp primitives on this kernel; \
-             refusing to run the agent unsandboxed (fail-closed)\n\
+            "Landlock LSM is required for Linux execution (kernel 5.13+). Fail-closed exit 125.\n\
              action: upgrade your kernel (Linux 5.13+) or enable CONFIG_SECURITY_LANDLOCK=y; run `vetto doctor` for the full capability picture"
         );
     }
@@ -294,19 +290,21 @@ fn child_write_all(fd: RawFd, mut buf: &[u8]) {
 
 /// Report a setup failure to the parent over the err pipe and die.
 fn child_fail(err_w: RawFd, code: i32, msg: &str) -> ! {
+    let _ = code;
     let mut m = String::with_capacity(msg.len() + 4);
     m.push('E');
     m.push(':');
     m.push_str(msg);
     m.push('\n');
     child_write_all(err_w, m.as_bytes());
-    // SAFETY: immediate child exit; no cleanup is possible or needed.
-    unsafe { libc::_exit(code) }
+    // SAFETY: immediate child exit; INV-01 requires all setup failures to exit 125.
+    unsafe { libc::_exit(crate::exit_codes::EXIT_FAIL_CLOSED) }
 }
 
 fn child_exit(code: i32) -> ! {
-    // SAFETY: immediate child exit.
-    unsafe { libc::_exit(code) }
+    let _ = code;
+    // SAFETY: immediate child exit; INV-01 requires all setup failures to exit 125.
+    unsafe { libc::_exit(crate::exit_codes::EXIT_FAIL_CLOSED) }
 }
 
 /// Resolve the relay fd for allowlist mode without panicking.
@@ -325,11 +323,11 @@ fn resolve_relay_fd(relay_end: Option<RawFd>, relay_port: Option<u16>) -> Option
 fn child_pdeathsig(parent_pid: libc::pid_t) {
     // SAFETY: scalar-only prctl.
     if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) } != 0 {
-        child_exit(113);
+        child_exit(crate::exit_codes::EXIT_FAIL_CLOSED);
     }
     // SAFETY: scalar getpid/getppid.
     if unsafe { libc::getppid() } != parent_pid {
-        child_exit(113);
+        child_exit(crate::exit_codes::EXIT_FAIL_CLOSED);
     }
 }
 
@@ -1292,7 +1290,7 @@ fn spawn_full(
 
     // INV-06: Parent subreaper invariant. Mark supervisor as subreaper before
     // spawning child processes; fail closed (Exit 125) if registration fails.
-    crate::multi::isolation::set_subreaper().map_err(anyhow::Error::new)?;
+    proctrack::set_subreaper().map_err(anyhow::Error::new)?;
 
     let (err_r, err_w) = pipe2_cloexec()?;
 
@@ -1426,7 +1424,7 @@ fn spawn_full(
         handle: SandboxHandle {
             root_pid: pid as u32,
             strategy: Some(KillStrategy::PidNsPipe(alive_w)),
-            _cgroup: cgroup_handle,
+            cgroup: cgroup_handle,
             pidfd,
             options: opts,
         },
@@ -1564,7 +1562,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
     // vetto adopts every descendant that outlives the agent child, so the
     // teardown sweep can reach escapers kill(-pgid) cannot. If the prctl
     // fails the historical gap remains; say so loudly instead of silently.
-    if let Err(error) = crate::multi::isolation::set_subreaper() {
+    if let Err(error) = proctrack::set_subreaper() {
         tracing::warn!(
             "fs-only: PR_SET_CHILD_SUBREAPER failed ({error}); setsid-detached \
              grandchildren may survive teardown"
@@ -1663,7 +1661,7 @@ fn spawn_fs_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<S
                 pgid: pid,
                 sweep: true,
             }),
-            _cgroup: cgroup_handle,
+            cgroup: cgroup_handle,
             pidfd,
             options: opts,
         },
@@ -1744,7 +1742,7 @@ unsafe fn child_seccomp_only(a: FsChildArgs<'_>) -> ! {
 
 fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Result<Spawned> {
     let parent_pid = unsafe { libc::getpid() };
-    if let Err(error) = crate::multi::isolation::set_subreaper() {
+    if let Err(error) = proctrack::set_subreaper() {
         tracing::warn!(
             "seccomp: PR_SET_CHILD_SUBREAPER failed ({error}); setsid-detached \
              grandchildren may survive teardown"
@@ -1838,7 +1836,7 @@ fn spawn_seccomp_only(policy: &Policy, opts: SpawnOptions, observe: bool) -> Res
                 pgid: pid,
                 sweep: true,
             }),
-            _cgroup: cgroup_handle,
+            cgroup: cgroup_handle,
             pidfd,
             options: opts,
         },

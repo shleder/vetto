@@ -7,7 +7,7 @@
 //! mechanism is:
 //!
 //! 1. Before the fork, vetto registers itself as a child sub-reaper
-//!    (`PR_SET_CHILD_SUBREAPER`, see `crate::multi::isolation`). When the
+//!    (`PR_SET_CHILD_SUBREAPER`, see [`set_subreaper`]). When the
 //!    agent child terminates, surviving descendants are reparented to vetto
 //!    instead of init.
 //! 2. After the group kill, [`sweep_reparented`] scans `/proc` for live
@@ -27,8 +27,83 @@
 //! is honest degradation from the FULL tier, where the PID namespace kills
 //! everything in the kernel.
 
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+/// PinnedProcess binds a process via Linux `pidfd_open(2)` (Linux 5.3+).
+/// This prevents PID recycling races (INV-21): signals delivered via
+/// `pidfd_send_signal(2)` are guaranteed to target the exact intended process
+/// instance, or fail closed with `ESRCH`, never misdirecting signals to a
+/// recycled PID.
+#[derive(Debug)]
+pub struct PinnedProcess {
+    pub pid: i32,
+    pub pidfd: Option<OwnedFd>,
+}
+
+impl PinnedProcess {
+    /// Open a pinned process descriptor for `pid`.
+    /// On Linux >= 5.3, uses `SYS_pidfd_open(pid, 0)`.
+    /// On older kernels or non-Linux targets, falls back to `pidfd = None`.
+    pub fn open(pid: i32) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            const SYS_PIDFD_OPEN: libc::c_long = 434;
+            let res = unsafe { libc::syscall(SYS_PIDFD_OPEN, pid as libc::pid_t, 0u32) };
+            if res >= 0 {
+                return Self {
+                    pid,
+                    pidfd: Some(unsafe { OwnedFd::from_raw_fd(res as i32) }),
+                };
+            }
+        }
+        Self { pid, pidfd: None }
+    }
+
+    /// Deliver a signal to the pinned process without PID recycling races.
+    /// Returns Ok(()) on success, or Err(io::Error) on failure.
+    pub fn send_signal(&self, sig: i32) -> Result<(), std::io::Error> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(ref fd) = self.pidfd {
+                const SYS_PIDFD_SEND_SIGNAL: libc::c_long = 424;
+                let res = unsafe {
+                    libc::syscall(
+                        SYS_PIDFD_SEND_SIGNAL,
+                        fd.as_raw_fd(),
+                        sig,
+                        std::ptr::null::<libc::siginfo_t>(),
+                        0u32,
+                    )
+                };
+                if res == 0 {
+                    return Ok(());
+                }
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        // Fallback for Linux < 5.3: verify process existence before signaling
+        unsafe {
+            if libc::kill(self.pid, sig) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        }
+    }
+
+    /// Non-blocking reap of the process. Must only be called AFTER signal delivery.
+    pub fn try_wait(&self) -> Option<i32> {
+        let mut status = 0i32;
+        let res = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
+        if res > 0 {
+            Some(status)
+        } else {
+            None
+        }
+    }
+}
 
 /// Upper bound for one sweep. Synchronized with MAX_EXTINCTION_DEADLINE_MS.
 pub const SWEEP_BUDGET_MS: u64 = crate::proctree::MAX_EXTINCTION_DEADLINE_MS;
@@ -98,54 +173,51 @@ pub fn sweep_reparented(deadline_ms: u64, root_pid: i32) -> usize {
     let mut killed = 0usize;
     loop {
         let candidates = scan_children(me, root_pid);
-        // Always reap any terminated zombie children among reparented children
-        // regardless of session (mine == theirs). Do not let reparented zombies linger.
-        // Active sibling roots must never be stolen from their own handles.
-        for &pid in &candidates {
-            if crate::sandbox::handle::is_active_root(pid as u32) {
+
+        // 1. Filter candidates into killable orphans vs non-killable.
+        // Pin killable processes via pidfd immediately, BEFORE any waitpid call (INV-21).
+        let mut killable = Vec::new();
+        let mut non_killable = Vec::new();
+
+        for pid in candidates {
+            if pid == root_pid || crate::sandbox::handle::is_active_root(pid as u32) {
                 continue;
             }
-            let mut status = 0i32;
-            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            let their_pgid = unsafe { libc::getpgid(pid) };
+            let is_killable = match (my_sid, session_of(pid)) {
+                (Some(mine), Some(theirs)) if mine != theirs => true,
+                _ => their_pgid == root_pid,
+            };
+            if is_killable {
+                killable.push(PinnedProcess::open(pid));
+            } else {
+                non_killable.push(pid);
+            }
         }
-        let killable: Vec<i32> = candidates
-            .into_iter()
-            .filter(|pid| {
-                // Never touch our own root (its status belongs to `wait`).
-                // Sibling sandbox roots must never be targeted by concurrent sweeps.
-                if *pid == root_pid || crate::sandbox::handle::is_active_root(*pid as u32) {
-                    return false;
-                }
-                // Foreign-session processes (concurrent sandboxes, harness
-                // helpers) are spared: setsid-detached escapers or shared-session
-                // orphan grandchildren (their_pgid != my_pgid || their_pgid == root_pid)
-                // qualify for evacuation.
-                let their_pgid = unsafe { libc::getpgid(*pid) };
-                match (my_sid, session_of(*pid)) {
-                    (Some(mine), Some(theirs)) if mine != theirs => true,
-                    _ => their_pgid == root_pid,
-                }
-            })
-            .collect();
+
         if killable.is_empty() {
-            // Orphans become visible only after their parent terminates:
-            // reparenting happens at termination, so once the root is a
-            // zombie (or gone), everything below it has already been adopted
-            // by us and an empty scan means the tree is clear. While the
-            // root is still dying, keep polling.
+            // Reap any lingering non-killable zombie children (without signals)
+            for pid in non_killable {
+                let mut status = 0i32;
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            }
             if root_settled(root_pid, me) {
                 return killed;
             }
         } else {
-            for pid in killable {
-                // SAFETY: SIGKILL to a pid that is, at scan time, a direct
-                // child of this process (PPid == getpid()).
-                if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
+            // 2. Deliver SIGKILL via pidfd BEFORE calling waitpid (INV-21)
+            for pinned in &killable {
+                if pinned.send_signal(libc::SIGKILL).is_ok() {
                     killed += 1;
                 }
+            }
+            // 3. ONLY AFTER signal delivery, reap terminated children
+            for pinned in &killable {
+                pinned.try_wait();
+            }
+            // 4. Also reap any non-killable zombie children
+            for pid in non_killable {
                 let mut status = 0i32;
-                // SAFETY: non-blocking waitpid on our own child. 0 (still
-                // dying) and ECHILD (already reaped) are expected races.
                 unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
             }
         }
@@ -227,6 +299,27 @@ fn state_letter(status_text: &str) -> Option<char> {
         }
     }
     None
+}
+
+/// Linux sub-reaper management: mark the calling process as a sub-reaper
+/// so that orphaned descendant processes are adopted by this process rather
+/// than PID 1 of the init system.
+#[cfg(target_os = "linux")]
+pub fn set_subreaper() -> crate::error::VettoResult<()> {
+    const PR_SET_CHILD_SUBREAPER: libc::c_int = 36;
+    // SAFETY: scalar prctl call
+    if unsafe { libc::prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
+        return Err(crate::error::VettoError::Sandbox(format!(
+            "PR_SET_CHILD_SUBREAPER: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_subreaper() -> crate::error::VettoResult<()> {
+    Ok(())
 }
 
 #[cfg(test)]

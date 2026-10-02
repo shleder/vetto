@@ -85,7 +85,7 @@ fn test_feature_30_diff_report() {
     let file_a = proj.path().join("initial.txt");
     write_file(&file_a, "initial content\n");
 
-    let manifest = vetto::report::diff::ProjectManifest::capture(proj.path());
+    let manifest = vetto::report::diff_project::ProjectManifest::capture(proj.path());
     assert_eq!(manifest.files.len(), 1);
 
     // Modify file and add new file
@@ -93,7 +93,7 @@ fn test_feature_30_diff_report() {
     let file_b = proj.path().join("created.txt");
     write_file(&file_b, "created content\n");
 
-    let diff = vetto::report::diff::ProjectDiff::compute(&manifest, proj.path());
+    let diff = vetto::report::diff_project::ProjectDiff::compute(&manifest, proj.path());
     assert_eq!(diff.modified.len(), 1);
     assert_eq!(diff.added.len(), 1);
     assert_eq!(diff.deleted.len(), 0);

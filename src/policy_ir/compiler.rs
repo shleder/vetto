@@ -41,7 +41,7 @@ pub struct EffectivePolicyInput<'a> {
     pub tier: Option<crate::policy::Tier>,
     pub backend: String,
     pub observe_seccomp: bool,
-    pub debug_ports: Option<&'a crate::multi::DebugPortConfig>,
+    pub debug_ports: Option<&'a crate::policy_ir::contract::DebugPortConfig>,
 }
 
 impl PolicyCompiler {

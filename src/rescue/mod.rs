@@ -1,352 +1,57 @@
-pub mod adapter;
-pub mod claude;
-pub mod codex;
-pub mod codex_index;
-pub mod codex_inventory;
-pub mod cursor;
+//! Workspace snapshot, atomic rollback, lock management and ephemeral execution cleanup.
+
+use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+
 pub mod ephemeral;
 pub mod lock;
 pub mod rollback;
-pub mod safe_fs;
 pub mod snapshot;
-pub mod types;
-pub mod wal;
 
 pub use ephemeral::handle_ephemeral_completion;
 
-use std::path::{Path, PathBuf};
-
-use anyhow::{bail, Context, Result};
-use serde::Serialize;
-
-use crate::report;
-pub use types::{ChangeType, RescueCommand, SecurityTelemetry};
-
-use adapter::RescueAdapter;
-use claude::ClaudeAdapter;
-use codex::CodexAdapter;
-use cursor::CursorAdapter;
-use types::{Availability, RescueContext, SessionRef};
-
-const DEFAULT_INDEX_SCAN_LIMIT: usize = 50;
-
-fn adapter_by_id(id: &str) -> Result<Box<dyn RescueAdapter>> {
-    match id {
-        "codex" => Ok(Box::new(CodexAdapter)),
-        "claude" => Ok(Box::new(ClaudeAdapter)),
-        "cursor" => Ok(Box::new(CursorAdapter)),
-        other => bail!(
-            "unsupported rescue adapter {other:?} in {}; available: codex, claude, cursor",
-            env!("CARGO_PKG_VERSION")
-        ),
-    }
+/// Security telemetry collected from session logs and reports.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecurityTelemetry {
+    pub blocked_file_count: u64,
+    pub blocked_file_paths: Vec<String>,
+    pub blocked_network_count: u64,
+    pub blocked_network_destinations: Vec<String>,
+    pub allowed_egress: Vec<String>,
 }
 
-fn default_root(adapter: &str, explicit: Option<&Path>) -> Result<PathBuf> {
-    if let Some(path) = explicit {
-        let candidate = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(path)
-        };
-        return Ok(candidate);
-    }
-    match adapter {
-        "codex" => {
-            if let Some(path) = std::env::var_os("CODEX_HOME") {
-                return Ok(PathBuf::from(path));
-            }
-            let home = std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(PathBuf::from)
-                .context("neither CODEX_HOME, HOME nor USERPROFILE is set; pass --root")?;
-            Ok(home.join(".codex"))
-        }
-        "claude" => {
-            if let Some(path) = std::env::var_os("CLAUDE_HOME") {
-                return Ok(PathBuf::from(path));
-            }
-            let home = std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(PathBuf::from)
-                .context("neither CLAUDE_HOME, HOME nor USERPROFILE is set; pass --root")?;
-            Ok(home.join(".claude"))
-        }
-        "cursor" => {
-            if let Some(dir) = CursorAdapter::default_user_dir() {
-                Ok(dir)
-            } else {
-                bail!("could not determine default Cursor user directory; pass --root");
-            }
-        }
-        other => bail!("adapter {other:?} requires an explicit --root"),
-    }
+/// Kind of file modification observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeType {
+    Added,
+    Modified,
+    Deleted,
 }
 
-fn select_session(
-    adapter: &dyn RescueAdapter,
-    context: &RescueContext,
-    selector: &str,
-) -> Result<SessionRef> {
-    // Codex keys are stable root-relative paths emitted by scan. Resolve them
-    // directly so diagnose/snapshot/fork never performs a complete discovery
-    // pass. Basename matching is intentionally not used for Codex: nested
-    // rollouts may legitimately share one filename.
-    if adapter.id() == "codex" {
-        return codex::CodexAdapter::resolve_exact(&context.root, selector);
-    }
-
-    let selector = selector.replace('\\', "/");
-    let sessions = adapter.discover_sessions(context)?;
-    if let Some(session) = sessions.iter().find(|session| session.key == selector) {
-        return Ok(session.clone());
-    }
-    let mut matches = sessions
-        .into_iter()
-        .filter(|session| {
-            let path = Path::new(&session.relative_path);
-            path.file_name().and_then(|name| name.to_str()) == Some(selector.as_str())
-                || path.file_stem().and_then(|name| name.to_str()) == Some(selector.as_str())
-        })
-        .collect::<Vec<_>>();
-    match matches.len() {
-        0 => bail!("session {selector:?} was not found; run `vetto rescue scan`"),
-        1 => Ok(matches.remove(0)),
-        count => bail!(
-            "session selector {selector:?} is ambiguous ({count} matches); use the exact key from `vetto rescue scan`"
-        ),
-    }
+/// Cryptographically verifiable receipt produced upon successful state repair.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepairReceipt {
+    pub adapter: String,
+    pub session_key: String,
+    pub original_sha256: String,
+    pub repaired_sha256: String,
+    pub backup_archive_path: PathBuf,
+    pub actions_applied: Vec<String>,
+    pub timestamp_unix_secs: u64,
 }
 
-fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    let mut value = serde_json::to_value(value)?;
-    report::sanitize_json_strings(&mut value);
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+/// Receipt generated upon successful atomic rollback of a previous state repair.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackReceipt {
+    pub adapter: String,
+    pub session_key: String,
+    pub target_path: String,
+    pub restored_sha256: String,
+    pub timestamp_unix_secs: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct ScanDiscovery {
-    /// `filesystem-all` is the bounded recursive walker. `index-first` means
-    /// every returned candidate came from a verified provider index.
-    mode: &'static str,
-    /// The evidence set whose completeness is described by `complete`.
-    /// Index completeness never proves that the provider indexed every file
-    /// in the state root.
-    scope: &'static str,
-    source: String,
-    complete: bool,
-    limit: Option<usize>,
-    candidate_count: usize,
-    returned_count: usize,
-}
-
-pub fn run_cli(
-    adapter_id: &str,
-    root: Option<&Path>,
-    json: bool,
-    command: &RescueCommand,
-) -> Result<()> {
-    let adapter = adapter_by_id(adapter_id)?;
-    let context = RescueContext::new(default_root(adapter_id, root)?);
-    match command {
-        RescueCommand::Scan { limit, all } => {
-            if *limit == Some(0) {
-                bail!("rescue scan --limit must be greater than zero");
-            }
-            // clap rejects --all combined with --limit at parse time; nothing
-            // else to enforce here for that pair.
-            if limit.is_some() && adapter_id != "codex" {
-                bail!("`rescue scan --limit` is supported only by the Codex index-first adapter");
-            }
-
-            let status = adapter.detect(&context)?;
-            let use_index = adapter_id == "codex" && !*all;
-            let effective_limit = use_index.then_some((*limit).unwrap_or(DEFAULT_INDEX_SCAN_LIMIT));
-            let filesystem_mode = if *all { "filesystem-all" } else { "filesystem" };
-            let (sessions, discovery) = if status.availability == Availability::Available {
-                if let Some(limit) = effective_limit {
-                    let indexed = codex_index::discover(&context, limit)?;
-                    let returned_count = indexed.sessions.len();
-                    let complete = !indexed.truncated;
-                    (
-                        indexed.sessions,
-                        ScanDiscovery {
-                            mode: "index-first",
-                            scope: "provider-index",
-                            source: indexed.source,
-                            complete,
-                            limit: Some(limit),
-                            candidate_count: indexed.candidate_count,
-                            returned_count,
-                        },
-                    )
-                } else {
-                    let sessions = adapter.discover_sessions(&context)?;
-                    let returned_count = sessions.len();
-                    (
-                        sessions,
-                        ScanDiscovery {
-                            mode: filesystem_mode,
-                            scope: "session-roots",
-                            source: "session-roots".to_string(),
-                            complete: true,
-                            limit: None,
-                            candidate_count: returned_count,
-                            returned_count,
-                        },
-                    )
-                }
-            } else {
-                (
-                    Vec::new(),
-                    ScanDiscovery {
-                        mode: if use_index {
-                            "index-first"
-                        } else {
-                            filesystem_mode
-                        },
-                        scope: if use_index {
-                            "provider-index"
-                        } else {
-                            "session-roots"
-                        },
-                        source: "unavailable".to_string(),
-                        complete: false,
-                        limit: effective_limit,
-                        candidate_count: 0,
-                        returned_count: 0,
-                    },
-                )
-            };
-            if json {
-                print_json(&serde_json::json!({
-                    "status": status,
-                    "sessions": sessions,
-                    "discovery": discovery,
-                }))
-            } else {
-                println!("adapter: {} ({})", adapter.id(), status.support_level);
-                if let Some(reason) = status.reason {
-                    println!("status: unavailable ({})", report::clean(&reason));
-                } else {
-                    println!("status: available");
-                }
-                println!(
-                    "discovery: {} ({}, {} candidate(s), {} returned)",
-                    discovery.mode,
-                    discovery.source,
-                    discovery.candidate_count,
-                    discovery.returned_count
-                );
-                if let Some(limit) = discovery.limit {
-                    if !discovery.complete {
-                        println!(
-                            "notice: result is limited to {limit}; use a larger --limit or `--all` for the bounded filesystem walk"
-                        );
-                    }
-                }
-                println!("sessions: {}", sessions.len());
-                for session in sessions {
-                    println!("{}  {} bytes", report::clean(&session.key), session.bytes);
-                }
-                Ok(())
-            }
-        }
-        RescueCommand::Diagnose { session } => {
-            let session = select_session(adapter.as_ref(), &context, session)?;
-            let view = adapter.diagnose(&context, &session)?;
-            if json {
-                print_json(&view)
-            } else {
-                println!("session: {}", report::clean(&view.key));
-                println!("health: {:?}", view.health);
-                println!("records: {}", view.records);
-                println!("malformed records: {}", view.malformed_records);
-                println!("oversized records: {}", view.oversized_records);
-                println!("sha256: {}", view.sha256);
-                for notice in view.notices {
-                    println!("notice: {}", report::clean(&notice));
-                }
-                Ok(())
-            }
-        }
-        RescueCommand::Snapshot { session, output } | RescueCommand::Fork { session, output } => {
-            let session = select_session(adapter.as_ref(), &context, session)?;
-            let receipt = adapter.snapshot(&context, &session, output)?;
-            if json {
-                print_json(&receipt)
-            } else {
-                println!("snapshot: {}", report::clean(&receipt.destination));
-                println!("bytes: {}", receipt.bytes);
-                println!("sha256: {}", receipt.sha256);
-                println!("source preserved: {}", receipt.source_preserved);
-                Ok(())
-            }
-        }
-        RescueCommand::Repair {
-            session,
-            backup_dir,
-        } => {
-            let session = select_session(adapter.as_ref(), &context, session)?;
-            let default_backup = context.root.join(".vetto_backups");
-            let backup_dir = backup_dir.as_deref().unwrap_or(&default_backup);
-            let receipt = adapter.repair(&context, &session, backup_dir)?;
-            if json {
-                print_json(&receipt)
-            } else {
-                println!(
-                    "repair completed for session: {}",
-                    report::clean(&receipt.session_key)
-                );
-                println!("original sha256: {}", receipt.original_sha256);
-                println!("repaired sha256: {}", receipt.repaired_sha256);
-                println!("backup archive: {}", receipt.backup_archive_path.display());
-                println!("actions applied:");
-                for action in &receipt.actions_applied {
-                    println!("  - {}", report::clean(action));
-                }
-                Ok(())
-            }
-        }
-        RescueCommand::Rollback { receipt, target } => {
-            let rollback_receipt = rollback::rollback_repair(receipt, target.as_deref())?;
-            if json {
-                print_json(&rollback_receipt)
-            } else {
-                println!("rollback completed successfully");
-                println!("session: {}", report::clean(&rollback_receipt.session_key));
-                println!(
-                    "target path: {}",
-                    report::clean(&rollback_receipt.target_path)
-                );
-                println!("restored sha256: {}", rollback_receipt.restored_sha256);
-                Ok(())
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn adapters_supported_list() {
-        assert!(adapter_by_id("codex").is_ok());
-        assert!(adapter_by_id("claude").is_ok());
-        assert!(adapter_by_id("cursor").is_ok());
-        assert!(adapter_by_id("invalid").is_err());
-    }
-
-    #[test]
-    fn default_root_resolution() {
-        let explicit = Path::new("custom/root");
-        assert!(default_root("claude", Some(explicit))
-            .unwrap()
-            .ends_with(Path::new("custom/root")));
-        assert!(default_root("cursor", Some(explicit))
-            .unwrap()
-            .ends_with(Path::new("custom/root")));
-    }
+/// Backwards compatibility alias for modules importing `crate::rescue::types::*`.
+pub mod types {
+    pub use super::{ChangeType, RepairReceipt, RollbackReceipt, SecurityTelemetry};
 }

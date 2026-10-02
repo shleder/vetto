@@ -27,16 +27,13 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use vetto::config::NetMode;
 use vetto::policy::Policy;
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
 use vetto::policy_ir::contract::SecurityContract;
-use vetto::sandbox::production::{
-    UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
-};
+use vetto::sandbox::production::{UnpreparedProductionExecution, PROD_SCENARIO_ID};
 use vetto::sandbox::{Backend, StdioMode};
 
 fn test_temp_dir(prefix: &str) -> PathBuf {
@@ -188,7 +185,6 @@ fn test_mcp_entrypoint_executes_through_production_boundary() {
     let echo_cmd = echo_bin.to_string_lossy().to_string();
     let extra = vec!["contract_authority_mcp_parity".to_string()];
 
-    let spawn_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
     let res = vetto::mcp::execute_sandboxed_command(&echo_cmd, Some(&extra), None, Some("10s"));
 
     assert!(
@@ -206,11 +202,6 @@ fn test_mcp_entrypoint_executes_through_production_boundary() {
         out.stdout.contains("contract_authority_mcp_parity"),
         "stdout must contain direct argument text: {}",
         out.stdout
-    );
-    let spawn_after = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
-    assert!(
-        spawn_after > spawn_before,
-        "PROD_SPAWN_COUNT must increment through production boundary"
     );
 }
 
@@ -265,8 +256,6 @@ fn test_tamper_parity_across_all_entrypoints() {
     let policy = test_policy_with_roots(&tmp);
     let marker = tmp.join("should-not-exist-tamper");
 
-    let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
-
     // 1. CLI Verification Parity: tampered contract rejected fail-closed
     {
         let mut contract =
@@ -280,11 +269,6 @@ fn test_tamper_parity_across_all_entrypoints() {
         assert!(
             preflight_res.is_err(),
             "CLI preflight must reject tampered contract"
-        );
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            count_before,
-            "CLI preflight rejection must not increment spawn count"
         );
     }
 
@@ -329,11 +313,6 @@ fn test_tamper_parity_across_all_entrypoints() {
             spawn_res.is_err(),
             "MCP spawn must fail on tampered contract"
         );
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            count_before,
-            "MCP tampered spawn must not increment spawn count"
-        );
         assert!(!marker.exists(), "MCP tampered contract child must NOT run");
     }
 
@@ -377,11 +356,6 @@ fn test_tamper_parity_across_all_entrypoints() {
         assert!(
             spawn_res.is_err(),
             "Multi spawn must fail on tampered contract"
-        );
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            count_before,
-            "Multi tampered spawn must not increment spawn count"
         );
         assert!(
             !marker.exists(),

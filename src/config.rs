@@ -17,15 +17,12 @@ pub use crate::policy::types::{strip_domain_port, NetMode, NetRule};
 pub enum TuiMode {
     /// Agent keeps its own TUI; vetto draws ONE status row on the last line.
     Statusline,
-    /// vetto owns an alternate-screen dashboard; agent runs headless.
-    Full,
     /// No terminal UI at all (CI / piping).
     None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportFormat {
-    Html,
     Markdown,
     Json,
     Sarif,
@@ -150,7 +147,6 @@ pub struct RunConfig {
     pub https_proxy: Option<String>,
     pub no_proxy: Option<String>,
     pub block_doh: bool,
-    pub windows_sandbox: bool,
     pub benchmark: bool,
     pub agent: Vec<String>,
 }
@@ -264,9 +260,8 @@ fn validate_domain(domain: &str) -> Result<()> {
 pub fn parse_tui_mode(s: &str) -> Result<TuiMode> {
     match s {
         "statusline" => Ok(TuiMode::Statusline),
-        "full" => Ok(TuiMode::Full),
         "none" => Ok(TuiMode::None),
-        other => bail!("invalid --tui mode '{other}' (expected statusline, full or none)"),
+        other => bail!("invalid --tui mode '{other}' (expected statusline or none)"),
     }
 }
 

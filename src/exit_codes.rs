@@ -10,6 +10,9 @@ pub const EXIT_SUCCESS: i32 = 0;
 /// Generic agent error or general operational error.
 pub const EXIT_AGENT_ERROR: i32 = 1;
 
+/// Invalid CLI usage or empty agent command.
+pub const EXIT_INVALID_USAGE: i32 = 2;
+
 /// Session timeout: the supervisor killed the child process after the deadline (mirrors GNU timeout).
 pub const EXIT_TIMEOUT: i32 = 124;
 
@@ -68,7 +71,7 @@ pub fn recap_hint(final_code: i32, blocked_total: u64, timed_out: bool) -> Optio
     }
     if final_code == EXIT_FAIL_CLOSED {
         return Some(
-            "sandbox refused fail-closed — run 'vetto doctor' for the capability picture, then 'vetto pack --bug -o bug.vetto-pack' to bundle a report"
+            "sandbox refused fail-closed — run 'vetto doctor' for the capability picture, or 'vetto audit --latest' to inspect session events"
                 .to_string(),
         );
     }
@@ -80,7 +83,7 @@ pub fn recap_hint(final_code: i32, blocked_total: u64, timed_out: bool) -> Optio
     }
     if final_code != EXIT_SUCCESS {
         return Some(format!(
-            "agent exited {final_code} — 'vetto pack --bug -o bug.vetto-pack' bundles a redacted report for your issue"
+            "agent exited {final_code} — run 'vetto audit --latest' to inspect session events and denials"
         ));
     }
     if blocked_total > 0 {
@@ -113,6 +116,8 @@ pub fn map_error_to_exit_code(err: &anyhow::Error) -> i32 {
         || msg.contains("not supported")
         || msg.contains("sandbox setup failed")
         || msg.contains("landlock")
+        || msg.contains("seccomp")
+        || msg.contains("cgroup")
         || msg.contains("namespace")
         || msg.contains("mount")
     {
@@ -233,14 +238,14 @@ mod tests {
 
         let fail_closed = recap_hint(EXIT_FAIL_CLOSED, 0, false).expect("fail-closed recap");
         assert!(fail_closed.contains("vetto doctor"));
-        assert!(fail_closed.contains("vetto pack --bug"));
+        assert!(fail_closed.contains("vetto audit --latest"));
 
         let missing = recap_hint(EXIT_COMMAND_NOT_FOUND, 0, false).expect("missing recap");
         assert!(missing.contains("vetto enable"));
 
         let agent_err = recap_hint(3, 0, false).expect("agent error recap");
         assert!(agent_err.contains('3'));
-        assert!(agent_err.contains("vetto pack --bug"));
+        assert!(agent_err.contains("vetto audit --latest"));
 
         let signal = recap_hint(137, 0, false).expect("signal recap");
         assert!(signal.contains("137"));

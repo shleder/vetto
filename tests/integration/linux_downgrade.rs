@@ -32,7 +32,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
     };
     assert_eq!(pick_tier(&probe_fs_only).unwrap(), Tier::FsOnly);
 
-    // 3. No landlock -> degrades to Tier::Seccomp
+    // 3. No landlock -> degrades to Tier::Seccomp is forbidden; must fail closed (INV-01)
     let probe_seccomp = Probe {
         kernel: "5.10.0".into(),
         landlock_abi: None,
@@ -43,7 +43,7 @@ fn test_pick_tier_matrix_downgrade_guarantee() {
         audit_feed_readable: false,
         cgroup_controllers: vec![],
     };
-    assert_eq!(pick_tier(&probe_seccomp).unwrap(), Tier::Seccomp);
+    assert!(pick_tier(&probe_seccomp).is_err());
 
     // 4. No landlock and no seccomp -> FAIL-CLOSED
     let probe_none = Probe {

@@ -85,7 +85,7 @@ impl WaitKill for crate::sandbox::SandboxHandle {
     }
 
     fn terminate(&mut self) {
-        crate::sandbox::SandboxHandle::terminate(self);
+        let _ = crate::sandbox::SandboxHandle::terminate(self);
     }
 
     fn terminate_graceful(&mut self) {

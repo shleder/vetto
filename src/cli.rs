@@ -1,36 +1,24 @@
 pub mod bench;
-pub mod bundle;
 pub mod diff;
 pub mod enable;
-pub mod eval;
-pub mod fleet;
-pub mod git_hook;
 pub mod hook;
 pub mod kill;
 pub mod mask;
-pub mod plugin;
-pub mod registry;
 pub mod shell_env;
 pub mod status;
 pub mod undo;
-pub mod why_slow;
-pub mod wizard;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub use crate::watchdog::WatchdogArgs;
 pub use bench::BenchArgs;
-pub use bundle::{PackArgs, UnpackArgs};
 pub use diff::DiffArgs;
 pub use enable::{DisableArgs, EnableArgs};
-pub use eval::EvalArgs;
-pub use fleet::{FleetArgs, FleetCommand, FleetSpawnArgs};
 pub use hook::{HookCommand, HookScope, ShellType};
 pub use kill::KillArgs;
 pub use mask::MaskArgs;
 pub use undo::UndoArgs;
-pub use wizard::WizardArgs;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -48,7 +36,6 @@ Examples:
   vetto enable codex
   claude
   vetto doctor
-  vetto tour
   vetto status
   vetto allow ./target
   vetto deny ~/.aws/credentials
@@ -80,11 +67,11 @@ pub struct Cli {
     #[arg(long, value_name = "MODE")]
     pub net: Option<String>,
 
-    /// UI mode: statusline | full | none
+    /// UI mode: statusline | none
     #[arg(long, value_name = "MODE")]
     pub tui: Option<String>,
 
-    /// Explicit sandbox backend: auto | process | win-sandbox
+    /// Explicit sandbox backend: auto | process
     #[arg(long, value_name = "BACKEND")]
     pub backend: Option<String>,
 
@@ -220,7 +207,7 @@ pub struct Cli {
     #[arg(long)]
     pub system_log: bool,
 
-    /// Select an agent preset, or provide NAME=PROGRAM entries with --multi.
+    /// Select an agent preset.
     #[arg(
         short = 'a',
         long = "agent",
@@ -228,14 +215,6 @@ pub struct Cli {
         action = clap::ArgAction::Append
     )]
     pub agents: Vec<String>,
-
-    /// Run the compatibility multi-agent frontend without a `multi` subcommand.
-    #[arg(long)]
-    pub multi: bool,
-
-    /// Multi-agent TOML manifest for the compatibility frontend.
-    #[arg(long = "manifest", value_name = "PATH")]
-    pub multi_manifest: Option<PathBuf>,
 
     /// Additional glob patterns to resolve and deny (e.g. "**/*.pem").
     #[arg(long = "deny-glob", value_name = "PATTERN", action = clap::ArgAction::Append)]
@@ -261,10 +240,6 @@ pub struct Cli {
     #[arg(long = "auto-deny-secrets")]
     pub auto_deny_secrets: bool,
 
-    /// Target remote daemon API endpoint URL (e.g. http://127.0.0.1:54321)
-    #[arg(long, value_name = "URL")]
-    pub remote: Option<String>,
-
     /// Redact secrets in real-time from stdout/stderr streams
     #[arg(long = "mask-secrets")]
     pub mask_secrets: bool,
@@ -284,10 +259,6 @@ pub struct Cli {
     /// Disable DoH and DoT blocking.
     #[arg(long = "no-block-doh")]
     pub no_block_doh: bool,
-
-    /// Run execution inside disposable Windows Sandbox (VM) instead of AppContainer (Windows only)
-    #[arg(long = "windows-sandbox")]
-    pub windows_sandbox: bool,
 
     /// Exits with 0 (and prints true) if running inside a container, 1 otherwise.
     #[arg(long)]
@@ -377,23 +348,6 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Interactive 5-step onboarding walkthrough
-    Tour {
-        /// Run all tour steps non-interactively without waiting for keypresses
-        #[arg(long)]
-        non_interactive: bool,
-    },
-    /// Launch the interactive TUI Mission Control dashboard
-    #[command(
-        name = "tui",
-        visible_alias = "mission-control",
-        alias = "mission_control"
-    )]
-    Tui {
-        /// Color theme mode: arasaka | circuit
-        #[arg(long, value_name = "THEME")]
-        theme: Option<String>,
-    },
     /// List active sandboxed sessions and cleanup stale metadata.
     Status {
         /// Emit machine-readable JSON.
@@ -441,23 +395,14 @@ pub enum Command {
         )]
         args: Vec<String>,
     },
-    /// Interactive terminal setup wizard to configure sandbox boundaries and write policy.toml
-    Wizard(wizard::WizardArgs),
     /// Restore project files from a previous session snapshot (instant rollback)
     Undo(undo::UndoArgs),
     /// Run an agent in a disposable ephemeral sandbox with instant rollback on cancel/failure
     Ephemeral(EphemeralArgs),
-    /// Safely evaluate code in a disposable, kernel-isolated sandbox (cgroups v2, timeout, secret masking)
-    Eval(eval::EvalArgs),
     /// High-throughput benchmark execution fast-path (SWE-bench adapter)
     Bench(bench::BenchArgs),
     /// Inspect agent changes against session snapshot (modified/added/deleted files & security)
     Diff(diff::DiffArgs),
-    /// Export a session into a portable repro bundle (.vetto-pack) with snapshot, logs,
-    /// and telemetry
-    Pack(bundle::PackArgs),
-    /// Unpack or inspect a .vetto-pack bundle to investigate or reproduce an incident
-    Unpack(bundle::UnpackArgs),
     /// Inspect active autonomous loop counters, failing commands, and monitored workspaces
     Watchdog(WatchdogArgs),
     /// Analyze project ecosystem and generate a tailored policy.toml policy
@@ -466,47 +411,21 @@ pub enum Command {
         /// Overwrite existing policy if present
         #[arg(long, short = 'f')]
         force: bool,
-        /// Interactive first-run setup wizard
-        #[arg(long)]
-        wizard: bool,
     },
     /// List built-in policy profiles
     #[command(hide = true)]
     Profiles,
-    /// Manage transparent developer shims, shell hooks, and Git hook wrappers
+    /// Manage transparent developer shims and shell hooks
     #[command(hide = true)]
     Hook {
         #[command(subcommand)]
         command: HookCommand,
-    },
-    /// Manage community-registry policies
-    #[command(hide = true)]
-    Registry {
-        #[command(subcommand)]
-        command: registry::RegistryCommand,
-    },
-    /// Manage agent integration plugins (Claude Code, OpenCode, Cursor, Aider)
-    #[command(hide = true)]
-    Plugin {
-        #[command(subcommand)]
-        command: plugin::PluginCommand,
     },
     /// Run or wrap Model Context Protocol (MCP) servers
     #[command(hide = true)]
     Mcp {
         #[command(subcommand)]
         command: Option<McpCommand>,
-    },
-    /// Manage background session multiplexer daemon and session registry
-    Daemon {
-        #[command(subcommand)]
-        command: crate::daemon::DaemonCommand,
-    },
-    /// Run multiplexer daemon in foreground with SSH remote instructions
-    Serve {
-        /// Loopback HTTP port for REST API (default: 54321)
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_HTTP_PORT)]
-        port: u16,
     },
     /// Fast native shim dispatcher for intercepted toolchain binaries
     #[command(hide = true)]
@@ -518,49 +437,6 @@ pub enum Command {
         /// Arguments passed to the target binary
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
-    },
-    /// Manage concurrent multi-agent fleet execution, slots, and isolation
-    Fleet {
-        #[command(subcommand)]
-        command: fleet::FleetCommand,
-    },
-    /// Run named agents concurrently, each in an independent sandbox.
-    #[command(hide = true)]
-    Multi {
-        /// TOML manifest containing one or more [[agents]] argv definitions.
-        #[arg(long, value_name = "PATH", conflicts_with = "agents")]
-        manifest: Option<PathBuf>,
-        /// Explicit repeated executable form: NAME=PROGRAM. Arguments and
-        /// per-agent policies belong in the manifest; no shell is involved.
-        #[arg(long = "agent", value_name = "NAME=PROGRAM", action = clap::ArgAction::Append)]
-        agents: Vec<String>,
-        /// Compatibility form for exactly one argv command. A literal `--`
-        /// inside this vector is rejected as ambiguous by the manifest parser.
-        #[arg(last = true, value_name = "COMMAND [ARGS...]")]
-        command: Vec<String>,
-    },
-    /// Inspect and copy persisted agent sessions without modifying originals.
-    #[command(hide = true)]
-    Rescue {
-        /// Recovery adapter: codex, claude or cursor.
-        #[arg(long, default_value = "codex", value_name = "ID")]
-        adapter: String,
-        /// Explicit agent state root. When omitted each adapter resolves its
-        /// own default: CODEX_HOME or $HOME/.codex, CLAUDE_HOME or
-        /// $HOME/.claude, and the platform Cursor user directory.
-        #[arg(long, value_name = "PATH")]
-        root: Option<PathBuf>,
-        /// Emit sanitized machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-        #[command(subcommand)]
-        command: RescueCommand,
-    },
-    /// Compare two JSON session reports.
-    #[command(hide = true)]
-    Report {
-        #[command(subcommand)]
-        command: ReportCommand,
     },
     /// Run red-team sandbox containment and kernel isolation attack battery.
     #[command(hide = true)]
@@ -602,15 +478,6 @@ pub enum Command {
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
-    },
-    /// Diagnostic latency breakdown and optimization hints for a session.
-    #[command(name = "why-slow", hide = true)]
-    WhySlow {
-        /// Session identifier or report path.
-        session: String,
-        /// Emit machine-readable JSON.
-        #[arg(long)]
-        json: bool,
     },
     /// Self-upgrade vetto via npm, cargo, homebrew, or direct binary
     #[command(hide = true)]
@@ -656,16 +523,6 @@ pub enum Command {
         /// Emit raw JSON lines instead of formatted output
         #[arg(long)]
         json: bool,
-    },
-    /// Restore project files from a previously created session snapshot
-    #[command(hide = true)]
-    Rollback {
-        /// Session ID or path to snapshot archive
-        #[arg(value_name = "SESSION")]
-        session: String,
-        /// Optional restore target directory override
-        #[arg(long, value_name = "TARGET")]
-        target: Option<PathBuf>,
     },
     /// Tail and filter JSONL session event logs.
     #[command(hide = true)]
@@ -925,19 +782,6 @@ pub enum ProfileCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
-pub enum ReportCommand {
-    /// Print a machine-readable delta for two session JSON reports.
-    Compare {
-        #[arg(value_name = "SESSION1")]
-        session1: PathBuf,
-        #[arg(value_name = "SESSION2")]
-        session2: PathBuf,
-    },
-}
-
-pub use crate::rescue::RescueCommand;
-
 /// Render completions to stdout without starting a sandbox session.
 pub fn print_completions(shell: Shell) -> anyhow::Result<()> {
     let mut command = Cli::command();
@@ -964,23 +808,17 @@ impl Cli {
         global: &crate::config::GlobalConfig,
     ) -> anyhow::Result<crate::config::RunConfig> {
         let cli = self;
-        let agent_preset = if cli.multi {
-            None
-        } else {
-            match cli.agents.as_slice() {
-                [] => crate::config::detect_agent_preset(&cli.agent),
-                [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
-                    Some(
-                        crate::policy::defaults::canonical_agent_name(agent)
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| agent.clone()),
-                    )
-                }
-                [_] => anyhow::bail!(
-                    "single-agent --agent expects a preset name; NAME=PROGRAM is only valid with --multi"
-                ),
-                _ => anyhow::bail!("single-agent mode accepts at most one --agent preset"),
+        let agent_preset = match cli.agents.as_slice() {
+            [] => crate::config::detect_agent_preset(&cli.agent),
+            [agent] if !agent.contains('=') && !agent.trim().is_empty() => {
+                Some(
+                    crate::policy::defaults::canonical_agent_name(agent)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| agent.clone()),
+                )
             }
+            [_] => anyhow::bail!("--agent expects a preset name (e.g. claude, codex, aider)"),
+            _ => anyhow::bail!("accepts at most one --agent preset"),
         };
 
         let explicit_net = cli.net.is_some();
@@ -1077,13 +915,12 @@ impl Cli {
         if let Some(fmts) = report_spec {
             for f in fmts.split(',') {
                 report_formats.push(match f.trim().to_ascii_lowercase().as_str() {
-                    "html" => crate::config::ReportFormat::Html,
                     "md" | "markdown" => crate::config::ReportFormat::Markdown,
                     "json" => crate::config::ReportFormat::Json,
                     "sarif" => crate::config::ReportFormat::Sarif,
                     other => {
                         anyhow::bail!(
-                            "unknown report format '{other}' (expected html, md, json, sarif)"
+                            "unknown report format '{other}' (expected md, json, sarif)"
                         )
                     }
                 });
@@ -1248,7 +1085,6 @@ impl Cli {
             mask_secrets,
             net_quota,
             block_doh,
-            windows_sandbox: cli.windows_sandbox,
             benchmark,
             agent: cli.agent.clone(),
             http_proxy,
@@ -1294,14 +1130,14 @@ mod tests {
     #[test]
     fn hook_subcommand_parses_install_and_status() {
         let install_cli =
-            Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--git"])
+            Cli::try_parse_from(["vetto", "hook", "install", "--scope", "local", "--force"])
                 .expect("hook install parsing");
         assert!(matches!(
             install_cli.command,
             Some(Command::Hook {
                 command: HookCommand::Install {
                     scope: HookScope::Local,
-                    git: true,
+                    force: true,
                     ..
                 }
             })
@@ -1371,23 +1207,6 @@ mod tests {
     }
 
     #[test]
-    fn top_level_multi_keeps_named_agents_separate_from_literal_command() {
-        let cli = Cli::try_parse_from([
-            "vetto",
-            "--multi",
-            "--agent",
-            "lint=/bin/true",
-            "--",
-            "/bin/true",
-            "--version",
-        ])
-        .expect("top-level multi syntax");
-        assert!(cli.multi);
-        assert_eq!(cli.agents, vec!["lint=/bin/true"]);
-        assert_eq!(cli.agent, vec!["/bin/true", "--version"]);
-    }
-
-    #[test]
     fn doctor_check_agent_is_an_explicit_subcommand_option() {
         let cli = Cli::try_parse_from(["vetto", "doctor", "--check-agent", "codex"])
             .expect("doctor agent check");
@@ -1417,73 +1236,6 @@ mod tests {
             Some(Command::Mask(MaskArgs {
                 style: mask::MaskStyle::Pad,
             }))
-        ));
-    }
-
-    #[test]
-    fn rescue_parser_keeps_adapter_options_outside_the_session_selector() {
-        let cli = Cli::try_parse_from([
-            "vetto",
-            "rescue",
-            "--adapter",
-            "codex",
-            "--root",
-            "/tmp/codex-home",
-            "--json",
-            "diagnose",
-            "sessions/example.jsonl",
-        ])
-        .expect("rescue syntax");
-        assert!(matches!(
-            cli.command,
-            Some(Command::Rescue {
-                ref adapter,
-                json: true,
-                command: RescueCommand::Diagnose { ref session },
-                ..
-            }) if adapter == "codex" && session == "sessions/example.jsonl"
-        ));
-    }
-
-    #[test]
-    fn rescue_scan_exposes_explicit_index_limit_and_full_walk_modes() {
-        let default =
-            Cli::try_parse_from(["vetto", "rescue", "scan"]).expect("default rescue scan syntax");
-        assert!(matches!(
-            default.command,
-            Some(Command::Rescue {
-                command: RescueCommand::Scan {
-                    limit: None,
-                    all: false,
-                },
-                ..
-            })
-        ));
-
-        let limited = Cli::try_parse_from(["vetto", "rescue", "scan", "--limit", "25"])
-            .expect("limited rescue scan syntax");
-        assert!(matches!(
-            limited.command,
-            Some(Command::Rescue {
-                command: RescueCommand::Scan {
-                    limit: Some(25),
-                    all: false,
-                },
-                ..
-            })
-        ));
-
-        let full = Cli::try_parse_from(["vetto", "rescue", "scan", "--all"])
-            .expect("full rescue scan syntax");
-        assert!(matches!(
-            full.command,
-            Some(Command::Rescue {
-                command: RescueCommand::Scan {
-                    limit: None,
-                    all: true,
-                },
-                ..
-            })
         ));
     }
 
@@ -1574,11 +1326,11 @@ mod tests {
     }
 
     #[test]
-    fn init_wizard_subcommand_parses() {
-        let cli = Cli::try_parse_from(["vetto", "init", "--wizard"]).expect("init wizard parsing");
+    fn init_subcommand_parses() {
+        let cli = Cli::try_parse_from(["vetto", "init", "--force"]).expect("init parsing");
         assert!(matches!(
             cli.command,
-            Some(Command::Init { wizard: true, .. })
+            Some(Command::Init { force: true })
         ));
     }
 
@@ -1624,18 +1376,6 @@ mod tests {
                 command: PolicyCommand::Import { ref claude, ref output, .. }
             }) if claude.as_deref() == Some(std::path::Path::new("settings.json"))
                 && output == &PathBuf::from("my-policy.toml")
-        ));
-    }
-
-    #[test]
-    fn tour_subcommand_parses_non_interactive_flag() {
-        let cli =
-            Cli::try_parse_from(["vetto", "tour", "--non-interactive"]).expect("tour parsing");
-        assert!(matches!(
-            cli.command,
-            Some(Command::Tour {
-                non_interactive: true,
-            })
         ));
     }
 
@@ -1799,43 +1539,6 @@ mod tests {
             }) if args.allow == vec!["/tmp"] && args.command == vec!["node", "server.js"]
         ));
 
-        let plugin_install =
-            Cli::try_parse_from(["vetto", "plugin", "install", "claude-code", "--force"])
-                .expect("plugin install syntax");
-        assert!(matches!(
-            plugin_install.command,
-            Some(Command::Plugin {
-                command: plugin::PluginCommand::Install {
-                    ref target,
-                    force: true
-                }
-            }) if target == "claude-code"
-        ));
-
-        let daemon_start = Cli::try_parse_from([
-            "vetto",
-            "daemon",
-            "start",
-            "--port",
-            "54321",
-            "--foreground",
-        ])
-        .expect("daemon start syntax");
-        assert!(matches!(
-            daemon_start.command,
-            Some(Command::Daemon {
-                command: crate::daemon::DaemonCommand::Start {
-                    port: 54321,
-                    foreground: true,
-                    ..
-                }
-            })
-        ));
-
-        let serve =
-            Cli::try_parse_from(["vetto", "serve", "--port", "8080"]).expect("serve syntax");
-        assert!(matches!(serve.command, Some(Command::Serve { port: 8080 })));
-
         let policy_sign = Cli::try_parse_from(["vetto", "policy", "sign", "vetto.toml"])
             .expect("policy sign syntax");
         assert!(matches!(
@@ -1899,32 +1602,5 @@ mod test_is_container {
         let cli = Cli::try_parse_from(["vetto", "--is-container"]).unwrap();
         assert!(cli.is_container);
         assert!(!cli.quiet);
-    }
-
-    #[test]
-    fn test_tui_and_mission_control_alias() {
-        let tui_cli = Cli::try_parse_from(["vetto", "tui"]).unwrap();
-        assert!(matches!(
-            tui_cli.command,
-            Some(Command::Tui { theme: None })
-        ));
-
-        let mc_cli =
-            Cli::try_parse_from(["vetto", "mission-control", "--theme", "circuit"]).unwrap();
-        assert!(matches!(
-            mc_cli.command,
-            Some(Command::Tui {
-                theme: Some(ref t)
-            }) if t == "circuit"
-        ));
-
-        let mc_underscore_cli =
-            Cli::try_parse_from(["vetto", "mission_control", "--theme", "arasaka"]).unwrap();
-        assert!(matches!(
-            mc_underscore_cli.command,
-            Some(Command::Tui {
-                theme: Some(ref t)
-            }) if t == "arasaka"
-        ));
     }
 }

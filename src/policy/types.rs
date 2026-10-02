@@ -118,70 +118,18 @@ impl CgroupConfig {
 /// Parse human-readable or raw byte amount into bytes.
 /// Returns None if string is empty, "max", or unparseable.
 pub fn parse_bytes_value(input: &str) -> Option<u64> {
-    let s = input.trim();
-    if s.is_empty() || s.eq_ignore_ascii_case("max") {
-        return None;
-    }
-    let (num_part, unit_part) = match s.find(|c: char| !c.is_ascii_digit() && c != '.') {
-        Some(idx) => (&s[..idx], s[idx..].trim().to_uppercase()),
-        None => (s, String::new()),
-    };
-    let num: f64 = num_part.parse().ok()?;
-    let multiplier: f64 = match unit_part.as_str() {
-        "" | "B" => 1.0,
-        "K" | "KB" | "KIB" => 1024.0,
-        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
-        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
-        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
-        _ => return None,
-    };
-    Some((num * multiplier) as u64)
+    crate::policy::units::parse_cgroup_memory(input).ok().flatten()
 }
 
 /// Parse byte amount supporting decimal suffixes (k/m/g/kb/mb/gb) and binary suffixes (kib/mib/gib).
 /// Returns None on unparseable input or u64 multiplication overflow.
 pub fn parse_byte_size(value: &str) -> Option<u64> {
-    let lower = value.trim().to_ascii_lowercase();
-    if let Ok(raw) = lower.parse::<u64>() {
-        return Some(raw);
-    }
-    let (number, mult) = if let Some(n) = lower.strip_suffix("kib") {
-        (n, 1024u64)
-    } else if let Some(n) = lower.strip_suffix("mib") {
-        (n, 1024u64 * 1024)
-    } else if let Some(n) = lower.strip_suffix("gib") {
-        (n, 1024u64 * 1024 * 1024)
-    } else if let Some(n) = lower.strip_suffix("gb") {
-        (n, 1000u64 * 1000 * 1000)
-    } else if let Some(n) = lower.strip_suffix("mb") {
-        (n, 1000u64 * 1000)
-    } else if let Some(n) = lower.strip_suffix("kb") {
-        (n, 1000u64)
-    } else if let Some(n) = lower.strip_suffix('k') {
-        (n, 1000u64)
-    } else if let Some(n) = lower.strip_suffix('m') {
-        (n, 1000u64 * 1000)
-    } else if let Some(n) = lower.strip_suffix('g') {
-        (n, 1000u64 * 1000 * 1000)
-    } else {
-        let n = lower.strip_suffix('b')?;
-        (n, 1u64)
-    };
-    let base: u64 = number.trim().parse().ok()?;
-    base.checked_mul(mult)
+    crate::policy::units::parse_bytes(value).ok()
 }
 
-/// Format byte count into human-readable string representation (B, KB, MB, GB).
+/// Format byte count into human-readable string representation (B, KiB, MiB, GiB).
 pub fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
+    crate::policy::units::format_bytes(bytes, crate::policy::units::UnitStandard::IecBinary)
 }
 
 /// Parse CPU limit string into an effective core ratio (e.g. 0.5 for 50%, 1.0 for 100%, 2.0 for 200%).
@@ -221,25 +169,10 @@ pub fn parse_cpu_ratio(input: &str) -> Option<f64> {
 
 /// Parse human-readable memory limit into bytes or string representation.
 pub fn parse_memory_bytes(input: &str) -> Option<String> {
-    let s = input.trim();
-    if s.is_empty() || s.eq_ignore_ascii_case("max") {
-        return Some("max".to_string());
+    match crate::policy::units::parse_cgroup_memory(input).ok()? {
+        None => Some("max".to_string()),
+        Some(bytes) => Some(bytes.to_string()),
     }
-    let (num_part, unit_part) = match s.find(|c: char| !c.is_ascii_digit() && c != '.') {
-        Some(idx) => (&s[..idx], s[idx..].trim().to_uppercase()),
-        None => (s, String::new()),
-    };
-    let num: f64 = num_part.parse().ok()?;
-    let multiplier: f64 = match unit_part.as_str() {
-        "" | "B" => 1.0,
-        "K" | "KB" | "KIB" => 1024.0,
-        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
-        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
-        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
-        _ => return None,
-    };
-    let bytes = (num * multiplier) as u64;
-    Some(bytes.to_string())
 }
 
 /// Parse CPU limit (e.g. "50%", "100%", "200%", or raw quota/period "50000 100000").
@@ -1027,17 +960,19 @@ mod cgroup_tests {
     #[test]
     fn test_parse_byte_size_and_format_bytes() {
         assert_eq!(parse_byte_size("1024"), Some(1024));
-        assert_eq!(parse_byte_size("2k"), Some(2000));
+        assert_eq!(parse_byte_size("2k"), Some(2048));
+        assert_eq!(parse_byte_size("2kb"), Some(2000));
         assert_eq!(parse_byte_size("4kib"), Some(4096));
         assert_eq!(parse_byte_size("10mb"), Some(10_000_000));
         assert_eq!(parse_byte_size("10mib"), Some(10 * 1024 * 1024));
-        assert_eq!(parse_byte_size("1g"), Some(1_000_000_000));
+        assert_eq!(parse_byte_size("1g"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_byte_size("1gb"), Some(1_000_000_000));
         assert_eq!(parse_byte_size("2gib"), Some(2 * 1024 * 1024 * 1024));
         assert_eq!(parse_byte_size("invalid"), None);
 
         assert_eq!(format_bytes(500), "500 B");
-        assert_eq!(format_bytes(2048), "2.0 KB");
-        assert_eq!(format_bytes(1024 * 1024 * 5), "5.0 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024 * 3), "3.0 GB");
+        assert_eq!(format_bytes(2048), "2.0 KiB");
+        assert_eq!(format_bytes(1024 * 1024 * 5), "5.0 MiB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024 * 3), "3.0 GiB");
     }
 }

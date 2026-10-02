@@ -1,7 +1,6 @@
-//! Project ecosystem detection, interactive wizard, and tailored policy generation for `vetto init`.
+//! Project ecosystem detection and tailored policy generation for `vetto init`.
 
 use anyhow::{bail, Context, Result};
-use std::io::{BufRead, Write};
 use std::path::Path;
 
 use crate::policy::presets::agent_network_allowlist;
@@ -415,91 +414,7 @@ file_size_bytes = {limit}
     out
 }
 
-/// Run the 3-question interactive setup wizard.
-pub fn run_wizard(
-    root: &Path,
-    reader: &mut impl BufRead,
-    writer: &mut impl Write,
-) -> Result<String> {
-    writer.write_all(b"vetto first-run wizard:\n")?;
-    writer.write_all(b"1. Which AI coding agent do you use? [claude / codex / opencode / cursor / aider / windsurf / omp / zcode / kimi / grok / none]: ")?;
-    writer.flush()?;
-
-    let mut agent_line = String::new();
-    reader.read_line(&mut agent_line)?;
-    let agent_choice = agent_line.trim().to_ascii_lowercase();
-    let agent = if agent_choice.is_empty() || agent_choice == "none" {
-        None
-    } else {
-        Some(agent_choice)
-    };
-
-    writer.write_all(b"2. Does the agent need internet / network access? [y/N / agent-only]: ")?;
-    writer.flush()?;
-
-    let mut net_line = String::new();
-    reader.read_line(&mut net_line)?;
-    let net_choice = net_line.trim().to_ascii_lowercase();
-    let allow_net = net_choice == "y" || net_choice == "yes" || net_choice == "agent-only";
-
-    writer.write_all(b"3. What should be considered the project workspace root? [default: .]: ")?;
-    writer.flush()?;
-
-    let mut root_line = String::new();
-    reader.read_line(&mut root_line)?;
-    let root_choice = root_line.trim();
-    let workspace_root = if root_choice.is_empty() {
-        "$PROJECT"
-    } else {
-        root_choice
-    };
-
-    let mut analysis = analyze_project(root);
-    if let Some(ref a) = agent {
-        analysis.detected_agents = vec![match a.as_str() {
-            "claude" => "Claude Code",
-            "codex" => "OpenAI Codex",
-            "antigravity" => "Antigravity CLI",
-            "aider" => "Aider",
-            "opencode" => {
-                analysis.recommended_file_size_bytes = Some(2147483648);
-                "OpenCode"
-            }
-            "cursor" => "Cursor",
-            "cline" => "Cline",
-            "copilot" => "GitHub Copilot",
-            "windsurf" => "Windsurf",
-            "goose" => "Block Goose",
-            "openhands" => "OpenHands",
-            "devin" => "Cognition Devin",
-            "smolagents" => "Smolagents",
-            "omp" => "OMP",
-            "zcode" => "ZCode",
-            "kimi" => "Kimi Code",
-            "grok" => "Grok Build",
-            _ => "Custom Agent",
-        }];
-        if allow_net {
-            let domains = agent_network_allowlist(a);
-            analysis.recommended_network_domains.extend(domains);
-            analysis.recommended_network_domains.sort();
-            analysis.recommended_network_domains.dedup();
-        }
-    }
-
-    if !allow_net {
-        analysis.recommended_network_domains.clear();
-    }
-
-    let mut toml = generate_policy_toml(&analysis);
-    if workspace_root != "$PROJECT" {
-        toml = toml.replace("\"$PROJECT\"", &format!("\"{workspace_root}\""));
-    }
-
-    Ok(toml)
-}
-
-pub fn run_init(root: &Path, force: bool, wizard: bool) -> Result<()> {
+pub fn run_init(root: &Path, force: bool) -> Result<()> {
     let policy_path = root.join("policy.toml");
     let legacy_path = root.join("vetto.toml");
 
@@ -507,14 +422,8 @@ pub fn run_init(root: &Path, force: bool, wizard: bool) -> Result<()> {
         bail!("policy file already exists in this directory (use --force to overwrite)");
     }
 
-    let toml_content = if wizard {
-        let mut stdin = std::io::stdin().lock();
-        let mut stdout = std::io::stdout();
-        run_wizard(root, &mut stdin, &mut stdout)?
-    } else {
-        let analysis = analyze_project(root);
-        generate_policy_toml(&analysis)
-    };
+    let analysis = analyze_project(root);
+    let toml_content = generate_policy_toml(&analysis);
 
     std::fs::write(&policy_path, toml_content)
         .with_context(|| format!("failed to write {}", policy_path.display()))?;
@@ -541,7 +450,6 @@ pub fn run_init(root: &Path, force: bool, wizard: bool) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::Cursor;
     use std::path::PathBuf;
 
     fn temp_test_dir(name: &str) -> PathBuf {
@@ -679,33 +587,18 @@ mod tests {
     }
 
     #[test]
-    fn wizard_answers_tailor_generated_policy() {
-        let dir = temp_test_dir("wizard");
-        let input = "claude\nyes\n/workspace\n";
-        let mut reader = Cursor::new(input);
-        let mut writer = Vec::new();
-
-        let toml = run_wizard(&dir, &mut reader, &mut writer).unwrap();
-        assert!(toml.contains("Claude Code"));
-        assert!(toml.contains("api.anthropic.com"));
-        assert!(toml.contains("/workspace"));
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn run_init_creates_policy_file_and_respects_force() {
         let dir = temp_test_dir("init-force");
         let path = dir.as_path();
 
-        assert!(run_init(path, false, false).is_ok());
+        assert!(run_init(path, false).is_ok());
         assert!(path.join("policy.toml").exists());
 
         // Second run without force should fail
-        assert!(run_init(path, false, false).is_err());
+        assert!(run_init(path, false).is_err());
 
         // Run with force should succeed
-        assert!(run_init(path, true, false).is_ok());
+        assert!(run_init(path, true).is_ok());
 
         let _ = fs::remove_dir_all(&dir);
     }

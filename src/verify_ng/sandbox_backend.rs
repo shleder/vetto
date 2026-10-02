@@ -1145,7 +1145,7 @@ impl LinuxBackend {
         // the targeted sweep can see them. Failure is not fatal here: the
         // sweep reports not-clean and the run fails closed instead. The
         // outcome is recorded for the tree-sweep diagnostic string.
-        self.subreaper_prepare = Some(match crate::multi::isolation::set_subreaper() {
+        self.subreaper_prepare = Some(match crate::sandbox::linux::proctrack::set_subreaper() {
             Ok(()) => {
                 format!(
                     "ok/subreaper={}",

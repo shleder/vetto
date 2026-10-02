@@ -147,7 +147,39 @@ pub struct ProductionContract {
     pub tier: Option<crate::policy::Tier>,
     pub backend: String,
     pub observe_seccomp: bool,
-    pub debug_ports: Option<crate::multi::DebugPortConfig>,
+    pub debug_ports: Option<DebugPortConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugPortConfig {
+    #[serde(default = "default_false")]
+    pub isolate_devtools: bool,
+    #[serde(default = "default_true")]
+    pub isolate_node_inspect: bool,
+    #[serde(default = "default_true")]
+    pub isolate_debugpy: bool,
+    #[serde(default)]
+    pub allowed_ports: Vec<u16>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
+}
+
+impl Default for DebugPortConfig {
+    fn default() -> Self {
+        Self {
+            isolate_devtools: false,
+            isolate_node_inspect: true,
+            isolate_debugpy: true,
+            allowed_ports: Vec::new(),
+        }
+    }
 }
 
 /// Cryptographic signing configuration and state for the security contract (Phase 4 / INV-36).

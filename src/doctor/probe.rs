@@ -22,8 +22,6 @@ use crate::policy::Policy;
 #[cfg(unix)]
 use std::collections::HashMap;
 #[cfg(unix)]
-use std::io::Read;
-#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 #[cfg(unix)]
@@ -129,15 +127,23 @@ pub fn run_probe_script(
     drop(out_w);
     drop(err_w);
 
-    // Consume the OwnedFds into Files (taking ownership, no double close).
-    // Read to EOF before waiting: the pipes close when the probe exits.
-    let mut output = String::new();
-    let mut out_file: std::fs::File = out_r.into();
-    let _ = out_file.read_to_string(&mut output);
-    let mut eout = String::new();
-    let mut err_file: std::fs::File = err_r.into();
-    let _ = err_file.read_to_string(&mut eout);
+    // Concurrently drain captured stdout and stderr using AsyncPipeReader (INV-25).
+    // Prevents probe execution deadlock if child writes >64KB to stderr before stdout closes.
+    let out_reader = crate::sandbox::production::AsyncPipeReader::spawn(
+        out_r,
+        crate::sandbox::production::PROD_MAX_STDIO,
+        std::time::Duration::from_millis(500),
+    );
+    let err_reader = crate::sandbox::production::AsyncPipeReader::spawn(
+        err_r,
+        crate::sandbox::production::PROD_MAX_STDIO,
+        std::time::Duration::from_millis(500),
+    );
     let _prod_res = spawned.wait_collect();
+    out_reader.notify_child_exited();
+    err_reader.notify_child_exited();
+    let output = String::from_utf8_lossy(&out_reader.join()).to_string();
+    let eout = String::from_utf8_lossy(&err_reader.join()).to_string();
 
     Ok(ProbeOutput {
         stdout: output,

@@ -29,7 +29,7 @@ const VALID_KEYS: &str =
 
 const BYTE_SUFFIX_DOC: &str =
     "byte values accept a plain integer or an integer with a case-insensitive \
-     suffix k/m/g (1000-based) or kib/mib/gib (1024-based)";
+     suffix k/m/g/t (1024-based binary), kib/mib/gib/tib (1024-based binary), or kb/mb/gb/tb (1000-based decimal)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LimitKey {
@@ -231,8 +231,8 @@ fn parse_value(key: &LimitKey, value: &str, pair: &str) -> Result<u64> {
 /// case-insensitive suffix. Suffix math is checked for overflow so a
 /// nonsensical value cannot wrap into a small (weaker) ceiling.
 fn parse_byte_value(value: &str, pair: &str) -> Result<u64> {
-    crate::policy::types::parse_byte_size(value).ok_or_else(|| {
-        anyhow::anyhow!("invalid --limits value '{value}' in pair '{pair}': {BYTE_SUFFIX_DOC}")
+    crate::policy::units::parse_bytes(value).map_err(|e| {
+        anyhow::anyhow!("invalid --limits value '{value}' in pair '{pair}': {e} ({BYTE_SUFFIX_DOC})")
     })
 }
 
@@ -243,10 +243,16 @@ mod tests {
     #[test]
     fn suffix_math_decimal_and_binary_case_insensitive() {
         let limits = parse_spec("as=2k").expect("2k");
+        assert_eq!(limits.address_space_bytes, Some(2048));
+        let limits = parse_spec("as=2kb").expect("2kb");
         assert_eq!(limits.address_space_bytes, Some(2_000));
         let limits = parse_spec("as=3m").expect("3m");
+        assert_eq!(limits.address_space_bytes, Some(3 * 1024 * 1024));
+        let limits = parse_spec("as=3mb").expect("3mb");
         assert_eq!(limits.address_space_bytes, Some(3_000_000));
         let limits = parse_spec("as=1g").expect("1g");
+        assert_eq!(limits.address_space_bytes, Some(1024 * 1024 * 1024));
+        let limits = parse_spec("as=1gb").expect("1gb");
         assert_eq!(limits.address_space_bytes, Some(1_000_000_000));
         let limits = parse_spec("as=4096").expect("raw");
         assert_eq!(limits.address_space_bytes, Some(4096));
@@ -257,6 +263,8 @@ mod tests {
         let limits = parse_spec("as=2gib").expect("2gib");
         assert_eq!(limits.address_space_bytes, Some(2 * 1024 * 1024 * 1024));
         let limits = parse_spec("fsize=2M").expect("2M uppercase");
+        assert_eq!(limits.file_size_bytes, Some(2 * 1024 * 1024));
+        let limits = parse_spec("fsize=2MB").expect("2MB uppercase");
         assert_eq!(limits.file_size_bytes, Some(2_000_000));
         let limits = parse_spec("as=4GiB").expect("4GiB mixed case");
         assert_eq!(limits.address_space_bytes, Some(4 * 1024 * 1024 * 1024));
@@ -341,7 +349,7 @@ mod tests {
     fn aliases_pids_and_mem_and_memory() {
         let limits = parse_spec("pids=64,mem=512m").expect("aliases");
         assert_eq!(limits.processes, Some(64));
-        assert_eq!(limits.address_space_bytes, Some(512_000_000));
+        assert_eq!(limits.address_space_bytes, Some(512 * 1024 * 1024));
 
         let limits = parse_spec("memory=2gib").expect("memory alias");
         assert_eq!(limits.address_space_bytes, Some(2 * 1024 * 1024 * 1024));

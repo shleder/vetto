@@ -7,7 +7,7 @@
 //! tier/backend requirements.
 //! Invariant: tamper -> digest/identity mismatch -> verification failure -> NO SPAWN.
 //! Child MUST NOT run: verified via exit code/verdict, child marker file absence,
-//! and global spawn ledger (PROD_SPAWN_COUNT) immutability.
+//! and spawn immutability.
 //!
 //! Master Task Section 3:
 //! ExecutionIdentity {scenario_id, session_nonce, registry_hash, frozen_hash} bound to evidence.
@@ -22,12 +22,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use vetto::config::NetMode;
-use vetto::multi::DebugPortConfig;
 use vetto::policy::{DenyEntry, Policy, Tier};
 use vetto::policy_ir::compiler::{EffectivePolicyInput, PolicyCompiler};
+use vetto::policy_ir::contract::DebugPortConfig;
 use vetto::policy_ir::contract::{NetworkMode, SecurityContract};
 use vetto::sandbox::production::{
-    UnpreparedProductionExecution, PROD_SCENARIO_ID, PROD_SPAWN_COUNT,
+    ProductionError, UnpreparedProductionExecution, PROD_SCENARIO_ID,
 };
 use vetto::sandbox::{Backend, StdioMode};
 use vetto::verify_ng::evidence::ExecutionIdentity;
@@ -222,8 +222,6 @@ fn test_tamper_matrix_all_field_classes_rejected_no_spawn() {
         "missing_production",
     ];
 
-    let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
-
     for case in cases {
         let marker = ws.join(format!("child-marker-{}", case));
         let script = format!("printf executed > {}\nexit 0\n", marker.display());
@@ -329,7 +327,6 @@ fn test_tamper_matrix_all_field_classes_rejected_no_spawn() {
             "{case}: unresealed contract must fail digest verification"
         );
 
-        let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         let (out, log) = run_linux_contract(&scen, &contract, &script, Vec::new(), false);
 
         assert_eq!(
@@ -350,18 +347,7 @@ fn test_tamper_matrix_all_field_classes_rejected_no_spawn() {
             !marker.exists(),
             "{case}: child marker must not exist — child process MUST NOT run"
         );
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            spawn_count_before,
-            "{case}: PROD_SPAWN_COUNT must not increment on tampered contract"
-        );
     }
-
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-        initial_spawn_count,
-        "spawn ledger must remain strictly unchanged across all tampering tests"
-    );
 
     let _ = std::fs::remove_dir_all(ws);
 }
@@ -401,8 +387,6 @@ fn test_tamper_matrix_resealed_fails_closed_no_spawn() {
         "tier_requirement",
         "backend_requirement",
     ];
-
-    let initial_spawn_count = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
 
     for case in cases {
         let marker = ws.join(format!("resealed-marker-{}", case));
@@ -472,7 +456,6 @@ fn test_tamper_matrix_resealed_fails_closed_no_spawn() {
             "{case}: resealed contract must have valid digest"
         );
 
-        let spawn_count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
         let (out, log) = run_linux_contract(&scen, &contract, &script, Vec::new(), false);
 
         assert_eq!(
@@ -486,18 +469,7 @@ fn test_tamper_matrix_resealed_fails_closed_no_spawn() {
             !marker.exists(),
             "{case}: resealed tamper must not execute child"
         );
-        assert_eq!(
-            PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-            spawn_count_before,
-            "{case}: PROD_SPAWN_COUNT must not increment on resealed tamper"
-        );
     }
-
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-        initial_spawn_count,
-        "spawn ledger must remain strictly unchanged after all resealed tamper attempts"
-    );
 
     let _ = std::fs::remove_dir_all(ws);
 }
@@ -513,8 +485,6 @@ fn test_tamper_production_spawn_ledger_and_marker_guarantee() {
         .unwrap_or_else(|e| e.into_inner());
     let tmp = temp_dir("prod-spawn-ledger");
     let marker = tmp.join("child-started");
-
-    let count_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
 
     // Prepare a real production execution
     let mut prepared = UnpreparedProductionExecution::new(
@@ -548,23 +518,19 @@ fn test_tamper_production_spawn_ledger_and_marker_guarantee() {
 
     // Attempt spawn: must fail closed before mechanics.spawn
     let spawn_result = prepared.spawn();
+    let spawn_err = spawn_result.expect_err("in-flight tampered contract must fail spawn");
     assert!(
-        spawn_result.is_err(),
-        "in-flight tampered contract must fail spawn"
-    );
-
-    // Assert on spawn ledger: PROD_SPAWN_COUNT MUST NOT INCREMENT
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-        count_before,
-        "PROD_SPAWN_COUNT must not increment on failed spawn"
+        matches!(
+            spawn_err,
+            ProductionError::ContractDigestMismatch | ProductionError::ContractDrift(_)
+        ),
+        "spawn error must be ContractDigestMismatch or ContractDrift, got: {spawn_err:?}"
     );
 
     // Assert on observable child marker: CHILD MUST NOT RUN
     assert!(!marker.exists(), "child process marker must not exist");
 
-    // Positive control: untampered contract succeeds, creates marker, increments ledger by exactly 1
-    let control_before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
+    // Positive control: untampered contract succeeds, creates marker
     let spawned = UnpreparedProductionExecution::new(
         Backend::detect(NetMode::Off, false).expect("detect mechanics"),
         functional_policy(&tmp),
@@ -585,16 +551,16 @@ fn test_tamper_production_spawn_ledger_and_marker_guarantee() {
     .spawn()
     .expect("spawn control");
 
-    spawned.wait_collect();
+    assert_eq!(
+        spawned.context.metrics.spawn_count(),
+        1,
+        "positive control must record exactly 1 spawn in session context metrics"
+    );
+    let _ = spawned.wait_collect();
     assert_eq!(
         std::fs::read_to_string(&marker).unwrap(),
         "started",
         "positive control must create marker"
-    );
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(Ordering::SeqCst),
-        control_before + 1,
-        "positive control must increment PROD_SPAWN_COUNT by exactly 1"
     );
 
     let _ = std::fs::remove_dir_all(tmp);

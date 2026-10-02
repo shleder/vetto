@@ -1,81 +1,4 @@
-//! Process-tree cleanup state machine (P3 slice): GRACEFUL → ESCALATE → VERIFY.
-//!
-//! This module only *plans* the kill sequence and models phase transitions.
-//! Actually signalling processes stays in the sandbox backends (destructive
-//! behavior is exercised in disposable VMs, never in unit tests).
-
-/// Cleanup phase for one process tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KillPhase {
-    /// Ask nicely: SIGTERM / polite shutdown, bounded by a deadline.
-    Graceful,
-    /// Deadline expired with survivors: SIGKILL the remainder.
-    Escalate,
-    /// Confirm no survivors; anything still alive is a cleanup failure.
-    Verify,
-}
-
-impl KillPhase {
-    pub fn label(self) -> &'static str {
-        match self {
-            KillPhase::Graceful => "GRACEFUL",
-            KillPhase::Escalate => "ESCALATE",
-            KillPhase::Verify => "VERIFY",
-        }
-    }
-}
-
-/// One planned step of the cleanup sequence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KillStep {
-    pub phase: KillPhase,
-    pub pid: u32,
-    /// Grace period in milliseconds before the next step (0 = act now).
-    pub grace_ms: u64,
-}
-
-/// Default polite window before escalation.
-pub const DEFAULT_GRACE_MS: u64 = 2_000;
-
-/// Plan the full sequence for a rooted process tree: terminate, then kill,
-/// then verify. Always all three steps — skipping VERIFY hides survivors.
-pub fn plan_kill(root_pid: u32, grace_ms: u64) -> Vec<KillStep> {
-    vec![
-        KillStep {
-            phase: KillPhase::Graceful,
-            pid: root_pid,
-            grace_ms,
-        },
-        KillStep {
-            phase: KillPhase::Escalate,
-            pid: root_pid,
-            grace_ms: 0,
-        },
-        KillStep {
-            phase: KillPhase::Verify,
-            pid: root_pid,
-            grace_ms: 0,
-        },
-    ]
-}
-
-/// Advance the machine after a step: with survivors after GRACEFUL the only
-/// legal move is ESCALATE; after ESCALATE always VERIFY; VERIFY with
-/// survivors is a terminal cleanup failure (`None` = no further step helps).
-pub fn advance(phase: KillPhase, survivors: bool) -> Option<KillPhase> {
-    match (phase, survivors) {
-        (KillPhase::Graceful, true) => Some(KillPhase::Escalate),
-        (KillPhase::Graceful, false) => Some(KillPhase::Verify),
-        (KillPhase::Escalate, _) => Some(KillPhase::Verify),
-        (KillPhase::Verify, false) => None,
-        (KillPhase::Verify, true) => None,
-    }
-}
-
-/// True only when VERIFY observed zero survivors — the single success state.
-pub fn cleanup_ok(phase: KillPhase, survivors: bool) -> bool {
-    phase == KillPhase::Verify && !survivors
-}
+//! Mathematical Process Tree Extinction Theorem (§12.1, INV-27).
 
 /// Hard upper bound for total process tree and resource extinction (§12.1).
 pub const MAX_EXTINCTION_DEADLINE_MS: u64 = 500;
@@ -193,102 +116,9 @@ impl ExtinctionVerifier {
     }
 }
 
-use std::collections::{HashMap, HashSet, VecDeque};
-
-/// Pure BFS traversal over `(pid, ppid)` edges returning `root_pid` followed by all descendants.
-pub fn collect_descendant_pids(root_pid: u32, ppid_pairs: &[(u32, u32)]) -> Vec<u32> {
-    let mut children_by_ppid: HashMap<u32, Vec<u32>> = HashMap::new();
-    for &(pid, ppid) in ppid_pairs {
-        if pid != root_pid {
-            children_by_ppid.entry(ppid).or_default().push(pid);
-        }
-    }
-    for list in children_by_ppid.values_mut() {
-        list.sort_unstable();
-        list.dedup();
-    }
-
-    let mut result = vec![root_pid];
-    let mut visited: HashSet<u32> = HashSet::new();
-    visited.insert(root_pid);
-    let mut queue: VecDeque<u32> = VecDeque::new();
-    queue.push_back(root_pid);
-
-    while let Some(current) = queue.pop_front() {
-        if let Some(children) = children_by_ppid.get(&current) {
-            for &child in children {
-                if visited.insert(child) {
-                    result.push(child);
-                    queue.push_back(child);
-                }
-            }
-        }
-    }
-
-    result
-}
-
-/// Scan Linux `/proc` for all numeric PIDs and extract their parent PID (PPID) from `/proc/<pid>/stat`.
-#[cfg(target_os = "linux")]
-pub fn scan_proc_ppid_pairs() -> std::io::Result<Vec<(u32, u32)>> {
-    let mut ppid_pairs = Vec::new();
-    let entries = std::fs::read_dir("/proc")?;
-    for entry in entries.flatten() {
-        let Ok(file_name) = entry.file_name().into_string() else {
-            continue;
-        };
-        let Ok(pid) = file_name.parse::<u32>() else {
-            continue;
-        };
-        if let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) {
-            if let Some(after_comm) = stat.rfind(')') {
-                let rest = stat[after_comm + 1..].trim();
-                let parts: Vec<&str> = rest.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(ppid) = parts[1].parse::<u32>() {
-                        ppid_pairs.push((pid, ppid));
-                    }
-                }
-            }
-        }
-    }
-    Ok(ppid_pairs)
-}
-
 #[cfg(test)]
 mod proctree_tests {
     use super::*;
-
-    #[test]
-    fn plan_always_has_all_three_steps_in_order() {
-        let plan = plan_kill(4242, DEFAULT_GRACE_MS);
-        let phases: Vec<KillPhase> = plan.iter().map(|s| s.phase).collect();
-        assert_eq!(
-            phases,
-            vec![KillPhase::Graceful, KillPhase::Escalate, KillPhase::Verify]
-        );
-        assert!(plan.iter().all(|s| s.pid == 4242));
-        assert_eq!(plan[0].grace_ms, DEFAULT_GRACE_MS);
-    }
-
-    #[test]
-    fn graceful_with_survivors_must_escalate() {
-        assert_eq!(
-            advance(KillPhase::Graceful, true),
-            Some(KillPhase::Escalate)
-        );
-        assert_eq!(advance(KillPhase::Graceful, false), Some(KillPhase::Verify));
-    }
-
-    #[test]
-    fn verify_is_terminal_and_honest() {
-        assert_eq!(advance(KillPhase::Escalate, true), Some(KillPhase::Verify));
-        assert_eq!(advance(KillPhase::Verify, true), None);
-        assert_eq!(advance(KillPhase::Verify, false), None);
-        assert!(cleanup_ok(KillPhase::Verify, false));
-        assert!(!cleanup_ok(KillPhase::Verify, true));
-        assert!(!cleanup_ok(KillPhase::Escalate, false));
-    }
 
     #[test]
     fn test_extinction_theorem_verification_pass() {
@@ -327,19 +157,5 @@ mod proctree_tests {
 
         assert_eq!(breach.exit_code, 125);
         assert!(breach.reason.contains("Extinction deadline exceeded"));
-    }
-
-    #[test]
-    fn test_collect_descendant_pids_multi_level() {
-        let pairs = vec![
-            (100, 1),
-            (200, 100),
-            (201, 100),
-            (300, 200),
-            (400, 300),
-            (999, 1000),
-        ];
-        let pids = collect_descendant_pids(100, &pairs);
-        assert_eq!(pids, vec![100, 200, 201, 300, 400]);
     }
 }

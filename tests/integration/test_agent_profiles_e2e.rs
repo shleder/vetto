@@ -401,7 +401,7 @@ fn test_loopback_hosts_recognized_for_agent_dev_servers() {
 
 #[test]
 fn test_computer_use_debug_ports_unblocked_by_default() {
-    let config = vetto::multi::DebugPortConfig::default();
+    let config = vetto::policy_ir::contract::DebugPortConfig::default();
     assert!(
         !config.isolate_devtools,
         "isolate_devtools must be false by default to enable Computer Use and Chrome CDP"

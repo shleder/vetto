@@ -1,13 +1,11 @@
-//! CLI subcommands `vetto hook install` / `uninstall` / `status` (Step 14).
+//! CLI subcommands `vetto hook install` / `uninstall` / `status`.
 //!
-//! Manages developer tooling interception shims, multi-shell profile hooks,
-//! and Git core.hooksPath configuration.
+//! Manages developer tooling interception shims and multi-shell profile hooks.
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
 
-use crate::cli::git_hook::{self, GitHookStatus};
 use crate::cli::shell_env::{self, ShellHookStatus, ShellKind};
 use crate::shim::registry::{ShimInfo, ShimRegistry};
 
@@ -71,10 +69,6 @@ pub enum HookCommand {
         /// Overwrite existing shims and force shell profile update
         #[arg(long, short = 'f')]
         force: bool,
-
-        /// Configure Git transparent hooks (core.hooksPath)
-        #[arg(long)]
-        git: bool,
     },
     /// Uninstall Vetto transparent shims and restore shell environments
     Uninstall {
@@ -85,12 +79,8 @@ pub enum HookCommand {
         /// Target shells to remove configuration from
         #[arg(long = "shell", value_enum, action = clap::ArgAction::Append)]
         shells: Vec<ShellType>,
-
-        /// Remove Git transparent hooks
-        #[arg(long)]
-        git: bool,
     },
-    /// Display status of Vetto shims, shell integrations, and Git hooks
+    /// Display status of Vetto shims and shell integrations
     Status {
         /// Scope to check (global or local)
         #[arg(long, value_enum, default_value = "global")]
@@ -110,7 +100,6 @@ pub struct HookStatusReport {
     pub shims_count: usize,
     pub active_shims: Vec<ShimInfo>,
     pub shell_hooks: Vec<ShellHookStatus>,
-    pub git_hooks: GitHookStatus,
 }
 
 /// Resolves the shims directory based on the selected scope.
@@ -146,9 +135,8 @@ pub fn run_cli(command: &HookCommand) -> Result<()> {
             shells,
             shims,
             force,
-            git,
-        } => handle_install(*scope, shells, shims, *force, *git),
-        HookCommand::Uninstall { scope, shells, git } => handle_uninstall(*scope, shells, *git),
+        } => handle_install(*scope, shells, shims, *force),
+        HookCommand::Uninstall { scope, shells } => handle_uninstall(*scope, shells),
         HookCommand::Status { scope, json } => handle_status(*scope, *json),
     }
 }
@@ -158,7 +146,6 @@ fn handle_install(
     shells: &[ShellType],
     custom_shims: &[String],
     force: bool,
-    install_git: bool,
 ) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
     let home_dir = get_home_dir()?;
@@ -198,16 +185,6 @@ fn handle_install(
         configured_profiles.push((shell, profile));
     }
 
-    let git_status = if install_git {
-        let is_global = scope == HookScope::Global;
-        let cwd = std::env::current_dir().ok();
-        let base_dir = if is_global { None } else { cwd.as_deref() };
-        let gdir = git_hook::install_git_hooks(is_global, base_dir, force)?;
-        Some(gdir)
-    } else {
-        None
-    };
-
     println!("vetto hook install: successfully configured environment");
     println!("  scope     : {:?}", scope);
     println!("  shims dir : {}", shims_dir.display());
@@ -220,9 +197,6 @@ fn handle_install(
     for (shell, profile) in &configured_profiles {
         println!("    - {:<10} -> {}", shell.name(), profile.display());
     }
-    if let Some(gdir) = git_status {
-        println!("  git hooks : configured in {}", gdir.display());
-    }
     println!();
     println!("To apply in your current shell session, prepend '~/.vetto/shims' to the FRONT of your PATH:");
     println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
@@ -230,7 +204,7 @@ fn handle_install(
     Ok(())
 }
 
-fn handle_uninstall(scope: HookScope, shells: &[ShellType], uninstall_git: bool) -> Result<()> {
+fn handle_uninstall(scope: HookScope, shells: &[ShellType]) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
     let home_dir = get_home_dir()?;
 
@@ -255,15 +229,6 @@ fn handle_uninstall(scope: HookScope, shells: &[ShellType], uninstall_git: bool)
         }
     }
 
-    let git_unset = if uninstall_git {
-        let is_global = scope == HookScope::Global;
-        let cwd = std::env::current_dir().ok();
-        let base_dir = if is_global { None } else { cwd.as_deref() };
-        git_hook::uninstall_git_hooks(is_global, base_dir)?
-    } else {
-        false
-    };
-
     println!("vetto hook uninstall: successfully cleaned environment");
     println!("  scope         : {:?}", scope);
     println!("  removed shims : {}", removed_shims.len());
@@ -275,12 +240,6 @@ fn handle_uninstall(scope: HookScope, shells: &[ShellType], uninstall_git: bool)
             println!("    - {:<10} -> {}", shell.name(), profile.display());
         }
     }
-    if uninstall_git {
-        println!(
-            "  git hooks     : unset core.hooksPath ({})",
-            if git_unset { "cleaned" } else { "was not set" }
-        );
-    }
 
     Ok(())
 }
@@ -288,9 +247,6 @@ fn handle_uninstall(scope: HookScope, shells: &[ShellType], uninstall_git: bool)
 fn handle_status(scope: HookScope, json: bool) -> Result<()> {
     let shims_dir = get_shims_dir(scope)?;
     let home_dir = get_home_dir()?;
-    let is_global = scope == HookScope::Global;
-    let cwd = std::env::current_dir().ok();
-    let base_dir = if is_global { None } else { cwd.as_deref() };
 
     let active_shims = ShimRegistry::list_active_shims(&shims_dir)?;
     let mut shell_hooks = Vec::new();
@@ -298,7 +254,6 @@ fn handle_status(scope: HookScope, json: bool) -> Result<()> {
         let st = shell_env::check_shell_hook_status(shell, &home_dir, &shims_dir);
         shell_hooks.push(st);
     }
-    let git_hooks = git_hook::git_hooks_status(is_global, base_dir)?;
 
     let report = HookStatusReport {
         scope,
@@ -306,7 +261,6 @@ fn handle_status(scope: HookScope, json: bool) -> Result<()> {
         shims_count: active_shims.len(),
         active_shims: active_shims.clone(),
         shell_hooks: shell_hooks.clone(),
-        git_hooks: git_hooks.clone(),
     };
 
     if json {
@@ -340,24 +294,6 @@ fn handle_status(scope: HookScope, json: bool) -> Result<()> {
         );
     }
 
-    println!();
-    println!("  git auto-wrapping:");
-    println!(
-        "    configured    : {}",
-        if git_hooks.is_configured {
-            "✓ active"
-        } else {
-            "✗ inactive"
-        }
-    );
-    if let Some(ref path) = git_hooks.configured_hooks_path {
-        println!("    core.hooksPath: {}", path);
-    }
-    println!("    hooks dir     : {}", git_hooks.hooks_dir.display());
-    if !git_hooks.active_hooks.is_empty() {
-        println!("    hooks present : {}", git_hooks.active_hooks.join(", "));
-    }
-
     Ok(())
 }
 
@@ -375,15 +311,14 @@ mod tests {
     #[test]
     fn parses_hook_install_subcommand() {
         let cli =
-            TestCli::try_parse_from(["vetto", "install", "--scope", "local", "--git", "--force"])
+            TestCli::try_parse_from(["vetto", "install", "--scope", "local", "--force"])
                 .expect("parse hook install");
         match cli.hook {
             HookCommand::Install {
-                scope, force, git, ..
+                scope, force, ..
             } => {
                 assert_eq!(scope, HookScope::Local);
                 assert!(force);
-                assert!(git);
             }
             _ => panic!("expected install variant"),
         }

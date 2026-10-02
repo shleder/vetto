@@ -41,11 +41,7 @@ use crate::sandbox::Spawned;
 // host-level observation or policy.  None of them silently elevates or
 // changes persistent host configuration.
 pub mod appcontainer;
-pub mod etw;
-pub mod eventlog;
-pub mod firewall;
 pub mod job_object;
-pub mod windows_sandbox;
 
 type Handle = *mut c_void;
 type Hmodule = *mut c_void;
@@ -322,26 +318,6 @@ pub struct PrivilegedNetworkBackendStatus {
     pub enabled: bool,
     pub requires_admin: bool,
     pub reason: &'static str,
-}
-
-/// Capability-only snapshot for optional host backends.  This is exported so
-/// doctor/reporting code can present the admin/feature boundaries without
-/// changing the main CLI or silently enabling any backend.
-#[derive(Debug, Clone)]
-pub struct OptionalBackendReport {
-    pub firewall: firewall::FirewallCapabilities,
-    pub etw: etw::EtwCapabilities,
-    pub windows_sandbox: windows_sandbox::WindowsSandboxCapabilities,
-    pub eventlog: eventlog::EventLogCapabilities,
-}
-
-pub fn optional_backend_report() -> OptionalBackendReport {
-    OptionalBackendReport {
-        firewall: firewall::capabilities(),
-        etw: etw::capability_probe(),
-        windows_sandbox: windows_sandbox::capabilities(),
-        eventlog: eventlog::capabilities("vetto"),
-    }
 }
 
 pub fn privileged_network_backend_status() -> PrivilegedNetworkBackendStatus {

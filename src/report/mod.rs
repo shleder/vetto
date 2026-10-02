@@ -1,14 +1,11 @@
 //! Post-session audit reports (HTML / Markdown / JSON / SARIF).
 
-pub mod diff;
 pub mod diff_project;
-pub mod html;
 pub mod json;
 pub mod markdown;
 pub mod sarif;
 pub mod stats;
 pub mod storage;
-pub mod svg;
 
 pub use diff_project::{ProjectDiff, ProjectManifest};
 
@@ -49,82 +46,7 @@ impl Default for ReportOptions {
     }
 }
 
-/// Compare stable numeric fields from two JSON session reports. The command
-/// deliberately emits a small JSON object so CI can consume it without
-/// depending on presentation-specific HTML/Markdown output.
-pub fn compare_reports(left: &std::path::Path, right: &std::path::Path) -> Result<()> {
-    let left_text =
-        std::fs::read_to_string(left).with_context(|| format!("read report {}", left.display()))?;
-    let right_text = std::fs::read_to_string(right)
-        .with_context(|| format!("read report {}", right.display()))?;
-    let left_json: serde_json::Value = serde_json::from_str(&left_text)
-        .with_context(|| format!("parse report {} as JSON", left.display()))?;
-    let right_json: serde_json::Value = serde_json::from_str(&right_text)
-        .with_context(|| format!("parse report {} as JSON", right.display()))?;
-
-    fn signed_delta(left: &serde_json::Value, right: &serde_json::Value, key: &str) -> i64 {
-        let l = left
-            .get(key)
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0);
-        let r = right
-            .get(key)
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0);
-        r.saturating_sub(l)
-    }
-    let new_blocked = new_records(
-        &left_json,
-        &right_json,
-        "blocked_attempts",
-        &["path", "comm", "source"],
-    );
-    let new_network = new_records(
-        &left_json,
-        &right_json,
-        "net_requests",
-        &["host", "port", "allowed"],
-    );
-    let new_suspicious = new_records(
-        &left_json,
-        &right_json,
-        "suspicious_signals",
-        &["category", "severity", "subject", "reason"],
-    );
-    let read_delta = signed_delta(&left_json, &right_json, "file_reads");
-    let blocked_delta = blocked_total(&right_json).saturating_sub(blocked_total(&left_json));
-    let summary = format!(
-        "session2 has {} new blocked pattern(s), {} additional observed file read(s), {} new network record(s), and {} new suspicious pattern(s)",
-        new_blocked.len(),
-        read_delta.max(0),
-        new_network.len(),
-        new_suspicious.len()
-    );
-    let mut result = serde_json::json!({
-        "left": clean(&left.display().to_string()),
-        "right": clean(&right.display().to_string()),
-        "summary": summary,
-        "delta": {
-            "duration_secs": signed_delta(&left_json, &right_json, "duration_secs"),
-            "exit_code": signed_delta(&left_json, &right_json, "exit_code"),
-            "events_total": signed_delta(&left_json, &right_json, "events_total"),
-            "file_reads": read_delta,
-            "file_writes": signed_delta(&left_json, &right_json, "file_writes"),
-            "blocked_attempts": blocked_delta,
-            "net_denied": denied_network_total(&right_json)
-                .saturating_sub(denied_network_total(&left_json)),
-            "suspicious_signals": suspicious_total(&right_json)
-                .saturating_sub(suspicious_total(&left_json))
-        },
-        "new_blocked_attempts": new_blocked,
-        "new_network_connections": new_network,
-        "new_suspicious_patterns": new_suspicious
-    });
-    sanitize_json_strings(&mut result);
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    Ok(())
-}
-
+#[cfg(test)]
 fn new_records(
     left: &serde_json::Value,
     right: &serde_json::Value,
@@ -179,57 +101,6 @@ pub(crate) fn sanitize_json_strings(value: &mut serde_json::Value) {
     }
 }
 
-fn blocked_total(value: &serde_json::Value) -> u64 {
-    value
-        .get("blocked_attempts")
-        .and_then(serde_json::Value::as_array)
-        .map(|records| {
-            records
-                .iter()
-                .map(|record| {
-                    record
-                        .get("count")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0)
-                })
-                .sum()
-        })
-        .unwrap_or(0)
-}
-
-fn denied_network_total(value: &serde_json::Value) -> u64 {
-    value
-        .get("net_requests")
-        .and_then(serde_json::Value::as_array)
-        .map(|requests| {
-            requests
-                .iter()
-                .filter(|request| {
-                    request.get("allowed").and_then(serde_json::Value::as_bool) == Some(false)
-                })
-                .count() as u64
-        })
-        .unwrap_or(0)
-}
-
-fn suspicious_total(value: &serde_json::Value) -> u64 {
-    value
-        .get("suspicious_signals")
-        .and_then(serde_json::Value::as_array)
-        .map(|signals| {
-            signals
-                .iter()
-                .map(|signal| {
-                    signal
-                        .get("count")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0)
-                })
-                .sum()
-        })
-        .unwrap_or(0)
-}
-
 /// Write a uniquely named `vetto-report-<timestamp>-<pid>-<id>.<ext>` for
 /// every requested format in `.vetto/reports`.
 /// Values pass through the BEST-EFFORT sanitizer before rendering.
@@ -250,7 +121,6 @@ pub fn write_reports_with_options(
     let mut written = Vec::new();
     for fmt in formats {
         let (content, ext): (String, &str) = match fmt {
-            ReportFormat::Html => (html::render(stats), "html"),
             ReportFormat::Markdown => (markdown::render(stats), "md"),
             ReportFormat::Json => (json::render(stats), "json"),
             ReportFormat::Sarif => (sarif::render(stats), "sarif"),

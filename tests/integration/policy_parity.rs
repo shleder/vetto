@@ -85,8 +85,8 @@ fn backend_selection_flag_parity() {
             "win-sandbox on non-Windows must fail closed"
         );
         assert!(
-            stderr(&out_win).contains("only available on Windows"),
-            "rejection must note platform availability: {}",
+            stderr(&out_win).contains("unknown backend 'win-sandbox'"),
+            "rejection must note unknown backend: {}",
             stderr(&out_win)
         );
     }

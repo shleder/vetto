@@ -177,7 +177,7 @@ fn is_generated_report(name: &str) -> bool {
     let Some((stem, extension)) = rest.rsplit_once('.') else {
         return false;
     };
-    if !matches!(extension, "html" | "md" | "json" | "sarif") {
+    if !matches!(extension, "md" | "json" | "sarif") {
         return false;
     }
     let mut parts = stem.split('-');

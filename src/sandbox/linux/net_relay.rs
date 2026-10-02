@@ -177,24 +177,7 @@ pub fn find_matching_quotas(
     matches
 }
 
-fn get_domain_bytes(host: &str) -> u64 {
-    let guard = DOMAIN_TRANSFER_STATS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    guard
-        .as_ref()
-        .and_then(|map| map.get(&host.trim().to_ascii_lowercase()))
-        .map(|s| s.bytes_tx + s.bytes_rx)
-        .unwrap_or(0)
-}
-
 static ASK_CACHE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
-
-#[cfg(test)]
-pub fn reset_ask_cache() {
-    let mut guard = ASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
-}
 
 fn is_stdin_tty() -> bool {
     unsafe { libc::isatty(0) == 1 }
@@ -478,62 +461,20 @@ where
         .spawn(move || {
             let bus = thread_bus;
             // SAFETY: broker_fd is an owned socketpair end created pre-fork.
-            let mut ctrl = unsafe { std::os::unix::net::UnixStream::from_raw_fd(broker_fd) };
+            let ctrl = unsafe { std::os::unix::net::UnixStream::from_raw_fd(broker_fd) };
             let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
-            // relay gone => loop (and thread) ends
-            while let Some(req) = read_framed_request(&mut ctrl) {
-                if !request_allowed(&req.host, req.port, req.token.as_deref(), &config, &bus) {
-                    bus.publish(Event::NetRequest {
-                        ts: crate::events::types::now(),
-                        host: req.host.clone(),
-                        port: req.port,
-                        allowed: false,
-                    });
-                    if ctrl.write_all(b"D").is_err() {
-                        break;
-                    }
-                    continue;
-                }
-                match resolve_and_connect(&req.host, req.port, &config, &bus) {
-                    Ok((tcp, addr)) => {
-                        bus.publish(Event::NetRequest {
-                            ts: crate::events::types::now(),
-                            host: req.host.clone(),
-                            port: req.port,
-                            allowed: true,
-                        });
-                        let active_quotas =
-                            Arc::new(find_matching_quotas(&req.host, &config.quotas));
-                        if create_and_send_data_fd(
-                            &mut ctrl,
-                            tcp,
-                            &req.host,
-                            addr,
-                            Arc::clone(&active_quotas),
-                            bus.clone(),
-                        )
-                        .is_err()
-                            && ctrl.write_all(b"X").is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        // Resolution/IP policy is part of the broker decision:
-                        // private, special-use, or otherwise invalid answers
-                        // are reported as denied rather than as a successful
-                        // allowlist match that merely failed to connect.
-                        bus.publish(Event::NetRequest {
-                            ts: crate::events::types::now(),
-                            host: req.host.clone(),
-                            port: req.port,
-                            allowed: false,
-                        });
-                        if ctrl.write_all(b"X").is_err() {
-                            break;
-                        }
-                    }
-                }
+
+            // Accept per-connection control channels over SCM_RIGHTS.
+            // Relay gone => recv_fd fails => loop ends.
+            while let Ok(conn_broker) = recv_fd(ctrl.as_raw_fd()) {
+                let worker_bus = bus.clone();
+                let worker_config = config.clone();
+                std::thread::Builder::new()
+                    .name("broker-worker".into())
+                    .spawn(move || {
+                        handle_broker_connection(conn_broker, worker_config, worker_bus);
+                    })
+                    .ok();
             }
 
             // Session network summary (Feature 24)
@@ -558,6 +499,63 @@ where
             }
         })
         .expect("spawn vetto-broker thread");
+}
+
+fn handle_broker_connection(conn_broker: OwnedFd, config: BrokerConfig, bus: EventBus) {
+    let mut ctrl = unsafe { std::os::unix::net::UnixStream::from_raw_fd(conn_broker.into_raw_fd()) };
+    let _ = ctrl.set_read_timeout(Some(std::time::Duration::from_secs(300)));
+
+    let Some(req) = read_framed_request(&mut ctrl) else {
+        return;
+    };
+
+    if !request_allowed(&req.host, req.port, req.token.as_deref(), &config, &bus) {
+        bus.publish(Event::NetRequest {
+            ts: crate::events::types::now(),
+            host: req.host.clone(),
+            port: req.port,
+            allowed: false,
+        });
+        let _ = ctrl.write_all(b"D");
+        return;
+    }
+
+    match resolve_and_connect(&req.host, req.port, &config, &bus) {
+        Ok((tcp, addr)) => {
+            bus.publish(Event::NetRequest {
+                ts: crate::events::types::now(),
+                host: req.host.clone(),
+                port: req.port,
+                allowed: true,
+            });
+            let active_quotas = Arc::new(find_matching_quotas(&req.host, &config.quotas));
+            if create_and_send_data_fd(
+                &mut ctrl,
+                tcp,
+                &req.host,
+                addr,
+                Arc::clone(&active_quotas),
+                bus.clone(),
+            )
+            .is_err()
+            {
+                let _ = ctrl.write_all(b"X");
+            }
+        }
+        Err(_) => {
+            // Resolution/IP policy is part of the broker decision:
+            // private, special-use, or otherwise invalid answers
+            // are reported as denied rather than as a successful
+            // allowlist match that merely failed to connect.
+            bus.publish(Event::NetRequest {
+                ts: crate::events::types::now(),
+                host: req.host.clone(),
+                port: req.port,
+                allowed: false,
+            });
+            let _ = ctrl.write_all(b"X");
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -635,6 +633,13 @@ pub const DOH_ENDPOINTS: &[&str] = &[
     "8.8.4.4",
     "9.9.9.9",
 ];
+
+pub fn is_doh_endpoint(host: &str) -> bool {
+    let host_lower = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    DOH_ENDPOINTS
+        .iter()
+        .any(|&d| d == host_lower || host_lower.ends_with(&format!(".{d}")))
+}
 
 pub(crate) fn is_loopback_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -743,24 +748,22 @@ fn request_allowed(
         };
     }
 
-    // Check DoH/DoT block
+    // Check DoH/DoT block: unconditionally deny when block_doh is enabled
     if config.block_doh {
         if port == 853 {
+            bus.publish(Event::Notice {
+                ts: crate::events::types::now(),
+                message: format!("blocked DoT attempt on port 853 to {host}:{port}"),
+            });
             return false;
         }
 
-        if !is_explicitly_allowed {
-            let host_lower = host.trim().trim_end_matches('.').to_ascii_lowercase();
-            let is_doh = DOH_ENDPOINTS
-                .iter()
-                .any(|&d| d == host_lower || host_lower.ends_with(&format!(".{d}")));
-            if is_doh {
-                bus.publish(Event::Notice {
-                    ts: crate::events::types::now(),
-                    message: format!("blocked DoH/DoT bypass attempt to {host}:{port}"),
-                });
-                return false;
-            }
+        if is_doh_endpoint(host) {
+            bus.publish(Event::Notice {
+                ts: crate::events::types::now(),
+                message: format!("blocked DoH bypass attempt to {host}:{port}"),
+            });
+            return false;
         }
     }
 
@@ -1284,6 +1287,36 @@ fn create_and_send_data_fd(
     Ok(())
 }
 
+pub(crate) fn validate_sni_host(requested: &str, sni: &str) -> bool {
+    let req_h = requested.trim().trim_end_matches('.').to_ascii_lowercase();
+    let act = sni.trim().trim_end_matches('.').to_ascii_lowercase();
+    let is_ip = req_h.parse::<std::net::IpAddr>().is_ok();
+
+    if act.is_empty() && is_ip {
+        return true;
+    }
+    if act == req_h {
+        return true;
+    }
+    if !is_ip && is_strict_subdomain(&act, &req_h) {
+        return true;
+    }
+    false
+}
+
+fn is_strict_subdomain(sub: &str, parent: &str) -> bool {
+    let sub_labels: Vec<&str> = sub.split('.').filter(|s| !s.is_empty()).collect();
+    let parent_labels: Vec<&str> = parent.split('.').filter(|s| !s.is_empty()).collect();
+
+    // Multi-label parent required (rejects TLD matching like "com")
+    if parent_labels.len() < 2 || sub_labels.len() <= parent_labels.len() {
+        return false;
+    }
+
+    let offset = sub_labels.len() - parent_labels.len();
+    sub_labels[offset..] == parent_labels[..]
+}
+
 fn forward_data_tunnel(
     mine: std::os::unix::net::UnixStream,
     tcp: TcpStream,
@@ -1371,20 +1404,13 @@ fn forward_data_tunnel(
                     sni_buf.extend_from_slice(&chunk[..n]);
                     match extract_sni(&sni_buf) {
                         Ok(Some(sni)) => {
-                            let req_h = host_tx.trim().trim_end_matches('.').to_ascii_lowercase();
-                            let act = sni.trim().trim_end_matches('.').to_ascii_lowercase();
-                            let is_ip = req_h.parse::<std::net::IpAddr>().is_ok();
-                            if (act.is_empty() && is_ip)
-                                || act == req_h
-                                || act.ends_with(&format!(".{req_h}"))
-                                || req_h.ends_with(&format!(".{act}"))
-                            {
+                            if validate_sni_host(&host_tx, &sni) {
                                 sni_ok = true;
                             } else {
                                 bus.publish(Event::Notice {
                                     ts: crate::events::types::now(),
                                     message: format!(
-                                        "SNI mismatch: expected '{req_h}', got '{act}'"
+                                        "SNI mismatch: expected '{host_tx}', got '{sni}'"
                                     ),
                                 });
                             }
@@ -1583,9 +1609,14 @@ pub(crate) fn recv_fd(sock: RawFd) -> Result<OwnedFd, ()> {
 // Sandbox side: the relay process (runs INSIDE the netns as process R).
 // ---------------------------------------------------------------------------
 
-/// Serializes tunnel setup over the shared control socket (each accepted
-/// client connection holds a dup of the same underlying socket).
-static SETUP_LOCK: Mutex<()> = Mutex::new(());
+/// Fast atomic dispatch lock protecting sendmsg(SCM_RIGHTS) onto ctrl_fd.
+/// Held only for the duration of a single syscall (<2us), NOT across DNS/TCP/IO.
+static RELAY_DISPATCH_LOCK: Mutex<()> = Mutex::new(());
+
+fn dispatch_conn_to_broker(ctrl_fd: RawFd, conn_broker: RawFd) -> Result<(), ()> {
+    let _guard = RELAY_DISPATCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    send_fd(ctrl_fd, conn_broker)
+}
 
 /// Entry point of the relay process R. Never returns.
 pub fn serve_relay(ctrl_fd: RawFd, port: u16) -> ! {
@@ -1601,14 +1632,9 @@ pub fn serve_relay(ctrl_fd: RawFd, port: u16) -> ! {
     };
     for client in listener.incoming() {
         let Ok(client) = client else { continue };
-        // SAFETY: ctrl_fd stays open for the whole relay lifetime.
-        let dup_fd = unsafe { libc::dup(ctrl_fd) };
-        if dup_fd < 0 {
-            continue;
-        }
         std::thread::Builder::new()
             .name("relay-conn".into())
-            .spawn(move || handle_client(client, dup_fd))
+            .spawn(move || handle_client(client, ctrl_fd))
             .ok();
     }
     std::process::exit(0)
@@ -1623,8 +1649,11 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
         return;
     }
 
-    let target = if first[0] == 5 {
-        socks5_handshake(&mut client, first[0]).map(|(h, p)| (h, p, None))
+    let (target, leftover) = if first[0] == 5 {
+        (
+            socks5_handshake(&mut client, first[0]).map(|(h, p)| (h, p, None)),
+            Vec::new(),
+        )
     } else {
         http_connect_head(&mut client, first[0])
     };
@@ -1633,11 +1662,25 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
         return;
     };
 
-    let outcome = {
-        let _guard = SETUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        send_request_frame(ctrl_fd, &host, port, token.as_deref())
-            .and_then(|_| read_status_and_fd(ctrl_fd))
+    // Allocate an independent control channel pair for this connection
+    let (conn_relay, conn_broker) = match socketpair_stream() {
+        Ok(pair) => pair,
+        Err(_) => return,
     };
+
+    // Send the framed request into our private channel
+    if send_request_frame(conn_relay.as_raw_fd(), &host, port, token.as_deref()).is_err() {
+        return;
+    }
+
+    // Hand off conn_broker to the broker via SCM_RIGHTS over ctrl_fd
+    if dispatch_conn_to_broker(ctrl_fd, conn_broker.as_raw_fd()).is_err() {
+        return;
+    }
+    drop(conn_broker);
+
+    // Read result status and data_fd exclusively from our private channel (ZERO global lock)
+    let outcome = read_status_and_fd(conn_relay.as_raw_fd());
 
     match outcome {
         Ok(data_fd) => {
@@ -1649,6 +1692,9 @@ fn handle_client(mut client: TcpStream, ctrl_fd: RawFd) {
                 let _ = client.write_all(&[5u8, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
             } else {
                 let _ = client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n");
+            }
+            if !leftover.is_empty() {
+                let _ = write_all_fd(data_fd.as_raw_fd(), &leftover);
             }
             pump(client, data_fd);
         }
@@ -1669,31 +1715,58 @@ type HttpTarget = Option<(String, u16, Option<String>)>;
 type SocksTarget = Option<(String, u16)>;
 
 /// Parse an HTTP CONNECT request head (first byte already consumed).
-fn http_connect_head(stream: &mut TcpStream, first: u8) -> HttpTarget {
+/// Uses buffered 512-byte block reads rather than 1-byte syscalls.
+fn http_connect_head(stream: &mut TcpStream, first: u8) -> (HttpTarget, Vec<u8>) {
     let mut buf = Vec::with_capacity(512);
     buf.push(first);
     const MAX_HEAD: usize = 16 * 1024;
+    let mut chunk = [0u8; 512];
     while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
         if buf.len() > MAX_HEAD {
-            return None;
+            return (None, Vec::new());
         }
-        let mut b = [0u8; 1];
-        stream.read_exact(&mut b).ok()?;
-        buf.push(b[0]);
+        let n = match stream.read(&mut chunk) {
+            Ok(0) => return (None, Vec::new()),
+            Ok(n) => n,
+            Err(_) => return (None, Vec::new()),
+        };
+        buf.extend_from_slice(&chunk[..n]);
     }
-    let head = String::from_utf8_lossy(&buf);
+
+    let end_idx = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(pos) => pos + 4,
+        None => return (None, Vec::new()),
+    };
+    let leftover = buf[end_idx..].to_vec();
+
+    let head = String::from_utf8_lossy(&buf[..end_idx]);
     let mut lines = head.lines();
-    let request_line = lines.next()?;
+    let request_line = match lines.next() {
+        Some(line) => line,
+        None => return (None, leftover),
+    };
     let mut parts = request_line.split_whitespace();
-    let method = parts.next()?.to_ascii_uppercase();
+    let method = match parts.next() {
+        Some(m) => m.to_ascii_uppercase(),
+        None => return (None, leftover),
+    };
     if method != "CONNECT" {
         // Plain absolute-URI HTTP is intentionally unsupported: fail closed.
         let _ = stream.write_all(b"HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n");
-        return None;
+        return (None, leftover);
     }
-    let authority = parts.next()?;
-    let (host, port_str) = authority.rsplit_once(':')?;
-    let port: u16 = port_str.parse().ok()?;
+    let authority = match parts.next() {
+        Some(a) => a,
+        None => return (None, leftover),
+    };
+    let (host, port_str) = match authority.rsplit_once(':') {
+        Some(pair) => pair,
+        None => return (None, leftover),
+    };
+    let port: u16 = match port_str.parse().ok() {
+        Some(p) => p,
+        None => return (None, leftover),
+    };
 
     let mut token = None;
     for line in lines {
@@ -1707,7 +1780,7 @@ fn http_connect_head(stream: &mut TcpStream, first: u8) -> HttpTarget {
         }
     }
 
-    Some((host.to_ascii_lowercase(), port, token))
+    (Some((host.to_ascii_lowercase(), port, token)), leftover)
 }
 
 /// Minimal socks5h server-side handshake (no-auth only, CONNECT only).
@@ -2702,10 +2775,10 @@ mod tests {
         assert!(!request_allowed("dns.google", 443, None, &config, &bus));
         assert!(!request_allowed("8.8.8.8", 443, None, &config, &bus));
 
-        // But explicitly allowed DoH endpoint should be allowed
+        // When block_doh is true, explicitly allowed DoH endpoint must still be unconditionally blocked
         let mut config_allowed = config.clone();
         config_allowed.policy = BrokerPolicy::Allowlist(vec!["cloudflare-dns.com".into()]);
-        assert!(request_allowed(
+        assert!(!request_allowed(
             "cloudflare-dns.com",
             443,
             None,
@@ -2724,6 +2797,31 @@ mod tests {
             &config,
             &bus
         ));
+    }
+
+    #[test]
+    fn test_sni_host_validation_prevents_spoofing() {
+        // Exact matches
+        assert!(super::validate_sni_host("api.openai.com", "api.openai.com"));
+        assert!(super::validate_sni_host("example.com", "example.com"));
+
+        // IP literal with omitted SNI
+        assert!(super::validate_sni_host("127.0.0.1", ""));
+        assert!(super::validate_sni_host("93.184.216.34", ""));
+        // Hostname with omitted SNI is rejected
+        assert!(!super::validate_sni_host("example.com", ""));
+
+        // Valid strict subdomain
+        assert!(super::validate_sni_host("openai.com", "api.openai.com"));
+
+        // Reverse matching rejected (spoofing prevention)
+        assert!(!super::validate_sni_host("api.openai.com", "openai.com"));
+        assert!(!super::validate_sni_host("api.openai.com", "com"));
+
+        // Suffix spoofing rejected
+        assert!(!super::validate_sni_host("api.openai.com", "api.openai.com.attacker.com"));
+        assert!(!super::validate_sni_host("api.openai.com.attacker.com", "api.openai.com"));
+        assert!(!super::validate_sni_host("api.openai.com", "attacker.com"));
     }
 
     #[test]

@@ -13,8 +13,6 @@ use std::collections::BTreeMap;
 #[cfg(target_os = "windows")]
 use std::collections::HashMap;
 #[cfg(target_os = "windows")]
-use std::sync::atomic::Ordering;
-#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 use vetto::config::NetMode;
@@ -22,7 +20,6 @@ use vetto::policy::Policy;
 #[cfg(target_os = "windows")]
 use vetto::sandbox::production::{
     execute_simple, execute_with_backend, ProdSpawnLog, UnpreparedProductionExecution,
-    PROD_BACKEND_ENTERED, PROD_SPAWN_COUNT,
 };
 use vetto::sandbox::production::{
     freeze_production, prod_tier_mapping, PROD_REGISTRY, PROD_SCENARIO_ID,
@@ -261,7 +258,6 @@ fn test_win_prod_real_001_child_runs_through_boundary() {
         return;
     }
     let root = win_exec_root("real");
-    let before = PROD_SPAWN_COUNT.load(Ordering::SeqCst);
     let mut log = ProdSpawnLog::new();
     let out = match execute_simple(
         &win_policy(),
@@ -280,11 +276,6 @@ fn test_win_prod_real_001_child_runs_through_boundary() {
         }
     };
     assert_eq!(log.len(), 1, "one execute == one spawn event");
-    assert_eq!(
-        PROD_SPAWN_COUNT.load(Ordering::SeqCst) - before,
-        1,
-        "boundary spawn counter moves exactly once"
-    );
     assert!(out.spawn_via_backend);
     assert_eq!(out.backend, BackendKind::Windows);
     assert_eq!(out.exit_code, Some(0));
@@ -341,10 +332,9 @@ fn test_win_prod_ownership_001_preparation_owns_inputs() {
     assert_eq!(prepared.frozen_inputs().argv, argv);
     assert_eq!(prepared.frozen_inputs().cwd, root);
     assert_eq!(prepared.frozen_policy().name, "default");
-    let before = PROD_BACKEND_ENTERED.load(Ordering::SeqCst);
     let spawned = prepared.spawn().expect("prepared spawn succeeds");
     assert_eq!(
-        PROD_BACKEND_ENTERED.load(Ordering::SeqCst) - before,
+        spawned.context.metrics.backend_entered(),
         1,
         "exactly one authoritative backend entry per preparation"
     );

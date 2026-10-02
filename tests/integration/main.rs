@@ -24,8 +24,6 @@ mod entrypoint_contract_parity;
 #[cfg(target_os = "linux")]
 mod env_stripping;
 mod ephemeral;
-mod fleet_concurrency;
-mod git_hooks;
 mod heavy_scenarios;
 #[cfg(target_os = "linux")]
 mod lifecycle_phase3;
@@ -55,7 +53,6 @@ mod linux_verify;
 mod linux_visibility;
 mod macos_prod;
 mod macos_seatbelt;
-mod multi_agent;
 mod onboarding;
 mod policy_loading;
 mod policy_overlays;
@@ -63,14 +60,12 @@ mod policy_parity;
 mod policy_tools;
 mod policy_ux_phase5;
 mod prod_stage3c;
-mod rescue;
 mod resource_limits_e2e;
 mod secret_masking;
 mod shim_interception;
 mod test_agent_profiles_e2e;
 mod test_aider_preset;
 mod test_bench_mode;
-mod test_eval_mode;
 #[cfg(target_os = "linux")]
 mod test_job_control;
 mod test_shell_hook_precedence;
@@ -98,4 +93,3 @@ mod verify_ng_tamper_contract;
 mod verify_ng_traps;
 mod windows_enforcement;
 mod windows_production;
-mod windows_sandbox;

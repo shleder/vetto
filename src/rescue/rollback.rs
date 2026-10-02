@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
-use super::types::{RepairReceipt, RollbackReceipt};
+use super::{RepairReceipt, RollbackReceipt};
 
 static ROLLBACK_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -123,20 +123,6 @@ pub fn rollback_repair(
             }
         }
     };
-
-    // If backup is a SQLite database with sidecars in the backup folder, restore sidecars too
-    if let Some(_backup_parent) = backup_path.parent() {
-        let backup_base = backup_path.to_string_lossy();
-        for ext in ["-wal", "-shm", "-journal"] {
-            let src_sc = PathBuf::from(format!("{}{}", backup_base, ext));
-            if src_sc.exists() {
-                let target_sc = PathBuf::from(format!("{}{}", target_path.display(), ext));
-                if let Ok(sc_bytes) = fs::read(&src_sc) {
-                    let _ = atomic_commit_bytes(&target_sc, &sc_bytes);
-                }
-            }
-        }
-    }
 
     atomic_commit_bytes(&target_path, &backup_bytes)?;
 

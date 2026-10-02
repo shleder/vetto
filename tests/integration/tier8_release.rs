@@ -4,24 +4,6 @@ use std::process::Command;
 use crate::common;
 
 #[test]
-fn tour_non_interactive_completes_all_steps_successfully() {
-    let mut cmd = Command::new(common::vetto_bin());
-    cmd.arg("tour").arg("--non-interactive");
-
-    let output = cmd.output().expect("invoke vetto tour --non-interactive");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "vetto tour failed: {output:?}");
-    assert!(stdout.contains("Welcome to the vetto Tour"));
-    assert!(stdout.contains("[Step 1/5]"));
-    assert!(stdout.contains("[Step 2/5]"));
-    assert!(stdout.contains("[Step 3/5]"));
-    assert!(stdout.contains("[Step 4/5]"));
-    assert!(stdout.contains("[Step 5/5]"));
-    assert!(stdout.contains("Tour completed!"));
-}
-
-#[test]
 fn upgrade_dry_run_and_check_flags_exit_zero() {
     let mut cmd = Command::new(common::vetto_bin());
     cmd.arg("upgrade").arg("--check");

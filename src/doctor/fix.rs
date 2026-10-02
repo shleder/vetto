@@ -177,7 +177,6 @@ pub fn collect_macos_fixes(seatbelt_available: bool, sbpl_broken: bool) -> Vec<D
 #[cfg(target_os = "windows")]
 pub fn collect_windows_fixes(
     caps: &crate::sandbox::windows::WindowsCapabilities,
-    opt: &crate::sandbox::windows::OptionalBackendReport,
 ) -> Vec<DoctorFix> {
     let mut fixes = Vec::new();
 
@@ -219,28 +218,6 @@ pub fn collect_windows_fixes(
                 "wsl --install".into(),
             ],
             explanation: "AppContainer process sandbox provides filesystem ACL isolation and network isolation on Windows.".into(),
-        });
-    }
-
-    if !opt.windows_sandbox.feature_enabled || !opt.windows_sandbox.virtualization_firmware_enabled
-    {
-        let mut cmds = Vec::new();
-        if !opt.windows_sandbox.feature_enabled {
-            cmds.push("powershell -NoProfile -Command \"Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All\"".into());
-            cmds.push("powershell -NoProfile -Command \"Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All\"".into());
-        }
-        if !opt.windows_sandbox.virtualization_firmware_enabled {
-            cmds.push("# Enable Hardware Virtualization (Intel VT-x or AMD SVM) in motherboard BIOS/UEFI firmware settings.".into());
-            cmds.push(
-                "powershell -NoProfile -Command \"Get-ComputerInfo -Property HyperVisorPresent\""
-                    .into(),
-            );
-        }
-        fixes.push(DoctorFix {
-            primitive: "Windows Sandbox & Virtualization",
-            issue: "Windows Sandbox optional feature is disabled or hardware virtualization is turned off in BIOS/UEFI".into(),
-            commands: cmds,
-            explanation: "Windows Sandbox (Hyper-V micro-VM) enables throwaway disposable VM isolation on Windows.".into(),
         });
     }
 

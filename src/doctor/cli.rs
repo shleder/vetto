@@ -131,42 +131,9 @@ pub fn run_doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Res
         );
         println!("LPAC API:                {}", yn(capabilities.lpac_api));
 
-        let optional = crate::sandbox::windows::optional_backend_report();
-        println!(
-            "firewall/WFP admin:      {}",
-            yn(optional.firewall.elevated_admin_token)
-        );
-        println!(
-            "firewall/WFP engine:     {}",
-            yn(optional.firewall.engine_readable)
-        );
-        println!(
-            "ETW private session:     {}",
-            yn(optional.etw.private_session_started)
-        );
-        println!(
-            "ETW decoded stream:      {}",
-            yn(optional.etw.decoded_event_stream)
-        );
-        println!(
-            "Windows Sandbox feature: {}",
-            yn(optional.windows_sandbox.feature_enabled)
-        );
-        println!(
-            "Windows Sandbox firmware: {}",
-            yn(optional.windows_sandbox.virtualization_firmware_enabled)
-        );
-        println!(
-            "event log source:        {}",
-            yn(optional.eventlog.source_registered)
-        );
         for note in &capabilities.notes {
             println!("  note: {note}");
         }
-        println!("  note: {}", optional.firewall.note);
-        println!("  note: {}", optional.etw.note);
-        println!("  note: {}", optional.windows_sandbox.note);
-        println!("  note: {}", optional.eventlog.note);
         println!(
             "  platform status:       Tier 3 (Experimental: Job Objects + Restricted Token + LPAC)"
         );
@@ -181,7 +148,7 @@ pub fn run_doctor(probe_deny: bool, check_agent: Option<&str>, fix: bool) -> Res
         println!("  network warning:       WFP network filtering requires elevated Administrator privileges (Issue #63). Default process sandbox enforces net=off via AppContainer.");
         println!("  recommendation:        For full 100% Landlock kernel confinement on Windows, run inside WSL2.");
         if fix {
-            let windows_fixes = crate::doctor::fix::collect_windows_fixes(&capabilities, &optional);
+            let windows_fixes = crate::doctor::fix::collect_windows_fixes(&capabilities);
             crate::doctor::print_fixes(&windows_fixes);
         }
         if probe_deny {

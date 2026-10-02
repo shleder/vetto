@@ -36,17 +36,55 @@ impl CgroupHandle {
 
     /// Clean up the cgroup directory.
     pub fn cleanup(&self) {
-        // Kill remaining procs once if cgroup.kill is available (Linux 5.14+)
         if !self.cleaned.swap(true, Ordering::SeqCst) {
-            let kill_file = self.path.join("cgroup.kill");
-            if kill_file.exists() {
-                let _ = fs::write(&kill_file, "1");
-            }
+            let _ = self.kill_all();
         }
         // Attempt removing the directory on every cleanup invocation until success
         if self.path.exists() {
             let _ = fs::remove_dir(&self.path);
         }
+    }
+
+    /// Atomically terminate all processes in this cgroup (INV-12/13).
+    ///
+    /// Uses cgroup.kill (Linux 5.14+). If unavailable (Linux 5.13), falls back
+    /// to freezing the cgroup via cgroup.freeze and sending SIGKILL to all PIDs.
+    pub fn kill_all(&self) -> std::io::Result<()> {
+        let kill_file = self.path.join("cgroup.kill");
+        if kill_file.exists() {
+            fs::write(&kill_file, "1")?;
+        } else {
+            let freeze_file = self.path.join("cgroup.freeze");
+            if freeze_file.exists() {
+                let _ = fs::write(&freeze_file, "1");
+            }
+            for pid in self.processes()? {
+                if pid > 1 {
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGKILL);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Read all active process PIDs currently belonging to this cgroup.
+    pub fn processes(&self) -> std::io::Result<Vec<u32>> {
+        let procs_file = self.path.join("cgroup.procs");
+        let content = fs::read_to_string(&procs_file)?;
+        let mut pids = Vec::new();
+        for line in content.lines() {
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                pids.push(pid);
+            }
+        }
+        Ok(pids)
+    }
+
+    /// Count surviving descendant processes in this cgroup.
+    pub fn surviving_processes(&self) -> usize {
+        self.processes().map(|p| p.len()).unwrap_or(0)
     }
 }
 
@@ -57,6 +95,7 @@ impl Drop for CgroupHandle {
 }
 
 pub use crate::policy::types::{parse_cpu_max, parse_memory_bytes};
+use crate::policy::units::parse_cgroup_memory;
 
 /// Read available cgroup v2 controllers from the cgroup root if mounted.
 pub fn available_controllers() -> Vec<String> {
@@ -172,14 +211,14 @@ pub fn setup_cgroup(
 
     // Validate quota specifications early: fail-closed if invalid
     if let Some(mem) = &effective_cgroup.memory_max {
-        if parse_memory_bytes(mem).is_none() && is_required {
+        if parse_cgroup_memory(mem).is_err() && is_required {
             return Err(VettoError::Sandbox(format!(
                 "invalid memory_max spec '{mem}' (fail-closed exit 125)"
             )));
         }
     }
     if let Some(swap) = &effective_cgroup.swap_max {
-        if parse_memory_bytes(swap).is_none() && is_required {
+        if parse_cgroup_memory(swap).is_err() && is_required {
             return Err(VettoError::Sandbox(format!(
                 "invalid swap_max spec '{swap}' (fail-closed exit 125)"
             )));
@@ -194,18 +233,11 @@ pub fn setup_cgroup(
     }
 
     let Some(root) = find_cgroup_root() else {
-        if is_required {
-            return Err(VettoError::Sandbox(
-                "cgroup v2 is unavailable or not writable on this system; \
-                 cannot enforce mandated cgroup resource quotas (fail-closed exit 125)"
-                    .into(),
-            ));
-        }
-        tracing::debug!(
+        return Err(VettoError::Sandbox(
             "cgroup v2 is unavailable or not writable on this system; \
-             continuing without cgroup resource quotas"
-        );
-        return Ok(None);
+             cgroup v2 is mandatory for Linux sandbox isolation and tree extinction (fail-closed exit 125)"
+                .into(),
+        ));
     };
 
     // Enable subtree controllers in parent if possible
@@ -221,29 +253,26 @@ pub fn setup_cgroup(
     let cgroup_dir = root.join(format!("vetto-session-{}-{}", std::process::id(), nonce));
 
     if let Err(e) = fs::create_dir(&cgroup_dir) {
-        if is_required {
-            return Err(VettoError::Sandbox(format!(
-                "failed to create cgroup directory {}: {e} (fail-closed exit 125)",
-                cgroup_dir.display()
-            )));
-        }
-        tracing::debug!(
-            "failed to create cgroup directory {}: {e}; continuing without cgroup",
+        return Err(VettoError::Sandbox(format!(
+            "failed to create cgroup directory {}: {e} (fail-closed exit 125)",
             cgroup_dir.display()
-        );
-        return Ok(None);
+        )));
     }
 
     // Write limits
     if let Some(mem) = &effective_cgroup.memory_max {
-        let bytes = parse_memory_bytes(mem).ok_or_else(|| {
-            if is_required {
-                let _ = fs::remove_dir(&cgroup_dir);
+        let bytes = match parse_cgroup_memory(mem) {
+            Ok(None) => "max".to_string(),
+            Ok(Some(b)) => b.to_string(),
+            Err(_) => {
+                if is_required {
+                    let _ = fs::remove_dir(&cgroup_dir);
+                }
+                return Err(VettoError::Sandbox(format!(
+                    "invalid memory_max spec '{mem}' (fail-closed exit 125)"
+                )));
             }
-            VettoError::Sandbox(format!(
-                "invalid memory_max spec '{mem}' (fail-closed exit 125)"
-            ))
-        })?;
+        };
         if let Err(e) = fs::write(cgroup_dir.join("memory.max"), &bytes) {
             if is_required {
                 let _ = fs::remove_dir(&cgroup_dir);
@@ -254,14 +283,18 @@ pub fn setup_cgroup(
         }
     }
     if let Some(swap) = &effective_cgroup.swap_max {
-        let bytes = parse_memory_bytes(swap).ok_or_else(|| {
-            if is_required {
-                let _ = fs::remove_dir(&cgroup_dir);
+        let bytes = match parse_cgroup_memory(swap) {
+            Ok(None) => "max".to_string(),
+            Ok(Some(b)) => b.to_string(),
+            Err(_) => {
+                if is_required {
+                    let _ = fs::remove_dir(&cgroup_dir);
+                }
+                return Err(VettoError::Sandbox(format!(
+                    "invalid swap_max spec '{swap}' (fail-closed exit 125)"
+                )));
             }
-            VettoError::Sandbox(format!(
-                "invalid swap_max spec '{swap}' (fail-closed exit 125)"
-            ))
-        })?;
+        };
         if let Err(e) = fs::write(cgroup_dir.join("memory.swap.max"), &bytes) {
             if is_required {
                 let _ = fs::remove_dir(&cgroup_dir);
@@ -312,6 +345,12 @@ mod tests {
 
     #[test]
     fn parse_memory_units() {
+        assert_eq!(parse_cgroup_memory("2g").unwrap(), Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(parse_cgroup_memory("512M").unwrap(), Some(512 * 1024 * 1024));
+        assert_eq!(parse_cgroup_memory("0").unwrap(), Some(0));
+        assert_eq!(parse_cgroup_memory("max").unwrap(), None);
+        assert_eq!(parse_cgroup_memory("1024").unwrap(), Some(1024));
+
         assert_eq!(parse_memory_bytes("2g"), Some("2147483648".into()));
         assert_eq!(parse_memory_bytes("512M"), Some("536870912".into()));
         assert_eq!(parse_memory_bytes("0"), Some("0".into()));
@@ -330,9 +369,13 @@ mod tests {
 
     #[test]
     fn test_cgroup_root_or_graceful_none() {
-        let _root = find_cgroup_root();
+        let root = find_cgroup_root();
         let scope = setup_cgroup(None, None);
-        assert!(scope.is_ok());
+        if root.is_some() {
+            assert!(scope.is_ok());
+        } else {
+            assert!(scope.is_err());
+        }
     }
 
     #[test]

@@ -16,7 +16,7 @@ events (`vetto audit --latest` shows nothing new), treat it as auth, not load.
 `vetto --timeout 120s -- <agent>`. A timeout exits `124` with a recap
 line instead of hanging. Then fix the credential path (broker or pushed
 credentials — never a long-lived key copied into the sandbox) and re-run.
-For the report bundle: `vetto pack --bug -o bug.vetto-pack`.
+For session inspection: `vetto audit --latest`.
 
 ## 2. Outer-boundary denial misread as an agent failure
 

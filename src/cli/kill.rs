@@ -119,18 +119,6 @@ fn kill_by_pid(pid: u32, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Also check daemon registry
-    if let Ok(daemon_dir) = crate::daemon::auth::default_daemon_dir() {
-        let daemon_reg = crate::daemon::registry::SessionRegistry::new(daemon_dir);
-        for s in daemon_reg.list_sessions() {
-            if s.pid == pid && s.status == crate::daemon::registry::SessionStatus::Running {
-                let _ = daemon_reg.stop_session(&s.id);
-                println!("Terminated daemon session {} (PID {})", s.id, pid);
-                return Ok(());
-            }
-        }
-    }
-
     if crate::cli::status::is_pid_alive(pid) {
         kill_pid(pid, force)?;
         println!("Terminated process PID {}", pid);
@@ -157,25 +145,6 @@ fn kill_by_session_id(target: &str, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Check daemon registry
-    if let Ok(daemon_dir) = crate::daemon::auth::default_daemon_dir() {
-        let daemon_reg = crate::daemon::registry::SessionRegistry::new(daemon_dir);
-        if let Some(s) = daemon_reg.get_session(target) {
-            let _ = daemon_reg.stop_session(&s.id);
-            println!("Terminated daemon session {} (PID {})", s.id, s.pid);
-            return Ok(());
-        }
-        for s in daemon_reg.list_sessions() {
-            if s.id.starts_with(target)
-                && s.status == crate::daemon::registry::SessionStatus::Running
-            {
-                let _ = daemon_reg.stop_session(&s.id);
-                println!("Terminated daemon session {} (PID {})", s.id, s.pid);
-                return Ok(());
-            }
-        }
-    }
-
     bail!("No active session found matching '{target}'");
 }
 
@@ -198,24 +167,6 @@ fn kill_hung_sessions(threshold: Duration, force: bool) -> Result<()> {
                 s.session_id, s.pid, elapsed
             );
             killed += 1;
-        }
-    }
-
-    // Also scan daemon sessions
-    if let Ok(daemon_dir) = crate::daemon::auth::default_daemon_dir() {
-        let daemon_reg = crate::daemon::registry::SessionRegistry::new(daemon_dir);
-        for s in daemon_reg.list_sessions() {
-            if s.status == crate::daemon::registry::SessionStatus::Running {
-                let elapsed = now_secs.saturating_sub(s.started_at);
-                if elapsed >= threshold.as_secs() {
-                    let _ = daemon_reg.stop_session(&s.id);
-                    println!(
-                        "Terminated hung daemon session {} (PID {}, running for {}s)",
-                        s.id, s.pid, elapsed
-                    );
-                    killed += 1;
-                }
-            }
         }
     }
 
